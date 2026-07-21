@@ -1,0 +1,27 @@
+# Node
+node_modules/
+dist/
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# PDFium native library (fetched by scripts/fetch-pdfium.mjs)
+src-tauri/pdfium/
+
+# Benchmarks: local corpora and results are machine-specific
+bench/corpus/*
+!bench/corpus/.gitkeep
+bench/results/
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Local env overrides (none required by the app)
+*.local

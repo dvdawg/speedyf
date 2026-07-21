@@ -1,0 +1,193 @@
+mod cache;
+mod commands;
+mod engine;
+mod errors;
+mod search;
+
+use commands::EngineState;
+use engine::types::{DocId, Priority, RenderKey, RenderKind, TileRect};
+use engine::{EngineHandle, Work};
+use tauri::http::{header, Response, StatusCode};
+use tauri::{Emitter, Manager};
+
+fn bad_request(msg: &str) -> Response<Vec<u8>> {
+    Response::builder()
+        .status(StatusCode::BAD_REQUEST)
+        .header(header::CONTENT_TYPE, "text/plain")
+        .body(msg.as_bytes().to_vec())
+        .unwrap()
+}
+
+fn png_response(bytes: &[u8]) -> Response<Vec<u8>> {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "image/png")
+        // URLs embed the generation, so responses are immutable by construction.
+        .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
+        .body(bytes.to_vec())
+        .unwrap()
+}
+
+fn status_response(status: StatusCode) -> Response<Vec<u8>> {
+    Response::builder().status(status).body(Vec::new()).unwrap()
+}
+
+struct RenderQuery {
+    key: RenderKey,
+    gen: u64,
+    prio: Priority,
+}
+
+fn parse_render_query(uri: &str) -> Option<RenderQuery> {
+    let parsed = url::Url::parse(uri).ok()?;
+    if !parsed.path().ends_with("/render") && parsed.path() != "/render" {
+        return None;
+    }
+    let mut doc: Option<DocId> = None;
+    let (mut src, mut rot, mut scale, mut gen) = (0u16, 0u16, 1000u32, 0u64);
+    let mut kind = RenderKind::Page;
+    let (mut tx, mut ty, mut tw, mut th) = (0u32, 0u32, 0u32, 0u32);
+    let mut prio: Option<u8> = None;
+    for (k, v) in parsed.query_pairs() {
+        match k.as_ref() {
+            "doc" => doc = v.parse().ok(),
+            "src" => src = v.parse().ok()?,
+            "rot" => rot = v.parse().ok()?,
+            "scale" => scale = v.parse().ok()?,
+            "gen" => gen = v.parse().ok()?,
+            "kind" => {
+                kind = match v.as_ref() {
+                    "thumb" => RenderKind::Thumb,
+                    "tile" => RenderKind::Tile,
+                    _ => RenderKind::Page,
+                }
+            }
+            "tx" => tx = v.parse().ok()?,
+            "ty" => ty = v.parse().ok()?,
+            "tw" => tw = v.parse().ok()?,
+            "th" => th = v.parse().ok()?,
+            "p" => prio = v.parse().ok(),
+            _ => {}
+        }
+    }
+    let doc = doc?;
+    if rot % 90 != 0 || rot >= 360 || scale == 0 || scale > 8000 {
+        return None;
+    }
+    let tile = if kind == RenderKind::Tile {
+        if tw == 0 || th == 0 || tw > 4096 || th > 4096 {
+            return None;
+        }
+        Some(TileRect { x: tx, y: ty, w: tw, h: th })
+    } else {
+        None
+    };
+    let default_prio = match kind {
+        RenderKind::Page => Priority::VisiblePage,
+        RenderKind::Tile => Priority::VisibleTile,
+        RenderKind::Thumb => Priority::VisibleThumb,
+    };
+    Some(RenderQuery {
+        key: RenderKey {
+            doc,
+            src,
+            rot,
+            scale_milli: scale,
+            kind,
+            tile,
+        },
+        gen,
+        prio: prio.map(Priority::from_u8).unwrap_or(default_prio),
+    })
+}
+
+pub fn run() {
+    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .try_init();
+
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let mut hints = Vec::new();
+            if let Ok(resources) = app.path().resource_dir() {
+                hints.push(resources.join("pdfium"));
+                hints.push(resources);
+            }
+            let low_memory = std::env::var("SPEEDYF_LOW_MEMORY").is_ok_and(|v| v == "1");
+            let engine = EngineHandle::start(hints, low_memory);
+
+            let emitter = app.handle().clone();
+            engine.set_progress_callback(Box::new(move |doc, status| {
+                let _ = emitter.emit(
+                    "search:progress",
+                    serde_json::json!({
+                        "docId": doc,
+                        "indexed": status.indexed,
+                        "total": status.total,
+                        "truncated": status.truncated,
+                    }),
+                );
+            }));
+
+            app.manage(EngineState(engine));
+            Ok(())
+        })
+        .register_asynchronous_uri_scheme_protocol("pdfr", |ctx, request, responder| {
+            let uri = request.uri().to_string();
+            let Some(q) = parse_render_query(&uri) else {
+                responder.respond(bad_request("malformed render request"));
+                return;
+            };
+            let engine = ctx.app_handle().state::<EngineState>().0.clone();
+
+            // Requests minted for an old generation are refused immediately.
+            if q.gen < engine.current_generation(q.key.doc) {
+                responder.respond(status_response(StatusCode::NO_CONTENT));
+                return;
+            }
+            // Fast path: serve straight from the byte-budgeted cache.
+            if let Some(hit) = engine.cached_render(&q.key) {
+                responder.respond(png_response(&hit));
+                return;
+            }
+            // Slow path: enqueue; the worker calls back with bytes or an error.
+            let doc = q.key.doc;
+            engine.submit_at_gen(
+                q.prio,
+                doc,
+                q.gen,
+                Work::Render {
+                    key: q.key,
+                    respond: Box::new(move |result| match result {
+                        Ok(bytes) => responder.respond(png_response(&bytes)),
+                        Err(crate::errors::AppError::Stale) => {
+                            responder.respond(status_response(StatusCode::NO_CONTENT))
+                        }
+                        Err(e) => {
+                            log::warn!("render failed: {e}");
+                            responder.respond(status_response(StatusCode::INTERNAL_SERVER_ERROR))
+                        }
+                    }),
+                },
+            );
+        })
+        .invoke_handler(tauri::generate_handler![
+            commands::open_document,
+            commands::close_document,
+            commands::request_page_sizes,
+            commands::get_text_layout,
+            commands::start_indexing,
+            commands::search_query,
+            commands::get_match_rects,
+            commands::save_document,
+            commands::get_form_fields,
+            commands::image_size,
+            commands::image_preview,
+            commands::engine_metrics,
+            commands::set_low_memory,
+            commands::doc_generation,
+            commands::bump_generation,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running SpeedyF");
+}

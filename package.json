@@ -1,0 +1,41 @@
+{
+  "name": "speedyf",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "SpeedyF — fast, memory-bounded desktop PDF viewer and editor",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "tauri": "tauri",
+    "fetch-pdfium": "node scripts/fetch-pdfium.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.4.0",
+    "solid-js": "^1.9.14"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
+    "eslint": "^9.39.0",
+    "eslint-plugin-solid": "^0.14.5",
+    "globals": "^16.5.0",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.4",
+    "vite": "^7.3.4",
+    "vite-plugin-solid": "^2.11.10",
+    "vitest": "^4.0.17"
+  }
+}

@@ -1,0 +1,10 @@
+dist/
+node_modules/
+src-tauri/target/
+src-tauri/gen/
+src-tauri/pdfium/
+src-tauri/icons/
+bench/corpus/
+bench/results/
+pnpm-lock.yaml
+docs/superpowers/

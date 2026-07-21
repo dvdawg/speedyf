@@ -1,0 +1,44 @@
+[package]
+name = "speedyf"
+version = "0.1.0"
+description = "SpeedyF — fast, memory-bounded desktop PDF viewer and editor"
+license = "MIT"
+edition = "2021"
+rust-version = "1.82"
+
+[lib]
+name = "speedyf_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+pdfium-render = { version = "0.8", features = ["image"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+png = "0.17"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+parking_lot = "0.12"
+crossbeam-channel = "0.5"
+tempfile = "3"
+url = "2"
+unicode-normalization = "0.1"
+log = "0.4"
+env_logger = "0.11"
+
+[profile.release]
+lto = "thin"
+strip = true
+opt-level = 3
+
+[[bin]]
+name = "speedyf"
+path = "src/main.rs"
+
+[[bin]]
+name = "speedyf-bench"
+path = "src/bin/bench.rs"
