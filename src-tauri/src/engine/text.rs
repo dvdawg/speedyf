@@ -90,7 +90,7 @@ pub fn extract_page(
     }
     let mut cur: Option<Run> = None;
 
-    let mut flush = |cur: &mut Option<Run>, runs: &mut Vec<TextRun>| {
+    let flush = |cur: &mut Option<Run>, runs: &mut Vec<TextRun>| {
         if let Some(r) = cur.take() {
             if !r.text.trim().is_empty() && r.x1 > r.x0 && r.y1 > r.y0 {
                 runs.push(TextRun {
@@ -192,8 +192,8 @@ pub fn match_rects(
         }
         // merge into the previous rect when on the same visual line
         if let Some(prev) = rects.last_mut() {
-            let same_line = (prev[1] + prev[3] / 2.0 - (y + h / 2.0)).abs() < h * 0.6
-                && x >= prev[0] - h * 0.5;
+            let same_line =
+                (prev[1] + prev[3] / 2.0 - (y + h / 2.0)).abs() < h * 0.6 && x >= prev[0] - h * 0.5;
             if same_line {
                 let right = (prev[0] + prev[2]).max(x + w);
                 let top = (prev[1] + prev[3]).max(y + h);

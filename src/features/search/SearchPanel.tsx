@@ -79,10 +79,18 @@ export default function SearchPanel() {
           }}
           aria-label="Search query"
         />
-        <IconButton label="Previous match (⇧Enter)" disabled={s.flat.length === 0} onClick={() => step(-1)}>
+        <IconButton
+          label="Previous match (⇧Enter)"
+          disabled={s.flat.length === 0}
+          onClick={() => step(-1)}
+        >
           <IconChevronUp />
         </IconButton>
-        <IconButton label="Next match (Enter)" disabled={s.flat.length === 0} onClick={() => step(1)}>
+        <IconButton
+          label="Next match (Enter)"
+          disabled={s.flat.length === 0}
+          onClick={() => step(1)}
+        >
           <IconChevronDown />
         </IconButton>
         <IconButton label="Close search (Esc)" onClick={() => setViewport('searchOpen', false)}>
@@ -121,8 +129,7 @@ export default function SearchPanel() {
       </Show>
       <Show when={s.truncated}>
         <div class="search-warning" role="status">
-          The text-index memory budget was reached — results cover the first {s.indexed} pages
-          only.
+          The text-index memory budget was reached — results cover the first {s.indexed} pages only.
         </div>
       </Show>
       <Show when={noTextDoc()}>

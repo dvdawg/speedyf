@@ -46,9 +46,14 @@ const [rectsVersion, setRectsVersion] = createStore({ n: 0 });
 
 let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 let querySeq = 0;
+let activeDocId = -1;
+const rectKey = (docId: number, match: Pick<FlatMatch, 'src' | 'start' | 'len'>) =>
+  `${docId}:${match.src}:${match.start}:${match.len}`;
 
 async function runQuery() {
   const seq = ++querySeq;
+  // Intentional event/timer snapshot; querySeq rejects later reactive changes.
+  // eslint-disable-next-line solid/reactivity
   const { docId, query, caseSensitive } = state;
   if (docId < 0 || query.trim().length === 0) {
     setState({ results: [], flat: [], current: -1, running: false });
@@ -81,6 +86,10 @@ export const searchStore = {
   state,
 
   resetForDocument(docId: number, total: number) {
+    activeDocId = docId;
+    clearTimeout(debounceTimer);
+    debounceTimer = undefined;
+    querySeq += 1;
     rectsCache.clear();
     rectsPending.clear();
     setState({
@@ -149,35 +158,42 @@ export const searchStore = {
 
   /** Matches on a given source page with rects when resolved (mounted pages
    * call this; rect fetches are queued only for what is actually visible). */
-  rectsForPage(src: number): { match: FlatMatch; index: number; rects: [number, number, number, number][] }[] {
+  rectsForPage(
+    src: number
+  ): { match: FlatMatch; index: number; rects: [number, number, number, number][] }[] {
     void rectsVersion.n; // reactive dependency for lazily arriving rects
-    const out: { match: FlatMatch; index: number; rects: [number, number, number, number][] }[] = [];
+    const out: { match: FlatMatch; index: number; rects: [number, number, number, number][] }[] =
+      [];
     state.flat.forEach((match, index) => {
       if (match.src !== src) return;
-      const key = `${match.src}:${match.start}:${match.len}`;
+      const docId = state.docId;
+      const key = rectKey(docId, match);
       const rects = rectsCache.get(key);
       if (rects) {
         out.push({ match, index, rects });
-      } else if (!rectsPending.has(key) && state.docId >= 0) {
+      } else if (!rectsPending.has(key) && docId >= 0) {
         rectsPending.add(key);
         void engine
-          .getMatchRects(state.docId, match.src, match.start, match.len)
+          .getMatchRects(docId, match.src, match.start, match.len)
           .then((r) => {
+            if (activeDocId !== docId) return;
             rectsCache.set(key, r);
-            rectsPending.delete(key);
             setRectsVersion('n', (n) => n + 1);
           })
-          .catch(() => rectsPending.delete(key));
+          .catch(() => undefined)
+          .finally(() => rectsPending.delete(key));
       }
     });
     return out;
   },
 
   async rectsForMatch(m: FlatMatch): Promise<[number, number, number, number][]> {
-    const key = `${m.src}:${m.start}:${m.len}`;
+    const docId = state.docId;
+    const key = rectKey(docId, m);
     const hit = rectsCache.get(key);
     if (hit) return hit;
-    const r = await engine.getMatchRects(state.docId, m.src, m.start, m.len);
+    const r = await engine.getMatchRects(docId, m.src, m.start, m.len);
+    if (activeDocId !== docId) return [];
     rectsCache.set(key, r);
     setRectsVersion('n', (n) => n + 1);
     return r;

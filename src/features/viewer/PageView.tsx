@@ -5,7 +5,15 @@
  * into place with a single CSS transform, so overlay math never deals with
  * rotation — only the pointer-input path does (via lib/coordinates).
  */
-import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from 'solid-js';
+import {
+  createEffect,
+  createMemo,
+  createResource,
+  createSignal,
+  For,
+  onCleanup,
+  Show,
+} from 'solid-js';
 import type { Layout } from '../../lib/coordinates/layout';
 import type { PageGeom } from '../../lib/coordinates/coords';
 import { RENDER_SCALE_BUCKETS, tileGrid } from '../../lib/coordinates/coords';
@@ -46,7 +54,11 @@ export default function PageView(props: Props) {
   const devH = () => Math.max(1, Math.round((rotH() * props.scaleMilli) / 1000));
   const tiled = () => devW() * devH() > TILE_THRESHOLD_PX;
 
-  const urlFor = (kind: 'page' | 'thumb' | 'tile', scaleMilli: number, tile?: { x: number; y: number; w: number; h: number }) => {
+  const urlFor = (
+    kind: 'page' | 'thumb' | 'tile',
+    scaleMilli: number,
+    tile?: { x: number; y: number; w: number; h: number }
+  ) => {
     const src = srcIndex();
     if (src === null) return null;
     return renderUrl({

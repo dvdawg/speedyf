@@ -17,11 +17,50 @@ use crate::errors::{AppError, AppResult};
 use pdfium_render::prelude::*;
 use std::path::Path;
 
+/// Write a replacement to a temporary sibling, verify it, perform any
+/// last-moment handle cleanup, then atomically persist it over `dest`.
+///
+/// `TempPath` removes the sibling on every early-return path, so a writer or
+/// verifier failure cannot modify the destination or leave save debris.
+pub fn verified_atomic_replace(
+    dest: &Path,
+    write: impl FnOnce(&Path) -> AppResult<()>,
+    verify: impl FnOnce(&Path) -> AppResult<()>,
+    before_replace: impl FnOnce() -> AppResult<()>,
+) -> AppResult<u64> {
+    let dir = dest
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .ok_or_else(|| AppError::Io("destination has no parent directory".into()))?;
+    let temp = tempfile::Builder::new()
+        .prefix(".speedyf-save-")
+        .suffix(".pdf")
+        .tempfile_in(dir)
+        .map_err(|e| AppError::Io(format!("cannot create temp file: {e}")))?;
+    let temp_path = temp.into_temp_path();
+
+    write(&temp_path)?;
+    verify(&temp_path)?;
+    before_replace()?;
+
+    let bytes = std::fs::metadata(&temp_path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    temp_path
+        .persist(dest)
+        .map_err(|e| AppError::Io(format!("cannot replace destination: {e}")))?;
+    Ok(bytes)
+}
+
 fn parse_color(hex: &str, opacity: f32) -> PdfColor {
     let h = hex.trim_start_matches('#');
     let v = u32::from_str_radix(h, 16).unwrap_or(0);
     let (r, g, b) = if h.len() >= 6 {
-        (((v >> 16) & 0xff) as u8, ((v >> 8) & 0xff) as u8, (v & 0xff) as u8)
+        (
+            ((v >> 16) & 0xff) as u8,
+            ((v >> 8) & 0xff) as u8,
+            (v & 0xff) as u8,
+        )
     } else {
         (0, 0, 0)
     };
@@ -56,10 +95,10 @@ impl PageSpace {
             _ => 0,
         };
         PageSpace {
-            crop_l: crop.left.value,
-            crop_b: crop.bottom.value,
-            crop_r: crop.right.value,
-            crop_t: crop.top.value,
+            crop_l: crop.left().value,
+            crop_b: crop.bottom().value,
+            crop_r: crop.right().value,
+            crop_t: crop.top().value,
             rot,
         }
     }
@@ -99,7 +138,8 @@ fn add_annotations<'a>(
         match annot.kind.as_str() {
             "highlight" => {
                 let mut a = page.annotations_mut().create_highlight_annotation()?;
-                a.set_fill_color(parse_color(&annot.color, annot.opacity)).ok();
+                a.set_fill_color(parse_color(&annot.color, annot.opacity))
+                    .ok();
                 let mut union: Option<PdfRect> = None;
                 if let Some(quads) = &annot.quads {
                     for q in quads {
@@ -122,10 +162,10 @@ fn add_annotations<'a>(
                         union = Some(match union {
                             None => rect,
                             Some(u) => PdfRect::new(
-                                PdfPoints::new(u.bottom.value.min(rect.bottom.value)),
-                                PdfPoints::new(u.left.value.min(rect.left.value)),
-                                PdfPoints::new(u.top.value.max(rect.top.value)),
-                                PdfPoints::new(u.right.value.max(rect.right.value)),
+                                PdfPoints::new(u.bottom().value.min(rect.bottom().value)),
+                                PdfPoints::new(u.left().value.min(rect.left().value)),
+                                PdfPoints::new(u.top().value.max(rect.top().value)),
+                                PdfPoints::new(u.right().value.max(rect.right().value)),
                             ),
                         });
                     }
@@ -135,14 +175,17 @@ fn add_annotations<'a>(
             "rect" => {
                 let mut a = page.annotations_mut().create_square_annotation()?;
                 a.set_bounds(space.rect_to_user(&annot.rect))?;
-                a.set_stroke_color(parse_color(&annot.color, annot.opacity)).ok();
-                a.set_width(PdfPoints::new(annot.stroke_width.unwrap_or(2.0))).ok();
+                a.set_stroke_color(parse_color(&annot.color, annot.opacity))
+                    .ok();
+                a.set_width(PdfPoints::new(annot.stroke_width.unwrap_or(2.0)))
+                    .ok();
             }
             "note" => {
                 let text = annot.text.clone().unwrap_or_default();
                 let mut a = page.annotations_mut().create_text_annotation(&text)?;
                 a.set_bounds(space.rect_to_user(&annot.rect))?;
-                a.set_fill_color(parse_color(&annot.color, annot.opacity)).ok();
+                a.set_fill_color(parse_color(&annot.color, annot.opacity))
+                    .ok();
             }
             "ink" => {
                 // Flattened to page path objects (portable; documented in README).
@@ -180,12 +223,12 @@ fn add_annotations<'a>(
         let user_rect = space.rect_to_user(&text.rect);
         let size = text.font_size_pt.max(4.0);
         let color = parse_color(&text.color, text.opacity);
-        let mut y = user_rect.top.value - size;
+        let mut y = user_rect.top().value - size;
         for line in text.text.split('\n') {
             let content = if line.trim().is_empty() { " " } else { line };
             let mut obj = PdfPageTextObject::new(doc, content, helv, PdfPoints::new(size))?;
             obj.set_fill_color(color).ok();
-            obj.translate(PdfPoints::new(user_rect.left.value), PdfPoints::new(y))?;
+            obj.translate(PdfPoints::new(user_rect.left().value), PdfPoints::new(y))?;
             page.objects_mut().add_text_object(obj)?;
             y -= size * 1.3;
         }
@@ -196,12 +239,12 @@ fn add_annotations<'a>(
             .map_err(|e| AppError::Io(format!("cannot load image {}: {e}", img.source_path)))?;
         let user_rect = space.rect_to_user(&img.rect);
         let mut obj = PdfPageImageObject::new(doc, &dyn_img)?;
-        let w = user_rect.right.value - user_rect.left.value;
-        let h = user_rect.top.value - user_rect.bottom.value;
+        let w = user_rect.right().value - user_rect.left().value;
+        let h = user_rect.top().value - user_rect.bottom().value;
         obj.scale(w, h)?;
         obj.translate(
-            PdfPoints::new(user_rect.left.value),
-            PdfPoints::new(user_rect.bottom.value),
+            PdfPoints::new(user_rect.left().value),
+            PdfPoints::new(user_rect.bottom().value),
         )?;
         page.objects_mut().add_image_object(obj)?;
     }
@@ -234,7 +277,9 @@ fn fill_form_fields(doc: &mut PdfDocument<'_>, form: &[(String, String)]) {
     }
     let page_count = doc.pages().len();
     for pi in 0..page_count {
-        let Ok(page) = doc.pages().get(pi) else { continue };
+        let Ok(page) = doc.pages().get(pi) else {
+            continue;
+        };
         let annotation_count = page.annotations().len();
         for ai in 0..annotation_count {
             let Ok(mut annotation) = page.annotations().get(ai) else {
@@ -275,7 +320,7 @@ pub fn build_output(
     let mut dest: u16 = 0;
     let mut i = 0;
     while i < plan.pages.len() {
-        if let Some(_) = plan.pages[i].src_index {
+        if plan.pages[i].src_index.is_some() {
             let mut list = String::new();
             let mut j = i;
             while j < plan.pages.len() {
@@ -328,4 +373,270 @@ pub fn build_output(
     file.flush()?;
     file.sync_all()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::pdfium_init;
+    use crate::engine::types::{PlanAnnot, PlanPage, PlanText, PointDto, QuadDto};
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    fn pdfium_test_guard() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn test_pdfium() -> Pdfium {
+        Pdfium::new(pdfium_init::init_bindings(&[]).expect("load bundled PDFium"))
+    }
+
+    fn create_source_fixture(pdfium: &Pdfium, path: &Path) {
+        let mut document = pdfium.create_new_pdf().expect("create fixture");
+        let font = document.fonts_mut().helvetica();
+        let specs = [
+            ("SOURCE-A", PdfPageRenderRotation::None),
+            ("SOURCE-B", PdfPageRenderRotation::Degrees90),
+            ("SOURCE-C", PdfPageRenderRotation::Degrees270),
+        ];
+        for (index, (label, rotation)) in specs.into_iter().enumerate() {
+            let mut page = document
+                .pages_mut()
+                .create_page_at_end(PdfPagePaperSize::Custom(
+                    PdfPoints::new(300.0 + index as f32 * 20.0),
+                    PdfPoints::new(420.0 + index as f32 * 20.0),
+                ))
+                .expect("create fixture page");
+            let mut text = PdfPageTextObject::new(&document, label, font, PdfPoints::new(22.0))
+                .expect("create fixture text");
+            text.translate(PdfPoints::new(36.0), PdfPoints::new(300.0))
+                .expect("position fixture text");
+            page.objects_mut()
+                .add_text_object(text)
+                .expect("add fixture text");
+            page.set_rotation(rotation);
+        }
+        document.save_to_file(path).expect("save fixture");
+    }
+
+    fn plan_page(src_index: Option<u16>, rotation: u16) -> PlanPage {
+        PlanPage {
+            src_index,
+            width_pt: 360.0,
+            height_pt: 480.0,
+            rotation,
+            annots: Vec::new(),
+            texts: Vec::new(),
+            images: Vec::new(),
+        }
+    }
+
+    fn rotation_degrees(page: &PdfPage<'_>) -> u16 {
+        match page.rotation().expect("read page rotation") {
+            PdfPageRenderRotation::Degrees90 => 90,
+            PdfPageRenderRotation::Degrees180 => 180,
+            PdfPageRenderRotation::Degrees270 => 270,
+            PdfPageRenderRotation::None => 0,
+        }
+    }
+
+    #[test]
+    fn materializes_page_order_duplicates_blanks_and_rotation_deltas() {
+        let _guard = pdfium_test_guard();
+        let pdfium = test_pdfium();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let source = dir.path().join("source.pdf");
+        let output = dir.path().join("output.pdf");
+        create_source_fixture(&pdfium, &source);
+
+        let plan = EditPlan {
+            pages: vec![
+                plan_page(Some(2), 90),
+                plan_page(Some(0), 180),
+                plan_page(Some(1), 90),
+                plan_page(Some(2), 0),
+                plan_page(None, 270),
+            ],
+            form: Vec::new(),
+        };
+        build_output(
+            &pdfium,
+            source.to_str().expect("source path"),
+            None,
+            &plan,
+            &output,
+        )
+        .expect("build edited output");
+
+        let saved = pdfium
+            .load_pdf_from_file(&output, None)
+            .expect("reopen edited output");
+        assert_eq!(saved.pages().len(), 5);
+
+        let mut text_order = Vec::new();
+        let mut rotations = Vec::new();
+        for index in 0..saved.pages().len() {
+            let page = saved.pages().get(index).expect("saved page");
+            text_order.push(page.text().expect("page text").all());
+            rotations.push(rotation_degrees(&page));
+        }
+        assert!(text_order[0].contains("SOURCE-C"));
+        assert!(text_order[1].contains("SOURCE-A"));
+        assert!(text_order[2].contains("SOURCE-B"));
+        assert!(text_order[3].contains("SOURCE-C"));
+        assert!(text_order[4].trim().is_empty());
+        assert_eq!(rotations, vec![0, 180, 180, 270, 270]);
+    }
+
+    #[test]
+    fn materializes_pdf_annotations_added_text_and_flattened_ink_paths() {
+        let _guard = pdfium_test_guard();
+        let pdfium = test_pdfium();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let source = dir.path().join("source.pdf");
+        let output = dir.path().join("output.pdf");
+        create_source_fixture(&pdfium, &source);
+
+        let rect = RectDto {
+            x: 40.0,
+            y: 50.0,
+            w: 100.0,
+            h: 40.0,
+        };
+        let point = |x, y| PointDto { x, y };
+        let mut page = plan_page(Some(0), 0);
+        page.annots = vec![
+            PlanAnnot {
+                kind: "highlight".into(),
+                rect,
+                color: "#ffd54a".into(),
+                opacity: 0.5,
+                stroke_width: None,
+                quads: Some(vec![QuadDto {
+                    p1: point(40.0, 50.0),
+                    p2: point(140.0, 50.0),
+                    p3: point(140.0, 70.0),
+                    p4: point(40.0, 70.0),
+                }]),
+                strokes: None,
+                text: None,
+            },
+            PlanAnnot {
+                kind: "rect".into(),
+                rect: RectDto {
+                    x: 30.0,
+                    y: 100.0,
+                    w: 120.0,
+                    h: 60.0,
+                },
+                color: "#1e88e5".into(),
+                opacity: 1.0,
+                stroke_width: Some(3.0),
+                quads: None,
+                strokes: None,
+                text: None,
+            },
+            PlanAnnot {
+                kind: "note".into(),
+                rect: RectDto {
+                    x: 180.0,
+                    y: 120.0,
+                    w: 18.0,
+                    h: 18.0,
+                },
+                color: "#ffeb3b".into(),
+                opacity: 1.0,
+                stroke_width: None,
+                quads: None,
+                strokes: None,
+                text: Some("fixture note".into()),
+            },
+            PlanAnnot {
+                kind: "ink".into(),
+                rect: RectDto {
+                    x: 25.0,
+                    y: 190.0,
+                    w: 100.0,
+                    h: 40.0,
+                },
+                color: "#d81b60".into(),
+                opacity: 0.8,
+                stroke_width: Some(2.5),
+                quads: None,
+                strokes: Some(vec![vec![
+                    point(25.0, 190.0),
+                    point(70.0, 225.0),
+                    point(125.0, 200.0),
+                ]]),
+                text: None,
+            },
+        ];
+        page.texts.push(PlanText {
+            rect: RectDto {
+                x: 36.0,
+                y: 250.0,
+                w: 180.0,
+                h: 40.0,
+            },
+            text: "ADDED-TEXT".into(),
+            font_size_pt: 16.0,
+            color: "#111111".into(),
+            opacity: 1.0,
+        });
+        let plan = EditPlan {
+            pages: vec![page],
+            form: Vec::new(),
+        };
+        build_output(
+            &pdfium,
+            source.to_str().expect("source path"),
+            None,
+            &plan,
+            &output,
+        )
+        .expect("build annotated output");
+
+        let saved = pdfium
+            .load_pdf_from_file(&output, None)
+            .expect("reopen annotated output");
+        let page = saved.pages().get(0).expect("saved page");
+        assert_eq!(page.annotations().len(), 3);
+        assert!(page.text().expect("page text").all().contains("ADDED-TEXT"));
+        assert!(
+            page.objects()
+                .iter()
+                .any(|object| object.as_path_object().is_some()),
+            "ink must be flattened to a page path object"
+        );
+    }
+
+    #[test]
+    fn injected_verify_failure_preserves_destination_and_cleans_temp_file() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let dest = dir.path().join("document.pdf");
+        std::fs::write(&dest, b"original bytes").expect("seed destination");
+
+        let result = verified_atomic_replace(
+            &dest,
+            |temp| {
+                std::fs::write(temp, b"replacement bytes")?;
+                Ok(())
+            },
+            |_temp| Err(AppError::Internal("injected verify failure".into())),
+            || Ok(()),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(
+            std::fs::read(&dest).expect("read destination"),
+            b"original bytes"
+        );
+        let siblings: Vec<_> = std::fs::read_dir(dir.path())
+            .expect("read temp dir")
+            .map(|entry| entry.expect("directory entry").file_name())
+            .collect();
+        assert_eq!(siblings, vec![dest.file_name().unwrap()]);
+    }
 }

@@ -21,18 +21,42 @@ export interface SearchProgress {
   truncated: boolean;
 }
 
+export interface EngineMetrics {
+  rendered: number;
+  skippedStale: number;
+  cacheHits: number;
+  cacheLookups: number;
+  pageCacheBytes: number;
+  pageCacheBudget: number;
+  thumbCacheBytes: number;
+  thumbCacheBudget: number;
+  textBytes: number;
+  textBudget: number;
+  pagesIndexed: number;
+  queueDepth: number;
+}
+
 export interface EngineApi {
   open(path: string, password?: string): Promise<DocMeta>;
   close(docId: number): Promise<void>;
-  requestPageSizes(docId: number, from: number, count: number): Promise<{ from: number; sizes: [number, number, number, number, number][] }>;
+  requestPageSizes(
+    docId: number,
+    from: number,
+    count: number
+  ): Promise<{ from: number; sizes: [number, number, number, number, number][] }>;
   getTextLayout(docId: number, src: number): Promise<PageTextLayout>;
   startIndexing(docId: number): Promise<void>;
   searchQuery(docId: number, query: string, caseSensitive: boolean): Promise<PageMatches[]>;
-  getMatchRects(docId: number, src: number, start: number, len: number): Promise<[number, number, number, number][]>;
+  getMatchRects(
+    docId: number,
+    src: number,
+    start: number,
+    len: number
+  ): Promise<[number, number, number, number][]>;
   saveDocument(docId: number, plan: EditPlan, destPath: string): Promise<SaveResult>;
   getFormFields(docId: number): Promise<FormFieldInfo[]>;
   imageSize(path: string): Promise<[number, number]>;
-  metrics(): Promise<Record<string, number>>;
+  metrics(): Promise<EngineMetrics>;
   setLowMemory(enabled: boolean): Promise<void>;
   bumpGeneration(docId: number): Promise<number>;
   onSearchProgress(cb: (p: SearchProgress) => void): Promise<() => void>;
@@ -59,19 +83,16 @@ export const engine: EngineApi = {
 /** Error shape produced by the Rust AppError serializer. */
 export interface EngineError {
   code:
-    | 'not_found'
-    | 'engine'
-    | 'password'
-    | 'malformed'
-    | 'io'
-    | 'stale'
-    | 'unsupported'
-    | 'internal';
+    'not_found' | 'engine' | 'password' | 'malformed' | 'io' | 'stale' | 'unsupported' | 'internal';
   message: string;
 }
 
 export function isEngineError(e: unknown): e is EngineError {
   return (
-    typeof e === 'object' && e !== null && 'code' in e && 'message' in e && typeof (e as EngineError).message === 'string'
+    typeof e === 'object' &&
+    e !== null &&
+    'code' in e &&
+    'message' in e &&
+    typeof (e as EngineError).message === 'string'
   );
 }

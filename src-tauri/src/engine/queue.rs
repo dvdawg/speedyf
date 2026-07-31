@@ -1,10 +1,9 @@
 //! Blocking priority queue + per-document generation registry.
 //!
 //! Jobs are ordered by (priority, submission sequence). Every job carries the
-//! generation current at submission time; the worker skips (and counts) jobs
-//! whose generation has since been bumped — this is how zoom changes, page
-//! mutations, document closes, and reloads cancel obsolete work without
-//! needing to reach into the queue.
+//! generation current at submission time; the worker skips (and counts)
+//! obsolete render jobs whose generation has since been bumped. Non-render
+//! work such as search and save is never cancelled by a zoom change.
 
 use super::types::{DocId, Priority};
 use parking_lot::{Condvar, Mutex};
@@ -15,7 +14,6 @@ use std::collections::{BinaryHeap, HashMap};
 pub struct JobMeta {
     pub doc: DocId,
     pub gen: u64,
-    pub prio: Priority,
 }
 
 struct Item<T> {
@@ -50,6 +48,12 @@ struct Inner<T> {
 pub struct PrioQueue<T> {
     inner: Mutex<Inner<T>>,
     cv: Condvar,
+}
+
+impl<T> Default for PrioQueue<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T> PrioQueue<T> {
@@ -99,6 +103,10 @@ impl<T> PrioQueue<T> {
         self.inner.lock().heap.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.inner.lock().heap.is_empty()
+    }
+
     pub fn close(&self) {
         self.inner.lock().closed = true;
         self.cv.notify_all();
@@ -125,10 +133,6 @@ impl GenerationMap {
     pub fn is_stale(&self, meta: &JobMeta) -> bool {
         meta.gen < self.current(meta.doc)
     }
-
-    pub fn remove(&self, doc: DocId) {
-        self.map.lock().remove(&doc);
-    }
 }
 
 #[cfg(test)]
@@ -136,17 +140,20 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    fn meta(doc: DocId, gen: u64, prio: Priority) -> JobMeta {
-        JobMeta { doc, gen, prio }
+    fn meta(doc: DocId, generation: u64) -> JobMeta {
+        JobMeta {
+            doc,
+            gen: generation,
+        }
     }
 
     #[test]
     fn pops_by_priority_then_fifo_within_priority() {
         let q: PrioQueue<&'static str> = PrioQueue::new();
-        q.push(Priority::Prefetch, meta(1, 0, Priority::Prefetch), "prefetch");
-        q.push(Priority::VisiblePage, meta(1, 0, Priority::VisiblePage), "page-a");
-        q.push(Priority::VisiblePage, meta(1, 0, Priority::VisiblePage), "page-b");
-        q.push(Priority::VisibleThumb, meta(1, 0, Priority::VisibleThumb), "thumb");
+        q.push(Priority::Prefetch, meta(1, 0), "prefetch");
+        q.push(Priority::VisiblePage, meta(1, 0), "page-a");
+        q.push(Priority::VisiblePage, meta(1, 0), "page-b");
+        q.push(Priority::VisibleThumb, meta(1, 0), "thumb");
         q.close();
         let order: Vec<&str> = std::iter::from_fn(|| q.pop_blocking().map(|(_, w)| w)).collect();
         assert_eq!(order, vec!["page-a", "page-b", "thumb", "prefetch"]);
@@ -158,7 +165,7 @@ mod tests {
         let q2 = Arc::clone(&q);
         let handle = std::thread::spawn(move || q2.pop_blocking());
         std::thread::sleep(std::time::Duration::from_millis(50));
-        q.push(Priority::VisiblePage, meta(1, 0, Priority::VisiblePage), 42);
+        q.push(Priority::VisiblePage, meta(1, 0), 42);
         let got = handle.join().unwrap();
         assert_eq!(got.map(|(_, w)| w), Some(42));
         q.close();
@@ -169,20 +176,23 @@ mod tests {
     fn generation_bump_marks_older_jobs_stale() {
         let gens = GenerationMap::default();
         let g0 = gens.current(7);
-        let m = meta(7, g0, Priority::VisiblePage);
+        let m = meta(7, g0);
         assert!(!gens.is_stale(&m));
         let g1 = gens.bump(7);
         assert!(g1 > g0);
         assert!(gens.is_stale(&m), "job submitted at g0 is stale after bump");
-        let fresh = meta(7, g1, Priority::VisiblePage);
+        let fresh = meta(7, g1);
         assert!(!gens.is_stale(&fresh));
     }
 
     #[test]
     fn generations_are_per_document() {
         let gens = GenerationMap::default();
-        let a = meta(1, gens.current(1), Priority::VisiblePage);
+        let a = meta(1, gens.current(1));
         gens.bump(2);
-        assert!(!gens.is_stale(&a), "bumping doc 2 must not stale doc 1 jobs");
+        assert!(
+            !gens.is_stale(&a),
+            "bumping doc 2 must not stale doc 1 jobs"
+        );
     }
 }

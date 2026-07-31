@@ -176,7 +176,10 @@ export default function AnnotationLayer(props: Props) {
     }
     layerEl.setPointerCapture(e.pointerId);
     setDrag({ kind: 'draw', startPdf: p, lastPdf: p, points: [p] });
-    setDraft({ rect: { x: p.x, y: p.y, w: 0, h: 0 }, ...(toolState.active === 'ink' ? { points: [p] } : {}) });
+    setDraft({
+      rect: { x: p.x, y: p.y, w: 0, h: 0 },
+      ...(toolState.active === 'ink' ? { points: [p] } : {}),
+    });
   };
 
   const onLayerPointerMove = (e: PointerEvent) => {
@@ -433,8 +436,7 @@ export default function AnnotationLayer(props: Props) {
                     <textarea
                       class="annot-text-editor"
                       value={a().text ?? ''}
-                       
-                      ref={(el) => setTimeout(() => el.focus(), 0)}
+                      ref={(el) => queueMicrotask(() => el.isConnected && el.focus())}
                       onPointerDown={(e) => e.stopPropagation()}
                       onBlur={(e) => commitText(raw, e.currentTarget.value)}
                       onKeyDown={(e) => {
@@ -485,6 +487,38 @@ export default function AnnotationLayer(props: Props) {
                 />
               </Show>
 
+              <button
+                type="button"
+                class="annot-keyboard-target"
+                style={{
+                  left: `${cssX(a().rect.x)}px`,
+                  top: `${cssY(a().rect.y, a().rect.h)}px`,
+                  width: `${Math.max(12, a().rect.w * props.zoom)}px`,
+                  height: `${Math.max(12, a().rect.h * props.zoom)}px`,
+                }}
+                tabIndex={toolState.active === 'select' ? 0 : -1}
+                aria-label={`${a().kind} annotation${a().text ? `: ${a().text}` : ''}`}
+                aria-pressed={isSel()}
+                title={`Select ${a().kind} annotation`}
+                onFocus={() =>
+                  documentStore.setSelected({ pageId: props.page.id, annotId: a().id })
+                }
+                onClick={() => {
+                  documentStore.setSelected({ pageId: props.page.id, annotId: a().id });
+                  if (a().kind === 'textbox' || a().kind === 'note') setEditingId(a().id);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Delete' || e.key === 'Backspace') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    deleteSelected(raw);
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    documentStore.setSelected(null);
+                  }
+                }}
+              />
+
               {/* note popover editor */}
               <Show when={a().kind === 'note' && editingId() === a().id}>
                 <div
@@ -497,8 +531,7 @@ export default function AnnotationLayer(props: Props) {
                 >
                   <textarea
                     value={a().text ?? ''}
-                     
-                    ref={(el) => setTimeout(() => el.focus(), 0)}
+                    ref={(el) => queueMicrotask(() => el.isConnected && el.focus())}
                     onBlur={(e) => commitText(raw, e.currentTarget.value)}
                     onKeyDown={(e) => {
                       e.stopPropagation();

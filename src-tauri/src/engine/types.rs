@@ -226,8 +226,6 @@ pub struct PlanPage {
     pub src_index: Option<u16>,
     pub width_pt: f32,
     pub height_pt: f32,
-    pub crop_x: f32,
-    pub crop_y: f32,
     /// extra rotation to add on top of the page's existing /Rotate
     pub rotation: u16,
     pub annots: Vec<PlanAnnot>,

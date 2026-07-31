@@ -26,7 +26,9 @@ const ASSETS = {
 const key = `${process.platform}-${process.arch}`;
 const entry = ASSETS[key];
 if (!entry) {
-  console.error(`No prebuilt PDFium mapping for ${key}. See https://github.com/bblanchon/pdfium-binaries`);
+  console.error(
+    `No prebuilt PDFium mapping for ${key}. See https://github.com/bblanchon/pdfium-binaries`
+  );
   process.exit(1);
 }
 const [asset, libName] = entry;
@@ -35,7 +37,11 @@ const destDir = join(import.meta.dirname, '..', 'src-tauri', 'pdfium');
 const libPath = join(destDir, libName);
 const versionPath = join(destDir, 'VERSION');
 
-if (existsSync(libPath) && existsSync(versionPath) && readFileSync(versionPath, 'utf8').trim() === TAG) {
+if (
+  existsSync(libPath) &&
+  existsSync(versionPath) &&
+  readFileSync(versionPath, 'utf8').trim() === TAG
+) {
   console.info(`PDFium ${TAG} already present at ${libPath}`);
   process.exit(0);
 }
@@ -65,9 +71,11 @@ if (!found) {
 }
 
 rmSync(libPath, { force: true });
-execFileSync(process.platform === 'win32' ? 'cmd' : 'cp',
+execFileSync(
+  process.platform === 'win32' ? 'cmd' : 'cp',
   process.platform === 'win32' ? ['/c', 'copy', '/y', found, libPath] : [found, libPath],
-  { stdio: 'inherit' });
+  { stdio: 'inherit' }
+);
 writeFileSync(versionPath, `${TAG}\n`);
 rmSync(archive, { force: true });
 rmSync(extractDir, { recursive: true, force: true });

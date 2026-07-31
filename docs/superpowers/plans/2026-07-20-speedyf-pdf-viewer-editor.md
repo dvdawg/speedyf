@@ -16,8 +16,8 @@
 - No PDF bytes / bitmaps / large arrays in frontend state; no base64 pixel transport.
 - Virtualized viewer: mount visible ± overscan only; placeholders elsewhere.
 - Progressive: placeholder → low-res preview → bucketed full render → tiles (>16 Mpx device area, 1024 px tiles).
-- Byte-budgeted caches (pages 256 MiB / thumbs 32 MiB / text 24 MiB; low-memory ≈ half) with LRU + stale-first eviction.
-- All engine work carries `generation`; stale tasks are skipped and counted.
+- Byte-budgeted caches (pages 256 MiB / thumbs 32 MiB / text 24 MiB; low-memory 96/16/12 MiB) with LRU + stale-first eviction.
+- All engine work carries `generation`; stale render tasks are skipped and counted without cancelling search/save work.
 - Scale buckets: 0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4 (device-pixel scale = zoom × DPR snapped up).
 - Annotations stored in unrotated PDF crop-box space; stable IDs; undo/redo for every mutation; vector SVG overlay during interaction.
 - Save: temp sibling → flush → reopen-verify → atomic rename; never silently overwrite.
@@ -128,7 +128,7 @@ pub struct EditPlan { pub pages: Vec<PlanPage>, pub form: Vec<(String,String)> }
 pub struct PlanPage { pub src_index: Option<u16>, pub size_pt: (f32,f32), pub rotation: u16, pub annots: Vec<PlanAnnot>, pub texts: Vec<PlanText>, pub images: Vec<PlanImage> }
 save_document(docId, plan, destPath?) -> SaveResult { path, bytes, durationMs }
 ```
-- Pipeline: new doc → import pages by order (FPDF_ImportPages) → rotations → blank pages → annots (Highlight/Square/Ink/Text-note via FPDFAnnot; textbox/added text as page text objects; images as image objects) → form values → save to temp sibling → reopen-verify (page count + openable) → atomic rename; on failure remove temp, original untouched. Dialogs: native save-as; overwrite confirm handled by OS dialog.
+- Pipeline: new doc → import pages by order (FPDF_ImportPages) → rotations → blank pages → annots (Highlight/Square/Text-note via FPDFAnnot; ink flattened to page path objects; textbox/added text as page text objects; images as image objects) → form values → save to temp sibling → reopen-verify (page count + openable) → atomic rename; on failure remove temp, original untouched. Dialogs: native save-as; overwrite confirm handled by OS dialog.
 
 **Verify:** `cargo test` save pipeline on generated fixtures (page count/order/rotation verified by reopen; annotation count via FPDFPage_GetAnnotCount); atomicity test (verify-failure injection leaves original intact). Dev-run: edit → Save As → reopen output in app + `Preview.app`.
 

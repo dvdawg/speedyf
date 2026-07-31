@@ -155,7 +155,6 @@ impl EngineHandle {
         let meta = JobMeta {
             doc,
             gen: self.0.gens.current(doc),
-            prio,
         };
         self.0.queue.push(prio, meta, work);
     }
@@ -163,7 +162,7 @@ impl EngineHandle {
     /// Submit pinned to a caller-known generation (used by the protocol so a
     /// URL minted for gen N can never be satisfied by gen N+1 state).
     pub fn submit_at_gen(&self, prio: Priority, doc: DocId, gen: u64, work: Work) {
-        self.0.queue.push(prio, JobMeta { doc, gen, prio }, work);
+        self.0.queue.push(prio, JobMeta { doc, gen }, work);
     }
 
     pub fn bump_generation(&self, doc: DocId) -> u64 {
@@ -219,6 +218,22 @@ impl EngineHandle {
             pages_indexed: self.0.metrics.pages_indexed.load(Ordering::Relaxed),
             queue_depth: self.0.queue.len() as u64,
         }
+    }
+
+    /// Query the pages currently present in the incremental search index.
+    /// This is intentionally non-blocking: callers decide how aggressively
+    /// to schedule extraction and can surface partial results immediately.
+    pub fn search_indexed(
+        &self,
+        doc: DocId,
+        query: &str,
+        case_sensitive: bool,
+        per_page_limit: usize,
+    ) -> Vec<PageMatchesDto> {
+        self.0
+            .search
+            .lock()
+            .query(doc, query, case_sensitive, per_page_limit)
     }
 
     /// Synchronous helper for commands: submit and block on the reply.

@@ -29,7 +29,12 @@ import { documentStore } from '../features/document/documentStore';
 import { openFromDialog, saveDocument } from '../features/document/controller';
 import { requestScrollToPage, rotateView, setViewport, viewport } from '../stores/viewportStore';
 import { applyFit, refreshFit, setZoomAnchored, zoomStep } from '../features/viewer/zoomController';
-import { activeStyle, toggleTool, toolState, updateActiveStyle } from '../features/annotations/toolStore';
+import {
+  activeStyle,
+  toggleTool,
+  toolState,
+  updateActiveStyle,
+} from '../features/annotations/toolStore';
 import { addImageFromDialog } from '../features/editor/editorActions';
 
 export default function Toolbar() {

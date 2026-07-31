@@ -127,6 +127,26 @@ impl SearchStore {
 
     pub fn set_budget(&mut self, budget: u64) {
         self.budget = budget;
+        // Preserve the earliest pages (the most useful partial-search
+        // coverage) and evict from the high end until the new bound is real,
+        // not merely the limit for future inserts.
+        while self.used > self.budget {
+            let victim = self
+                .docs
+                .iter()
+                .flat_map(|(doc, index)| index.pages.keys().map(move |src| (*src, *doc)))
+                .max();
+            let Some((src, doc)) = victim else {
+                self.used = 0;
+                break;
+            };
+            if let Some(index) = self.docs.get_mut(&doc) {
+                if let Some(entry) = index.pages.remove(&src) {
+                    self.used = self.used.saturating_sub(entry.cost);
+                }
+                index.truncated = true;
+            }
+        }
     }
 
     pub fn used(&self) -> u64 {
@@ -177,7 +197,10 @@ impl SearchStore {
     }
 
     pub fn indexed_count(&self, doc: DocId) -> u32 {
-        self.docs.get(&doc).map(|d| d.pages.len() as u32).unwrap_or(0)
+        self.docs
+            .get(&doc)
+            .map(|d| d.pages.len() as u32)
+            .unwrap_or(0)
     }
 
     pub fn is_truncated(&self, doc: DocId) -> bool {
@@ -214,7 +237,11 @@ impl SearchStore {
                     src: *src as u32,
                     matches: found
                         .into_iter()
-                        .map(|(start, len, snippet)| MatchDto { start, len, snippet })
+                        .map(|(start, len, snippet)| MatchDto {
+                            start,
+                            len,
+                            snippet,
+                        })
                         .collect(),
                 });
             }
@@ -303,6 +330,22 @@ mod tests {
         assert_eq!(s.indexed_count(1), 1);
         s.remove_doc(1);
         assert_eq!(s.used(), 0);
+    }
+
+    #[test]
+    fn shrinking_budget_evicts_high_pages_to_restore_the_hard_bound() {
+        let mut store = SearchStore::new(10_000);
+        assert!(store.store_page(1, 0, "first page", Vec::new(), 10));
+        let one_page_budget = store.used();
+        assert!(store.store_page(1, 1, "second page", Vec::new(), 11));
+        assert!(store.used() > one_page_budget);
+
+        store.set_budget(one_page_budget);
+
+        assert!(store.used() <= one_page_budget);
+        assert!(store.page(1, 0).is_some(), "earliest indexed page survives");
+        assert!(store.page(1, 1).is_none(), "higher page is evicted first");
+        assert!(store.is_truncated(1));
     }
 
     #[test]

@@ -53,9 +53,7 @@ export interface PlanPage {
   srcIndex: number | null;
   widthPt: number;
   heightPt: number;
-  cropX: number;
-  cropY: number;
-  /** absolute target rotation = (base + user) % 360 */
+  /** extra clockwise rotation applied after importing the source page */
   rotation: Rotation;
   annots: PlanAnnot[];
   texts: PlanText[];
@@ -118,6 +116,7 @@ export interface DocumentStore {
   canRedo: () => boolean;
   markSaved: () => void;
   setSaving: (v: boolean) => void;
+  setGeneration: (generation: number) => void;
   setSelected: (sel: DocState['selected']) => void;
   setSearchIndex: (s: Partial<DocState['searchIndex']>) => void;
   reset: () => void;
@@ -180,7 +179,11 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
       case 'duplicate':
         return { type: 'delete', pageId: op.newId! };
       case 'rotate':
-        return { type: 'rotate', pageId: op.pageId, delta: ((360 - op.delta) % 360) as 90 | 180 | 270 };
+        return {
+          type: 'rotate',
+          pageId: op.pageId,
+          delta: ((360 - op.delta) % 360) as 90 | 180 | 270,
+        };
       case 'addBlank':
         return { type: 'delete', pageId: op.newId! };
       case 'addAnnot':
@@ -404,9 +407,7 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
         srcIndex: p.srcIndex,
         widthPt: p.widthPt,
         heightPt: p.heightPt,
-        cropX: p.cropX,
-        cropY: p.cropY,
-        rotation: (((p.baseRotation + p.userRotation) % 360) + 0) as Rotation,
+        rotation: p.userRotation,
         annots: anns
           .filter((a): a is Annotation & { kind: PlanAnnot['kind'] } =>
             ['highlight', 'ink', 'rect', 'note'].includes(a.kind)
@@ -452,6 +453,7 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
       syncHistoryMeta();
     },
     setSaving: (v) => setState('saving', v),
+    setGeneration: (generation) => setState('generation', generation),
     setSelected: (sel) => setState('selected', sel),
     setSearchIndex: (s) =>
       setState(

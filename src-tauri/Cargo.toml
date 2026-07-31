@@ -5,6 +5,7 @@ description = "SpeedyF — fast, memory-bounded desktop PDF viewer and editor"
 license = "MIT"
 edition = "2021"
 rust-version = "1.82"
+default-run = "speedyf"
 
 [lib]
 name = "speedyf_lib"
@@ -29,6 +30,7 @@ url = "2"
 unicode-normalization = "0.1"
 log = "0.4"
 env_logger = "0.11"
+libc = "0.2"
 
 [profile.release]
 lto = "thin"
@@ -40,5 +42,5 @@ name = "speedyf"
 path = "src/main.rs"
 
 [[bin]]
-name = "speedyf-bench"
+name = "bench"
 path = "src/bin/bench.rs"

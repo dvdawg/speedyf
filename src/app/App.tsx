@@ -40,11 +40,14 @@ export default function App() {
   createEffect(() => {
     const doc = documentStore.state;
     const title = doc.loaded ? `${doc.dirty ? '• ' : ''}${doc.name} — SpeedyF` : 'SpeedyF';
-    void getCurrentWindow().setTitle(title).catch(() => undefined);
+    void getCurrentWindow()
+      .setTitle(title)
+      .catch(() => undefined);
   });
 
   onMount(() => {
     const cleanupShortcuts = installShortcuts();
+    let disposed = false;
 
     // engine events → search store
     let unlistenProgress: (() => void) | undefined;
@@ -54,7 +57,10 @@ export default function App() {
           searchStore.onIndexProgress(p.indexed, p.total, p.truncated);
         }
       })
-      .then((un) => (unlistenProgress = un));
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else unlistenProgress = unlisten;
+      });
 
     // native file drag-drop
     let unlistenDrop: (() => void) | undefined;
@@ -69,7 +75,10 @@ export default function App() {
           if (pdf) void openPath(pdf);
         }
       })
-      .then((un) => (unlistenDrop = un));
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else unlistenDrop = unlisten;
+      });
 
     // unsaved-changes close guard
     let closing = false;
@@ -87,12 +96,16 @@ export default function App() {
           }
         }
       })
-      .then((un) => (unlistenClose = un));
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else unlistenClose = unlisten;
+      });
 
     // apply persisted low-memory budget at startup
     if (settings.lowMemory) void engine.setLowMemory(true);
 
     onCleanup(() => {
+      disposed = true;
       cleanupShortcuts();
       unlistenProgress?.();
       unlistenDrop?.();

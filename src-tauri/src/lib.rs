@@ -1,7 +1,7 @@
 mod cache;
 mod commands;
-mod engine;
-mod errors;
+pub mod engine;
+pub mod errors;
 mod search;
 
 use commands::EngineState;
@@ -78,7 +78,12 @@ fn parse_render_query(uri: &str) -> Option<RenderQuery> {
         if tw == 0 || th == 0 || tw > 4096 || th > 4096 {
             return None;
         }
-        Some(TileRect { x: tx, y: ty, w: tw, h: th })
+        Some(TileRect {
+            x: tx,
+            y: ty,
+            w: tw,
+            h: th,
+        })
     } else {
         None
     };
@@ -140,8 +145,9 @@ pub fn run() {
             };
             let engine = ctx.app_handle().state::<EngineState>().0.clone();
 
-            // Requests minted for an old generation are refused immediately.
-            if q.gen < engine.current_generation(q.key.doc) {
+            // Only the exact current generation is valid. This rejects both
+            // stale URLs and forged future generations before queueing.
+            if q.gen != engine.current_generation(q.key.doc) {
                 responder.respond(status_response(StatusCode::NO_CONTENT));
                 return;
             }
@@ -190,4 +196,63 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running SpeedyF");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_native_custom_scheme_render_urls() {
+        let query = parse_render_query(
+            "pdfr://localhost/render?doc=7&src=12&rot=90&scale=1750&gen=4&kind=page&p=2",
+        )
+        .expect("valid native render URL");
+        assert_eq!(query.key.doc, 7);
+        assert_eq!(query.key.src, 12);
+        assert_eq!(query.key.rot, 90);
+        assert_eq!(query.key.scale_milli, 1750);
+        assert_eq!(query.key.kind, RenderKind::Page);
+        assert_eq!(query.gen, 4);
+        assert_eq!(query.prio, Priority::AdjacentPage);
+    }
+
+    #[test]
+    fn parses_windows_http_rewrite_and_tile_query() {
+        let query = parse_render_query(
+            "http://pdfr.localhost/render?doc=2&src=3&rot=270&scale=4000&gen=9&kind=tile&tx=1024&ty=2048&tw=1024&th=900",
+        )
+        .expect("valid Windows render URL");
+        assert_eq!(query.key.kind, RenderKind::Tile);
+        assert_eq!(
+            query.key.tile,
+            Some(TileRect {
+                x: 1024,
+                y: 2048,
+                w: 1024,
+                h: 900,
+            })
+        );
+        assert_eq!(query.prio, Priority::VisibleTile);
+    }
+
+    #[test]
+    fn rejects_unsafe_or_malformed_render_queries() {
+        assert!(
+            parse_render_query("pdfr://localhost/render?doc=1&src=0&rot=45&scale=1000&gen=0")
+                .is_none()
+        );
+        assert!(
+            parse_render_query("pdfr://localhost/render?doc=1&src=0&rot=0&scale=9000&gen=0")
+                .is_none()
+        );
+        assert!(parse_render_query(
+            "pdfr://localhost/render?doc=1&src=0&rot=0&scale=1000&gen=0&kind=tile&tw=0&th=1024"
+        )
+        .is_none());
+        assert!(parse_render_query(
+            "pdfr://localhost/not-render?doc=1&src=0&rot=0&scale=1000&gen=0"
+        )
+        .is_none());
+    }
 }

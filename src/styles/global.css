@@ -155,11 +155,27 @@ body {
 .primary-btn:focus-visible,
 .secondary-btn:focus-visible,
 .search-result:focus-visible,
+.annot-keyboard-target:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
+}
+
+.annot-keyboard-target {
+  position: absolute;
+  z-index: 3;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  pointer-events: none;
+}
+
+.annot-keyboard-target:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .tb-input {
@@ -339,8 +355,8 @@ textarea:focus-visible {
 }
 
 .page-loading {
-  background:
-    linear-gradient(100deg, transparent 30%, rgba(0, 0, 0, 0.04) 50%, transparent 70%) white;
+  background: linear-gradient(100deg, transparent 30%, rgba(0, 0, 0, 0.04) 50%, transparent 70%)
+    white;
   background-size: 300% 100%;
   animation: shimmer 1.4s infinite linear;
 }
@@ -956,12 +972,6 @@ textarea:focus-visible {
 
 /* ---------- narrow windows ---------- */
 @media (max-width: 900px) {
-  .sidebar {
-    width: 120px;
-  }
-  .thumb-slot {
-    width: 96px;
-  }
   .search-panel,
   .form-panel {
     width: 240px;

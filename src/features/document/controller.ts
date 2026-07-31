@@ -6,8 +6,10 @@ import { documentStore } from './documentStore';
 import { askPassword, askUnsaved, showError } from '../../stores/modalStore';
 import { requestScrollToPage, setViewport, viewport } from '../../stores/viewportStore';
 import { searchStore } from '../search/searchStore';
+import { clearImagePreviews } from '../editor/editorActions';
 
 const SIZE_BATCH = 128;
+let openRequestSeq = 0;
 
 async function hydrateSizes(docId: number, pageCount: number) {
   for (let from = 64; from < pageCount; from += SIZE_BATCH) {
@@ -43,13 +45,19 @@ export async function openFromDialog() {
 
 export async function openPath(path: string, opts?: { skipGuard?: boolean }) {
   if (!opts?.skipGuard && !(await guardUnsaved())) return;
+  const requestSeq = ++openRequestSeq;
   const previous = documentStore.state.loaded ? documentStore.state.docId : null;
 
   let password: string | undefined;
   for (;;) {
     try {
       const meta = await engine.open(path, password);
+      if (requestSeq !== openRequestSeq) {
+        void engine.close(meta.docId);
+        return;
+      }
       if (previous !== null) void engine.close(previous);
+      clearImagePreviews();
       searchStore.resetForDocument(meta.docId, meta.pageCount);
       documentStore.initFromMeta(meta);
       setViewport({ currentPage: 0, scrollTop: 0 });
@@ -58,6 +66,7 @@ export async function openPath(path: string, opts?: { skipGuard?: boolean }) {
       void hydrateSizes(meta.docId, meta.pageCount);
       return;
     } catch (e) {
+      if (requestSeq !== openRequestSeq) return;
       if (isEngineError(e) && e.code === 'password') {
         const entered = await askPassword(
           password === undefined
@@ -78,6 +87,8 @@ export async function openPath(path: string, opts?: { skipGuard?: boolean }) {
 export async function saveDocument(saveAs: boolean): Promise<boolean> {
   const state = documentStore.state;
   if (!state.loaded || state.saving) return false;
+  if (!saveAs && !state.dirty) return true;
+  const docId = state.docId;
 
   let dest = state.path;
   if (saveAs || !dest) {
@@ -86,14 +97,20 @@ export async function saveDocument(saveAs: boolean): Promise<boolean> {
       filters: [{ name: 'PDF documents', extensions: ['pdf'] }],
     });
     if (!picked) return false;
+    if (!state.loaded || state.docId !== docId) return false;
     dest = picked.toLowerCase().endsWith('.pdf') ? picked : `${picked}.pdf`;
   }
 
+  if (!state.loaded || state.docId !== docId) return false;
   documentStore.setSaving(true);
   const rememberPage = viewport.currentPage;
   try {
     const plan = documentStore.buildEditPlan();
-    await engine.saveDocument(state.docId, plan, dest);
+    await engine.saveDocument(docId, plan, dest);
+    // A discard/open can replace the active document while the native save
+    // is running. The file was saved, but its completion must not overwrite
+    // the newer session's model or navigation.
+    if (!state.loaded || state.docId !== docId) return true;
     documentStore.markSaved();
     // Reload from disk so the saved file becomes the new baseline (edits are
     // baked in; undo history restarts clean).
@@ -108,6 +125,6 @@ export async function saveDocument(saveAs: boolean): Promise<boolean> {
     );
     return false;
   } finally {
-    documentStore.setSaving(false);
+    if (documentStore.state.docId === docId) documentStore.setSaving(false);
   }
 }

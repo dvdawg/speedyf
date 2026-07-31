@@ -18,11 +18,13 @@ pub fn open_document(
     if !std::path::Path::new(&path).is_file() {
         return Err(AppError::Io(format!("not a readable file: {path}")));
     }
-    state.0.call(Priority::VisiblePage, 0, |respond| Work::Open {
-        path,
-        password,
-        respond,
-    })
+    state
+        .0
+        .call(Priority::VisiblePage, 0, |respond| Work::Open {
+            path,
+            password,
+            respond,
+        })
 }
 
 #[tauri::command]
@@ -68,9 +70,11 @@ pub fn get_text_layout(
 
 #[tauri::command]
 pub fn start_indexing(state: tauri::State<'_, EngineState>, doc_id: DocId) {
-    state
-        .0
-        .submit(Priority::TextExtract, doc_id, Work::IndexNext { doc: doc_id });
+    state.0.submit(
+        Priority::TextExtract,
+        doc_id,
+        Work::IndexNext { doc: doc_id },
+    );
 }
 
 #[tauri::command]
@@ -85,7 +89,7 @@ pub fn search_query(
     }
     // Runs directly against the shared index — no engine round-trip, so
     // results are instant over whatever subset is indexed so far.
-    state.0 .0.search.lock().query(doc_id, &query, case_sensitive, 200)
+    state.0.search_indexed(doc_id, &query, case_sensitive, 200)
 }
 
 #[tauri::command]
@@ -115,14 +119,18 @@ pub fn save_document(
     dest_path: String,
 ) -> AppResult<SaveResultDto> {
     if plan.pages.is_empty() {
-        return Err(AppError::Unsupported("cannot save an empty document".into()));
+        return Err(AppError::Unsupported(
+            "cannot save an empty document".into(),
+        ));
     }
-    state.0.call(Priority::VisiblePage, doc_id, |respond| Work::Save {
-        doc: doc_id,
-        plan,
-        dest: PathBuf::from(dest_path),
-        respond,
-    })
+    state
+        .0
+        .call(Priority::VisiblePage, doc_id, |respond| Work::Save {
+            doc: doc_id,
+            plan,
+            dest: PathBuf::from(dest_path),
+            respond,
+        })
 }
 
 #[tauri::command]
@@ -142,7 +150,10 @@ pub fn get_form_fields(
 pub fn image_size(state: tauri::State<'_, EngineState>, path: String) -> AppResult<[u32; 2]> {
     state
         .0
-        .call(Priority::AdjacentPage, 0, |respond| Work::ImageSize { path, respond })
+        .call(Priority::AdjacentPage, 0, |respond| Work::ImageSize {
+            path,
+            respond,
+        })
 }
 
 /// Small downscaled PNG preview of a local image, returned over binary IPC

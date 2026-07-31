@@ -1,13 +1,37 @@
-import { Show } from 'solid-js';
+import { createSignal, onCleanup, onMount, Show } from 'solid-js';
 import { documentStore } from '../features/document/documentStore';
 import { searchStore } from '../features/search/searchStore';
 import { viewport } from '../stores/viewportStore';
 import { effectiveTheme, settings, updateSettings } from '../stores/settings';
 import { engine } from '../lib/transport/engine';
+import type { EngineMetrics } from '../lib/transport/engine';
 
 export default function StatusBar() {
   const doc = documentStore.state;
   const s = searchStore.state;
+  const [metrics, setMetrics] = createSignal<EngineMetrics | null>(null);
+
+  onMount(() => {
+    let disposed = false;
+    const refresh = async () => {
+      if (!doc.loaded) {
+        setMetrics(null);
+        return;
+      }
+      try {
+        const next = await engine.metrics();
+        if (!disposed) setMetrics(next);
+      } catch {
+        // Diagnostics must never interfere with document interaction.
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 1_500);
+    onCleanup(() => {
+      disposed = true;
+      window.clearInterval(timer);
+    });
+  });
 
   return (
     <footer class="status-bar">
@@ -39,6 +63,17 @@ export default function StatusBar() {
         </Show>
       </div>
       <div class="sb-right">
+        <Show when={doc.loaded && metrics()}>
+          {(value) => (
+            <span
+              class="sb-dim"
+              title={`Engine diagnostics: ${value().rendered} renders, queue ${value().queueDepth}`}
+              aria-label={`Engine cache ${value().cacheHits} hits from ${value().cacheLookups} lookups; ${value().skippedStale} stale tasks skipped`}
+            >
+              cache {value().cacheHits}/{value().cacheLookups} · stale {value().skippedStale}
+            </span>
+          )}
+        </Show>
         <Show when={doc.loaded}>
           <span class="sb-dim">
             p. {viewport.currentPage + 1}/{doc.pages.length} · {Math.round(viewport.zoom * 100)}%
@@ -59,7 +94,9 @@ export default function StatusBar() {
           <span class="sr-only">Theme</span>
           <select
             value={settings.theme}
-            onInput={(e) => updateSettings({ theme: e.currentTarget.value as 'system' | 'light' | 'dark' })}
+            onInput={(e) =>
+              updateSettings({ theme: e.currentTarget.value as 'system' | 'light' | 'dark' })
+            }
             aria-label={`Theme (currently ${effectiveTheme()})`}
           >
             <option value="system">System</option>

@@ -88,7 +88,9 @@ impl<'a> WorkerState<'a> {
             }
             self.bindings.FPDF_CloseDocument(doc.raw);
         }
-        shared.gens.remove(id);
+        // Keep the generation tombstone. Document ids are never reused, and
+        // queued render URLs minted before close must remain stale even after
+        // the PDFium handles and caches are gone.
         shared.page_cache.lock().remove_matching(|k| k.doc == id);
         shared.thumb_cache.lock().remove_matching(|k| k.doc == id);
         shared.search.lock().remove_doc(id);
@@ -120,8 +122,9 @@ pub fn run(shared: Arc<EngineShared>, hints: Vec<PathBuf>) {
     };
 
     while let Some((meta, work)) = shared.queue.pop_blocking() {
-        // Generation-based cancellation: obsolete jobs are skipped, not run.
-        let stale = shared.gens.is_stale(&meta) && !matches!(work, Work::Close { .. });
+        // A generation represents render state (principally the scale bucket).
+        // Never let a zoom gesture cancel indexing, text, save, or form work.
+        let stale = shared.gens.is_stale(&meta) && is_generation_cancellable(&work);
         if stale {
             shared.metrics.skipped_stale.fetch_add(1, Ordering::Relaxed);
             fail_work(work, || AppError::Stale);
@@ -129,6 +132,10 @@ pub fn run(shared: Arc<EngineShared>, hints: Vec<PathBuf>) {
         }
         handle_work(&mut state, &shared, meta, work);
     }
+}
+
+fn is_generation_cancellable(work: &Work) -> bool {
+    matches!(work, Work::Render { .. })
 }
 
 fn fail_work(work: Work, err: impl Fn() -> AppError) {
@@ -199,7 +206,11 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
     }
 }
 
-fn do_open(state: &mut WorkerState, path: String, password: Option<String>) -> AppResult<DocMetaDto> {
+fn do_open(
+    state: &mut WorkerState,
+    path: String,
+    password: Option<String>,
+) -> AppResult<DocMetaDto> {
     let raw = render::open_document(state.bindings, &path, password.as_deref())?;
     let page_count = state.bindings.FPDF_GetPageCount(raw).max(0) as u32;
     if page_count == 0 {
@@ -276,7 +287,11 @@ fn do_sizes(state: &mut WorkerState, doc: DocId, from: u32, count: u32) -> AppRe
     Ok(PageSizesDto { from, sizes })
 }
 
-fn do_render(state: &mut WorkerState, shared: &EngineShared, key: &RenderKey) -> AppResult<Arc<Vec<u8>>> {
+fn do_render(
+    state: &mut WorkerState,
+    shared: &EngineShared,
+    key: &RenderKey,
+) -> AppResult<Arc<Vec<u8>>> {
     // Another request may have populated the cache while this job queued.
     if let Some(hit) = match key.kind {
         RenderKind::Thumb => shared.thumb_cache.lock().get(key),
@@ -298,8 +313,16 @@ fn do_render(state: &mut WorkerState, shared: &EngineShared, key: &RenderKey) ->
     let bytes = Arc::new(out.png);
     let cost = crate::cache::bitmap_cost(out.width, out.height);
     match key.kind {
-        RenderKind::Thumb => shared.thumb_cache.lock().insert(key.clone(), Arc::clone(&bytes), cost),
-        _ => shared.page_cache.lock().insert(key.clone(), Arc::clone(&bytes), cost),
+        RenderKind::Thumb => {
+            shared
+                .thumb_cache
+                .lock()
+                .insert(key.clone(), Arc::clone(&bytes), cost)
+        }
+        _ => shared
+            .page_cache
+            .lock()
+            .insert(key.clone(), Arc::clone(&bytes), cost),
     }
     Ok(bytes)
 }
@@ -383,11 +406,7 @@ fn do_index_next(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, 
     // Requeue at the same generation: closing/reloading the doc cancels this.
     shared.queue.push(
         Priority::TextExtract,
-        JobMeta {
-            doc,
-            gen: meta.gen,
-            prio: Priority::TextExtract,
-        },
+        JobMeta { doc, gen: meta.gen },
         Work::IndexNext { doc },
     );
 }
@@ -415,7 +434,14 @@ fn do_match_rects(
 ) -> AppResult<Vec<[f32; 4]>> {
     let [w_pt, h_pt] = state.display_size(doc, src)?;
     let page = state.page_handle(doc, src)?;
-    Ok(text::match_rects(state.bindings, page, w_pt, h_pt, start, len))
+    Ok(text::match_rects(
+        state.bindings,
+        page,
+        w_pt,
+        h_pt,
+        start,
+        len,
+    ))
 }
 
 fn do_save(
@@ -424,62 +450,95 @@ fn do_save(
     plan: EditPlan,
     dest: PathBuf,
 ) -> AppResult<SaveResultDto> {
+    if plan.pages.len() > u16::MAX as usize {
+        return Err(AppError::Unsupported(
+            "save is limited to 65,535 output pages".into(),
+        ));
+    }
     let started = Instant::now();
-    let (src_path, password, same_file) = {
+    let (src_path, password, same_file, page_count, sizes, index_cursor, index_stopped) = {
         let d = state.doc(doc)?;
         (
             d.path.clone(),
             d.password.clone(),
             std::path::Path::new(&d.path) == dest.as_path(),
+            d.page_count,
+            d.sizes.clone(),
+            d.index_cursor,
+            d.index_stopped,
         )
     };
-    let dir = dest
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .ok_or_else(|| AppError::Io("destination has no parent directory".into()))?;
-
-    // 1) write to a temp sibling (same filesystem → atomic rename later)
-    let tmp = tempfile::Builder::new()
-        .prefix(".speedyf-save-")
-        .suffix(".pdf")
-        .tempfile_in(dir)
-        .map_err(|e| AppError::Io(format!("cannot create temp file: {e}")))?;
-    let tmp_path = tmp.into_temp_path();
-
-    save::build_output(state.pdfium, &src_path, password.as_deref(), &plan, &tmp_path)?;
-
-    // 2) verify the produced file reopens with the expected page count
-    let verify = render::open_document(
-        state.bindings,
-        tmp_path.to_str().ok_or_else(|| AppError::Io("bad temp path".into()))?,
-        None,
-    )?;
-    let count = state.bindings.FPDF_GetPageCount(verify).max(0) as usize;
-    state.bindings.FPDF_CloseDocument(verify);
-    if count != plan.pages.len() {
-        return Err(AppError::Internal(format!(
-            "verification failed: wrote {count} pages, expected {}",
-            plan.pages.len()
-        )));
-    }
-
-    // 3) if overwriting the open file, release its handles first (Windows
-    //    cannot rename over an open mapping; the frontend reopens afterwards)
-    if same_file {
-        if let Some(d) = state.docs.get_mut(&doc) {
-            for (_, p) in d.pages.drain(..) {
-                state.bindings.FPDF_ClosePage(p);
+    let pdfium = state.pdfium;
+    let bindings = state.bindings;
+    let expected_pages = plan.pages.len();
+    let docs = &mut state.docs;
+    let mut closed_for_replace = false;
+    let save_result = save::verified_atomic_replace(
+        &dest,
+        |temp_path| save::build_output(pdfium, &src_path, password.as_deref(), &plan, temp_path),
+        |temp_path| {
+            let path = temp_path
+                .to_str()
+                .ok_or_else(|| AppError::Io("bad temp path".into()))?;
+            let verify = render::open_document(bindings, path, None)?;
+            let count = bindings.FPDF_GetPageCount(verify).max(0) as usize;
+            bindings.FPDF_CloseDocument(verify);
+            if count != expected_pages {
+                return Err(AppError::Internal(format!(
+                    "verification failed: wrote {count} pages, expected {expected_pages}"
+                )));
             }
-            state.bindings.FPDF_CloseDocument(d.raw);
+            Ok(())
+        },
+        || {
+            // Windows cannot rename over an open mapping. The frontend
+            // immediately reopens the persisted file after a successful save.
+            if same_file {
+                if let Some(mut d) = docs.remove(&doc) {
+                    for (_, p) in d.pages.drain(..) {
+                        bindings.FPDF_ClosePage(p);
+                    }
+                    bindings.FPDF_CloseDocument(d.raw);
+                    closed_for_replace = true;
+                }
+            }
+            Ok(())
+        },
+    );
+    let bytes = match save_result {
+        Ok(bytes) => bytes,
+        Err(save_error) => {
+            // A same-path save must close the source before Windows can
+            // replace it. If replacement itself fails, restore the engine
+            // session over the still-intact destination so the user's
+            // in-memory EditPlan remains retryable.
+            if same_file && closed_for_replace {
+                match render::open_document(bindings, &src_path, password.as_deref()) {
+                    Ok(raw) => {
+                        docs.insert(
+                            doc,
+                            DocState {
+                                raw,
+                                path: src_path,
+                                password,
+                                page_count,
+                                sizes,
+                                pages: Vec::new(),
+                                index_cursor,
+                                index_stopped,
+                            },
+                        );
+                    }
+                    Err(restore_error) => {
+                        return Err(AppError::Internal(format!(
+                            "{save_error}; could not restore document session: {restore_error}"
+                        )));
+                    }
+                }
+            }
+            return Err(save_error);
         }
-        state.docs.remove(&doc);
-    }
-
-    // 4) atomic replace; original document is untouched on any earlier failure
-    let bytes = std::fs::metadata(&tmp_path).map(|m| m.len()).unwrap_or(0);
-    tmp_path
-        .persist(&dest)
-        .map_err(|e| AppError::Io(format!("cannot replace destination: {e}")))?;
+    };
 
     Ok(SaveResultDto {
         path: dest.to_string_lossy().into_owned(),
@@ -503,11 +562,17 @@ fn do_form_fields(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<FormFiel
     let mut out = Vec::new();
     let page_count = document.pages().len();
     for pi in 0..page_count {
-        let Ok(page) = document.pages().get(pi) else { continue };
+        let Ok(page) = document.pages().get(pi) else {
+            continue;
+        };
         let annotation_count = page.annotations().len();
         for ai in 0..annotation_count {
-            let Ok(annotation) = page.annotations().get(ai) else { continue };
-            let Some(field) = annotation.as_form_field() else { continue };
+            let Ok(annotation) = page.annotations().get(ai) else {
+                continue;
+            };
+            let Some(field) = annotation.as_form_field() else {
+                continue;
+            };
             let kind = if field.as_text_field().is_some() {
                 "text"
             } else {
@@ -527,4 +592,27 @@ fn do_form_fields(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<FormFiel
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generation_cancellation_only_applies_to_render_work() {
+        let render = Work::Render {
+            key: RenderKey {
+                doc: 1,
+                src: 0,
+                rot: 0,
+                scale_milli: 1_000,
+                kind: RenderKind::Page,
+                tile: None,
+            },
+            respond: Box::new(|_| {}),
+        };
+        assert!(is_generation_cancellable(&render));
+        assert!(!is_generation_cancellable(&Work::IndexNext { doc: 1 }));
+        assert!(!is_generation_cancellable(&Work::Close { doc: 1 }));
+    }
 }

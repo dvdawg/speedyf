@@ -33,7 +33,10 @@ export { settings };
 export function updateSettings(patch: Partial<Settings>) {
   setSettingsStore(patch);
   try {
-    localStorage.setItem(KEY, JSON.stringify({ theme: settings.theme, lowMemory: settings.lowMemory }));
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ theme: settings.theme, lowMemory: settings.lowMemory })
+    );
   } catch {
     /* storage unavailable (private mode) — settings stay session-only */
   }

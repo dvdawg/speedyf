@@ -4,12 +4,19 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { documentStore } from '../document/documentStore';
 import { setViewport, viewport, VIEW_PADDING } from '../../stores/viewportStore';
-import { layoutFor, pagesGeom, refreshFit, registerScroller, setZoomAnchored } from './zoomController';
+import {
+  layoutFor,
+  pagesGeom,
+  refreshFit,
+  registerScroller,
+  setZoomAnchored,
+} from './zoomController';
 import { bucketForScale } from '../../lib/coordinates/coords';
 import { pageIndexAt, visibleRange } from '../../lib/coordinates/layout';
 import PageView from './PageView';
 import { openFromDialog } from '../document/controller';
 import { IconOpen } from '../../components/icons';
+import { engine } from '../../lib/transport/engine';
 
 export default function Viewer() {
   let scroller!: HTMLDivElement;
@@ -31,20 +38,45 @@ export default function Viewer() {
     Math.round(bucketForScale(viewport.zoom * viewport.dpr) * 1000)
   );
   let lastScaleApply = 0;
+  let scaleRequestSeq = 0;
+  const applyRenderScale = (target: number) => {
+    const seq = ++scaleRequestSeq;
+    const docId = doc.docId;
+    if (!doc.loaded) {
+      setRenderScaleMilli(target);
+      return;
+    }
+    // Mark queued work for the previous scale stale before minting URLs for
+    // the new bucket. A sequence guard prevents out-of-order invoke replies
+    // from rolling the UI back during rapid zoom gestures.
+    void engine
+      .bumpGeneration(docId)
+      .then((generation) => {
+        if (seq !== scaleRequestSeq || doc.docId !== docId) return;
+        documentStore.setGeneration(generation);
+        setRenderScaleMilli(target);
+      })
+      .catch(() => {
+        if (seq === scaleRequestSeq && doc.docId === docId) setRenderScaleMilli(target);
+      });
+  };
   createEffect(() => {
     const target = Math.round(bucketForScale(viewport.zoom * viewport.dpr) * 1000);
     if (target === renderScaleMilli()) return;
     const now = Date.now();
     if (now - lastScaleApply > 400) {
       lastScaleApply = now;
-      setRenderScaleMilli(target);
+      applyRenderScale(target);
       return;
     }
     const t = setTimeout(() => {
       lastScaleApply = Date.now();
-      setRenderScaleMilli(target);
+      applyRenderScale(target);
     }, 160);
     onCleanup(() => clearTimeout(t));
+  });
+  onCleanup(() => {
+    scaleRequestSeq += 1;
   });
 
   let scrollRaf = 0;
@@ -130,7 +162,12 @@ export default function Viewer() {
           <For each={indices()}>
             {(i) => (
               <Show when={geoms()[i]}>
-                <PageView index={i} layout={layout()} geom={geoms()[i]!} scaleMilli={renderScaleMilli()} />
+                <PageView
+                  index={i}
+                  layout={layout()}
+                  geom={geoms()[i]!}
+                  scaleMilli={renderScaleMilli()}
+                />
               </Show>
             )}
           </For>

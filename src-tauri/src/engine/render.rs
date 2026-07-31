@@ -4,8 +4,8 @@
 //! tiles are produced by offsetting the page origin negatively inside a
 //! tile-sized bitmap, so no oversized full-page bitmap is ever allocated.
 
-use crate::errors::{AppError, AppResult};
 use crate::engine::types::TileRect;
+use crate::errors::{AppError, AppResult};
 use pdfium_render::prelude::{PdfiumLibraryBindings, FPDF_DOCUMENT, FPDF_PAGE, FS_SIZEF};
 
 const FPDF_ANNOT_FLAG: i32 = 0x01;

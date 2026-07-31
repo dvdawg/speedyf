@@ -107,9 +107,7 @@ export function installShortcuts(): () => void {
     if (key === 'PageDown') {
       if (!documentStore.state.loaded) return;
       e.preventDefault();
-      requestScrollToPage(
-        Math.min(viewport.currentPage + 1, documentStore.state.pages.length - 1)
-      );
+      requestScrollToPage(Math.min(viewport.currentPage + 1, documentStore.state.pages.length - 1));
       return;
     }
     if (key === 'PageUp') {

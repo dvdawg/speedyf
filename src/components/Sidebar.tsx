@@ -8,7 +8,14 @@ import { renderUrl } from '../lib/rendering/renderSource';
 import type { Layout } from '../lib/coordinates/layout';
 import { visibleRange } from '../lib/coordinates/layout';
 import IconButton from './IconButton';
-import { IconDuplicate, IconPlus, IconRotate, IconTrash } from './icons';
+import {
+  IconChevronDown,
+  IconChevronUp,
+  IconDuplicate,
+  IconPlus,
+  IconRotate,
+  IconTrash,
+} from './icons';
 import { addBlankPageAfter } from '../features/editor/editorActions';
 import type { Rotation } from '../types/model';
 
@@ -152,6 +159,32 @@ export default function Sidebar() {
                       <span class="thumb-num">{i + 1}</span>
                       <Show when={viewport.editMode}>
                         <span class="thumb-ops">
+                          <IconButton
+                            label={`Move page ${i + 1} up`}
+                            disabled={i === 0}
+                            onClick={() =>
+                              documentStore.apply({
+                                type: 'reorder',
+                                pageId: doc.pages[i]!.id,
+                                toIndex: i - 1,
+                              })
+                            }
+                          >
+                            <IconChevronUp />
+                          </IconButton>
+                          <IconButton
+                            label={`Move page ${i + 1} down`}
+                            disabled={i >= doc.pages.length - 1}
+                            onClick={() =>
+                              documentStore.apply({
+                                type: 'reorder',
+                                pageId: doc.pages[i]!.id,
+                                toIndex: i + 1,
+                              })
+                            }
+                          >
+                            <IconChevronDown />
+                          </IconButton>
                           <IconButton
                             label={`Rotate page ${i + 1} 90°`}
                             onClick={() =>

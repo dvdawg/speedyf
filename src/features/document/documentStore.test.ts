@@ -50,6 +50,14 @@ describe('initFromMeta', () => {
     expect(s.state.pages[4]!.sizeKnown).toBe(false);
     expect(s.state.pages[4]!.widthPt).toBe(600);
   });
+
+  it('tracks the engine generation independently of edit history', () => {
+    const s = fresh();
+    s.setGeneration(7);
+    expect(s.state.generation).toBe(7);
+    expect(s.state.dirty).toBe(false);
+    expect(s.state.historyDepth).toBe(0);
+  });
 });
 
 describe('page operations', () => {
@@ -124,7 +132,12 @@ describe('annotations', () => {
     const pid = s.state.pages[0]!.id;
     s.apply({ type: 'addAnnot', annot: annot(pid) });
     expect(s.state.annotations[pid]).toHaveLength(1);
-    s.apply({ type: 'patchAnnot', pageId: pid, id: 'a-test-1', patch: { rect: { x: 50, y: 60, w: 100, h: 50 } } });
+    s.apply({
+      type: 'patchAnnot',
+      pageId: pid,
+      id: 'a-test-1',
+      patch: { rect: { x: 50, y: 60, w: 100, h: 50 } },
+    });
     expect(s.state.annotations[pid]![0]!.rect.x).toBe(50);
     s.undo();
     expect(s.state.annotations[pid]![0]!.rect.x).toBe(10);
@@ -189,7 +202,7 @@ describe('buildEditPlan', () => {
     const s = fresh();
     const [p0, p1, p2] = s.state.pages.map((p) => p.id) as [string, string, string];
     s.apply({ type: 'delete', pageId: p1 });
-    s.apply({ type: 'rotate', pageId: p2, delta: 90 }); // base 90 + 90 = 180 absolute
+    s.apply({ type: 'rotate', pageId: p2, delta: 90 }); // save plan carries only the user delta
     s.apply({ type: 'addBlank', index: 2, widthPt: 500, heightPt: 500 });
     s.apply({ type: 'addAnnot', annot: annot(p0, { id: 'hl', kind: 'highlight', quads: [] }) });
     s.apply({
@@ -211,7 +224,7 @@ describe('buildEditPlan', () => {
     const plan = s.buildEditPlan();
     expect(plan.pages).toHaveLength(3);
     expect(plan.pages.map((p) => p.srcIndex)).toEqual([0, 2, null]);
-    expect(plan.pages[1]!.rotation).toBe(180);
+    expect(plan.pages[1]!.rotation).toBe(90);
     expect(plan.pages[2]!.widthPt).toBe(500);
     expect(plan.pages[0]!.annots).toHaveLength(1);
     expect(plan.pages[0]!.texts).toHaveLength(1);

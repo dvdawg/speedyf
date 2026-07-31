@@ -18,6 +18,9 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "bench": "bash scripts/bench.sh",
+    "bench:release": "bash scripts/bench.sh --release",
+    "fixture:smoke": "node scripts/make-smoke-pdf.mjs",
     "tauri": "tauri",
     "fetch-pdfium": "node scripts/fetch-pdfium.mjs"
   },

@@ -119,18 +119,12 @@ export function cssRectToPdfRect(rect: CssRect, page: PageGeom, zoom: number): P
 }
 
 /** Normalized page space → raw PDF user space (adds the crop-box origin). */
-export function pageNormToPdfUser(
-  pt: PdfPoint,
-  geom: { cropX: number; cropY: number }
-): PdfPoint {
+export function pageNormToPdfUser(pt: PdfPoint, geom: { cropX: number; cropY: number }): PdfPoint {
   return { x: pt.x + geom.cropX, y: pt.y + geom.cropY };
 }
 
 /** Raw PDF user space → normalized page space. */
-export function pdfUserToPageNorm(
-  pt: PdfPoint,
-  geom: { cropX: number; cropY: number }
-): PdfPoint {
+export function pdfUserToPageNorm(pt: PdfPoint, geom: { cropX: number; cropY: number }): PdfPoint {
   return { x: pt.x - geom.cropX, y: pt.y - geom.cropY };
 }
 

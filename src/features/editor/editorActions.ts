@@ -14,6 +14,7 @@ export function newAnnotId(): string {
 export async function addImageFromDialog() {
   const state = documentStore.state;
   if (!state.loaded) return;
+  const docId = state.docId;
   const picked = await openDialog({
     multiple: false,
     filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg'] }],
@@ -21,6 +22,7 @@ export async function addImageFromDialog() {
   if (typeof picked !== 'string') return;
   try {
     const [nw, nh] = await engine.imageSize(picked);
+    if (!state.loaded || state.docId !== docId) return;
     const page = state.pages[Math.min(viewport.currentPage, state.pages.length - 1)];
     if (!page) return;
     // place at ~40% of page width, centered
@@ -67,17 +69,40 @@ export function addBlankPageAfter(index: number) {
 /** Small downscaled preview of a local image for the annotation overlay
  * (binary IPC → blob URL; revoked when the document changes). */
 const previewCache = new Map<string, string>();
+interface PendingPreview {
+  promise: Promise<string>;
+}
+const previewPending = new Map<string, PendingPreview>();
+let previewEpoch = 0;
 
 export async function imagePreviewUrl(path: string): Promise<string> {
   const hit = previewCache.get(path);
   if (hit) return hit;
-  const bytes = await invoke<ArrayBuffer>('image_preview', { path });
-  const url = URL.createObjectURL(new Blob([bytes], { type: 'image/png' }));
-  previewCache.set(path, url);
-  return url;
+  const pending = previewPending.get(path);
+  if (pending) return pending.promise;
+
+  const epoch = previewEpoch;
+  const entry = {} as PendingPreview;
+  entry.promise = (async () => {
+    try {
+      const bytes = await invoke<ArrayBuffer>('image_preview', { path });
+      if (epoch !== previewEpoch) throw new Error('image preview request was invalidated');
+      const raced = previewCache.get(path);
+      if (raced) return raced;
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'image/png' }));
+      previewCache.set(path, url);
+      return url;
+    } finally {
+      if (previewPending.get(path) === entry) previewPending.delete(path);
+    }
+  })();
+  previewPending.set(path, entry);
+  return entry.promise;
 }
 
 export function clearImagePreviews() {
+  previewEpoch += 1;
   for (const url of previewCache.values()) URL.revokeObjectURL(url);
   previewCache.clear();
+  previewPending.clear();
 }
