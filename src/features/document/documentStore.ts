@@ -133,6 +133,20 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
   /** undoStack.length at the last save; null once history diverged past it. */
   let savedLen: number | null = 0;
   let idSeq = 0;
+  const pageIndexLookup = new Map<PageId, number>();
+  const sourcePageIndices = new Map<number, number[]>();
+
+  const rebuildPageLookups = () => {
+    pageIndexLookup.clear();
+    sourcePageIndices.clear();
+    state.pages.forEach((page, index) => {
+      pageIndexLookup.set(page.id, index);
+      if (page.srcIndex === null) return;
+      const indices = sourcePageIndices.get(page.srcIndex);
+      if (indices) indices.push(index);
+      else sourcePageIndices.set(page.srcIndex, [index]);
+    });
+  };
 
   const genId = (prefix: string) => `${prefix}-${++idSeq}`;
 
@@ -146,7 +160,7 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
     );
   };
 
-  const pageIndexById = (id: PageId) => state.pages.findIndex((p) => p.id === id);
+  const pageIndexById = (id: PageId) => pageIndexLookup.get(id) ?? -1;
 
   /** Fill in generated ids so redo replays deterministically, then build the inverse. */
   const materialize = (op: EditOp): EditOp => {
@@ -311,6 +325,15 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
         }
       })
     );
+    if (
+      op.type === 'reorder' ||
+      op.type === 'delete' ||
+      op.type === 'duplicate' ||
+      op.type === 'addBlank' ||
+      op.type === 'restorePage'
+    ) {
+      rebuildPageLookups();
+    }
   };
 
   const apply = (op: EditOp) => {
@@ -378,6 +401,7 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
       pages,
       searchIndex: { indexed: 0, total: meta.pageCount, done: false },
     });
+    rebuildPageLookups();
   };
 
   const updateSizes = (from: number, sizes: [number, number, number, number, number][]) => {
@@ -385,8 +409,10 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
       produce((s) => {
         sizes.forEach(([w, h, cx, cy, rot], i) => {
           // sizes arrive keyed by ORIGINAL source index; update matching pages
-          for (const p of s.pages) {
-            if (p.srcIndex === from + i && !p.sizeKnown) {
+          for (const pageIndex of sourcePageIndices.get(from + i) ?? []) {
+            const p = s.pages[pageIndex];
+            if (!p || p.srcIndex !== from + i) continue;
+            if (!p.sizeKnown) {
               p.widthPt = w;
               p.heightPt = h;
               p.cropX = cx;
@@ -466,6 +492,7 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
       redoStack = [];
       savedLen = 0;
       setState(emptyState());
+      rebuildPageLookups();
     },
     pageIndexById,
     buildEditPlan,

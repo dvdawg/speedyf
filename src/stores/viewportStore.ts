@@ -9,6 +9,7 @@ export interface ViewportState {
   /** whole-view rotation applied on top of per-page rotation */
   viewRotation: Rotation;
   scrollTop: number;
+  scrollLeft: number;
   containerW: number;
   containerH: number;
   dpr: number;
@@ -31,6 +32,7 @@ const [viewport, setViewport] = createStore<ViewportState>({
   fitMode: 'fit-width',
   viewRotation: 0,
   scrollTop: 0,
+  scrollLeft: 0,
   containerW: 800,
   containerH: 600,
   dpr: typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1,

@@ -8,9 +8,9 @@ import { listen } from '@tauri-apps/api/event';
 import type {
   DocMeta,
   FormFieldInfo,
-  PageMatches,
   PageTextLayout,
   SaveResult,
+  SearchQueryResult,
 } from '../../types/engine';
 import type { EditPlan } from '../../features/document/documentStore';
 
@@ -46,7 +46,7 @@ export interface EngineApi {
   ): Promise<{ from: number; sizes: [number, number, number, number, number][] }>;
   getTextLayout(docId: number, src: number): Promise<PageTextLayout>;
   startIndexing(docId: number): Promise<void>;
-  searchQuery(docId: number, query: string, caseSensitive: boolean): Promise<PageMatches[]>;
+  searchQuery(docId: number, query: string, caseSensitive: boolean): Promise<SearchQueryResult>;
   getMatchRects(
     docId: number,
     src: number,

@@ -129,7 +129,13 @@ export default function SearchPanel() {
       </Show>
       <Show when={s.truncated}>
         <div class="search-warning" role="status">
-          The text-index memory budget was reached — results cover the first {s.indexed} pages only.
+          The text-index memory budget was reached — results cover the first {s.indexed} pages. Text
+          selection and highlighting still work on every page.
+        </div>
+      </Show>
+      <Show when={s.resultsTruncated}>
+        <div class="search-warning" role="status">
+          Showing the first {s.resultLimit} matches. Refine the query to see a narrower result set.
         </div>
       </Show>
       <Show when={noTextDoc()}>

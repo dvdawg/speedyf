@@ -29,8 +29,8 @@ export function pagesGeom(): PageGeom[] {
   }));
 }
 
-export function layoutFor(zoom: number): Layout {
-  return layoutPages(pagesGeom(), zoom, {
+export function layoutFor(zoom: number, geoms: PageGeom[] = pagesGeom()): Layout {
+  return layoutPages(geoms, zoom, {
     gap: PAGE_GAP,
     padding: VIEW_PADDING,
     containerW: viewport.containerW,
@@ -45,8 +45,9 @@ export function setZoomAnchored(zoom: number, anchorY?: number, fitMode: FitMode
     return;
   }
   const anchor = anchorY ?? viewport.containerH / 2;
-  const oldLayout = layoutFor(viewport.zoom);
-  const newLayout = layoutFor(target);
+  const geoms = pagesGeom();
+  const oldLayout = layoutFor(viewport.zoom, geoms);
+  const newLayout = layoutFor(target, geoms);
   const newScroll = anchorScrollTop(oldLayout, newLayout, viewport.scrollTop, anchor);
   setViewport({ zoom: target, fitMode });
   if (scroller) {

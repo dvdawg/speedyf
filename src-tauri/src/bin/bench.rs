@@ -2,7 +2,8 @@
 
 use serde::Serialize;
 use speedyf_lib::engine::types::{
-    DocMetaDto, EditPlan, PlanPage, Priority, RenderKey, RenderKind, SaveResultDto, TileRect,
+    DocMetaDto, EditPlan, FormFieldDto, PageTextDto, PlanPage, Priority, RenderKey, RenderKind,
+    SaveResultDto, TileRect,
 };
 use speedyf_lib::engine::{EngineHandle, Work};
 use speedyf_lib::errors::AppError;
@@ -14,18 +15,20 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const CATEGORIES: [&str; 6] = [
+const CATEGORIES: [&str; 7] = [
     "text-1000p",
     "scanned-large",
     "cad-page",
     "image-100p",
     "malformed",
     "edited-save",
+    "text-70000p",
 ];
 const MAX_PAGE_RENDER_SAMPLES: usize = 20;
 const MAX_TILE_RENDER_SAMPLES: usize = 12;
 const MAX_TEXT_PAGES: u32 = 1_000;
 const STALE_EXERCISE_JOBS: usize = 12;
+const SCROLL_CACHE_PAGES: usize = 160;
 
 #[derive(Debug)]
 struct Config {
@@ -66,6 +69,8 @@ struct BenchMetrics {
     #[serde(skip_serializing_if = "Option::is_none")]
     page_render_p95_ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    max_page_render_source: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     tile_render_samples: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tile_render_p50_ms: Option<f64>,
@@ -88,7 +93,43 @@ struct BenchMetrics {
     #[serde(skip_serializing_if = "Option::is_none")]
     cache_hit_rate: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    page_cache_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    page_cache_budget: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scroll_cache_pages: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scroll_back_hits: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scroll_back_lookups: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scroll_back_hit_rate: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     skipped_stale_tasks: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    in_flight_cancelled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cancel_to_visible_tile_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    in_flight_stale_tasks: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    search_indexed_pages: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    search_index_truncated: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    search_index_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_text_page_runs: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_text_page_chars: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_text_page_cached_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    form_field_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    form_fields_first_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    form_fields_cached_ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     save_ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -391,15 +432,12 @@ fn benchmark_valid(
             .map_err(|error| StageError::new("first-page-render", error))?;
         metrics.first_page_render_ms = Some(elapsed_ms(started));
 
-        let renderable_pages = meta.page_count.min(u16::MAX as u32 + 1) as usize;
-        if meta.page_count as usize > renderable_pages {
-            notes.push("render samples limited to the first 65,536 source pages".into());
-        }
+        let renderable_pages = meta.page_count as usize;
         let page_keys: Vec<RenderKey> = sample_indices(renderable_pages, MAX_PAGE_RENDER_SAMPLES)
             .into_iter()
             .map(|src| RenderKey {
                 doc,
-                src: src as u16,
+                src: src as u32,
                 rot: 0,
                 scale_milli: 1_000,
                 kind: RenderKind::Page,
@@ -411,12 +449,13 @@ fn benchmark_valid(
         metrics.page_render_samples = Some(page_times.len());
         metrics.page_render_p50_ms = percentile(&page_times, 0.50);
         metrics.page_render_p95_ms = percentile(&page_times, 0.95);
+        metrics.max_page_render_source = page_keys.iter().map(|key| key.src).max();
 
         let tile_keys: Vec<RenderKey> = sample_indices(renderable_pages, MAX_TILE_RENDER_SAMPLES)
             .into_iter()
             .map(|src| RenderKey {
                 doc,
-                src: src as u16,
+                src: src as u32,
                 rot: 0,
                 scale_milli: 2_500,
                 kind: RenderKind::Tile,
@@ -453,24 +492,57 @@ fn benchmark_valid(
         metrics.cache_hits = Some(hits);
         metrics.cache_lookups = Some(lookups);
         metrics.cache_hit_rate = (lookups > 0).then_some(hits as f64 / lookups as f64);
+        metrics.page_cache_bytes = Some(cache_after.page_cache_bytes);
+        metrics.page_cache_budget = Some(cache_after.page_cache_budget);
+        if category == "text-1000p" {
+            let (pages, scroll_hits, scroll_lookups) = exercise_scroll_cache(engine, &meta)
+                .map_err(|error| StageError::new("scroll-cache", error))?;
+            metrics.scroll_cache_pages = Some(pages);
+            metrics.scroll_back_hits = Some(scroll_hits);
+            metrics.scroll_back_lookups = Some(scroll_lookups);
+            metrics.scroll_back_hit_rate =
+                (scroll_lookups > 0).then_some(scroll_hits as f64 / scroll_lookups as f64);
+            let cache = engine.metrics_snapshot();
+            metrics.page_cache_bytes = Some(cache.page_cache_bytes);
+        }
 
         metrics.skipped_stale_tasks = Some(
             exercise_stale_jobs(engine, &meta)
                 .map_err(|error| StageError::new("stale-task-exercise", error))?,
         );
+        if category == "cad-page" {
+            let (cancelled, visible_ms, stale_tasks) =
+                exercise_in_flight_cancellation(engine, &meta)
+                    .map_err(|error| StageError::new("in-flight-cancellation", error))?;
+            metrics.in_flight_cancelled = Some(cancelled);
+            metrics.cancel_to_visible_tile_ms = Some(visible_ms);
+            metrics.in_flight_stale_tasks = Some(stale_tasks);
+        }
+        if category == "text-70000p" {
+            let started = Instant::now();
+            let fields =
+                form_fields(engine, doc).map_err(|error| StageError::new("form-fields", error))?;
+            metrics.form_fields_first_ms = Some(elapsed_ms(started));
+            metrics.form_field_count = Some(fields.len());
+            let started = Instant::now();
+            form_fields(engine, doc)
+                .map_err(|error| StageError::new("form-fields-cache", error))?;
+            metrics.form_fields_cached_ms = Some(elapsed_ms(started));
+        }
 
         match read_search_query(path) {
             Ok(Some(query)) => {
                 let started = Instant::now();
-                let max_pages = meta.page_count.min(u16::MAX as u32 + 1);
+                let max_pages = meta.page_count;
                 let mut found_page = None;
                 let mut scanned = 0;
                 for src in 0..max_pages {
-                    extract_text(engine, doc, src as u16)
+                    extract_text(engine, doc, src)
                         .map_err(|error| StageError::new("first-search-result", error))?;
                     scanned += 1;
                     if let Some(result) = engine
-                        .search_indexed(doc, &query, false, 100)
+                        .search_indexed(doc, &query, false, 100, 500)
+                        .pages
                         .into_iter()
                         .find(|page| !page.matches.is_empty())
                     {
@@ -505,20 +577,34 @@ fn benchmark_valid(
         open_document(engine, path).map_err(|error| StageError::new("text-reopen", error))?;
     let fresh_doc = fresh_meta.doc_id;
     let extraction_and_save_result = (|| {
-        let text_page_count = fresh_meta
-            .page_count
-            .min(MAX_TEXT_PAGES)
-            .min(u16::MAX as u32 + 1);
+        let text_page_count = fresh_meta.page_count.min(MAX_TEXT_PAGES);
         let mut total_text_ms = 0.0;
+        let mut last_layout = None;
         for src in 0..text_page_count {
             let started = Instant::now();
-            extract_text(engine, fresh_doc, src as u16)
-                .map_err(|error| StageError::new("text-extract", error))?;
+            last_layout = Some(
+                extract_text(engine, fresh_doc, src)
+                    .map_err(|error| StageError::new("text-extract", error))?,
+            );
             total_text_ms += elapsed_ms(started);
         }
         metrics.text_pages_measured = Some(text_page_count);
         metrics.text_extract_ms_per_page =
             (text_page_count > 0).then_some(total_text_ms / text_page_count as f64);
+        if let Some(layout) = last_layout {
+            metrics.last_text_page_runs = Some(layout.runs.len());
+            metrics.last_text_page_chars = Some(layout.char_count);
+            let started = Instant::now();
+            extract_text(engine, fresh_doc, layout.src)
+                .map_err(|error| StageError::new("last-text-page-replay", error))?;
+            metrics.last_text_page_cached_ms = Some(elapsed_ms(started));
+        }
+        {
+            let search = engine.0.search.lock();
+            metrics.search_indexed_pages = Some(search.indexed_count(fresh_doc));
+            metrics.search_index_truncated = Some(search.is_truncated(fresh_doc));
+            metrics.search_index_bytes = Some(search.used());
+        }
 
         if category == "edited-save" {
             let sizes = collect_page_sizes(engine, &fresh_meta)
@@ -533,7 +619,7 @@ fn benchmark_valid(
                 .into_iter()
                 .enumerate()
                 .map(|(src, size)| PlanPage {
-                    src_index: Some(src as u16),
+                    src_index: Some(src as u32),
                     width_pt: size[0],
                     height_pt: size[1],
                     rotation: 0,
@@ -616,14 +702,19 @@ fn measure_renders(
     Ok(samples)
 }
 
-fn extract_text(engine: &EngineHandle, doc: u32, src: u16) -> Result<(), AppError> {
-    engine
-        .call(Priority::TextExtract, doc, |respond| Work::TextLayout {
-            doc,
-            src,
-            respond,
-        })
-        .map(|_| ())
+fn extract_text(engine: &EngineHandle, doc: u32, src: u32) -> Result<PageTextDto, AppError> {
+    engine.call(Priority::TextExtract, doc, |respond| Work::TextLayout {
+        doc,
+        src,
+        respond,
+    })
+}
+
+fn form_fields(engine: &EngineHandle, doc: u32) -> Result<Vec<FormFieldDto>, AppError> {
+    engine.call(Priority::AdjacentPage, doc, |respond| Work::FormFields {
+        doc,
+        respond,
+    })
 }
 
 fn exercise_stale_jobs(engine: &EngineHandle, meta: &DocMetaDto) -> Result<u64, String> {
@@ -632,7 +723,7 @@ fn exercise_stale_jobs(engine: &EngineHandle, meta: &DocMetaDto) -> Result<u64, 
     let (tx, rx) = crossbeam_channel::bounded(STALE_EXERCISE_JOBS);
     for index in 0..STALE_EXERCISE_JOBS {
         let tx = tx.clone();
-        let src = (index % meta.page_count as usize) as u16;
+        let src = (index % meta.page_count as usize) as u32;
         let key = RenderKey {
             doc: meta.doc_id,
             src,
@@ -662,6 +753,99 @@ fn exercise_stale_jobs(engine: &EngineHandle, meta: &DocMetaDto) -> Result<u64, 
     }
     let after = engine.metrics_snapshot().skipped_stale;
     Ok(after.saturating_sub(before))
+}
+
+fn exercise_scroll_cache(
+    engine: &EngineHandle,
+    meta: &DocMetaDto,
+) -> Result<(usize, u64, u64), AppError> {
+    let count = (meta.page_count as usize).min(SCROLL_CACHE_PAGES);
+    let keys: Vec<RenderKey> = (0..count)
+        .map(|src| RenderKey {
+            doc: meta.doc_id,
+            src: src as u32,
+            rot: 0,
+            scale_milli: 2_000,
+            kind: RenderKind::Page,
+            tile: None,
+        })
+        .collect();
+    for key in &keys {
+        render(engine, key.clone(), Priority::Prefetch)?;
+    }
+    let before = engine.metrics_snapshot();
+    for key in keys.into_iter().rev() {
+        render(engine, key, Priority::AdjacentPage)?;
+    }
+    let after = engine.metrics_snapshot();
+    Ok((
+        count,
+        after.cache_hits.saturating_sub(before.cache_hits),
+        after.cache_lookups.saturating_sub(before.cache_lookups),
+    ))
+}
+
+fn exercise_in_flight_cancellation(
+    engine: &EngineHandle,
+    meta: &DocMetaDto,
+) -> Result<(bool, f64, u64), String> {
+    let generation = engine.current_generation(meta.doc_id);
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    let heavy = RenderKey {
+        doc: meta.doc_id,
+        src: 0,
+        rot: 0,
+        scale_milli: 1_007,
+        kind: RenderKind::Page,
+        tile: None,
+    };
+    engine.submit_at_gen(
+        Priority::VisiblePage,
+        meta.doc_id,
+        generation,
+        Work::Render {
+            key: heavy,
+            respond: Box::new(move |result| {
+                let _ = tx.send(result.map(|_| ()));
+            }),
+        },
+    );
+
+    // The CAD fixture takes well over a second for this uncached whole-page
+    // render. Give the worker enough time to enter PDFium, then invalidate it
+    // exactly as the viewer does after scrolling away.
+    std::thread::sleep(Duration::from_millis(100));
+    let stale_before = engine.metrics_snapshot().skipped_stale;
+    let started = Instant::now();
+    engine.bump_generation(meta.doc_id);
+    render(
+        engine,
+        RenderKey {
+            doc: meta.doc_id,
+            src: 0,
+            rot: 0,
+            scale_milli: 1_008,
+            kind: RenderKind::Tile,
+            tile: Some(TileRect {
+                x: 0,
+                y: 0,
+                w: 768,
+                h: 768,
+            }),
+        },
+        Priority::VisibleTile,
+    )
+    .map_err(|error| format!("visible tile after cancellation failed: {error}"))?;
+    let visible_ms = elapsed_ms(started);
+    let heavy_result = rx
+        .recv_timeout(Duration::from_secs(30))
+        .map_err(|error| format!("timed out waiting for cancelled render: {error}"))?;
+    let stale_after = engine.metrics_snapshot().skipped_stale;
+    Ok((
+        matches!(heavy_result, Err(AppError::Stale)),
+        visible_ms,
+        stale_after.saturating_sub(stale_before),
+    ))
 }
 
 fn collect_page_sizes(engine: &EngineHandle, meta: &DocMetaDto) -> Result<Vec<[f32; 2]>, AppError> {
@@ -781,6 +965,10 @@ mod tests {
         assert_eq!(
             select_category("edited-save-smoke.pdf"),
             Some("edited-save")
+        );
+        assert_eq!(
+            select_category("stress-text-70000p.pdf"),
+            Some("text-70000p")
         );
         assert_eq!(select_category("ordinary.pdf"), None);
     }

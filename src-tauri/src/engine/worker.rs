@@ -10,6 +10,7 @@ use super::text;
 use super::types::*;
 use super::{EngineShared, Work};
 use crate::errors::{AppError, AppResult};
+use crate::search::TextLayoutData;
 use pdfium_render::prelude::*;
 use pdfium_render::prelude::{FPDF_DOCUMENT, FPDF_PAGE};
 use std::collections::HashMap;
@@ -30,9 +31,9 @@ struct DocState {
     /// display sizes (pt), lazily hydrated
     sizes: Vec<Option<[f32; 2]>>,
     /// tiny MRU of open page handles: (src_index, handle)
-    pages: Vec<(u16, FPDF_PAGE)>,
+    pages: Vec<(u32, FPDF_PAGE)>,
     index_cursor: u32,
-    index_stopped: bool,
+    form_fields: Option<Vec<FormFieldDto>>,
 }
 
 struct WorkerState<'a> {
@@ -47,7 +48,7 @@ impl<'a> WorkerState<'a> {
         self.docs.get_mut(&id).ok_or(AppError::DocumentNotFound)
     }
 
-    fn page_handle(&mut self, id: DocId, src: u16) -> AppResult<FPDF_PAGE> {
+    fn page_handle(&mut self, id: DocId, src: u32) -> AppResult<FPDF_PAGE> {
         let b = self.bindings;
         let doc = self.doc(id)?;
         if let Some(pos) = doc.pages.iter().position(|(s, _)| *s == src) {
@@ -67,7 +68,7 @@ impl<'a> WorkerState<'a> {
         Ok(handle)
     }
 
-    fn display_size(&mut self, id: DocId, src: u16) -> AppResult<[f32; 2]> {
+    fn display_size(&mut self, id: DocId, src: u32) -> AppResult<[f32; 2]> {
         let b = self.bindings;
         let doc = self.doc(id)?;
         if let Some(Some(s)) = doc.sizes.get(src as usize) {
@@ -94,6 +95,7 @@ impl<'a> WorkerState<'a> {
         shared.page_cache.lock().remove_matching(|k| k.doc == id);
         shared.thumb_cache.lock().remove_matching(|k| k.doc == id);
         shared.search.lock().remove_doc(id);
+        shared.text_layouts.lock().remove_doc(id);
     }
 }
 
@@ -168,17 +170,25 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
         } => respond(do_sizes(state, doc, from, count)),
         Work::Render { key, respond } => {
             let started = Instant::now();
-            let result = do_render(state, shared, &key);
-            if result.is_ok() {
-                shared.metrics.rendered.fetch_add(1, Ordering::Relaxed);
-                log::debug!(
-                    "render doc={} src={} kind={:?} scale={} in {:?}",
-                    key.doc,
-                    key.src,
-                    key.kind,
-                    key.scale_milli,
-                    started.elapsed()
-                );
+            let result = do_render(state, shared, meta, &key);
+            match &result {
+                Ok(_) => {
+                    shared.metrics.rendered.fetch_add(1, Ordering::Relaxed);
+                    log::debug!(
+                        "render doc={} src={} kind={:?} scale={} in {:?}",
+                        key.doc,
+                        key.src,
+                        key.kind,
+                        key.scale_milli,
+                        started.elapsed()
+                    );
+                }
+                Err(AppError::Stale) => {
+                    // Count progressive in-flight aborts in the same public
+                    // metric as work rejected before dispatch.
+                    shared.metrics.skipped_stale.fetch_add(1, Ordering::Relaxed);
+                }
+                Err(_) => {}
             }
             respond(result);
         }
@@ -190,7 +200,7 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
             start,
             len,
             respond,
-        } => respond(do_match_rects(state, doc, src, start, len)),
+        } => respond(do_match_rects(state, shared, doc, src, start, len)),
         Work::Save {
             doc,
             plan,
@@ -253,7 +263,7 @@ fn do_open(
             sizes: sizes_vec,
             pages: Vec::new(),
             index_cursor: 0,
-            index_stopped: false,
+            form_fields: None,
         },
     );
     Ok(DocMetaDto {
@@ -290,6 +300,7 @@ fn do_sizes(state: &mut WorkerState, doc: DocId, from: u32, count: u32) -> AppRe
 fn do_render(
     state: &mut WorkerState,
     shared: &EngineShared,
+    meta: JobMeta,
     key: &RenderKey,
 ) -> AppResult<Arc<Vec<u8>>> {
     // Another request may have populated the cache while this job queued.
@@ -304,14 +315,17 @@ fn do_render(
     let out = render::render_page(
         state.bindings,
         page,
-        w_pt,
-        h_pt,
+        [w_pt, h_pt],
         key.scale_milli as f32 / 1000.0,
         key.rot,
         key.tile,
+        || shared.gens.is_stale(&meta),
     )?;
     let bytes = Arc::new(out.png);
-    let cost = crate::cache::bitmap_cost(out.width, out.height);
+    // The Rust cache stores encoded PNG bytes. Browser-decoded memory is
+    // bounded separately by page virtualization, not by overcharging every
+    // cached PNG as if it remained mounted RGBA.
+    let cost = bytes.len() as u64;
     match key.kind {
         RenderKind::Thumb => {
             shared
@@ -327,50 +341,78 @@ fn do_render(
     Ok(bytes)
 }
 
-fn ensure_extracted(
+fn ensure_search_extracted(
     state: &mut WorkerState,
     shared: &EngineShared,
     doc: DocId,
-    src: u16,
+    src: u32,
 ) -> AppResult<(u32, bool)> {
-    if shared.search.lock().page(doc, src).is_some() {
+    if shared.search.lock().contains_page(doc, src) {
         return Ok((0, true));
     }
-    let [w_pt, h_pt] = state.display_size(doc, src)?;
     let page = state.page_handle(doc, src)?;
-    let extracted = text::extract_page(state.bindings, page, w_pt, h_pt);
-    let stored = shared.search.lock().store_page(
-        doc,
-        src,
-        &extracted.raw,
-        extracted.runs,
-        extracted.char_count,
-    );
+    let extracted = text::extract_search_text(state.bindings, page);
+    let stored = shared
+        .search
+        .lock()
+        .store_page(doc, src, &extracted.raw, extracted.char_count);
     if stored {
         shared.metrics.pages_indexed.fetch_add(1, Ordering::Relaxed);
     }
     Ok((extracted.char_count, stored))
 }
 
+fn ensure_text_layout(
+    state: &mut WorkerState,
+    shared: &EngineShared,
+    doc: DocId,
+    src: u32,
+) -> AppResult<TextLayoutData> {
+    if let Some(layout) = shared.text_layouts.lock().get(doc, src) {
+        return Ok(layout);
+    }
+    let [w_pt, h_pt] = state.display_size(doc, src)?;
+    let page = state.page_handle(doc, src)?;
+    let extracted = text::extract_page(state.bindings, page, w_pt, h_pt);
+
+    // A foreground request can extend search coverage, but failure to retain
+    // search text must never erase the freshly extracted selectable layout.
+    if !shared.search.lock().contains_page(doc, src) {
+        let stored =
+            shared
+                .search
+                .lock()
+                .store_page(doc, src, &extracted.raw, extracted.char_count);
+        if stored {
+            shared.metrics.pages_indexed.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    Ok(shared.text_layouts.lock().insert(
+        doc,
+        src,
+        extracted.runs,
+        extracted.boxes,
+        extracted.char_count,
+    ))
+}
+
 fn do_text_layout(
     state: &mut WorkerState,
     shared: &EngineShared,
     doc: DocId,
-    src: u16,
+    src: u32,
 ) -> AppResult<PageTextDto> {
-    ensure_extracted(state, shared, doc, src)?;
-    let search = shared.search.lock();
-    let entry = search.page(doc, src);
+    let layout = ensure_text_layout(state, shared, doc, src)?;
     Ok(PageTextDto {
-        src: src as u32,
-        runs: entry.map(|e| e.runs.clone()).unwrap_or_default(),
-        char_count: entry.map(|e| e.char_count).unwrap_or(0),
+        src,
+        runs: layout.runs.as_ref().clone(),
+        char_count: layout.char_count,
     })
 }
 
 fn do_index_next(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, doc: DocId) {
     let Ok(d) = state.doc(doc) else { return };
-    if d.index_stopped {
+    if shared.search.lock().is_truncated(doc) {
         return;
     }
     let total = d.page_count;
@@ -378,7 +420,7 @@ fn do_index_next(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, 
     let mut next = d.index_cursor;
     {
         let search = shared.search.lock();
-        while next < total && search.page(doc, next as u16).is_some() {
+        while next < total && search.contains_page(doc, next) {
             next += 1;
         }
     }
@@ -386,21 +428,20 @@ fn do_index_next(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, 
         emit_progress(shared, doc, total, total, false);
         return;
     }
-    let ok = match ensure_extracted(state, shared, doc, next as u16) {
+    let ok = match ensure_search_extracted(state, shared, doc, next) {
         Ok((_, stored)) => stored,
         Err(_) => true, // unreadable page: skip it, keep going
     };
     if let Ok(d) = state.doc(doc) {
         d.index_cursor = next + 1;
-        if !ok {
-            d.index_stopped = true;
-        }
     }
     let indexed = shared.search.lock().indexed_count(doc);
     let truncated = shared.search.lock().is_truncated(doc);
-    emit_progress(shared, doc, indexed, total, truncated);
+    if truncated || next + 1 >= total || (next + 1) % 32 == 0 {
+        emit_progress(shared, doc, indexed, total, truncated);
+    }
     if !ok {
-        log::warn!("search index budget exhausted for doc {doc}; indexing stopped");
+        log::warn!("search index budget exhausted for doc {doc} after {indexed}/{total} pages");
         return;
     }
     // Requeue at the same generation: closing/reloading the doc cancels this.
@@ -413,13 +454,14 @@ fn do_index_next(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, 
 
 fn emit_progress(shared: &EngineShared, doc: DocId, indexed: u32, total: u32, truncated: bool) {
     if let Some(cb) = shared.progress.lock().as_ref() {
+        let chars_indexed = shared.search.lock().chars_indexed(doc);
         cb(
             doc,
             SearchStatusDto {
                 indexed,
                 total,
                 truncated,
-                chars_indexed: shared.search.lock().used(),
+                chars_indexed,
             },
         );
     }
@@ -427,21 +469,14 @@ fn emit_progress(shared: &EngineShared, doc: DocId, indexed: u32, total: u32, tr
 
 fn do_match_rects(
     state: &mut WorkerState,
+    shared: &EngineShared,
     doc: DocId,
-    src: u16,
+    src: u32,
     start: u32,
     len: u32,
 ) -> AppResult<Vec<[f32; 4]>> {
-    let [w_pt, h_pt] = state.display_size(doc, src)?;
-    let page = state.page_handle(doc, src)?;
-    Ok(text::match_rects(
-        state.bindings,
-        page,
-        w_pt,
-        h_pt,
-        start,
-        len,
-    ))
+    let layout = ensure_text_layout(state, shared, doc, src)?;
+    Ok(text::merge_match_rects(&layout.boxes, start, len))
 }
 
 fn do_save(
@@ -456,7 +491,7 @@ fn do_save(
         ));
     }
     let started = Instant::now();
-    let (src_path, password, same_file, page_count, sizes, index_cursor, index_stopped) = {
+    let (src_path, password, same_file, page_count, sizes, index_cursor, form_fields) = {
         let d = state.doc(doc)?;
         (
             d.path.clone(),
@@ -465,7 +500,7 @@ fn do_save(
             d.page_count,
             d.sizes.clone(),
             d.index_cursor,
-            d.index_stopped,
+            d.form_fields.clone(),
         )
     };
     let pdfium = state.pdfium;
@@ -525,7 +560,7 @@ fn do_save(
                                 sizes,
                                 pages: Vec::new(),
                                 index_cursor,
-                                index_stopped,
+                                form_fields,
                             },
                         );
                     }
@@ -548,50 +583,148 @@ fn do_save(
 }
 
 fn do_form_fields(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<FormFieldDto>> {
-    let (path, password) = {
+    let (raw, page_count, cached) = {
         let d = state.doc(doc)?;
-        (d.path.clone(), d.password.clone())
+        (d.raw, d.page_count, d.form_fields.clone())
     };
-    let document = state
-        .pdfium
-        .load_pdf_from_file(&path, password.as_deref())
-        .map_err(|e| AppError::Malformed(format!("cannot reopen for form read: {e:?}")))?;
-    if document.form().is_none() {
+    if let Some(fields) = cached {
+        return Ok(fields);
+    }
+
+    let bindings = state.bindings;
+    if bindings.FPDF_GetFormType(raw) == 0 {
+        state.doc(doc)?.form_fields = Some(Vec::new());
         return Ok(Vec::new());
     }
-    let mut out = Vec::new();
-    let page_count = document.pages().len();
-    for pi in 0..page_count {
-        let Ok(page) = document.pages().get(pi) else {
-            continue;
-        };
-        let annotation_count = page.annotations().len();
-        for ai in 0..annotation_count {
-            let Ok(annotation) = page.annotations().get(ai) else {
-                continue;
-            };
-            let Some(field) = annotation.as_form_field() else {
-                continue;
-            };
-            let kind = if field.as_text_field().is_some() {
-                "text"
-            } else {
-                "other"
-            };
-            let value = field
-                .as_text_field()
-                .and_then(|t| t.value())
-                .unwrap_or_default();
-            out.push(FormFieldDto {
-                name: field.name().unwrap_or_default(),
-                kind: kind.into(),
-                value,
-                page: pi as u32,
-                read_only: false,
-            });
-        }
+
+    // PDFium retains this pointer until ExitFormFillEnvironment(), so the
+    // callback table must stay pinned for the complete scan.
+    let mut form_fill_info = Box::pin(FPDF_FORMFILLINFO {
+        version: 2,
+        Release: None,
+        FFI_Invalidate: None,
+        FFI_OutputSelectedRect: None,
+        FFI_SetCursor: None,
+        FFI_SetTimer: None,
+        FFI_KillTimer: None,
+        FFI_GetLocalTime: None,
+        FFI_OnChange: None,
+        FFI_GetPage: None,
+        FFI_GetCurrentPage: None,
+        FFI_GetRotation: None,
+        FFI_ExecuteNamedAction: None,
+        FFI_SetTextFieldFocus: None,
+        FFI_DoURIAction: None,
+        FFI_DoGoToAction: None,
+        m_pJsPlatform: std::ptr::null_mut(),
+        xfa_disabled: 0,
+        FFI_DisplayCaret: None,
+        FFI_GetCurrentPageIndex: None,
+        FFI_SetCurrentPage: None,
+        FFI_GotoURL: None,
+        FFI_GetPageViewRect: None,
+        FFI_PageEvent: None,
+        FFI_PopupMenu: None,
+        FFI_OpenFile: None,
+        FFI_EmailTo: None,
+        FFI_UploadTo: None,
+        FFI_GetPlatform: None,
+        FFI_GetLanguage: None,
+        FFI_DownloadFromURL: None,
+        FFI_PostRequestURL: None,
+        FFI_PutRequestURL: None,
+        FFI_OnFocusChange: None,
+        FFI_DoURIActionWithKeyboardModifier: None,
+    });
+    let form = bindings.FPDFDOC_InitFormFillEnvironment(raw, form_fill_info.as_mut().get_mut());
+    if form.is_null() {
+        state.doc(doc)?.form_fields = Some(Vec::new());
+        return Ok(Vec::new());
     }
+
+    let mut out = Vec::new();
+    for pi in 0..page_count {
+        let page = bindings.FPDF_LoadPage(raw, pi as i32);
+        if page.is_null() {
+            continue;
+        }
+        bindings.FORM_OnAfterLoadPage(page, form);
+        let annotation_count = bindings.FPDFPage_GetAnnotCount(page).max(0);
+        for ai in 0..annotation_count {
+            let annotation = bindings.FPDFPage_GetAnnot(page, ai);
+            if annotation.is_null() {
+                continue;
+            }
+            let field_type = bindings.FPDFAnnot_GetFormFieldType(form, annotation);
+            if field_type < 0 {
+                bindings.FPDFPage_CloseAnnot(annotation);
+                continue;
+            };
+            let name = read_pdfium_utf16(|buffer, len| {
+                bindings.FPDFAnnot_GetFormFieldName(form, annotation, buffer, len)
+            });
+            let value = read_pdfium_utf16(|buffer, len| {
+                bindings.FPDFAnnot_GetFormFieldValue(form, annotation, buffer, len)
+            });
+            let flags = bindings.FPDFAnnot_GetFormFieldFlags(form, annotation);
+            out.push(FormFieldDto {
+                name,
+                kind: form_field_kind(field_type).into(),
+                value,
+                page: pi,
+                read_only: flags & 1 != 0,
+            });
+            bindings.FPDFPage_CloseAnnot(annotation);
+        }
+        bindings.FORM_OnBeforeClosePage(page, form);
+        bindings.FPDF_ClosePage(page);
+    }
+
+    bindings.FPDFDOC_ExitFormFillEnvironment(form);
+    state.doc(doc)?.form_fields = Some(out.clone());
     Ok(out)
+}
+
+fn form_field_kind(field_type: i32) -> &'static str {
+    match field_type {
+        1 => "button",
+        2 => "checkbox",
+        3 => "radio",
+        4 => "combo",
+        5 => "list",
+        6 => "text",
+        7 => "signature",
+        _ => "other",
+    }
+}
+
+const MAX_FORM_STRING_BYTES: usize = 16 * 1024 * 1024;
+
+fn read_pdfium_utf16(
+    mut read: impl FnMut(*mut FPDF_WCHAR, std::os::raw::c_ulong) -> std::os::raw::c_ulong,
+) -> String {
+    let bytes = read(std::ptr::null_mut(), 0) as usize;
+    if bytes == 0 || bytes > MAX_FORM_STRING_BYTES {
+        return String::new();
+    }
+    let mut units = vec![0_u16; bytes.div_ceil(2)];
+    let written = read(
+        units.as_mut_ptr(),
+        (units.len() * std::mem::size_of::<u16>()) as std::os::raw::c_ulong,
+    ) as usize;
+    if written == 0 {
+        return String::new();
+    }
+    units.truncate(written.div_ceil(2).min(units.len()));
+    decode_pdfium_utf16(&units)
+}
+
+fn decode_pdfium_utf16(units: &[u16]) -> String {
+    let end = units
+        .iter()
+        .position(|unit| *unit == 0)
+        .unwrap_or(units.len());
+    String::from_utf16_lossy(&units[..end])
 }
 
 #[cfg(test)]
@@ -614,5 +747,25 @@ mod tests {
         assert!(is_generation_cancellable(&render));
         assert!(!is_generation_cancellable(&Work::IndexNext { doc: 1 }));
         assert!(!is_generation_cancellable(&Work::Close { doc: 1 }));
+    }
+
+    #[test]
+    fn form_field_types_have_stable_ui_kinds() {
+        assert_eq!(form_field_kind(1), "button");
+        assert_eq!(form_field_kind(2), "checkbox");
+        assert_eq!(form_field_kind(3), "radio");
+        assert_eq!(form_field_kind(4), "combo");
+        assert_eq!(form_field_kind(5), "list");
+        assert_eq!(form_field_kind(6), "text");
+        assert_eq!(form_field_kind(7), "signature");
+        assert_eq!(form_field_kind(-1), "other");
+    }
+
+    #[test]
+    fn pdfium_utf16_decoder_removes_the_terminal_nul() {
+        assert_eq!(
+            decode_pdfium_utf16(&['S' as u16, 'p' as u16, 'e' as u16, 'e' as u16, 'd' as u16, 0]),
+            "Speed"
+        );
     }
 }

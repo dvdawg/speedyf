@@ -6,12 +6,36 @@
 
 use crate::engine::types::TileRect;
 use crate::errors::{AppError, AppResult};
-use pdfium_render::prelude::{PdfiumLibraryBindings, FPDF_DOCUMENT, FPDF_PAGE, FS_SIZEF};
+use pdfium_render::prelude::{
+    PdfiumLibraryBindings, FPDF_DOCUMENT, FPDF_PAGE, FS_SIZEF, IFSDK_PAUSE,
+};
+use std::ffi::c_void;
 
 const FPDF_ANNOT_FLAG: i32 = 0x01;
 const FORMAT_BGRA: i32 = 4; // FPDFBitmap_BGRA
-/// Hard guard: refuse absurd single allocations (frontend tiles above 16 Mpx).
+/// Hard guard: refuse absurd single allocations (frontend tiles above 4 Mpx).
 const MAX_PIXELS: u64 = 64_000_000;
+const RENDER_TO_BE_CONTINUED: i32 = 1;
+const RENDER_DONE: i32 = 2;
+
+struct PauseContext<'a> {
+    cancelled: &'a dyn Fn() -> bool,
+}
+
+unsafe extern "C" fn need_to_pause_now(interface: *mut IFSDK_PAUSE) -> i32 {
+    if interface.is_null() {
+        return 0;
+    }
+    // SAFETY: `render_page()` keeps both the interface and context alive for
+    // every synchronous Start/Continue call. The callback catches panics so
+    // none can cross PDFium's C ABI.
+    let context = unsafe { (*interface).user.cast::<PauseContext<'_>>().as_ref() };
+    context
+        .and_then(|context| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (context.cancelled)())).ok()
+        })
+        .unwrap_or(true) as i32
+}
 
 pub fn open_document(
     b: &dyn PdfiumLibraryBindings,
@@ -52,21 +76,23 @@ pub fn page_display_size(
 
 pub struct RenderOutput {
     pub png: Vec<u8>,
-    pub width: u32,
-    pub height: u32,
 }
 
 /// Render a page (or a tile of it) at `scale` device pixels per point with an
 /// extra rotation on top of the page's own /Rotate, returning encoded PNG.
-pub fn render_page(
+pub fn render_page<F>(
     b: &dyn PdfiumLibraryBindings,
     page: FPDF_PAGE,
-    disp_w_pt: f32,
-    disp_h_pt: f32,
+    display_size_pt: [f32; 2],
     scale: f32,
     extra_rot_deg: u16,
     tile: Option<TileRect>,
-) -> AppResult<RenderOutput> {
+    cancelled: F,
+) -> AppResult<RenderOutput>
+where
+    F: Fn() -> bool,
+{
+    let [disp_w_pt, disp_h_pt] = display_size_pt;
     let full_w = (disp_w_pt * scale).round().max(1.0) as i64;
     let full_h = (disp_h_pt * scale).round().max(1.0) as i64;
     // FPDF_RenderPageBitmap expects size_x/size_y in FINAL (rotated) space.
@@ -101,7 +127,17 @@ pub fn render_page(
         return Err(AppError::Internal("bitmap allocation failed".into()));
     }
     b.FPDFBitmap_FillRect(bitmap, 0, 0, bmp_w as i32, bmp_h as i32, 0xFFFF_FFFF);
-    b.FPDF_RenderPageBitmap(
+    let context = PauseContext {
+        cancelled: &cancelled,
+    };
+    let mut pause = IFSDK_PAUSE {
+        version: 1,
+        NeedToPauseNow: Some(need_to_pause_now),
+        user: (&context as *const PauseContext<'_>)
+            .cast_mut()
+            .cast::<c_void>(),
+    };
+    let mut status = b.FPDF_RenderPageBitmap_Start(
         bitmap,
         page,
         start_x as i32,
@@ -110,7 +146,22 @@ pub fn render_page(
         size_y as i32,
         (extra_rot_deg / 90) as i32,
         FPDF_ANNOT_FLAG,
+        &mut pause,
     );
+    while status == RENDER_TO_BE_CONTINUED && !cancelled() {
+        status = b.FPDF_RenderPage_Continue(page, &mut pause);
+    }
+    b.FPDF_RenderPage_Close(page);
+    if cancelled() {
+        b.FPDFBitmap_Destroy(bitmap);
+        return Err(AppError::Stale);
+    }
+    if status != RENDER_DONE {
+        b.FPDFBitmap_Destroy(bitmap);
+        return Err(AppError::Internal(format!(
+            "progressive render failed with status {status}"
+        )));
+    }
 
     let stride = b.FPDFBitmap_GetStride(bitmap) as usize;
     let buffer = b.FPDFBitmap_GetBuffer(bitmap) as *const u8;
@@ -135,11 +186,7 @@ pub fn render_page(
     b.FPDFBitmap_Destroy(bitmap);
 
     let png = encode_png(&rgb, w as u32, h as u32)?;
-    Ok(RenderOutput {
-        png,
-        width: w as u32,
-        height: h as u32,
-    })
+    Ok(RenderOutput { png })
 }
 
 fn encode_png(rgb: &[u8], w: u32, h: u32) -> AppResult<Vec<u8>> {

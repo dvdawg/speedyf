@@ -44,7 +44,7 @@ fn parse_render_query(uri: &str) -> Option<RenderQuery> {
         return None;
     }
     let mut doc: Option<DocId> = None;
-    let (mut src, mut rot, mut scale, mut gen) = (0u16, 0u16, 1000u32, 0u64);
+    let (mut src, mut rot, mut scale, mut gen) = (0u32, 0u16, 1000u32, 0u64);
     let mut kind = RenderKind::Page;
     let (mut tx, mut ty, mut tw, mut th) = (0u32, 0u32, 0u32, 0u32);
     let mut prio: Option<u8> = None;
@@ -71,7 +71,7 @@ fn parse_render_query(uri: &str) -> Option<RenderQuery> {
         }
     }
     let doc = doc?;
-    if rot % 90 != 0 || rot >= 360 || scale == 0 || scale > 8000 {
+    if rot % 90 != 0 || rot >= 360 || scale == 0 || scale > 12_000 {
         return None;
     }
     let tile = if kind == RenderKind::Tile {
@@ -237,13 +237,23 @@ mod tests {
     }
 
     #[test]
+    fn parses_deep_zoom_and_source_indices_above_u16() {
+        let query = parse_render_query(
+            "pdfr://localhost/render?doc=4&src=69999&rot=0&scale=12000&gen=2&kind=tile&tx=0&ty=0&tw=1024&th=1024",
+        )
+        .expect("large source indices and the maximum sharp zoom are valid");
+        assert_eq!(query.key.src, 69_999);
+        assert_eq!(query.key.scale_milli, 12_000);
+    }
+
+    #[test]
     fn rejects_unsafe_or_malformed_render_queries() {
         assert!(
             parse_render_query("pdfr://localhost/render?doc=1&src=0&rot=45&scale=1000&gen=0")
                 .is_none()
         );
         assert!(
-            parse_render_query("pdfr://localhost/render?doc=1&src=0&rot=0&scale=9000&gen=0")
+            parse_render_query("pdfr://localhost/render?doc=1&src=0&rot=0&scale=13000&gen=0")
                 .is_none()
         );
         assert!(parse_render_query(

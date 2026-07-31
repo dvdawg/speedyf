@@ -108,7 +108,10 @@ describe('bucketForScale', () => {
     expect(bucketForScale(0.3)).toBe(0.5);
     expect(bucketForScale(1)).toBe(1);
     expect(bucketForScale(1.01)).toBe(1.25);
-    expect(bucketForScale(5)).toBe(4);
+    expect(bucketForScale(5)).toBe(6);
+    expect(bucketForScale(8)).toBe(8);
+    expect(bucketForScale(12)).toBe(12);
+    expect(bucketForScale(15)).toBe(12);
   });
 });
 

@@ -61,6 +61,14 @@ export default function StatusBar() {
             index truncated
           </span>
         </Show>
+        <Show when={doc.loaded && doc.pages.length > 65_535}>
+          <span
+            class="sb-warn"
+            title="Viewing and search support all pages, but PDFium output documents are limited to 65,535 pages. Delete pages below that limit before saving."
+          >
+            save disabled above 65,535 pages
+          </span>
+        </Show>
       </div>
       <div class="sb-right">
         <Show when={doc.loaded && metrics()}>

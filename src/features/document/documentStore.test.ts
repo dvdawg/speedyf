@@ -58,6 +58,27 @@ describe('initFromMeta', () => {
     expect(s.state.dirty).toBe(false);
     expect(s.state.historyDepth).toBe(0);
   });
+
+  it('hydrates every page sharing a source index in one size batch', () => {
+    const s = createDocumentStore();
+    s.initFromMeta({ ...meta, pageCount: 5 });
+    const estimated = s.state.pages[4]!;
+    s.apply({ type: 'duplicate', pageId: estimated.id });
+    const duplicate = s.state.pages.find(
+      (page) => page.srcIndex === 4 && page.id !== estimated.id
+    )!;
+    s.apply({ type: 'reorder', pageId: duplicate.id, toIndex: 0 });
+
+    s.updateSizes(4, [[420, 640, 0, 0, 0]]);
+
+    const copies = s.state.pages.filter((page) => page.srcIndex === 4);
+    expect(copies).toHaveLength(2);
+    expect(copies.every((page) => page.sizeKnown)).toBe(true);
+    expect(copies.map((page) => [page.widthPt, page.heightPt])).toEqual([
+      [420, 640],
+      [420, 640],
+    ]);
+  });
 });
 
 describe('page operations', () => {

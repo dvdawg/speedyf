@@ -271,6 +271,13 @@ fn apply_rotation(page: &mut PdfPage<'_>, extra_deg: u16) {
     });
 }
 
+fn page_requires_mutation(page: &crate::engine::types::PlanPage) -> bool {
+    page.rotation % 360 != 0
+        || !page.annots.is_empty()
+        || !page.texts.is_empty()
+        || !page.images.is_empty()
+}
+
 fn fill_form_fields(doc: &mut PdfDocument<'_>, form: &[(String, String)]) {
     if form.is_empty() || doc.form().is_none() {
         return;
@@ -357,6 +364,9 @@ pub fn build_output(
 
     // 2) per-page: annotations/texts/images in ORIGINAL display space, then rotation delta.
     for (idx, pp) in plan.pages.iter().enumerate() {
+        if !page_requires_mutation(pp) {
+            continue;
+        }
         let mut page = out.pages().get(idx as u16)?;
         add_annotations(&out, &mut page, pp, helv)?;
         apply_rotation(&mut page, pp.rotation % 360);
@@ -421,7 +431,7 @@ mod tests {
         document.save_to_file(path).expect("save fixture");
     }
 
-    fn plan_page(src_index: Option<u16>, rotation: u16) -> PlanPage {
+    fn plan_page(src_index: Option<u32>, rotation: u16) -> PlanPage {
         PlanPage {
             src_index,
             width_pt: 360.0,
@@ -440,6 +450,29 @@ mod tests {
             PdfPageRenderRotation::Degrees270 => 270,
             PdfPageRenderRotation::None => 0,
         }
+    }
+
+    #[test]
+    fn unchanged_imported_pages_do_not_require_a_mutation_pass() {
+        let mut page = plan_page(Some(0), 0);
+        assert!(!page_requires_mutation(&page));
+
+        page.rotation = 90;
+        assert!(page_requires_mutation(&page));
+        page.rotation = 0;
+        page.texts.push(PlanText {
+            rect: RectDto {
+                x: 0.0,
+                y: 0.0,
+                w: 10.0,
+                h: 10.0,
+            },
+            text: "changed".into(),
+            font_size_pt: 10.0,
+            color: "#000000".into(),
+            opacity: 1.0,
+        });
+        assert!(page_requires_mutation(&page));
     }
 
     #[test]

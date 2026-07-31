@@ -88,6 +88,13 @@ export async function saveDocument(saveAs: boolean): Promise<boolean> {
   const state = documentStore.state;
   if (!state.loaded || state.saving) return false;
   if (!saveAs && !state.dirty) return true;
+  if (state.pages.length > 65_535) {
+    showError(
+      `This document currently has ${state.pages.length.toLocaleString()} pages. ` +
+        'PDF output is limited to 65,535 pages; delete pages below that limit before saving.'
+    );
+    return false;
+  }
   const docId = state.docId;
 
   let dest = state.path;

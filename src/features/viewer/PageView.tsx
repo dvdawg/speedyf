@@ -16,7 +16,7 @@ import {
 } from 'solid-js';
 import type { Layout } from '../../lib/coordinates/layout';
 import type { PageGeom } from '../../lib/coordinates/coords';
-import { RENDER_SCALE_BUCKETS, tileGrid } from '../../lib/coordinates/coords';
+import { tileGrid } from '../../lib/coordinates/coords';
 import { renderUrl } from '../../lib/rendering/renderSource';
 import { documentStore } from '../document/documentStore';
 import { viewport } from '../../stores/viewportStore';
@@ -26,9 +26,10 @@ import TextLayer from './TextLayer';
 import AnnotationLayer from '../annotations/AnnotationLayer';
 import type { Rotation } from '../../types/model';
 
-const TILE_THRESHOLD_PX = 16_700_000; // ~4096×4096 device pixels
+// Keep single PDFium jobs bounded. Normal letter pages remain whole-page at
+// typical Retina zoom, while large/complex sheets switch to ~1Mpx tiles.
+const TILE_THRESHOLD_PX = 4_000_000;
 const TILE_SIZE = 1024;
-const BACKDROP_BUDGET_PX = 2_000_000;
 
 interface Props {
   index: number;
@@ -72,8 +73,10 @@ export default function PageView(props: Props) {
     });
   };
 
-  /** low-res preview: cheapest bucket, upscaled while the real render loads */
-  const previewUrl = createMemo(() => urlFor('page', 250));
+  /** Low-res preview for ordinary pages. Tiled sheets intentionally skip a
+   * whole-page preview: a dense CAD preview can itself monopolize PDFium for
+   * hundreds of milliseconds while useful visible tiles wait behind it. */
+  const previewUrl = createMemo(() => (tiled() ? null : urlFor('page', 250)));
 
   /** whole-page raster URL (non-tiled mode) */
   const fullUrl = createMemo(() => {
@@ -81,36 +84,40 @@ export default function PageView(props: Props) {
     return urlFor('page', props.scaleMilli);
   });
 
-  /** backdrop scale for tiled mode: biggest bucket within the pixel budget */
-  const backdropUrl = createMemo(() => {
-    if (!tiled()) return null;
-    let bucket = RENDER_SCALE_BUCKETS[0]!;
-    for (const b of RENDER_SCALE_BUCKETS) {
-      if (rotW() * b * rotH() * b <= BACKDROP_BUDGET_PX) bucket = b;
-    }
-    return urlFor('page', Math.round(bucket * 1000));
-  });
+  const allTiles = createMemo(() => (tiled() ? tileGrid(devW(), devH(), TILE_SIZE) : []));
 
-  /** visible tiles only (plus margin), never the whole grid */
+  /** Visible tiles only (plus margin) in both axes. `allTiles()` owns stable
+   * object identities, so scrolling filters references instead of recreating
+   * every tile DOM node. */
   const visibleTiles = createMemo(() => {
     if (!tiled()) return [];
-    const scaleCssToDev = devH() / Math.max(1, cssH());
+    const scaleX = devW() / Math.max(1, cssW());
+    const scaleY = devH() / Math.max(1, cssH());
     const margin = 768;
-    const y0 = Math.max(0, (viewport.scrollTop - top()) * scaleCssToDev - margin);
+    const x0 = Math.max(0, (viewport.scrollLeft - left()) * scaleX - margin);
+    const x1 = Math.min(
+      devW(),
+      (viewport.scrollLeft + viewport.containerW - left()) * scaleX + margin
+    );
+    const y0 = Math.max(0, (viewport.scrollTop - top()) * scaleY - margin);
     const y1 = Math.min(
       devH(),
-      (viewport.scrollTop + viewport.containerH - top()) * scaleCssToDev + margin
+      (viewport.scrollTop + viewport.containerH - top()) * scaleY + margin
     );
-    if (y1 <= 0 || y0 >= devH()) return [];
-    return tileGrid(devW(), devH(), TILE_SIZE).filter((t) => t.y + t.h >= y0 && t.y <= y1);
+    if (x1 <= 0 || x0 >= devW() || y1 <= 0 || y0 >= devH()) return [];
+    return allTiles().filter(
+      (tile) => tile.x + tile.w >= x0 && tile.x <= x1 && tile.y + tile.h >= y0 && tile.y <= y1
+    );
   });
 
   // Progressive swap: keep the last loaded raster on screen until the newer
   // one has actually decoded (the browser CSS-scales the old one meanwhile).
   const [displayed, setDisplayed] = createSignal<string | null>(null);
+  const [renderError, setRenderError] = createSignal(false);
   createEffect(() => {
-    const url = fullUrl() ?? backdropUrl();
+    const url = fullUrl();
     if (!url || displayed() === url) return;
+    setRenderError(false);
     let cancelled = false;
     const img = new Image();
     img.decoding = 'async';
@@ -118,9 +125,13 @@ export default function PageView(props: Props) {
     img.onload = () => {
       if (!cancelled) setDisplayed(url);
     };
+    img.onerror = () => {
+      if (!cancelled) setRenderError(true);
+    };
     onCleanup(() => {
       cancelled = true;
       img.onload = null;
+      img.onerror = null;
       img.src = '';
     });
   });
@@ -195,16 +206,22 @@ export default function PageView(props: Props) {
                   src={urlFor('tile', props.scaleMilli, t)!}
                   alt=""
                   draggable={false}
+                  onError={() => setRenderError(true)}
                   style={{
                     left: `${t.x * factor()}px`,
-                    top: `${t.y * factor()}px`,
+                    top: `${t.y * (cssH() / devH())}px`,
                     width: `${t.w * factor()}px`,
-                    height: `${t.h * factor()}px`,
+                    height: `${t.h * (cssH() / devH())}px`,
                   }}
                 />
               );
             }}
           </For>
+        </Show>
+        <Show when={renderError()}>
+          <div class="page-render-warning" role="status">
+            Part of this page could not be rendered. Try another zoom level.
+          </div>
         </Show>
       </Show>
 

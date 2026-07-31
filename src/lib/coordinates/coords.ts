@@ -34,7 +34,9 @@ export interface CssRect {
 /** Quantized raster scales (device px per PDF point ÷ 72dpi unit). Rendering only
  * ever happens at these buckets so zoom gestures cannot fill the cache with
  * one-off rasters. */
-export const RENDER_SCALE_BUCKETS: readonly number[] = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
+export const RENDER_SCALE_BUCKETS: readonly number[] = [
+  0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4, 6, 8, 12,
+];
 
 const EPS = 1e-9;
 

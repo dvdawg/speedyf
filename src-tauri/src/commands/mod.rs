@@ -57,7 +57,7 @@ pub fn request_page_sizes(
 pub fn get_text_layout(
     state: tauri::State<'_, EngineState>,
     doc_id: DocId,
-    src: u16,
+    src: u32,
 ) -> AppResult<PageTextDto> {
     state
         .0
@@ -83,20 +83,27 @@ pub fn search_query(
     doc_id: DocId,
     query: String,
     case_sensitive: bool,
-) -> Vec<PageMatchesDto> {
+) -> SearchQueryDto {
+    const GLOBAL_MATCH_LIMIT: usize = 500;
     if query.trim().is_empty() {
-        return Vec::new();
+        return SearchQueryDto {
+            pages: Vec::new(),
+            truncated: false,
+            limit: GLOBAL_MATCH_LIMIT as u32,
+        };
     }
     // Runs directly against the shared index — no engine round-trip, so
     // results are instant over whatever subset is indexed so far.
-    state.0.search_indexed(doc_id, &query, case_sensitive, 200)
+    state
+        .0
+        .search_indexed(doc_id, &query, case_sensitive, 200, GLOBAL_MATCH_LIMIT)
 }
 
 #[tauri::command]
 pub fn get_match_rects(
     state: tauri::State<'_, EngineState>,
     doc_id: DocId,
-    src: u16,
+    src: u32,
     start: u32,
     len: u32,
 ) -> AppResult<Vec<[f32; 4]>> {

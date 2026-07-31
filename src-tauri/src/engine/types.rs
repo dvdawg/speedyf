@@ -34,7 +34,7 @@ impl Priority {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize, Deserialize)]
 pub struct TileRect {
     pub x: u32,
     pub y: u32,
@@ -42,7 +42,7 @@ pub struct TileRect {
     pub h: u32,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum RenderKind {
     Page,
     Thumb,
@@ -50,10 +50,10 @@ pub enum RenderKind {
 }
 
 /// Cache key for one rendered artifact.
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct RenderKey {
     pub doc: DocId,
-    pub src: u16,
+    pub src: u32,
     /// extra rotation applied on top of the page's own /Rotate (0/90/180/270)
     pub rot: u16,
     pub scale_milli: u32,
@@ -116,6 +116,15 @@ pub struct MatchDto {
 pub struct PageMatchesDto {
     pub src: u32,
     pub matches: Vec<MatchDto>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchQueryDto {
+    pub pages: Vec<PageMatchesDto>,
+    /// True when the global/per-page safety bound omitted further matches.
+    pub truncated: bool,
+    pub limit: u32,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -223,7 +232,7 @@ pub struct PlanImage {
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanPage {
-    pub src_index: Option<u16>,
+    pub src_index: Option<u32>,
     pub width_pt: f32,
     pub height_pt: f32,
     /// extra rotation to add on top of the page's existing /Rotate

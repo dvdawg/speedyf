@@ -118,18 +118,24 @@ The engine boundary is deliberately message-shaped:
 
 1. Visible pages and tiles outrank thumbnails, text extraction, and prefetch.
 2. A zoom bucket change increments the document generation; queued work from
-   older generations is skipped before PDFium touches it.
-3. Page/thumbnail caches use decoded bitmap cost (`width × height × 4`) and
-   stale-first LRU eviction. Text indexing has its own hard byte budget.
+   older generations is skipped before PDFium touches it, while PDFium's
+   progressive-render pause callback aborts a stale render already in flight.
+3. Page/thumbnail caches charge the encoded PNG bytes they actually retain and
+   use stale-first O(log n) LRU eviction. Mounted-page virtualization separately
+   bounds decoded webview images.
 4. Rust serves encoded PNG bytes through `pdfr://`; no base64, JSON pixels, or
    PDF buffers are held in frontend state.
 5. The frontend mounts only visible pages plus an overscan window. Pages over
-   about 16.7 million device pixels use 1024-pixel tiles over a low-resolution
-   backdrop.
+   about 4 million device pixels use 1024-pixel tiles culled in both axes.
+   Complex tiled sheets skip the blocking whole-page preview.
 6. Save serializes a small EditPlan. Rust imports source pages in the requested
    order, creates blanks, applies rotation/annotations/text/images/forms,
    writes a sibling temporary file, reopens it with PDFium, verifies the page
    count, and atomically replaces the destination.
+7. Search keeps compact normalized UTF-8 text and sparse source offsets under
+   its own hard budget. Selectable text geometry lives in an independent
+   foreground LRU, so search truncation never disables selection or highlights.
+   Query responses are globally capped and report when results were omitted.
 
 See [the architecture decision](docs/architecture-decision.md) for the full
 trade study and [the implementation plan](docs/superpowers/plans/2026-07-20-speedyf-pdf-viewer-editor.md)
@@ -196,7 +202,7 @@ performance model.
 ## Project map
 
 - `src-tauri/src/engine/` — PDFium worker, queue, rendering, text, and save
-- `src-tauri/src/cache/` — decoded-byte-cost LRU implementation
+- `src-tauri/src/cache/` — encoded-byte-cost, stale-first LRU implementation
 - `src-tauri/src/search/` — incremental NFKC search index and source offsets
 - `src-tauri/src/lib.rs` — Tauri app, custom protocol, and command registration
 - `src/features/viewer/` — virtualization, progressive raster, tiles, text layer
@@ -218,8 +224,9 @@ SpeedyF is a focused editor, not a full PDF authoring or forensic tool:
   signatures. Password protection is not preserved in the output.
 - Existing annotations remain in imported pages and render, but are not loaded
   into the editable overlay.
-- Rendering source indexes support at most 65,536 input pages, and save is
-  limited to 65,535 output pages.
+- Viewing, rendering, selection, and search use 32-bit source indexes. Save is
+  limited to 65,535 output pages; the toolbar and status bar disclose and
+  enforce that limit as soon as a larger document opens.
 - Ink is intentionally flattened to page path objects on save; it is not saved
   as an editable PDF Ink annotation.
 - Only AcroForm text fields are best-effort editable. Other widgets are listed

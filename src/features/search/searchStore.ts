@@ -23,6 +23,8 @@ interface SearchState {
   total: number;
   truncated: boolean;
   indexingDone: boolean;
+  resultsTruncated: boolean;
+  resultLimit: number;
 }
 
 const [state, setState] = createStore<SearchState>({
@@ -37,6 +39,8 @@ const [state, setState] = createStore<SearchState>({
   total: 0,
   truncated: false,
   indexingDone: false,
+  resultsTruncated: false,
+  resultLimit: 500,
 });
 
 /** rects per "src:start:len", resolved lazily for mounted pages */
@@ -56,23 +60,31 @@ async function runQuery() {
   // eslint-disable-next-line solid/reactivity
   const { docId, query, caseSensitive } = state;
   if (docId < 0 || query.trim().length === 0) {
-    setState({ results: [], flat: [], current: -1, running: false });
+    setState({
+      results: [],
+      flat: [],
+      current: -1,
+      running: false,
+      resultsTruncated: false,
+    });
     return;
   }
   setState('running', true);
   try {
-    const results = await engine.searchQuery(docId, query, caseSensitive);
+    const response = await engine.searchQuery(docId, query, caseSensitive);
     if (seq !== querySeq) return; // superseded
     const flat: FlatMatch[] = [];
-    for (const page of results) {
+    for (const page of response.pages) {
       for (const m of page.matches) {
         flat.push({ src: page.src, start: m.start, len: m.len, snippet: m.snippet });
       }
     }
     setState(
       produce((s) => {
-        s.results = results;
+        s.results = response.pages;
         s.flat = flat;
+        s.resultsTruncated = response.truncated;
+        s.resultLimit = response.limit;
         s.current = flat.length > 0 ? Math.min(Math.max(s.current, 0), flat.length - 1) : -1;
         s.running = false;
       })
@@ -103,6 +115,8 @@ export const searchStore = {
       total,
       truncated: false,
       indexingDone: false,
+      resultsTruncated: false,
+      resultLimit: 500,
     });
   },
 

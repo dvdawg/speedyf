@@ -101,11 +101,3 @@ export interface SearchMatch {
   snippet: string;
   rects: SearchMatchRect[];
 }
-
-export interface FormFieldInfo {
-  name: string;
-  kind: string;
-  pageSrcIndex: number;
-  value: string;
-  readOnly: boolean;
-}

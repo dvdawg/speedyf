@@ -23,7 +23,7 @@ export default function Viewer() {
   const doc = documentStore.state;
 
   const geoms = createMemo(pagesGeom);
-  const layout = createMemo(() => layoutFor(viewport.zoom));
+  const layout = createMemo(() => layoutFor(viewport.zoom, geoms()));
   const range = createMemo(() =>
     visibleRange(layout(), viewport.scrollTop, viewport.containerH, viewport.containerH)
   );
@@ -75,6 +75,21 @@ export default function Viewer() {
     }, 160);
     onCleanup(() => clearTimeout(t));
   });
+
+  // A page change means an expensive render for the page left behind is no
+  // longer useful. Bump after a short scroll debounce; PDFium's progressive
+  // pause callback observes the generation and aborts in-flight stale work.
+  let previousPage = -1;
+  createEffect(() => {
+    const currentPage = viewport.currentPage;
+    if (!doc.loaded || previousPage < 0 || currentPage === previousPage) {
+      previousPage = currentPage;
+      return;
+    }
+    previousPage = currentPage;
+    const timer = setTimeout(() => applyRenderScale(renderScaleMilli()), 80);
+    onCleanup(() => clearTimeout(timer));
+  });
   onCleanup(() => {
     scaleRequestSeq += 1;
   });
@@ -86,17 +101,27 @@ export default function Viewer() {
       scrollRaf = 0;
       const top = scroller.scrollTop;
       const current = pageIndexAt(layout(), top + viewport.containerH * 0.4);
-      setViewport({ scrollTop: top, currentPage: current });
+      setViewport({ scrollTop: top, scrollLeft: scroller.scrollLeft, currentPage: current });
     });
   };
 
+  let wheelRaf = 0;
+  let wheelTarget = viewport.zoom;
+  let wheelAnchor = viewport.containerH / 2;
   const onWheel = (e: WheelEvent) => {
     if (!(e.ctrlKey || e.metaKey)) return;
     e.preventDefault();
     if (!doc.loaded) return;
     const rect = scroller.getBoundingClientRect();
     const factor = Math.exp(-e.deltaY * 0.0022);
-    setZoomAnchored(viewport.zoom * factor, e.clientY - rect.top);
+    if (!wheelRaf) wheelTarget = viewport.zoom;
+    wheelTarget *= factor;
+    wheelAnchor = e.clientY - rect.top;
+    if (wheelRaf) return;
+    wheelRaf = requestAnimationFrame(() => {
+      wheelRaf = 0;
+      setZoomAnchored(wheelTarget, wheelAnchor);
+    });
   };
 
   onMount(() => {
@@ -109,13 +134,28 @@ export default function Viewer() {
     });
     ro.observe(scroller);
     scroller.addEventListener('wheel', onWheel, { passive: false });
-    const dprListener = () => setViewport('dpr', window.devicePixelRatio || 1);
-    const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
-    mq.addEventListener?.('change', dprListener);
+    let dprMedia: MediaQueryList | null = null;
+    const dprListener = () => {
+      const next = window.devicePixelRatio || 1;
+      setViewport('dpr', next);
+      // A resolution query only observes transitions away from the value it
+      // was created for. Re-arm it after every change so 2→3→1 transitions
+      // cannot leave the render scale stale.
+      dprMedia?.removeEventListener?.('change', dprListener);
+      dprMedia = window.matchMedia(`(resolution: ${next}dppx)`);
+      dprMedia.addEventListener?.('change', dprListener);
+    };
+    dprListener();
+    window.addEventListener('resize', dprListener);
+    window.visualViewport?.addEventListener('resize', dprListener);
     onCleanup(() => {
       ro.disconnect();
       scroller.removeEventListener('wheel', onWheel);
-      mq.removeEventListener?.('change', dprListener);
+      dprMedia?.removeEventListener?.('change', dprListener);
+      window.removeEventListener('resize', dprListener);
+      window.visualViewport?.removeEventListener('resize', dprListener);
+      if (scrollRaf) cancelAnimationFrame(scrollRaf);
+      if (wheelRaf) cancelAnimationFrame(wheelRaf);
       registerScroller(null);
     });
   });

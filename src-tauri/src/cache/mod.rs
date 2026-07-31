@@ -1,12 +1,12 @@
-//! Byte-budgeted LRU cache. Costs are charged in *approximate decoded bitmap
-//! bytes* (`width × height × 4`) rather than stored (encoded) bytes, so the
-//! budget conservatively bounds both the encoded store and the decoded
-//! footprint the webview may hold for mounted pages.
+//! Byte-budgeted LRU cache. Costs are the encoded bytes actually retained by
+//! Rust. The frontend's page virtualization separately bounds how many images
+//! can be decoded/mounted by the webview.
 //!
 //! Eviction prefers entries flagged stale (wrong generation / closed document
 //! / superseded scale) before falling back to least-recently-used order.
 
-use std::collections::HashMap;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
 use std::hash::Hash;
 use std::sync::Arc;
 
@@ -17,8 +17,9 @@ struct Entry {
     stale: bool,
 }
 
-pub struct ByteLru<K: Eq + Hash + Clone> {
+pub struct ByteLru<K: Eq + Hash + Clone + Ord> {
     map: HashMap<K, Entry>,
+    order: BinaryHeap<Reverse<(u8, u64, K)>>,
     budget: u64,
     used: u64,
     tick: u64,
@@ -26,10 +27,11 @@ pub struct ByteLru<K: Eq + Hash + Clone> {
     pub lookups: u64,
 }
 
-impl<K: Eq + Hash + Clone> ByteLru<K> {
+impl<K: Eq + Hash + Clone + Ord> ByteLru<K> {
     pub fn new(budget: u64) -> Self {
         ByteLru {
             map: HashMap::new(),
+            order: BinaryHeap::new(),
             budget,
             used: 0,
             tick: 0,
@@ -63,6 +65,8 @@ impl<K: Eq + Hash + Clone> ByteLru<K> {
             Some(e) => {
                 e.last_used = tick;
                 self.hits += 1;
+                self.order
+                    .push(Reverse((u8::from(!e.stale), tick, key.clone())));
                 Some(Arc::clone(&e.bytes))
             }
             None => None,
@@ -81,7 +85,7 @@ impl<K: Eq + Hash + Clone> ByteLru<K> {
         self.evict_to(self.budget.saturating_sub(cost));
         self.tick += 1;
         self.map.insert(
-            key,
+            key.clone(),
             Entry {
                 bytes,
                 cost,
@@ -89,7 +93,9 @@ impl<K: Eq + Hash + Clone> ByteLru<K> {
                 stale: false,
             },
         );
+        self.order.push(Reverse((1, self.tick, key)));
         self.used += cost;
+        self.compact_order_if_needed();
     }
 
     /// Change the budget at runtime (e.g. low-memory mode), evicting to fit.
@@ -100,11 +106,18 @@ impl<K: Eq + Hash + Clone> ByteLru<K> {
 
     /// Flag matching entries as stale so they are evicted first.
     pub fn mark_stale(&mut self, pred: impl Fn(&K) -> bool) {
+        let mut newly_stale = Vec::new();
         for (k, e) in self.map.iter_mut() {
             if pred(k) {
                 e.stale = true;
+                newly_stale.push((k.clone(), e.last_used));
             }
         }
+        self.order.extend(
+            newly_stale
+                .into_iter()
+                .map(|(key, tick)| Reverse((0, tick, key))),
+        );
     }
 
     /// Drop matching entries immediately.
@@ -119,27 +132,33 @@ impl<K: Eq + Hash + Clone> ByteLru<K> {
 
     fn evict_to(&mut self, target: u64) {
         while self.used > target && !self.map.is_empty() {
-            // stale entries first (false sorts before true), then LRU
-            let victim = self
+            let Some(Reverse((freshness, tick, key))) = self.order.pop() else {
+                break;
+            };
+            let current = self
                 .map
-                .iter()
-                .min_by_key(|(_, e)| (!e.stale, e.last_used))
-                .map(|(k, _)| k.clone());
-            match victim {
-                Some(k) => {
-                    if let Some(e) = self.map.remove(&k) {
-                        self.used = self.used.saturating_sub(e.cost);
-                    }
-                }
-                None => break,
+                .get(&key)
+                .map(|entry| (u8::from(!entry.stale), entry.last_used));
+            if current != Some((freshness, tick)) {
+                continue;
+            }
+            if let Some(entry) = self.map.remove(&key) {
+                self.used = self.used.saturating_sub(entry.cost);
             }
         }
+        self.compact_order_if_needed();
     }
-}
 
-/// Approximate decoded cost of an RGBA bitmap.
-pub fn bitmap_cost(width: u32, height: u32) -> u64 {
-    (width as u64) * (height as u64) * 4
+    fn compact_order_if_needed(&mut self) {
+        if self.order.len() <= self.map.len().saturating_mul(8).saturating_add(64) {
+            return;
+        }
+        self.order = self
+            .map
+            .iter()
+            .map(|(key, entry)| Reverse((u8::from(!entry.stale), entry.last_used, key.clone())))
+            .collect();
+    }
 }
 
 #[cfg(test)]
@@ -148,12 +167,6 @@ mod tests {
 
     fn arc(n: usize) -> Arc<Vec<u8>> {
         Arc::new(vec![0u8; n])
-    }
-
-    #[test]
-    fn bitmap_cost_is_width_height_rgba() {
-        assert_eq!(bitmap_cost(100, 50), 100 * 50 * 4);
-        assert_eq!(bitmap_cost(0, 50), 0);
     }
 
     #[test]

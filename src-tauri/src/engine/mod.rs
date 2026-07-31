@@ -17,7 +17,7 @@ pub mod worker;
 
 use crate::cache::ByteLru;
 use crate::errors::{AppError, AppResult};
-use crate::search::SearchStore;
+use crate::search::{query_pages, SearchStore, TextLayoutCache};
 use parking_lot::Mutex;
 use queue::{GenerationMap, JobMeta, PrioQueue};
 use std::path::PathBuf;
@@ -49,7 +49,7 @@ pub enum Work {
     },
     TextLayout {
         doc: DocId,
-        src: u16,
+        src: u32,
         respond: Respond<PageTextDto>,
     },
     /// Extract the next unindexed page, then requeue itself (yields between
@@ -59,7 +59,7 @@ pub enum Work {
     },
     MatchRects {
         doc: DocId,
-        src: u16,
+        src: u32,
         start: u32,
         len: u32,
         respond: Respond<Vec<[f32; 4]>>,
@@ -92,7 +92,8 @@ pub type ProgressCallback = Box<dyn Fn(DocId, SearchStatusDto) + Send + Sync>;
 pub struct CacheBudgets {
     pub pages: u64,
     pub thumbs: u64,
-    pub text: u64,
+    pub search: u64,
+    pub text_layouts: u64,
 }
 
 impl CacheBudgets {
@@ -100,14 +101,16 @@ impl CacheBudgets {
         CacheBudgets {
             pages: 256 * 1024 * 1024,
             thumbs: 32 * 1024 * 1024,
-            text: 24 * 1024 * 1024,
+            search: 64 * 1024 * 1024,
+            text_layouts: 32 * 1024 * 1024,
         }
     }
     pub fn low_memory() -> Self {
         CacheBudgets {
             pages: 96 * 1024 * 1024,
             thumbs: 16 * 1024 * 1024,
-            text: 12 * 1024 * 1024,
+            search: 32 * 1024 * 1024,
+            text_layouts: 16 * 1024 * 1024,
         }
     }
 }
@@ -118,8 +121,10 @@ pub struct EngineShared {
     pub page_cache: Mutex<ByteLru<RenderKey>>,
     pub thumb_cache: Mutex<ByteLru<RenderKey>>,
     pub search: Mutex<SearchStore>,
+    pub text_layouts: Mutex<TextLayoutCache>,
     pub metrics: Metrics,
     pub progress: Mutex<Option<ProgressCallback>>,
+    pub last_metrics: Mutex<EngineMetricsDto>,
 }
 
 #[derive(Clone)]
@@ -139,9 +144,11 @@ impl EngineHandle {
             gens: GenerationMap::default(),
             page_cache: Mutex::new(ByteLru::new(budgets.pages)),
             thumb_cache: Mutex::new(ByteLru::new(budgets.thumbs)),
-            search: Mutex::new(SearchStore::new(budgets.text)),
+            search: Mutex::new(SearchStore::new(budgets.search)),
+            text_layouts: Mutex::new(TextLayoutCache::new(budgets.text_layouts)),
             metrics: Metrics::default(),
             progress: Mutex::new(None),
+            last_metrics: Mutex::new(EngineMetricsDto::default()),
         });
         let worker_shared = Arc::clone(&shared);
         std::thread::Builder::new()
@@ -197,27 +204,36 @@ impl EngineHandle {
         };
         self.0.page_cache.lock().set_budget(budgets.pages);
         self.0.thumb_cache.lock().set_budget(budgets.thumbs);
-        self.0.search.lock().set_budget(budgets.text);
+        self.0.search.lock().set_budget(budgets.search);
+        self.0.text_layouts.lock().set_budget(budgets.text_layouts);
     }
 
     pub fn metrics_snapshot(&self) -> EngineMetricsDto {
-        let page_cache = self.0.page_cache.lock();
-        let thumb_cache = self.0.thumb_cache.lock();
-        let search = self.0.search.lock();
-        EngineMetricsDto {
-            rendered: self.0.metrics.rendered.load(Ordering::Relaxed),
-            skipped_stale: self.0.metrics.skipped_stale.load(Ordering::Relaxed),
-            cache_hits: page_cache.hits + thumb_cache.hits,
-            cache_lookups: page_cache.lookups + thumb_cache.lookups,
-            page_cache_bytes: page_cache.used(),
-            page_cache_budget: page_cache.budget(),
-            thumb_cache_bytes: thumb_cache.used(),
-            thumb_cache_budget: thumb_cache.budget(),
-            text_bytes: search.used(),
-            text_budget: search.budget(),
-            pages_indexed: self.0.metrics.pages_indexed.load(Ordering::Relaxed),
-            queue_depth: self.0.queue.len() as u64,
+        let mut snapshot = self.0.last_metrics.lock().clone();
+        snapshot.rendered = self.0.metrics.rendered.load(Ordering::Relaxed);
+        snapshot.skipped_stale = self.0.metrics.skipped_stale.load(Ordering::Relaxed);
+        snapshot.pages_indexed = self.0.metrics.pages_indexed.load(Ordering::Relaxed);
+        snapshot.queue_depth = self.0.queue.len() as u64;
+
+        // Diagnostics must never make an interactive render/search wait. Keep
+        // the last complete cache sample if any cache is currently busy.
+        if let (Some(page_cache), Some(thumb_cache), Some(search), Some(text_layouts)) = (
+            self.0.page_cache.try_lock(),
+            self.0.thumb_cache.try_lock(),
+            self.0.search.try_lock(),
+            self.0.text_layouts.try_lock(),
+        ) {
+            snapshot.cache_hits = page_cache.hits + thumb_cache.hits;
+            snapshot.cache_lookups = page_cache.lookups + thumb_cache.lookups;
+            snapshot.page_cache_bytes = page_cache.used();
+            snapshot.page_cache_budget = page_cache.budget();
+            snapshot.thumb_cache_bytes = thumb_cache.used();
+            snapshot.thumb_cache_budget = thumb_cache.budget();
+            snapshot.text_bytes = search.used() + text_layouts.used();
+            snapshot.text_budget = search.budget() + text_layouts.budget();
+            *self.0.last_metrics.lock() = snapshot.clone();
         }
+        snapshot
     }
 
     /// Query the pages currently present in the incremental search index.
@@ -229,11 +245,12 @@ impl EngineHandle {
         query: &str,
         case_sensitive: bool,
         per_page_limit: usize,
-    ) -> Vec<PageMatchesDto> {
-        self.0
-            .search
-            .lock()
-            .query(doc, query, case_sensitive, per_page_limit)
+        global_limit: usize,
+    ) -> SearchQueryDto {
+        // Clone cheap Arc entries, release the store mutex, then scan. This
+        // prevents a broad query from blocking the background indexer.
+        let pages = self.0.search.lock().snapshot(doc);
+        query_pages(&pages, query, case_sensitive, per_page_limit, global_limit)
     }
 
     /// Synchronous helper for commands: submit and block on the reply.

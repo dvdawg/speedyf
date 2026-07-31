@@ -38,9 +38,11 @@ import {
 import { addImageFromDialog } from '../features/editor/editorActions';
 
 export default function Toolbar() {
+  const maxSavePages = 65_535;
   const doc = documentStore.state;
   const loaded = () => doc.loaded;
   const pageCount = () => doc.pages.length;
+  const saveSupported = () => pageCount() <= maxSavePages;
   const [pageInput, setPageInput] = createSignal<string | null>(null);
   const [zoomInput, setZoomInput] = createSignal<string | null>(null);
 
@@ -78,14 +80,14 @@ export default function Toolbar() {
         </IconButton>
         <IconButton
           label="Save (⌘S)"
-          disabled={!loaded() || !doc.dirty || doc.saving}
+          disabled={!loaded() || !doc.dirty || doc.saving || !saveSupported()}
           onClick={() => void saveDocument(false)}
         >
           <IconSave />
         </IconButton>
         <IconButton
           label="Save As… (⇧⌘S)"
-          disabled={!loaded() || doc.saving}
+          disabled={!loaded() || doc.saving || !saveSupported()}
           onClick={() => void saveDocument(true)}
         >
           <IconSaveAs />

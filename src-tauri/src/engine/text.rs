@@ -14,38 +14,49 @@ pub struct ExtractedPage {
     /// one Rust char per PDFium char index (controls/unmappables become ' ')
     pub raw: String,
     pub runs: Vec<TextRun>,
+    /// display-space character boxes keyed by PDFium character index; a zero
+    /// box means PDFium reported no usable geometry for that character.
+    pub boxes: Vec<[f32; 4]>,
     pub char_count: u32,
 }
 
-struct DispMapper<'a> {
-    b: &'a dyn PdfiumLibraryBindings,
-    page: FPDF_PAGE,
-    dw: i32,
-    dh: i32,
+pub struct ExtractedSearchText {
+    pub raw: String,
+    pub char_count: u32,
+}
+
+struct DispMapper {
+    origin: (f64, f64),
+    x_axis: (f64, f64),
+    y_axis: (f64, f64),
     disp_h: f32,
 }
 
-impl<'a> DispMapper<'a> {
-    fn new(b: &'a dyn PdfiumLibraryBindings, page: FPDF_PAGE, disp_w: f32, disp_h: f32) -> Self {
+impl DispMapper {
+    fn new(b: &dyn PdfiumLibraryBindings, page: FPDF_PAGE, disp_w: f32, disp_h: f32) -> Self {
+        let dw = (disp_w as f64 * PREC) as i32;
+        let dh = (disp_h as f64 * PREC) as i32;
+        let device = |ux: f64, uy: f64| {
+            let (mut dx, mut dy) = (0i32, 0i32);
+            b.FPDF_PageToDevice(page, 0, 0, dw, dh, 0, ux, uy, &mut dx, &mut dy);
+            (dx as f64 / PREC, dy as f64 / PREC)
+        };
+        let origin = device(0.0, 0.0);
+        let x_unit = device(1.0, 0.0);
+        let y_unit = device(0.0, 1.0);
         DispMapper {
-            b,
-            page,
-            dw: (disp_w as f64 * PREC) as i32,
-            dh: (disp_h as f64 * PREC) as i32,
+            origin,
+            x_axis: (x_unit.0 - origin.0, x_unit.1 - origin.1),
+            y_axis: (y_unit.0 - origin.0, y_unit.1 - origin.1),
             disp_h,
         }
     }
 
     /// user-space point → display-normalized (y-up) point
     fn map(&self, ux: f64, uy: f64) -> (f32, f32) {
-        let (mut dx, mut dy) = (0i32, 0i32);
-        self.b.FPDF_PageToDevice(
-            self.page, 0, 0, self.dw, self.dh, 0, ux, uy, &mut dx, &mut dy,
-        );
-        (
-            (dx as f64 / PREC) as f32,
-            self.disp_h - (dy as f64 / PREC) as f32,
-        )
+        let dx = self.origin.0 + ux * self.x_axis.0 + uy * self.y_axis.0;
+        let dy = self.origin.1 + ux * self.x_axis.1 + uy * self.y_axis.1;
+        (dx as f32, self.disp_h - dy as f32)
     }
 
     /// user-space char box → display rect (x, y_bottom, w, h), y-up
@@ -55,6 +66,29 @@ impl<'a> DispMapper<'a> {
         let x = x1.min(x2);
         let y = y1.min(y2);
         (x, y, (x1 - x2).abs(), (y1 - y2).abs())
+    }
+}
+
+/// Extract only the character stream needed by the background search index.
+/// Foreground layout extraction additionally asks PDFium for character boxes;
+/// the indexer deliberately avoids those thousands of FFI calls per page.
+pub fn extract_search_text(b: &dyn PdfiumLibraryBindings, page: FPDF_PAGE) -> ExtractedSearchText {
+    let text_page = b.FPDFText_LoadPage(page);
+    if text_page.is_null() {
+        return ExtractedSearchText {
+            raw: String::new(),
+            char_count: 0,
+        };
+    }
+    let count = b.FPDFText_CountChars(text_page).max(0);
+    let mut raw = String::with_capacity(count as usize);
+    for index in 0..count {
+        raw.push(char::from_u32(b.FPDFText_GetUnicode(text_page, index)).unwrap_or(' '));
+    }
+    b.FPDFText_ClosePage(text_page);
+    ExtractedSearchText {
+        raw,
+        char_count: count as u32,
     }
 }
 
@@ -69,6 +103,7 @@ pub fn extract_page(
         return ExtractedPage {
             raw: String::new(),
             runs: Vec::new(),
+            boxes: Vec::new(),
             char_count: 0,
         };
     }
@@ -77,6 +112,7 @@ pub fn extract_page(
 
     let mut raw = String::with_capacity(n as usize);
     let mut runs: Vec<TextRun> = Vec::new();
+    let mut boxes = vec![[0.0; 4]; n as usize];
 
     struct Run {
         text: String,
@@ -122,6 +158,7 @@ pub fn extract_page(
             continue;
         }
         let (x, y, w, h) = mapper.map_box(l, r, bo, t);
+        boxes[i as usize] = [x, y, w, h];
 
         let split = match &cur {
             None => true,
@@ -160,33 +197,18 @@ pub fn extract_page(
     ExtractedPage {
         raw,
         runs,
+        boxes,
         char_count: n as u32,
     }
 }
 
-/// Merged line rects (display space) for a match range of PDFium chars.
-pub fn match_rects(
-    b: &dyn PdfiumLibraryBindings,
-    page: FPDF_PAGE,
-    disp_w: f32,
-    disp_h: f32,
-    start: u32,
-    len: u32,
-) -> Vec<[f32; 4]> {
-    let tp = b.FPDFText_LoadPage(page);
-    if tp.is_null() {
-        return Vec::new();
-    }
-    let n = b.FPDFText_CountChars(tp).max(0) as u32;
-    let mapper = DispMapper::new(b, page, disp_w, disp_h);
+/// Merge cached character boxes into visual-line rectangles for a match.
+/// This avoids reopening a PDFium text page for every visible search hit.
+pub fn merge_match_rects(boxes: &[[f32; 4]], start: u32, len: u32) -> Vec<[f32; 4]> {
     let mut rects: Vec<[f32; 4]> = Vec::new();
-    let end = (start + len).min(n);
+    let end = start.saturating_add(len).min(boxes.len() as u32);
     for i in start..end {
-        let (mut l, mut r, mut bo, mut t) = (0f64, 0f64, 0f64, 0f64);
-        if b.FPDFText_GetCharBox(tp, i as i32, &mut l, &mut r, &mut bo, &mut t) == 0 {
-            continue;
-        }
-        let (x, y, w, h) = mapper.map_box(l, r, bo, t);
+        let [x, y, w, h] = boxes[i as usize];
         if w <= 0.0 || h <= 0.0 {
             continue;
         }
@@ -206,6 +228,23 @@ pub fn match_rects(
         }
         rects.push([x, y, w, h]);
     }
-    b.FPDFText_ClosePage(tp);
     rects
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cached_match_boxes_merge_visual_lines_without_pdfium_reload() {
+        let boxes = vec![
+            [10.0, 20.0, 5.0, 8.0],
+            [15.0, 20.0, 6.0, 8.0],
+            [2.0, 5.0, 4.0, 8.0],
+        ];
+        assert_eq!(
+            merge_match_rects(&boxes, 0, 3),
+            vec![[10.0, 20.0, 11.0, 8.0], [2.0, 5.0, 4.0, 8.0]]
+        );
+    }
 }

@@ -37,6 +37,12 @@ export interface PageMatches {
   matches: MatchDto[];
 }
 
+export interface SearchQueryResult {
+  pages: PageMatches[];
+  truncated: boolean;
+  limit: number;
+}
+
 export interface FormFieldInfo {
   name: string;
   kind: string;
