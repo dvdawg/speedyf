@@ -24,6 +24,7 @@ import { engine } from '../../lib/transport/engine';
 import { searchStore } from '../search/searchStore';
 import TextLayer from './TextLayer';
 import AnnotationLayer from '../annotations/AnnotationLayer';
+import CitationLayer from '../citations/CitationLayer';
 import type { Rotation } from '../../types/model';
 
 // Keep single PDFium jobs bounded. Normal letter pages remain whole-page at
@@ -261,6 +262,14 @@ export default function PageView(props: Props) {
             )}
           </For>
         </div>
+        <Show when={srcIndex() !== null}>
+          <CitationLayer
+            docId={doc.docId}
+            src={srcIndex()!}
+            pageHeightPt={props.geom.heightPt}
+            zoom={viewport.zoom}
+          />
+        </Show>
         <Show when={page()}>
           <AnnotationLayer
             page={page()!}

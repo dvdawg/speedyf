@@ -2,6 +2,7 @@ mod cache;
 mod commands;
 pub mod engine;
 pub mod errors;
+mod library;
 mod search;
 
 use commands::EngineState;
@@ -59,6 +60,7 @@ fn parse_render_query(uri: &str) -> Option<RenderQuery> {
                 kind = match v.as_ref() {
                     "thumb" => RenderKind::Thumb,
                     "tile" => RenderKind::Tile,
+                    "preview" => RenderKind::Preview,
                     _ => RenderKind::Page,
                 }
             }
@@ -74,7 +76,7 @@ fn parse_render_query(uri: &str) -> Option<RenderQuery> {
     if rot % 90 != 0 || rot >= 360 || scale == 0 || scale > 12_000 {
         return None;
     }
-    let tile = if kind == RenderKind::Tile {
+    let tile = if matches!(kind, RenderKind::Tile | RenderKind::Preview) {
         if tw == 0 || th == 0 || tw > 4096 || th > 4096 {
             return None;
         }
@@ -91,6 +93,7 @@ fn parse_render_query(uri: &str) -> Option<RenderQuery> {
         RenderKind::Page => Priority::VisiblePage,
         RenderKind::Tile => Priority::VisibleTile,
         RenderKind::Thumb => Priority::VisibleThumb,
+        RenderKind::Preview => Priority::HoverPreview,
     };
     Some(RenderQuery {
         key: RenderKey {
@@ -119,7 +122,8 @@ pub fn run() {
                 hints.push(resources);
             }
             let low_memory = std::env::var("SPEEDYF_LOW_MEMORY").is_ok_and(|v| v == "1");
-            let engine = EngineHandle::start(hints, low_memory);
+            let app_data_dir = app.path().app_data_dir().ok();
+            let engine = EngineHandle::start(hints, low_memory, app_data_dir);
 
             let emitter = app.handle().clone();
             engine.set_progress_callback(Box::new(move |doc, status| {
@@ -182,6 +186,11 @@ pub fn run() {
             commands::close_document,
             commands::request_page_sizes,
             commands::get_text_layout,
+            commands::get_page_links,
+            commands::get_preview_rect,
+            commands::resolve_citation,
+            commands::set_library_root,
+            commands::library_status,
             commands::start_indexing,
             commands::search_query,
             commands::get_match_rects,
@@ -214,7 +223,7 @@ mod tests {
         assert_eq!(query.key.scale_milli, 1750);
         assert_eq!(query.key.kind, RenderKind::Page);
         assert_eq!(query.gen, 4);
-        assert_eq!(query.prio, Priority::AdjacentPage);
+        assert_eq!(query.prio, Priority::HoverPreview);
     }
 
     #[test]
@@ -234,6 +243,25 @@ mod tests {
             })
         );
         assert_eq!(query.prio, Priority::VisibleTile);
+    }
+
+    #[test]
+    fn parses_preview_crop_with_hover_priority() {
+        let query = parse_render_query(
+            "pdfr://localhost/render?doc=2&src=4&rot=0&scale=2000&gen=3&kind=preview&tx=20&ty=40&tw=840&th=600",
+        )
+        .expect("valid preview URL");
+        assert_eq!(query.key.kind, RenderKind::Preview);
+        assert_eq!(
+            query.key.tile,
+            Some(TileRect {
+                x: 20,
+                y: 40,
+                w: 840,
+                h: 600,
+            })
+        );
+        assert_eq!(query.prio, Priority::HoverPreview);
     }
 
     #[test]
@@ -258,6 +286,10 @@ mod tests {
         );
         assert!(parse_render_query(
             "pdfr://localhost/render?doc=1&src=0&rot=0&scale=1000&gen=0&kind=tile&tw=0&th=1024"
+        )
+        .is_none());
+        assert!(parse_render_query(
+            "pdfr://localhost/render?doc=1&src=0&rot=0&scale=2000&gen=0&kind=preview"
         )
         .is_none());
         assert!(parse_render_query(

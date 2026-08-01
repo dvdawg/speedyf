@@ -2,7 +2,9 @@
 //! Raw FPDF_* handles never leave this thread; results cross back as owned
 //! bytes/DTOs through responder callbacks.
 
+use super::links;
 use super::pdfium_init;
+use super::preview::{self, CropInput, PREVIEW_SCALE_MILLI};
 use super::queue::JobMeta;
 use super::render;
 use super::save;
@@ -10,11 +12,12 @@ use super::text;
 use super::types::*;
 use super::{EngineShared, Work};
 use crate::errors::{AppError, AppResult};
+use crate::library::{self, LibraryEntry};
 use crate::search::TextLayoutData;
 use pdfium_render::prelude::*;
 use pdfium_render::prelude::{FPDF_DOCUMENT, FPDF_PAGE};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
@@ -22,6 +25,7 @@ use std::time::Instant;
 /// Open page handles kept per document to avoid re-parsing page objects on
 /// every render/text request for the same page.
 const PAGE_HANDLE_CAP: usize = 8;
+const LIBRARY_DOC_CAP: usize = 3;
 
 struct DocState {
     raw: FPDF_DOCUMENT,
@@ -41,6 +45,12 @@ struct WorkerState<'a> {
     pdfium: &'a Pdfium,
     docs: HashMap<DocId, DocState>,
     next_id: DocId,
+    active_main: Option<DocId>,
+    /// Least-recently-used first; these documents exist only for hover cards.
+    library_docs: Vec<DocId>,
+    /// Includes LRU-evicted library handles whose encoded preview can still be
+    /// served from the bounded preview cache until the main document changes.
+    library_session_docs: Vec<DocId>,
 }
 
 impl<'a> WorkerState<'a> {
@@ -82,7 +92,7 @@ impl<'a> WorkerState<'a> {
         Ok(s)
     }
 
-    fn close_doc(&mut self, id: DocId, shared: &EngineShared) {
+    fn close_one(&mut self, id: DocId, shared: &EngineShared, remove_preview: bool) {
         if let Some(doc) = self.docs.remove(&id) {
             for (_, p) in doc.pages {
                 self.bindings.FPDF_ClosePage(p);
@@ -94,8 +104,39 @@ impl<'a> WorkerState<'a> {
         // the PDFium handles and caches are gone.
         shared.page_cache.lock().remove_matching(|k| k.doc == id);
         shared.thumb_cache.lock().remove_matching(|k| k.doc == id);
+        if remove_preview {
+            shared.preview_cache.lock().remove_matching(|k| k.doc == id);
+        }
         shared.search.lock().remove_doc(id);
         shared.text_layouts.lock().remove_doc(id);
+        shared.link_cache.lock().remove_doc(id);
+        self.library_docs.retain(|candidate| *candidate != id);
+    }
+
+    fn close_library_docs(&mut self, shared: &EngineShared) {
+        let docs = std::mem::take(&mut self.library_docs);
+        for id in docs {
+            self.close_one(id, shared, false);
+        }
+        let session_docs = std::mem::take(&mut self.library_session_docs);
+        if !session_docs.is_empty() {
+            shared
+                .preview_cache
+                .lock()
+                .remove_matching(|key| session_docs.contains(&key.doc));
+        }
+    }
+
+    fn close_doc(&mut self, id: DocId, shared: &EngineShared) {
+        let was_main = self.active_main == Some(id);
+        self.close_one(id, shared, true);
+        self.library_session_docs
+            .retain(|candidate| *candidate != id);
+        if was_main {
+            shared.main_epoch.fetch_add(1, Ordering::AcqRel);
+            self.active_main = None;
+            self.close_library_docs(shared);
+        }
     }
 }
 
@@ -121,6 +162,9 @@ pub fn run(shared: Arc<EngineShared>, hints: Vec<PathBuf>) {
         pdfium,
         docs: HashMap::new(),
         next_id: 1,
+        active_main: None,
+        library_docs: Vec::new(),
+        library_session_docs: Vec::new(),
     };
 
     while let Some((meta, work)) = shared.queue.pop_blocking() {
@@ -146,11 +190,14 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         Work::Sizes { respond, .. } => respond(Err(err())),
         Work::Render { respond, .. } => respond(Err(err())),
         Work::TextLayout { respond, .. } => respond(Err(err())),
+        Work::PageLinks { respond, .. } => respond(Err(err())),
+        Work::PreviewRect { respond, .. } => respond(Err(err())),
+        Work::ResolveCitation { respond, .. } => respond(Err(err())),
         Work::MatchRects { respond, .. } => respond(Err(err())),
         Work::Save { respond, .. } => respond(Err(err())),
         Work::FormFields { respond, .. } => respond(Err(err())),
         Work::ImageSize { respond, .. } => respond(Err(err())),
-        Work::Close { .. } | Work::IndexNext { .. } => {}
+        Work::Close { .. } | Work::IndexNext { .. } | Work::LibraryScanNext => {}
     }
 }
 
@@ -160,7 +207,7 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
             path,
             password,
             respond,
-        } => respond(do_open(state, path, password)),
+        } => respond(do_open(state, shared, path, password)),
         Work::Close { doc } => state.close_doc(doc, shared),
         Work::Sizes {
             doc,
@@ -193,7 +240,27 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
             respond(result);
         }
         Work::TextLayout { doc, src, respond } => respond(do_text_layout(state, shared, doc, src)),
+        Work::PageLinks { doc, src, respond } => respond(do_page_links(state, shared, doc, src)),
+        Work::PreviewRect {
+            doc,
+            src,
+            x,
+            y,
+            respond,
+        } => respond(do_preview_rect(state, shared, doc, src, x, y)),
+        Work::ResolveCitation {
+            id,
+            main_epoch,
+            respond,
+        } => {
+            if main_epoch == shared.main_epoch.load(Ordering::Acquire) {
+                respond(do_resolve_citation(state, shared, &id));
+            } else {
+                respond(Ok(None));
+            }
+        }
         Work::IndexNext { doc } => do_index_next(state, shared, meta, doc),
+        Work::LibraryScanNext => do_library_scan_next(state, shared),
         Work::MatchRects {
             doc,
             src,
@@ -218,6 +285,7 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
 
 fn do_open(
     state: &mut WorkerState,
+    shared: &EngineShared,
     path: String,
     password: Option<String>,
 ) -> AppResult<DocMetaDto> {
@@ -229,6 +297,12 @@ fn do_open(
     }
     let id = state.next_id;
     state.next_id += 1;
+
+    // A new user document supersedes every library hover session. The newly
+    // opened raw handle is already validated, so a failed open never tears
+    // down useful preview state from the current document.
+    state.close_library_docs(shared);
+    shared.main_epoch.fetch_add(1, Ordering::AcqRel);
 
     let mut sizes_vec: Vec<Option<[f32; 2]>> = vec![None; page_count as usize];
     let mut sizes = Vec::new();
@@ -266,6 +340,7 @@ fn do_open(
             form_fields: None,
         },
     );
+    state.active_main = Some(id);
     Ok(DocMetaDto {
         doc_id: id,
         path,
@@ -306,6 +381,7 @@ fn do_render(
     // Another request may have populated the cache while this job queued.
     if let Some(hit) = match key.kind {
         RenderKind::Thumb => shared.thumb_cache.lock().get(key),
+        RenderKind::Preview => shared.preview_cache.lock().get(key),
         _ => shared.page_cache.lock().get(key),
     } {
         return Ok(hit);
@@ -330,6 +406,12 @@ fn do_render(
         RenderKind::Thumb => {
             shared
                 .thumb_cache
+                .lock()
+                .insert(key.clone(), Arc::clone(&bytes), cost)
+        }
+        RenderKind::Preview => {
+            shared
+                .preview_cache
                 .lock()
                 .insert(key.clone(), Arc::clone(&bytes), cost)
         }
@@ -410,6 +492,90 @@ fn do_text_layout(
     })
 }
 
+fn do_page_links(
+    state: &mut WorkerState,
+    shared: &EngineShared,
+    doc: DocId,
+    src: u32,
+) -> AppResult<PageLinksDto> {
+    if let Some(cached) = shared.link_cache.lock().get(doc, src) {
+        return Ok(PageLinksDto {
+            src,
+            links: cached.as_ref().clone(),
+        });
+    }
+    let (raw, page_count) = {
+        let document = state.doc(doc)?;
+        if src >= document.page_count {
+            return Err(AppError::Malformed(format!("page {src} is out of range")));
+        }
+        (document.raw, document.page_count)
+    };
+    let layout = ensure_text_layout(state, shared, doc, src)?;
+    let display_size = state.display_size(doc, src)?;
+    let page = state.page_handle(doc, src)?;
+    let text_page = state.bindings.FPDFText_LoadPage(page);
+    let extracted = links::extract_links(
+        state.bindings,
+        raw,
+        page,
+        text_page,
+        display_size,
+        &layout.boxes,
+        page_count,
+    );
+    if !text_page.is_null() {
+        state.bindings.FPDFText_ClosePage(text_page);
+    }
+    let cached = shared.link_cache.lock().insert(doc, src, extracted);
+    Ok(PageLinksDto {
+        src,
+        links: cached.as_ref().clone(),
+    })
+}
+
+fn do_preview_rect(
+    state: &mut WorkerState,
+    shared: &EngineShared,
+    doc: DocId,
+    src: u32,
+    x: Option<f32>,
+    y: Option<f32>,
+) -> AppResult<PreviewSpecDto> {
+    let [page_w, page_h] = state.display_size(doc, src)?;
+    let layout = ensure_text_layout(state, shared, doc, src)?;
+    let rect = preview::crop_rect(&CropInput {
+        page_w_pt: page_w,
+        page_h_pt: page_h,
+        dest_x: x,
+        dest_y: y,
+        runs: &layout.runs,
+    });
+    let tile = preview::rect_to_tile(rect, page_h, PREVIEW_SCALE_MILLI);
+    let [crop_x, crop_y, crop_w, crop_h] = rect;
+    let mut preview_text = layout
+        .runs
+        .iter()
+        .filter(|run| {
+            run.x + run.w > crop_x
+                && run.x < crop_x + crop_w
+                && run.y + run.h > crop_y
+                && run.y < crop_y + crop_h
+        })
+        .map(|run| run.text.trim())
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    preview_text = preview_text.chars().take(400).collect();
+    Ok(PreviewSpecDto {
+        doc_id: doc,
+        src,
+        tile,
+        scale_milli: PREVIEW_SCALE_MILLI,
+        text: preview_text,
+    })
+}
+
 fn do_index_next(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, doc: DocId) {
     let Ok(d) = state.doc(doc) else { return };
     if shared.search.lock().is_truncated(doc) {
@@ -450,6 +616,191 @@ fn do_index_next(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, 
         JobMeta { doc, gen: meta.gen },
         Work::IndexNext { doc },
     );
+}
+
+fn scan_library_candidate(
+    state: &mut WorkerState,
+    candidate: &library::ScanCandidate,
+) -> LibraryEntry {
+    if let Some(entry) = library::entry_from_filename(candidate) {
+        return entry;
+    }
+    let Some(path) = candidate.path.to_str() else {
+        return library::entry_from_first_page(candidate, "");
+    };
+    let raw = match render::open_document(state.bindings, path, None) {
+        Ok(raw) => raw,
+        Err(error) => {
+            log::warn!(
+                "cannot scan library PDF {}: {error}",
+                candidate.path.display()
+            );
+            return library::entry_from_first_page(candidate, "");
+        }
+    };
+    let page = state.bindings.FPDF_LoadPage(raw, 0);
+    let text = if page.is_null() {
+        String::new()
+    } else {
+        let extracted = text::extract_search_text(state.bindings, page);
+        state.bindings.FPDF_ClosePage(page);
+        extracted.raw
+    };
+    state.bindings.FPDF_CloseDocument(raw);
+    library::entry_from_first_page(candidate, &text)
+}
+
+fn do_library_scan_next(state: &mut WorkerState, shared: &EngineShared) {
+    let candidate = shared.library.lock().next_candidate();
+    let Some(candidate) = candidate else {
+        return;
+    };
+    let entry = (!candidate.unchanged).then(|| scan_library_candidate(state, &candidate));
+    shared.library.lock().finish_candidate(&candidate, entry);
+    if shared.library.lock().has_scan_work() {
+        shared.queue.push(
+            Priority::Idle,
+            JobMeta {
+                doc: 0,
+                gen: shared.gens.current(0),
+            },
+            Work::LibraryScanNext,
+        );
+    }
+}
+
+fn open_library_document(
+    state: &mut WorkerState,
+    shared: &EngineShared,
+    path: &Path,
+) -> AppResult<DocId> {
+    if let Some(position) = state.library_docs.iter().position(|id| {
+        state
+            .docs
+            .get(id)
+            .is_some_and(|document| std::path::Path::new(&document.path) == path)
+    }) {
+        let id = state.library_docs.remove(position);
+        state.library_docs.push(id);
+        return Ok(id);
+    }
+
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string_lossy().into_owned());
+    let Some(path_string) = path.to_str() else {
+        return Err(AppError::Io(format!("Could not open {file_name}")));
+    };
+    let raw = match render::open_document(state.bindings, path_string, None) {
+        Ok(raw) => raw,
+        Err(error) => {
+            log::warn!(
+                "could not open citation preview {}: {error}",
+                path.display()
+            );
+            return Err(AppError::Io(format!("Could not open {file_name}")));
+        }
+    };
+    let page_count = state.bindings.FPDF_GetPageCount(raw).max(0) as u32;
+    if page_count == 0 {
+        state.bindings.FPDF_CloseDocument(raw);
+        log::warn!("citation preview has no pages: {}", path.display());
+        return Err(AppError::Malformed(format!("Could not open {file_name}")));
+    }
+    if state.library_docs.len() >= LIBRARY_DOC_CAP {
+        let victim = state.library_docs.remove(0);
+        // Keep any already-rendered PNG alive in the separate bounded preview
+        // cache; this preserves instant memoized re-hover without retaining a
+        // fourth PDFium document handle.
+        state.close_one(victim, shared, false);
+    }
+    let id = state.next_id;
+    state.next_id += 1;
+    state.docs.insert(
+        id,
+        DocState {
+            raw,
+            path: path_string.to_owned(),
+            password: None,
+            page_count,
+            sizes: vec![None; page_count as usize],
+            pages: Vec::new(),
+            index_cursor: 0,
+            form_fields: None,
+        },
+    );
+    state.library_docs.push(id);
+    state.library_session_docs.push(id);
+    Ok(id)
+}
+
+fn do_resolve_citation(
+    state: &mut WorkerState,
+    shared: &EngineShared,
+    id: &CitationIdDto,
+) -> AppResult<Option<ResolvedCitationDto>> {
+    let path = shared
+        .citation_resolver
+        .lock()
+        .as_ref()
+        .and_then(|resolver| resolver.resolve(id));
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let metadata = shared.library.lock().entry_for_path(&path);
+    let doc_id = open_library_document(state, shared, &path)?;
+    let page_count = state.doc(doc_id)?.page_count;
+    let [page_w, page_h] = state.display_size(doc_id, 0)?;
+    let tile = TileRect {
+        x: 0,
+        y: 0,
+        w: (page_w * PREVIEW_SCALE_MILLI as f32 / 1_000.0)
+            .round()
+            .clamp(1.0, 4_096.0) as u32,
+        h: (page_h * PREVIEW_SCALE_MILLI as f32 / 1_000.0)
+            .round()
+            .clamp(1.0, 4_096.0) as u32,
+    };
+    let (text, extracted_title) = ensure_text_layout(state, shared, doc_id, 0)
+        .map(|layout| {
+            let text = layout
+                .runs
+                .iter()
+                .map(|run| run.text.trim())
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ")
+                .chars()
+                .take(400)
+                .collect();
+            let title = layout
+                .runs
+                .iter()
+                .map(|run| run.text.trim())
+                .find(|line| line.chars().count() > 12)
+                .map(|line| line.chars().take(300).collect());
+            (text, title)
+        })
+        .unwrap_or_default();
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string_lossy().into_owned());
+    Ok(Some(ResolvedCitationDto {
+        doc_id,
+        title: metadata.and_then(|entry| entry.title).or(extracted_title),
+        page_count,
+        file_name,
+        path: path.to_string_lossy().into_owned(),
+        preview: PreviewSpecDto {
+            doc_id,
+            src: 0,
+            tile,
+            scale_milli: PREVIEW_SCALE_MILLI,
+            text,
+        },
+    }))
 }
 
 fn emit_progress(shared: &EngineShared, doc: DocId, indexed: u32, total: u32, truncated: bool) {
@@ -745,7 +1096,25 @@ mod tests {
             respond: Box::new(|_| {}),
         };
         assert!(is_generation_cancellable(&render));
+        assert!(!is_generation_cancellable(&Work::PreviewRect {
+            doc: 1,
+            src: 0,
+            x: None,
+            y: None,
+            respond: Box::new(|_| {}),
+        }));
+        assert!(!is_generation_cancellable(&Work::PageLinks {
+            doc: 1,
+            src: 0,
+            respond: Box::new(|_| {}),
+        }));
+        assert!(!is_generation_cancellable(&Work::ResolveCitation {
+            id: CitationIdDto::Doi("10.1000/test".into()),
+            main_epoch: 0,
+            respond: Box::new(|_| {}),
+        }));
         assert!(!is_generation_cancellable(&Work::IndexNext { doc: 1 }));
+        assert!(!is_generation_cancellable(&Work::LibraryScanNext));
         assert!(!is_generation_cancellable(&Work::Close { doc: 1 }));
     }
 

@@ -25,7 +25,8 @@ pub struct ExtractedSearchText {
     pub char_count: u32,
 }
 
-struct DispMapper {
+#[derive(Clone, Copy)]
+pub(crate) struct DispMapper {
     origin: (f64, f64),
     x_axis: (f64, f64),
     y_axis: (f64, f64),
@@ -33,7 +34,12 @@ struct DispMapper {
 }
 
 impl DispMapper {
-    fn new(b: &dyn PdfiumLibraryBindings, page: FPDF_PAGE, disp_w: f32, disp_h: f32) -> Self {
+    pub(crate) fn new(
+        b: &dyn PdfiumLibraryBindings,
+        page: FPDF_PAGE,
+        disp_w: f32,
+        disp_h: f32,
+    ) -> Self {
         let dw = (disp_w as f64 * PREC) as i32;
         let dh = (disp_h as f64 * PREC) as i32;
         let device = |ux: f64, uy: f64| {
@@ -53,14 +59,14 @@ impl DispMapper {
     }
 
     /// user-space point → display-normalized (y-up) point
-    fn map(&self, ux: f64, uy: f64) -> (f32, f32) {
+    pub(crate) fn map(&self, ux: f64, uy: f64) -> (f32, f32) {
         let dx = self.origin.0 + ux * self.x_axis.0 + uy * self.y_axis.0;
         let dy = self.origin.1 + ux * self.x_axis.1 + uy * self.y_axis.1;
         (dx as f32, self.disp_h - dy as f32)
     }
 
     /// user-space char box → display rect (x, y_bottom, w, h), y-up
-    fn map_box(&self, l: f64, r: f64, b_: f64, t: f64) -> (f32, f32, f32, f32) {
+    pub(crate) fn map_box(&self, l: f64, r: f64, b_: f64, t: f64) -> (f32, f32, f32, f32) {
         let (x1, y1) = self.map(l, b_);
         let (x2, y2) = self.map(r, t);
         let x = x1.min(x2);

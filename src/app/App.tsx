@@ -16,6 +16,8 @@ import { viewport } from '../stores/viewportStore';
 import { effectiveTheme, settings } from '../stores/settings';
 import { installShortcuts } from './shortcuts';
 import { clearImagePreviews } from '../features/editor/editorActions';
+import PreviewPopover from '../features/citations/PreviewPopover';
+import { citationStore } from '../features/citations/linkStore';
 
 export default function App() {
   const [dropActive, setDropActive] = createSignal(false);
@@ -24,6 +26,11 @@ export default function App() {
   createEffect(() => {
     document.documentElement.dataset.theme = effectiveTheme();
     void settings.theme; // dependency
+  });
+
+  createEffect(() => {
+    const doc = documentStore.state;
+    citationStore.syncDocument(doc.loaded ? doc.docId : -1);
   });
   onMount(() => {
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
@@ -103,6 +110,7 @@ export default function App() {
 
     // apply persisted low-memory budget at startup
     if (settings.lowMemory) void engine.setLowMemory(true);
+    void citationStore.initializeLibrary();
 
     onCleanup(() => {
       disposed = true;
@@ -138,6 +146,7 @@ export default function App() {
         </div>
       </Show>
       <Modals />
+      <PreviewPopover />
     </div>
   );
 }

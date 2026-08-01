@@ -57,3 +57,12 @@ pub fn init_bindings(hints: &[PathBuf]) -> Result<Box<dyn PdfiumLibraryBindings>
         )),
     }
 }
+
+#[cfg(test)]
+pub fn test_guard() -> std::sync::MutexGuard<'static, ()> {
+    use std::sync::{Mutex, OnceLock};
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}

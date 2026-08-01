@@ -17,6 +17,8 @@ manual QA before a public release.
 - Fit page, fit width, anchored zoom, whole-view rotation, and large-page tiles
 - Virtualized thumbnails and direct page navigation
 - Selectable PDF text and incremental, normalized search
+- Hover previews for internal PDF links and DOI/arXiv citations, with optional
+  local-library first-page previews
 - Highlights, freehand ink, rectangle annotations, text boxes, and notes
 - Annotation select, move, resize, delete, undo, and redo
 - Page drag-reorder, delete, duplicate, rotate, and add blank page
@@ -102,6 +104,11 @@ Search starts returning results from the pages already indexed instead of
 waiting for the whole document. Scanned PDFs without an embedded text layer
 are viewable but not searchable because OCR is not implemented.
 
+Hover a linked citation, section, figure, or table for a destination crop.
+Choose **Citation library…** in the status bar to index a local folder of PDFs;
+recognized DOI/arXiv links can then show the matching paper's first page. The
+library is local-only and can be disabled from the same control.
+
 ## Architecture
 
 ```text
@@ -116,13 +123,15 @@ one dedicated engine thread (sole owner of every PDFium handle)
 
 The engine boundary is deliberately message-shaped:
 
-1. Visible pages and tiles outrank thumbnails, text extraction, and prefetch.
+1. Visible pages and tiles outrank hover previews; hover previews outrank
+   thumbnails, text extraction, prefetch, and idle library scanning.
 2. A zoom bucket change increments the document generation; queued work from
    older generations is skipped before PDFium touches it, while PDFium's
    progressive-render pause callback aborts a stale render already in flight.
-3. Page/thumbnail caches charge the encoded PNG bytes they actually retain and
-   use stale-first O(log n) LRU eviction. Mounted-page virtualization separately
-   bounds decoded webview images.
+3. Page, thumbnail, and hover-preview caches charge the encoded PNG bytes they
+   actually retain and use stale-first O(log n) LRU eviction. Hover traffic has
+   a separate cache, so it cannot evict pages being read. Mounted-page
+   virtualization separately bounds decoded webview images.
 4. Rust serves encoded PNG bytes through `pdfr://`; no base64, JSON pixels, or
    PDF buffers are held in frontend state.
 5. The frontend mounts only visible pages plus an overscan window. Pages over
@@ -204,10 +213,12 @@ performance model.
 - `src-tauri/src/engine/` — PDFium worker, queue, rendering, text, and save
 - `src-tauri/src/cache/` — encoded-byte-cost, stale-first LRU implementation
 - `src-tauri/src/search/` — incremental NFKC search index and source offsets
+- `src-tauri/src/library/` — contained local-library index and citation resolver
 - `src-tauri/src/lib.rs` — Tauri app, custom protocol, and command registration
 - `src/features/viewer/` — virtualization, progressive raster, tiles, text layer
 - `src/features/document/` — document model, undo/redo, EditPlan, workflows
 - `src/features/annotations/` — pointer mapping and vector edit overlays
+- `src/features/citations/` — link hotspots, dwell state machine, and popover
 - `src/lib/coordinates/` — the only page/PDF/CSS rotation conversion layer
 - `src/lib/transport/engine.ts` — the frontend’s typed engine boundary
 - `docs/` — architecture, performance, security, and implementation plan
@@ -217,6 +228,9 @@ performance model.
 SpeedyF is a focused editor, not a full PDF authoring or forensic tool:
 
 - Existing embedded text cannot be rewritten; text boxes add new text objects.
+- Citation previews require real PDF link annotations or explicit DOI/arXiv
+  text. External-paper previews resolve only against the configured local
+  library; SpeedyF performs no metadata lookup or download.
 - There is no OCR, signature creation/validation, encryption-preserving save,
   or secure redaction. Drawing an opaque shape does **not** remove underlying
   text or image data.

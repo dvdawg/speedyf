@@ -26,6 +26,47 @@ export interface PageTextLayout {
   charCount: number;
 }
 
+export type CitationId = { scheme: 'doi'; value: string } | { scheme: 'arXiv'; value: string };
+
+export type LinkTarget =
+  | { kind: 'internal'; page: number; x: number | null; y: number | null }
+  | { kind: 'uri'; uri: string; citation: CitationId | null }
+  | { kind: 'unknown' };
+
+export interface PageLink {
+  rect: [number, number, number, number];
+  target: LinkTarget;
+}
+
+export interface PageLinks {
+  src: number;
+  links: PageLink[];
+}
+
+export interface PreviewSpec {
+  docId: number;
+  src: number;
+  tile: { x: number; y: number; w: number; h: number };
+  scaleMilli: number;
+  text: string;
+}
+
+export interface ResolvedCitation {
+  docId: number;
+  title: string | null;
+  pageCount: number;
+  fileName: string;
+  path: string;
+  preview: PreviewSpec;
+}
+
+export interface LibraryStatus {
+  root: string | null;
+  indexed: number;
+  total: number;
+  scanning: boolean;
+}
+
 export interface MatchDto {
   start: number;
   len: number;

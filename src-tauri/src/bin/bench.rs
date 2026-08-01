@@ -2,8 +2,8 @@
 
 use serde::Serialize;
 use speedyf_lib::engine::types::{
-    DocMetaDto, EditPlan, FormFieldDto, PageTextDto, PlanPage, Priority, RenderKey, RenderKind,
-    SaveResultDto, TileRect,
+    DocMetaDto, EditPlan, FormFieldDto, PageLinksDto, PageTextDto, PlanPage, PreviewSpecDto,
+    Priority, RenderKey, RenderKind, SaveResultDto, TileRect,
 };
 use speedyf_lib::engine::{EngineHandle, Work};
 use speedyf_lib::errors::AppError;
@@ -80,6 +80,12 @@ struct BenchMetrics {
     text_pages_measured: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     text_extract_ms_per_page: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    link_pages_measured: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    link_enumeration_ms_per_page: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preview_latency_ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     first_search_result_ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -224,7 +230,7 @@ fn run() -> Result<(), String> {
 
     let corpus = discover_corpus(&config.corpus_dir)?;
     let pdfium_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pdfium");
-    let engine = EngineHandle::start(vec![pdfium_dir], false);
+    let engine = EngineHandle::start(vec![pdfium_dir], false, None);
     let mut reports = Vec::with_capacity(CATEGORIES.len());
 
     for category in CATEGORIES {
@@ -495,6 +501,16 @@ fn benchmark_valid(
         metrics.page_cache_bytes = Some(cache_after.page_cache_bytes);
         metrics.page_cache_budget = Some(cache_after.page_cache_budget);
         if category == "text-1000p" {
+            match measure_citation_preview(engine, &meta) {
+                Ok((pages, per_page_ms, preview_ms)) => {
+                    metrics.link_pages_measured = Some(pages);
+                    metrics.link_enumeration_ms_per_page = Some(per_page_ms);
+                    metrics.preview_latency_ms = Some(preview_ms);
+                }
+                Err(error) => notes.push(format!(
+                    "citation preview metrics omitted because they could not be measured: {error}"
+                )),
+            }
             let (pages, scroll_hits, scroll_lookups) = exercise_scroll_cache(engine, &meta)
                 .map_err(|error| StageError::new("scroll-cache", error))?;
             metrics.scroll_cache_pages = Some(pages);
@@ -640,7 +656,7 @@ fn benchmark_valid(
             let rss_before = peak_rss_bytes();
             let started = Instant::now();
             let save_result: SaveResultDto = engine
-                .call(Priority::VisiblePage, fresh_doc, |respond| Work::Save {
+                .call_blocking(Priority::VisiblePage, fresh_doc, |respond| Work::Save {
                     doc: fresh_doc,
                     plan,
                     dest,
@@ -668,7 +684,7 @@ fn benchmark_valid(
 
 fn open_document(engine: &EngineHandle, path: &Path) -> Result<DocMetaDto, AppError> {
     let path = path.to_string_lossy().into_owned();
-    engine.call(Priority::VisiblePage, 0, |respond| Work::Open {
+    engine.call_blocking(Priority::VisiblePage, 0, |respond| Work::Open {
         path,
         password: None,
         respond,
@@ -685,7 +701,7 @@ fn render(
     priority: Priority,
 ) -> Result<Arc<Vec<u8>>, AppError> {
     let doc = key.doc;
-    engine.call(priority, doc, |respond| Work::Render { key, respond })
+    engine.call_blocking(priority, doc, |respond| Work::Render { key, respond })
 }
 
 fn measure_renders(
@@ -703,7 +719,7 @@ fn measure_renders(
 }
 
 fn extract_text(engine: &EngineHandle, doc: u32, src: u32) -> Result<PageTextDto, AppError> {
-    engine.call(Priority::TextExtract, doc, |respond| Work::TextLayout {
+    engine.call_blocking(Priority::TextExtract, doc, |respond| Work::TextLayout {
         doc,
         src,
         respond,
@@ -711,10 +727,58 @@ fn extract_text(engine: &EngineHandle, doc: u32, src: u32) -> Result<PageTextDto
 }
 
 fn form_fields(engine: &EngineHandle, doc: u32) -> Result<Vec<FormFieldDto>, AppError> {
-    engine.call(Priority::AdjacentPage, doc, |respond| Work::FormFields {
+    engine.call_blocking(Priority::AdjacentPage, doc, |respond| Work::FormFields {
         doc,
         respond,
     })
+}
+
+fn measure_citation_preview(
+    engine: &EngineHandle,
+    meta: &DocMetaDto,
+) -> Result<(u32, f64, f64), AppError> {
+    let pages = meta.page_count.min(20);
+    if pages == 0 {
+        return Err(AppError::Malformed("document has no pages".into()));
+    }
+    let links_started = Instant::now();
+    for src in 0..pages {
+        let links: PageLinksDto =
+            engine.call_blocking(Priority::AdjacentPage, meta.doc_id, |respond| {
+                Work::PageLinks {
+                    doc: meta.doc_id,
+                    src,
+                    respond,
+                }
+            })?;
+        std::hint::black_box(links.links.len());
+    }
+    let per_page_ms = elapsed_ms(links_started) / pages as f64;
+
+    let preview_started = Instant::now();
+    let preview: PreviewSpecDto =
+        engine.call_blocking(Priority::HoverPreview, meta.doc_id, |respond| {
+            Work::PreviewRect {
+                doc: meta.doc_id,
+                src: 0,
+                x: None,
+                y: None,
+                respond,
+            }
+        })?;
+    render(
+        engine,
+        RenderKey {
+            doc: preview.doc_id,
+            src: preview.src,
+            rot: 0,
+            scale_milli: preview.scale_milli,
+            kind: RenderKind::Preview,
+            tile: Some(preview.tile),
+        },
+        Priority::HoverPreview,
+    )?;
+    Ok((pages, per_page_ms, elapsed_ms(preview_started)))
 }
 
 fn exercise_stale_jobs(engine: &EngineHandle, meta: &DocMetaDto) -> Result<u64, String> {
@@ -852,12 +916,13 @@ fn collect_page_sizes(engine: &EngineHandle, meta: &DocMetaDto) -> Result<Vec<[f
     let mut sizes: Vec<[f32; 2]> = meta.sizes.iter().map(|size| [size[0], size[1]]).collect();
     while sizes.len() < meta.page_count as usize {
         let from = sizes.len() as u32;
-        let page_sizes = engine.call(Priority::Prefetch, meta.doc_id, |respond| Work::Sizes {
-            doc: meta.doc_id,
-            from,
-            count: 64,
-            respond,
-        })?;
+        let page_sizes =
+            engine.call_blocking(Priority::Prefetch, meta.doc_id, |respond| Work::Sizes {
+                doc: meta.doc_id,
+                from,
+                count: 64,
+                respond,
+            })?;
         if page_sizes.sizes.is_empty() {
             break;
         }

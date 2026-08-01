@@ -451,10 +451,201 @@ textarea:focus-visible {
   outline: 1.5px solid rgba(200, 90, 0, 0.9);
 }
 
+/* ---------- citation links + hover previews ---------- */
+.citation-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.citation-layer.is-disabled {
+  pointer-events: none;
+}
+
+.citation-hotspot {
+  position: absolute;
+  pointer-events: auto;
+  appearance: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  border-radius: 1px;
+  background: transparent;
+  color: transparent;
+  cursor: pointer;
+}
+
+.citation-layer.is-disabled .citation-hotspot {
+  pointer-events: none;
+}
+
+.citation-hotspot:hover,
+.citation-hotspot:focus-visible {
+  border-bottom-color: color-mix(in srgb, var(--accent) 75%, transparent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.citation-hotspot:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.citation-popover {
+  position: fixed;
+  z-index: 45;
+  width: min(420px, calc(100vw - 16px));
+  max-height: min(320px, calc(100vh - 16px));
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  color: var(--text);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.28);
+}
+
+.citation-preview-action {
+  display: block;
+  width: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 7px;
+  background: var(--bg-inset);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.citation-preview-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.citation-preview-skeleton {
+  width: 100%;
+  height: 220px;
+  background: linear-gradient(
+      100deg,
+      transparent 30%,
+      color-mix(in srgb, var(--text) 8%, transparent) 50%,
+      transparent 70%
+    )
+    var(--bg-inset);
+  background-size: 300% 100%;
+  animation: shimmer 1.4s infinite linear;
+}
+
+.citation-preview-skeleton.is-popover {
+  border-radius: 7px;
+  height: 260px;
+}
+
+.citation-preview-image {
+  display: block;
+  width: 100%;
+  max-height: 232px;
+  object-fit: contain;
+  background: white;
+  opacity: 0;
+}
+
+.citation-preview-image.is-loaded {
+  opacity: 1;
+}
+
+.citation-preview-image.is-full-page {
+  height: 220px;
+}
+
+.citation-preview-caption {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-height: 38px;
+  padding: 7px 9px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.citation-preview-caption.is-compact {
+  gap: 4px;
+  min-height: 22px;
+  padding: 2px 6px;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.citation-preview-caption strong {
+  overflow: hidden;
+  flex: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.citation-preview-caption span {
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.citation-preview-text,
+.citation-metadata-card {
+  min-height: 180px;
+  padding: 18px;
+  overflow: auto;
+  background: var(--bg-inset);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.citation-metadata-card {
+  display: flex;
+  min-height: 220px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 10px;
+  border-radius: 7px;
+}
+
+.citation-uri {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: var(--text-dim);
+}
+
+.citation-library-action {
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.citation-library-action:hover {
+  border-color: var(--accent);
+}
+
+.citation-preview-error {
+  color: var(--warn);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .citation-preview-skeleton {
+    animation: none;
+  }
+}
+
 /* ---------- annotations ---------- */
 .annot-layer {
   position: absolute;
   inset: 0;
+  z-index: 3;
   pointer-events: none;
 }
 
@@ -859,6 +1050,26 @@ textarea:focus-visible {
   border: 1px solid var(--border);
   border-radius: 4px;
   font: inherit;
+}
+
+.sb-button,
+.sb-clear {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  cursor: pointer;
+}
+
+.sb-button:hover,
+.sb-clear:hover {
+  color: var(--text);
+}
+
+.sb-clear {
+  width: 16px;
+  font-size: 14px;
 }
 
 /* ---------- empty state / drop ---------- */

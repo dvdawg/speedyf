@@ -71,6 +71,8 @@ For each valid category, the report contains:
 - cache-hit count/rate from exact render replays plus encoded cache occupancy;
 - for `text-1000p`, a 160-page 2× forward sweep followed by a reverse
   scroll-back pass, with actual hit count/rate;
+- for `text-1000p`, structured-link enumeration time per page (up to 20 pages)
+  and end-to-end synthetic destination crop plus preview-render latency;
 - stale queued tasks skipped after an explicit generation bump; and
 - for `cad-page`, a generation bump during an uncached whole-page render,
   whether PDFium aborted it as stale, and time until a new visible tile

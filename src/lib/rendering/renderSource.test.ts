@@ -38,4 +38,14 @@ describe('buildRenderUrl', () => {
     const url = buildRenderUrl({ ...spec, kind: 'thumb', scaleMilli: 200 }, true);
     expect(url).toBe('http://pdfr.localhost/render?doc=3&src=12&rot=90&scale=200&gen=7&kind=thumb');
   });
+
+  it('encodes a preview crop', () => {
+    const url = buildRenderUrl(
+      { ...spec, kind: 'preview', scaleMilli: 2000, tile: { x: 20, y: 40, w: 840, h: 600 } },
+      false
+    );
+    expect(url).toBe(
+      'pdfr://localhost/render?doc=3&src=12&rot=90&scale=2000&gen=7&kind=preview&tx=20&ty=40&tw=840&th=600'
+    );
+  });
 });

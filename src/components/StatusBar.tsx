@@ -5,6 +5,7 @@ import { viewport } from '../stores/viewportStore';
 import { effectiveTheme, settings, updateSettings } from '../stores/settings';
 import { engine } from '../lib/transport/engine';
 import type { EngineMetrics } from '../lib/transport/engine';
+import { citationStore } from '../features/citations/linkStore';
 
 export default function StatusBar() {
   const doc = documentStore.state;
@@ -27,9 +28,11 @@ export default function StatusBar() {
     };
     void refresh();
     const timer = window.setInterval(() => void refresh(), 1_500);
+    const libraryTimer = window.setInterval(() => void citationStore.refreshLibraryStatus(), 1_200);
     onCleanup(() => {
       disposed = true;
       window.clearInterval(timer);
+      window.clearInterval(libraryTimer);
     });
   });
 
@@ -54,6 +57,17 @@ export default function StatusBar() {
         <Show when={doc.loaded && !s.indexingDone && s.total > 0}>
           <span class="sb-dim">
             Indexing text {s.indexed}/{s.total}
+          </span>
+        </Show>
+        <Show when={citationStore.state.library.scanning}>
+          <span class="sb-dim">
+            Citation library {citationStore.state.library.indexed}/
+            {citationStore.state.library.total}
+          </span>
+        </Show>
+        <Show when={citationStore.state.libraryError}>
+          <span class="sb-warn" title={citationStore.state.libraryError ?? undefined}>
+            citation library error
           </span>
         </Show>
         <Show when={s.truncated}>
@@ -98,6 +112,25 @@ export default function StatusBar() {
           />
           low&nbsp;memory
         </label>
+        <button
+          type="button"
+          class="sb-control sb-button"
+          title={citationStore.state.library.root ?? 'Choose a folder of local PDF papers'}
+          onClick={() => void citationStore.chooseLibraryFolder()}
+        >
+          Citation library…
+        </button>
+        <Show when={citationStore.state.library.root}>
+          <button
+            type="button"
+            class="sb-clear"
+            title="Disable citation library"
+            aria-label="Disable citation library"
+            onClick={() => void citationStore.disableLibrary()}
+          >
+            ×
+          </button>
+        </Show>
         <label class="sb-control" title="Color theme">
           <span class="sr-only">Theme</span>
           <select

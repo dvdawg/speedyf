@@ -7,8 +7,13 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type {
   DocMeta,
+  CitationId,
   FormFieldInfo,
+  LibraryStatus,
+  PageLinks,
   PageTextLayout,
+  PreviewSpec,
+  ResolvedCitation,
   SaveResult,
   SearchQueryResult,
 } from '../../types/engine';
@@ -30,6 +35,8 @@ export interface EngineMetrics {
   pageCacheBudget: number;
   thumbCacheBytes: number;
   thumbCacheBudget: number;
+  previewCacheBytes: number;
+  previewCacheBudget: number;
   textBytes: number;
   textBudget: number;
   pagesIndexed: number;
@@ -45,6 +52,16 @@ export interface EngineApi {
     count: number
   ): Promise<{ from: number; sizes: [number, number, number, number, number][] }>;
   getTextLayout(docId: number, src: number): Promise<PageTextLayout>;
+  getPageLinks(docId: number, src: number): Promise<PageLinks>;
+  getPreviewRect(
+    docId: number,
+    src: number,
+    x: number | null,
+    y: number | null
+  ): Promise<PreviewSpec>;
+  resolveCitation(id: CitationId): Promise<ResolvedCitation | null>;
+  setLibraryRoot(path: string | null): Promise<void>;
+  libraryStatus(): Promise<LibraryStatus>;
   startIndexing(docId: number): Promise<void>;
   searchQuery(docId: number, query: string, caseSensitive: boolean): Promise<SearchQueryResult>;
   getMatchRects(
@@ -67,6 +84,11 @@ export const engine: EngineApi = {
   close: (docId) => invoke('close_document', { docId }),
   requestPageSizes: (docId, from, count) => invoke('request_page_sizes', { docId, from, count }),
   getTextLayout: (docId, src) => invoke('get_text_layout', { docId, src }),
+  getPageLinks: (docId, src) => invoke('get_page_links', { docId, src }),
+  getPreviewRect: (docId, src, x, y) => invoke('get_preview_rect', { docId, src, x, y }),
+  resolveCitation: (id) => invoke('resolve_citation', { id }),
+  setLibraryRoot: (path) => invoke('set_library_root', { path }),
+  libraryStatus: () => invoke('library_status'),
   startIndexing: (docId) => invoke('start_indexing', { docId }),
   searchQuery: (docId, query, caseSensitive) =>
     invoke('search_query', { docId, query, caseSensitive }),

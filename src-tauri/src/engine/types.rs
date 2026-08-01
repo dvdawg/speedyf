@@ -11,12 +11,13 @@ pub type DocId = u32;
 pub enum Priority {
     VisiblePage = 0,
     VisibleTile = 1,
-    AdjacentPage = 2,
-    VisibleThumb = 3,
-    NearThumb = 4,
-    TextExtract = 5,
-    Prefetch = 6,
-    Idle = 7,
+    HoverPreview = 2,
+    AdjacentPage = 3,
+    VisibleThumb = 4,
+    NearThumb = 5,
+    TextExtract = 6,
+    Prefetch = 7,
+    Idle = 8,
 }
 
 impl Priority {
@@ -24,11 +25,12 @@ impl Priority {
         match v {
             0 => Priority::VisiblePage,
             1 => Priority::VisibleTile,
-            2 => Priority::AdjacentPage,
-            3 => Priority::VisibleThumb,
-            4 => Priority::NearThumb,
-            5 => Priority::TextExtract,
-            6 => Priority::Prefetch,
+            2 => Priority::HoverPreview,
+            3 => Priority::AdjacentPage,
+            4 => Priority::VisibleThumb,
+            5 => Priority::NearThumb,
+            6 => Priority::TextExtract,
+            7 => Priority::Prefetch,
             _ => Priority::Idle,
         }
     }
@@ -47,6 +49,7 @@ pub enum RenderKind {
     Page,
     Thumb,
     Tile,
+    Preview,
 }
 
 /// Cache key for one rendered artifact.
@@ -101,6 +104,76 @@ pub struct PageTextDto {
     pub src: u32,
     pub runs: Vec<TextRun>,
     pub char_count: u32,
+}
+
+/// Where a real PDF link points. Internal destinations are resolved while the
+/// source page is enumerated, keeping hover-time work to a single crop request.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum LinkTarget {
+    Internal {
+        page: u32,
+        x: Option<f32>,
+        y: Option<f32>,
+    },
+    Uri {
+        uri: String,
+        citation: Option<CitationIdDto>,
+    },
+    Unknown,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
+#[serde(tag = "scheme", content = "value", rename_all = "camelCase")]
+pub enum CitationIdDto {
+    Doi(String),
+    ArXiv(String),
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkDto {
+    /// Display-normalized page space, y-up: [x, y, w, h].
+    pub rect: [f32; 4],
+    pub target: LinkTarget,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PageLinksDto {
+    pub src: u32,
+    pub links: Vec<LinkDto>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewSpecDto {
+    pub doc_id: DocId,
+    pub src: u32,
+    pub tile: TileRect,
+    pub scale_milli: u32,
+    pub text: String,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedCitationDto {
+    pub doc_id: DocId,
+    pub title: Option<String>,
+    pub page_count: u32,
+    pub file_name: String,
+    /// Canonical, root-contained path used by the normal guarded open flow.
+    pub path: String,
+    pub preview: PreviewSpecDto,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryStatusDto {
+    pub root: Option<String>,
+    pub indexed: u32,
+    pub total: u32,
+    pub scanning: bool,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -165,6 +238,8 @@ pub struct EngineMetricsDto {
     pub page_cache_budget: u64,
     pub thumb_cache_bytes: u64,
     pub thumb_cache_budget: u64,
+    pub preview_cache_bytes: u64,
+    pub preview_cache_budget: u64,
     pub text_bytes: u64,
     pub text_budget: u64,
     pub pages_indexed: u64,

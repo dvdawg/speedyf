@@ -390,14 +390,6 @@ mod tests {
     use super::*;
     use crate::engine::pdfium_init;
     use crate::engine::types::{PlanAnnot, PlanPage, PlanText, PointDto, QuadDto};
-    use std::sync::{Mutex, MutexGuard, OnceLock};
-
-    fn pdfium_test_guard() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
 
     fn test_pdfium() -> Pdfium {
         Pdfium::new(pdfium_init::init_bindings(&[]).expect("load bundled PDFium"))
@@ -477,7 +469,7 @@ mod tests {
 
     #[test]
     fn materializes_page_order_duplicates_blanks_and_rotation_deltas() {
-        let _guard = pdfium_test_guard();
+        let _guard = pdfium_init::test_guard();
         let pdfium = test_pdfium();
         let dir = tempfile::tempdir().expect("temp dir");
         let source = dir.path().join("source.pdf");
@@ -525,7 +517,7 @@ mod tests {
 
     #[test]
     fn materializes_pdf_annotations_added_text_and_flattened_ink_paths() {
-        let _guard = pdfium_test_guard();
+        let _guard = pdfium_init::test_guard();
         let pdfium = test_pdfium();
         let dir = tempfile::tempdir().expect("temp dir");
         let source = dir.path().join("source.pdf");

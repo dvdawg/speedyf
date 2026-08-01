@@ -4,7 +4,7 @@
 import type { Rotation } from '../../types/model';
 import type { TileRect } from '../coordinates/coords';
 
-export type RenderKind = 'page' | 'thumb' | 'tile';
+export type RenderKind = 'page' | 'thumb' | 'tile' | 'preview';
 
 export interface RenderUrlSpec {
   docId: number;
@@ -28,7 +28,7 @@ export function buildRenderUrl(spec: RenderUrlSpec, isWindows: boolean): string 
     `${protocolBase('pdfr', isWindows)}/render` +
     `?doc=${spec.docId}&src=${spec.srcIndex}&rot=${spec.rotation}` +
     `&scale=${spec.scaleMilli}&gen=${spec.generation}&kind=${spec.kind}`;
-  if (spec.kind === 'tile' && spec.tile) {
+  if ((spec.kind === 'tile' || spec.kind === 'preview') && spec.tile) {
     url += `&tx=${spec.tile.x}&ty=${spec.tile.y}&tw=${spec.tile.w}&th=${spec.tile.h}`;
   }
   return url;
