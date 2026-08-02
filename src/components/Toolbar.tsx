@@ -1,6 +1,7 @@
 import { createSignal, Show } from 'solid-js';
 import IconButton from './IconButton';
 import {
+  IconBack,
   IconChevronDown,
   IconChevronUp,
   IconEdit,
@@ -36,6 +37,7 @@ import {
   updateActiveStyle,
 } from '../features/annotations/toolStore';
 import { addImageFromDialog } from '../features/editor/editorActions';
+import { citationStore, goBackFromInternalTarget } from '../features/citations/linkStore';
 
 export default function Toolbar() {
   const maxSavePages = 65_535;
@@ -112,6 +114,13 @@ export default function Toolbar() {
       </div>
 
       <div class="tb-group">
+        <IconButton
+          label="Back to previous view"
+          disabled={!loaded() || citationStore.state.navigationDepth === 0}
+          onClick={() => goBackFromInternalTarget()}
+        >
+          <IconBack />
+        </IconButton>
         <IconButton
           label="Previous page (Page Up)"
           disabled={!loaded() || viewport.currentPage <= 0}

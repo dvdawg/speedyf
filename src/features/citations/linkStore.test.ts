@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { HoverMachine } from './linkStore';
+import { HoverMachine, ReferenceNavigationHistory } from './linkStore';
 
 interface Request {
   key: string;
@@ -90,5 +90,37 @@ describe('HoverMachine', () => {
     expect(machine.snapshot().phase).toBe('shown');
     expect(machine.snapshot().result).toBe('preview-a');
     expect(loader).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ReferenceNavigationHistory', () => {
+  it('unwinds chained reference jumps in reverse order', () => {
+    const history = new ReferenceNavigationHistory();
+    history.push({ docId: 7, scrollTop: 120, scrollLeft: 4 });
+    history.push({ docId: 7, scrollTop: 980, scrollLeft: 0 });
+
+    expect(history.depth).toBe(2);
+    expect(history.pop(7)).toEqual({ docId: 7, scrollTop: 980, scrollLeft: 0 });
+    expect(history.pop(7)).toEqual({ docId: 7, scrollTop: 120, scrollLeft: 4 });
+    expect(history.depth).toBe(0);
+  });
+
+  it('does not restore positions belonging to a different document', () => {
+    const history = new ReferenceNavigationHistory();
+    history.push({ docId: 2, scrollTop: 300, scrollLeft: 10 });
+
+    expect(history.pop(3)).toBeUndefined();
+    expect(history.depth).toBe(0);
+  });
+
+  it('bounds retained reading positions', () => {
+    const history = new ReferenceNavigationHistory(2);
+    history.push({ docId: 1, scrollTop: 10, scrollLeft: 0 });
+    history.push({ docId: 1, scrollTop: 20, scrollLeft: 0 });
+    history.push({ docId: 1, scrollTop: 30, scrollLeft: 0 });
+
+    expect(history.depth).toBe(2);
+    expect(history.pop(1)?.scrollTop).toBe(30);
+    expect(history.pop(1)?.scrollTop).toBe(20);
   });
 });

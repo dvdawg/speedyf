@@ -164,6 +164,13 @@ export default function Viewer() {
   createEffect(() => {
     const req = viewport.scrollRequest;
     if (!req || !doc.loaded) return;
+    if (req.kind === 'position') {
+      requestAnimationFrame(() => {
+        scroller.scrollTop = req.top;
+        scroller.scrollLeft = req.left;
+      });
+      return;
+    }
     const l = layout();
     const top = l.tops[req.page];
     if (top === undefined) return;

@@ -50,6 +50,13 @@ export const IconRedo = () =>
       <path d="M10.5 3.5l3 3-3 3" />
     </>
   );
+export const IconBack = () =>
+  base(
+    <>
+      <path d="M3 8h10.5" />
+      <path d="M6.5 4.5L3 8l3.5 3.5" />
+    </>
+  );
 export const IconPrev = () =>
   base(
     <path

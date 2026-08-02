@@ -6,6 +6,13 @@ import { documentStore } from '../document/documentStore';
 import { openPath } from '../document/controller';
 import { citationLabel } from './citationLabel';
 import { citationStore, navigateInternalTarget, type HoverPreview } from './linkStore';
+import {
+  positionPreviewPopover,
+  previewContentSize,
+  previewPopoverSize,
+  previewRasterStyle,
+  type PreviewPopoverVariant,
+} from './previewLayout';
 
 function urlFor(preview: PreviewSpec): string {
   return renderUrl({
@@ -22,14 +29,15 @@ function urlFor(preview: PreviewSpec): string {
 function RasterCard(props: {
   preview: PreviewSpec;
   alt: string;
-  caption: string;
+  caption?: string;
   detail?: string;
   pageCount?: number;
   fullPage?: boolean;
-  compactCaption?: boolean;
+  pageNumber?: number;
   activate: () => void;
 }) {
   const url = createMemo(() => urlFor(props.preview));
+  const rasterStyle = createMemo(() => previewRasterStyle(props.preview));
   const [loaded, setLoaded] = createSignal(false);
   const [failed, setFailed] = createSignal(false);
   let rasterTimeout: number | undefined;
@@ -48,42 +56,60 @@ function RasterCard(props: {
   const fallback = () => props.preview.text.trim() || props.detail || 'Preview unavailable.';
 
   return (
-    <button type="button" class="citation-preview-action" onClick={() => props.activate()}>
-      <Show when={!failed()} fallback={<div class="citation-preview-text">{fallback()}</div>}>
-        <Show when={!loaded()}>
-          <div class="citation-preview-skeleton" aria-label="Loading preview" />
-        </Show>
-        <img
-          class="citation-preview-image"
-          classList={{ 'is-full-page': props.fullPage === true, 'is-loaded': loaded() }}
-          src={url()}
-          alt={props.alt}
-          draggable={false}
-          onLoad={() => {
-            clearRasterTimeout();
-            setLoaded(true);
-          }}
-          onError={() => {
-            clearRasterTimeout();
-            setFailed(true);
-            setLoaded(false);
-          }}
-        />
-      </Show>
+    <button
+      type="button"
+      class="citation-preview-action"
+      classList={{ 'is-internal': props.pageNumber !== undefined }}
+      onClick={() => props.activate()}
+    >
       <div
-        class="citation-preview-caption"
-        classList={{ 'is-compact': props.compactCaption === true }}
+        class="citation-preview-viewport"
+        classList={{ 'is-scrollable': props.pageNumber !== undefined }}
       >
-        <strong>{props.caption}</strong>
-        <Show when={props.detail}>
-          <span>{props.detail}</span>
-        </Show>
-        <Show when={props.pageCount !== undefined}>
-          <span>
-            {props.pageCount} {props.pageCount === 1 ? 'page' : 'pages'}
-          </span>
+        <Show when={!failed()} fallback={<div class="citation-preview-text">{fallback()}</div>}>
+          <Show when={!loaded()}>
+            <div
+              class="citation-preview-skeleton is-raster-placeholder"
+              aria-label="Loading preview"
+            />
+          </Show>
+          <img
+            class="citation-preview-image"
+            classList={{ 'is-full-page': props.fullPage === true, 'is-loaded': loaded() }}
+            style={props.pageNumber !== undefined ? rasterStyle() : undefined}
+            width={props.preview.tile.w}
+            height={props.preview.tile.h}
+            src={url()}
+            alt={props.alt}
+            draggable={false}
+            onLoad={() => {
+              clearRasterTimeout();
+              setLoaded(true);
+            }}
+            onError={() => {
+              clearRasterTimeout();
+              setFailed(true);
+              setLoaded(false);
+            }}
+          />
         </Show>
       </div>
+      <Show when={props.pageNumber !== undefined}>
+        <div class="citation-preview-page-number">Page {props.pageNumber}</div>
+      </Show>
+      <Show when={props.caption !== undefined}>
+        <div class="citation-preview-caption">
+          <strong>{props.caption}</strong>
+          <Show when={props.detail}>
+            <span>{props.detail}</span>
+          </Show>
+          <Show when={props.pageCount !== undefined}>
+            <span>
+              {props.pageCount} {props.pageCount === 1 ? 'page' : 'pages'}
+            </span>
+          </Show>
+        </div>
+      </Show>
     </button>
   );
 }
@@ -96,8 +122,7 @@ function PreviewContent(props: { result: HoverPreview }) {
           <RasterCard
             preview={result().preview}
             alt={`Preview of page ${result().page + 1}`}
-            caption={`Page ${result().page + 1}`}
-            compactCaption
+            pageNumber={result().page + 1}
             activate={() => {
               navigateInternalTarget({
                 kind: 'internal',
@@ -180,27 +205,39 @@ export default function PreviewPopover() {
     onCleanup(() => window.removeEventListener('resize', resize));
   });
 
-  const position = createMemo(() => {
-    const anchor = hover().request?.anchor;
-    if (!anchor) return { left: '8px', top: '8px' };
-    const { width, height } = viewportSize();
-    const popoverW = Math.min(420, Math.max(280, width - 16));
-    const popoverH = Math.min(320, Math.max(180, height - 16));
-    let left = anchor.right + 10;
-    if (left + popoverW > width - 8) left = anchor.left - popoverW - 10;
-    left = Math.max(8, Math.min(left, width - popoverW - 8));
-    let top = anchor.top;
-    if (top + popoverH > height - 8) top = anchor.bottom - popoverH;
-    top = Math.max(8, Math.min(top, height - popoverH - 8));
-    return { left: `${left}px`, top: `${top}px` };
-  });
+  const variant = (): PreviewPopoverVariant =>
+    hover().request?.target.kind === 'internal' ? 'internal' : 'default';
+
+  const internalContentSize = () => {
+    const result = hover().result;
+    return result?.kind === 'internal' ? previewContentSize(result.preview) : undefined;
+  };
+
+  const popoverSize = createMemo(() =>
+    previewPopoverSize(viewportSize(), variant(), internalContentSize())
+  );
+
+  const position = createMemo(() =>
+    positionPreviewPopover(
+      hover().request?.anchor,
+      viewportSize(),
+      variant(),
+      internalContentSize()
+    )
+  );
+
+  const style = createMemo(() => ({
+    ...position(),
+    ...(variant() === 'internal' ? { width: `${popoverSize().width}px` } : {}),
+  }));
 
   return (
     <Show when={visible()}>
       <Portal>
         <section
           class="citation-popover"
-          style={position()}
+          classList={{ 'is-internal': variant() === 'internal' }}
+          style={style()}
           role="dialog"
           aria-label="Citation preview"
           onPointerEnter={() => citationStore.enterPopover()}

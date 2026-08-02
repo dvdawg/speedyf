@@ -506,6 +506,12 @@ textarea:focus-visible {
   box-shadow: 0 14px 38px rgba(0, 0, 0, 0.28);
 }
 
+.citation-popover.is-internal {
+  width: min(504px, calc(100vw - 16px));
+  max-height: min(384px, calc(100vh - 16px));
+  overflow: hidden;
+}
+
 .citation-preview-action {
   display: block;
   width: 100%;
@@ -522,6 +528,23 @@ textarea:focus-visible {
 .citation-preview-action:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
+}
+
+.citation-preview-action.is-internal {
+  position: relative;
+  padding: 8px 8px 24px;
+  background: white;
+}
+
+.citation-preview-viewport {
+  position: relative;
+}
+
+.citation-preview-viewport.is-scrollable {
+  max-height: min(334px, calc(100vh - 66px));
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: white;
 }
 
 .citation-preview-skeleton {
@@ -543,6 +566,17 @@ textarea:focus-visible {
   height: 260px;
 }
 
+.citation-preview-skeleton.is-raster-placeholder {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  height: 100%;
+}
+
+.citation-popover.is-internal > .citation-preview-skeleton.is-popover {
+  height: 334px;
+}
+
 .citation-preview-image {
   display: block;
   width: 100%;
@@ -554,6 +588,12 @@ textarea:focus-visible {
 
 .citation-preview-image.is-loaded {
   opacity: 1;
+}
+
+.citation-preview-viewport.is-scrollable .citation-preview-image {
+  margin: 0 auto;
+  max-width: 100%;
+  max-height: none;
 }
 
 .citation-preview-image.is-full-page {
@@ -570,12 +610,14 @@ textarea:focus-visible {
   font-size: 12px;
 }
 
-.citation-preview-caption.is-compact {
-  gap: 4px;
-  min-height: 22px;
-  padding: 2px 6px;
+.citation-preview-page-number {
+  position: absolute;
+  right: 9px;
+  bottom: 7px;
+  color: #5c6570;
   font-size: 11px;
-  line-height: 1.2;
+  line-height: 1;
+  pointer-events: none;
 }
 
 .citation-preview-caption strong {

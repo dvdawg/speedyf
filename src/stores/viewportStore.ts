@@ -18,9 +18,13 @@ export interface ViewportState {
   searchOpen: boolean;
   formPanelOpen: boolean;
   editMode: boolean;
-  /** bumped to request a programmatic scroll to a page/offset */
-  scrollRequest: { page: number; offsetCss?: number; seq: number } | null;
+  /** bumped to request programmatic page navigation or exact view restore */
+  scrollRequest: ScrollRequest | null;
 }
+
+export type ScrollRequest =
+  | { kind: 'page'; page: number; offsetCss?: number; seq: number }
+  | { kind: 'position'; top: number; left: number; seq: number };
 
 export const MIN_ZOOM = 0.2;
 export const MAX_ZOOM = 6;
@@ -53,9 +57,20 @@ export function clampZoom(z: number): number {
 let scrollSeq = 0;
 export function requestScrollToPage(page: number, offsetCss?: number) {
   setViewport('scrollRequest', {
+    kind: 'page',
     page,
     seq: ++scrollSeq,
     ...(offsetCss !== undefined ? { offsetCss } : {}),
+  });
+}
+
+/** Restore an exact reading position, used by internal-reference history. */
+export function requestScrollToPosition(top: number, left: number) {
+  setViewport('scrollRequest', {
+    kind: 'position',
+    top: Math.max(0, top),
+    left: Math.max(0, left),
+    seq: ++scrollSeq,
   });
 }
 

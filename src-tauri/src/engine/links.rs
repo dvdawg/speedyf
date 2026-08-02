@@ -15,6 +15,8 @@ use std::sync::Arc;
 const ACTION_GOTO: std::os::raw::c_ulong = 1;
 const ACTION_URI: std::os::raw::c_ulong = 3;
 const MAX_LINK_STRING: usize = 1024 * 1024;
+const RUNAWAY_URI_MIN_RECTS: usize = 12;
+const RUNAWAY_URI_MIN_PAGE_SPAN: f32 = 0.45;
 
 fn read_uri(
     b: &dyn PdfiumLibraryBindings,
@@ -131,6 +133,112 @@ fn raw_text(b: &dyn PdfiumLibraryBindings, text_page: FPDF_TEXTPAGE) -> String {
     raw
 }
 
+fn normalized_link_text(value: &str) -> String {
+    value
+        .chars()
+        .flat_map(char::to_lowercase)
+        .filter(|ch| ch.is_alphanumeric())
+        .collect()
+}
+
+fn text_overlapping_rect(raw: &str, boxes: &[[f32; 4]], rect: [f32; 4]) -> String {
+    let [left, bottom, width, height] = rect;
+    let right = left + width;
+    let top = bottom + height;
+    raw.chars()
+        .zip(boxes.iter())
+        .filter_map(|(ch, [x, y, w, h])| {
+            (*w > 0.0 && *h > 0.0 && *x + *w > left && *x < right && *y + *h > bottom && *y < top)
+                .then_some(ch)
+        })
+        .collect()
+}
+
+/// Some PDF producers emit a single URI annotation as one rectangle for
+/// every intervening text line when a link scope is accidentally left open.
+/// PDFium faithfully enumerates those rectangles, which would otherwise turn
+/// most of a page into hover targets. Only intervene for an extreme same-URI
+/// group spanning nearly half a page; then retain rectangles whose visible
+/// text is actually part of the URI. If the link uses an arbitrary label,
+/// preserve its narrowest text-bearing endpoint as a conservative fallback.
+fn sanitize_runaway_uri_annotations(
+    links: Vec<LinkDto>,
+    raw: &str,
+    boxes: &[[f32; 4]],
+    page_h: f32,
+) -> Vec<LinkDto> {
+    let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
+    for (index, link) in links.iter().enumerate() {
+        if let LinkTarget::Uri { uri, .. } = &link.target {
+            groups.entry(uri.clone()).or_default().push(index);
+        }
+    }
+
+    let mut keep = vec![true; links.len()];
+    for (uri, indices) in groups {
+        if indices.len() < RUNAWAY_URI_MIN_RECTS {
+            continue;
+        }
+        let bottom = indices
+            .iter()
+            .map(|index| links[*index].rect[1])
+            .min_by(f32::total_cmp)
+            .unwrap_or(0.0);
+        let top = indices
+            .iter()
+            .map(|index| links[*index].rect[1] + links[*index].rect[3])
+            .max_by(f32::total_cmp)
+            .unwrap_or(0.0);
+        if top - bottom < page_h.max(1.0) * RUNAWAY_URI_MIN_PAGE_SPAN {
+            continue;
+        }
+
+        let uri_text = normalized_link_text(&uri);
+        let text_candidates: Vec<(usize, String)> = indices
+            .iter()
+            .filter_map(|index| {
+                let text =
+                    normalized_link_text(&text_overlapping_rect(raw, boxes, links[*index].rect));
+                (!text.is_empty()).then_some((*index, text))
+            })
+            .collect();
+        if text_candidates.is_empty() {
+            continue;
+        }
+
+        let matching: Vec<usize> = text_candidates
+            .iter()
+            .filter(|(_, text)| {
+                text.len() >= 5 && (uri_text.contains(text) || text.contains(&uri_text))
+            })
+            .map(|(index, _)| *index)
+            .collect();
+        let retained = if matching.is_empty() {
+            text_candidates
+                .iter()
+                .min_by(|(left_index, left_text), (right_index, right_text)| {
+                    links[*left_index].rect[2]
+                        .total_cmp(&links[*right_index].rect[2])
+                        .then_with(|| left_text.len().cmp(&right_text.len()))
+                })
+                .map(|(index, _)| vec![*index])
+                .unwrap_or_default()
+        } else {
+            matching
+        };
+
+        for index in indices {
+            keep[index] = retained.contains(&index);
+        }
+    }
+
+    links
+        .into_iter()
+        .zip(keep)
+        .filter_map(|(link, keep)| keep.then_some(link))
+        .collect()
+}
+
 fn intersection_over_union(left: [f32; 4], right: [f32; 4]) -> f32 {
     let x0 = left[0].max(right[0]);
     let y0 = left[1].max(right[1]);
@@ -209,6 +317,7 @@ pub fn extract_links(
     let mapper = text::DispMapper::new(b, page, display_w, display_h);
     let mut destination_mappers = HashMap::new();
     let mut out = Vec::new();
+    let page_raw = (!text_page.is_null()).then(|| raw_text(b, text_page));
 
     // Annotation-derived entries go first so overlap de-duplication always
     // retains their more authoritative target.
@@ -250,6 +359,12 @@ pub fn extract_links(
             ),
         });
     }
+    out = sanitize_runaway_uri_annotations(
+        out,
+        page_raw.as_deref().unwrap_or_default(),
+        char_boxes,
+        display_h,
+    );
 
     let web_links = (!text_page.is_null()).then(|| b.FPDFLink_LoadWebLinks(text_page));
     if let Some(web_links) = web_links.filter(|links| !links.is_null()) {
@@ -282,10 +397,10 @@ pub fn extract_links(
         b.FPDFLink_CloseWebLinks(web_links);
     }
 
-    if text_page.is_null() {
+    let Some(page_raw) = page_raw else {
         return out;
-    }
-    for occurrence in find_explicit_citations(&raw_text(b, text_page)) {
+    };
+    for occurrence in find_explicit_citations(&page_raw) {
         for rect in text::merge_match_rects(char_boxes, occurrence.start, occurrence.len) {
             let value = match &occurrence.id {
                 super::types::CitationIdDto::Doi(value) => format!("doi:{value}"),
@@ -442,6 +557,81 @@ mod tests {
         )
         .unwrap();
         bytes
+    }
+
+    fn uri_link(uri: &str, rect: [f32; 4]) -> LinkDto {
+        LinkDto {
+            rect,
+            target: LinkTarget::Uri {
+                uri: uri.into(),
+                citation: None,
+            },
+        }
+    }
+
+    fn append_boxed_line(raw: &mut String, boxes: &mut Vec<[f32; 4]>, text: &str, y: f32) {
+        for (column, ch) in text.chars().enumerate() {
+            raw.push(ch);
+            boxes.push([20.0 + column as f32 * 5.0, y, 5.0, 10.0]);
+        }
+        raw.push('\n');
+        boxes.push([0.0; 4]);
+    }
+
+    #[test]
+    fn runaway_same_uri_annotations_keep_only_the_visible_uri_fragment() {
+        let uri = "https://github.com/alphanso-org/alphanso";
+        let mut raw = String::new();
+        let mut boxes = Vec::new();
+        let mut links = Vec::new();
+        for line in 0..12 {
+            let y = 700.0 - line as f32 * 50.0;
+            let text = if line == 11 {
+                "org/alphanso"
+            } else {
+                "ordinary body text that must not become a link"
+            };
+            append_boxed_line(&mut raw, &mut boxes, text, y);
+            links.push(uri_link(
+                uri,
+                [20.0, y, if line == 11 { 60.0 } else { 420.0 }, 10.0],
+            ));
+        }
+
+        let sanitized = sanitize_runaway_uri_annotations(links, &raw, &boxes, 792.0);
+
+        assert_eq!(sanitized.len(), 1);
+        assert_eq!(sanitized[0].rect, [20.0, 150.0, 60.0, 10.0]);
+    }
+
+    #[test]
+    fn ordinary_wrapped_uri_annotations_are_not_filtered() {
+        let links = vec![
+            uri_link("https://example.test/long/path", [20.0, 80.0, 200.0, 10.0]),
+            uri_link("https://example.test/long/path", [20.0, 60.0, 80.0, 10.0]),
+        ];
+        assert_eq!(
+            sanitize_runaway_uri_annotations(links.clone(), "", &[], 792.0),
+            links
+        );
+    }
+
+    #[test]
+    fn repeated_internal_references_are_never_treated_as_runaway_uris() {
+        let links: Vec<_> = (0..20)
+            .map(|line| LinkDto {
+                rect: [20.0, 700.0 - line as f32 * 30.0, 80.0, 10.0],
+                target: LinkTarget::Internal {
+                    page: 4,
+                    x: None,
+                    y: None,
+                },
+            })
+            .collect();
+        assert_eq!(
+            sanitize_runaway_uri_annotations(links.clone(), "", &[], 792.0),
+            links
+        );
     }
 
     #[test]
