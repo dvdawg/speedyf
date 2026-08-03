@@ -150,10 +150,6 @@ The engine boundary is deliberately message-shaped:
    foreground LRU, so search truncation never disables selection or highlights.
    Query responses are globally capped and report when results were omitted.
 
-See [the architecture decision](docs/architecture-decision.md) for the full
-trade study and [the implementation plan](docs/superpowers/plans/2026-07-20-speedyf-pdf-viewer-editor.md)
-for interface-level details.
-
 ### Why this stack is leaner
 
 Tauri uses the operating system webview instead of shipping Chromium and Node
@@ -225,9 +221,6 @@ performance model.
 - `src/features/citations/` — link hotspots, dwell state machine, and popover
 - `src/lib/coordinates/` — the only page/PDF/CSS rotation conversion layer
 - `src/lib/transport/engine.ts` — the frontend’s typed engine boundary
-- `docs/` — architecture, performance, security, and implementation plan
-
-
 
 ## Current limitations
 
@@ -257,9 +250,6 @@ document-level structures is not guaranteed.
 - PDFium and image decoding run in-process. A native decoder crash terminates
 the app; helper-process isolation is a future hardening milestone.
 - No autosave, collaboration, cloud sync, or recovery journal is included.
-
-Read [docs/security.md](docs/security.md) before using untrusted documents in a
-high-assurance environment.
 
 ## License and contribution
 
