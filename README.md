@@ -18,7 +18,7 @@ manual QA before a public release.
 - Virtualized thumbnails and direct page navigation
 - Selectable PDF text and incremental, normalized search
 - Hover previews for internal PDF links and DOI/arXiv citations, with optional
-  local-library first-page previews
+local-library first-page previews
 - Highlights, freehand ink, rectangle annotations, text boxes, and notes
 - Annotation select, move, resize, delete, undo, and redo
 - Page drag-reorder, delete, duplicate, rotate, and add blank page
@@ -27,6 +27,8 @@ manual QA before a public release.
 - Save As followed by automatic reopen of the materialized document
 - Light/dark/system themes and a lower-memory cache mode
 - Live status counters for cache hits and skipped stale render work
+
+
 
 ## Quick start
 
@@ -39,7 +41,7 @@ Prerequisites:
 - macOS: Xcode Command Line Tools
 - Windows: Microsoft C++ Build Tools and WebView2
 - Linux: WebKitGTK 4.1 and the other
-  [Tauri 2 system prerequisites](https://v2.tauri.app/start/prerequisites/)
+[Tauri 2 system prerequisites](https://v2.tauri.app/start/prerequisites/)
 
 On Debian/Ubuntu, the current Tauri prerequisites are:
 
@@ -59,7 +61,7 @@ pnpm fetch-pdfium
 Launch the desktop app:
 
 ```bash
-export PATH="$HOME/.cargo/bin:$PATH" && cd /Users/dvdkm/Documents/code/speedyf && pnpm tauri dev
+export PATH="$HOME/.cargo/bin:$PATH" && cd /path/to/directory/speedyf && pnpm tauri dev
 ```
 
 The Vite development port is fixed at `1420`. To load PDFium from a custom
@@ -89,6 +91,7 @@ Annotation tools use PDF page coordinates, so marks stay aligned through zoom,
 scroll, and 90°/180°/270° rotations. Double-click text boxes or notes to edit
 their content. Select an annotation and press Delete/Backspace to remove it.
 
+
 | Action                     | macOS               | Windows/Linux             |
 | -------------------------- | ------------------- | ------------------------- |
 | Open                       | `⌘O`                | `Ctrl+O`                  |
@@ -99,6 +102,7 @@ their content. Select an annotation and press Delete/Backspace to remove it.
 | Fit page / 100%            | `⌘0` / `⌘1`         | `Ctrl+0` / `Ctrl+1`       |
 | Previous/next page         | Page Up / Page Down | Page Up / Page Down       |
 | Close panel/tool/selection | Escape              | Escape                    |
+
 
 Search starts returning results from the pages already indexed instead of
 waiting for the whole document. Scanned PDFs without an embedded text layer
@@ -124,25 +128,25 @@ one dedicated engine thread (sole owner of every PDFium handle)
 The engine boundary is deliberately message-shaped:
 
 1. Visible pages and tiles outrank hover previews; hover previews outrank
-   thumbnails, text extraction, prefetch, and idle library scanning.
+  thumbnails, text extraction, prefetch, and idle library scanning.
 2. A zoom bucket change increments the document generation; queued work from
-   older generations is skipped before PDFium touches it, while PDFium's
+  older generations is skipped before PDFium touches it, while PDFium's
    progressive-render pause callback aborts a stale render already in flight.
 3. Page, thumbnail, and hover-preview caches charge the encoded PNG bytes they
-   actually retain and use stale-first O(log n) LRU eviction. Hover traffic has
+  actually retain and use stale-first O(log n) LRU eviction. Hover traffic has
    a separate cache, so it cannot evict pages being read. Mounted-page
    virtualization separately bounds decoded webview images.
 4. Rust serves encoded PNG bytes through `pdfr://`; no base64, JSON pixels, or
-   PDF buffers are held in frontend state.
+  PDF buffers are held in frontend state.
 5. The frontend mounts only visible pages plus an overscan window. Pages over
-   about 4 million device pixels use 1024-pixel tiles culled in both axes.
+  about 4 million device pixels use 1024-pixel tiles culled in both axes.
    Complex tiled sheets skip the blocking whole-page preview.
 6. Save serializes a small EditPlan. Rust imports source pages in the requested
-   order, creates blanks, applies rotation/annotations/text/images/forms,
+  order, creates blanks, applies rotation/annotations/text/images/forms,
    writes a sibling temporary file, reopens it with PDFium, verifies the page
    count, and atomically replaces the destination.
 7. Search keeps compact normalized UTF-8 text and sparse source offsets under
-   its own hard budget. Selectable text geometry lives in an independent
+  its own hard budget. Selectable text geometry lives in an independent
    foreground LRU, so search truncation never disables selection or highlights.
    Query responses are globally capped and report when results were omitted.
 
@@ -223,33 +227,35 @@ performance model.
 - `src/lib/transport/engine.ts` — the frontend’s typed engine boundary
 - `docs/` — architecture, performance, security, and implementation plan
 
+
+
 ## Current limitations
 
 SpeedyF is a focused editor, not a full PDF authoring or forensic tool:
 
 - Existing embedded text cannot be rewritten; text boxes add new text objects.
 - Citation previews require real PDF link annotations or explicit DOI/arXiv
-  text. External-paper previews resolve only against the configured local
-  library; SpeedyF performs no metadata lookup or download.
+text. External-paper previews resolve only against the configured local
+library; SpeedyF performs no metadata lookup or download.
 - There is no OCR, signature creation/validation, encryption-preserving save,
-  or secure redaction. Drawing an opaque shape does **not** remove underlying
-  text or image data.
+or secure redaction. Drawing an opaque shape does **not** remove underlying
+text or image data.
 - Saving a signed PDF creates a new document and should be assumed to invalidate
-  signatures. Password protection is not preserved in the output.
+signatures. Password protection is not preserved in the output.
 - Existing annotations remain in imported pages and render, but are not loaded
-  into the editable overlay.
+into the editable overlay.
 - Viewing, rendering, selection, and search use 32-bit source indexes. Save is
-  limited to 65,535 output pages; the toolbar and status bar disclose and
-  enforce that limit as soon as a larger document opens.
+limited to 65,535 output pages; the toolbar and status bar disclose and
+enforce that limit as soon as a larger document opens.
 - Ink is intentionally flattened to page path objects on save; it is not saved
-  as an editable PDF Ink annotation.
+as an editable PDF Ink annotation.
 - Only AcroForm text fields are best-effort editable. Other widgets are listed
-  read-only, and advanced forms/XFA are unsupported.
+read-only, and advanced forms/XFA are unsupported.
 - Because save rebuilds a PDF from imported pages, preservation of bookmarks,
-  attachments, document JavaScript, metadata, advanced forms, and unusual
-  document-level structures is not guaranteed.
+attachments, document JavaScript, metadata, advanced forms, and unusual
+document-level structures is not guaranteed.
 - PDFium and image decoding run in-process. A native decoder crash terminates
-  the app; helper-process isolation is a future hardening milestone.
+the app; helper-process isolation is a future hardening milestone.
 - No autosave, collaboration, cloud sync, or recovery journal is included.
 
 Read [docs/security.md](docs/security.md) before using untrusted documents in a
