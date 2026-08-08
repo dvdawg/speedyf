@@ -77,7 +77,10 @@ export default function CitationLayer(props: Props) {
               }}
               onClick={(event) => {
                 event.preventDefault();
-                if (link.target.kind === 'internal') citationStore.navigateInternalTarget(link.target);
+                if (link.target.kind === 'internal') {
+                  citationStore.navigateInternalTarget(link.target);
+                  citationStore.close();
+                }
               }}
             />
           );
