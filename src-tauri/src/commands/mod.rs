@@ -6,8 +6,20 @@ use crate::engine::types::*;
 use crate::engine::{EngineHandle, Work};
 use crate::errors::{AppError, AppResult};
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 pub struct EngineState(pub EngineHandle);
+
+/// File paths the OS asked us to open (double-click, "Open With", Dock drop)
+/// before the frontend was ready to receive the live `file-open-requested`
+/// event — drained once on startup so a cold launch-to-open never loses them.
+#[derive(Default)]
+pub struct PendingOpens(pub Mutex<Vec<String>>);
+
+#[tauri::command]
+pub fn take_pending_opens(state: tauri::State<'_, PendingOpens>) -> Vec<String> {
+    std::mem::take(&mut *state.0.lock().unwrap())
+}
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -275,6 +287,22 @@ pub async fn get_form_fields(
         .0
         .call_async(Priority::AdjacentPage, doc_id, move |respond| {
             Work::FormFields {
+                doc: doc_id,
+                respond,
+            }
+        })
+        .await
+}
+
+#[tauri::command]
+pub async fn get_outline(
+    state: tauri::State<'_, EngineState>,
+    doc_id: DocId,
+) -> AppResult<Vec<OutlineNodeDto>> {
+    state
+        .0
+        .call_async(Priority::AdjacentPage, doc_id, move |respond| {
+            Work::Outline {
                 doc: doc_id,
                 respond,
             }

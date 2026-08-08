@@ -10,6 +10,7 @@ import type {
   CitationId,
   FormFieldInfo,
   LibraryStatus,
+  OutlineNode,
   PageLinks,
   PageTextLayout,
   PreviewSpec,
@@ -78,6 +79,7 @@ export interface EngineApi {
   ): Promise<[number, number, number, number][]>;
   saveDocument(docId: number, plan: EditPlan, destPath: string): Promise<SaveResult>;
   getFormFields(docId: number): Promise<FormFieldInfo[]>;
+  getOutline(docId: number): Promise<OutlineNode[]>;
   imageSize(path: string): Promise<[number, number]>;
   metrics(): Promise<EngineMetrics>;
   setLowMemory(enabled: boolean): Promise<void>;
@@ -103,6 +105,7 @@ export const engine: EngineApi = {
   getMatchRects: (docId, src, start, len) => invoke('get_match_rects', { docId, src, start, len }),
   saveDocument: (docId, plan, destPath) => invoke('save_document', { docId, plan, destPath }),
   getFormFields: (docId) => invoke('get_form_fields', { docId }),
+  getOutline: (docId) => invoke('get_outline', { docId }),
   imageSize: (path) => invoke('image_size', { path }),
   metrics: () => invoke('engine_metrics'),
   setLowMemory: (enabled) => invoke('set_low_memory', { enabled }),

@@ -102,6 +102,10 @@ pub enum Work {
         doc: DocId,
         respond: Respond<Vec<FormFieldDto>>,
     },
+    Outline {
+        doc: DocId,
+        respond: Respond<Vec<OutlineNodeDto>>,
+    },
     ImageSize {
         path: String,
         respond: Respond<[u32; 2]>,

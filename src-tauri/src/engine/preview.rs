@@ -91,7 +91,11 @@ pub fn crop_rect(input: &CropInput<'_>) -> [f32; 4] {
             .unwrap_or(fallback)
     };
 
-    let y_top = (anchor_y + 6.0).min(page_h);
+    // Leave headroom above the linked line itself, not just a hairline sliver,
+    // so the preview shows a bit of what precedes the target (context: the
+    // end of the prior sentence/heading), not just the destination pinned to
+    // the very top edge.
+    let y_top = (anchor_y + 30.0).min(page_h);
     let mut vertical: Vec<&TextRun> = input
         .runs
         .iter()
@@ -235,7 +239,7 @@ mod tests {
             dest_y: Some(400.0),
             runs: &[],
         });
-        assert_eq!(rect, [32.0, 312.0, 536.0, 98.0]);
+        assert_eq!(rect, [32.0, 336.0, 536.0, 98.0]);
     }
 
     #[test]

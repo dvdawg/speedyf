@@ -2,6 +2,8 @@ import { createEffect, onCleanup, onMount, Show } from 'solid-js';
 import { createSignal, For } from 'solid-js';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import Toolbar from '../components/Toolbar';
 import TabStrip from '../features/tabs/TabStrip';
 import Sidebar from '../components/Sidebar';
@@ -72,6 +74,20 @@ export default function App() {
         else unlistenProgress = unlisten;
       });
 
+    // Files the OS asked us to open (double-click, "Open With", Dock drop):
+    // drain anything that arrived before we were ready to listen (cold
+    // launch-to-open), then keep listening for the rest of this session.
+    void invoke<string[]>('take_pending_opens').then((paths) => {
+      for (const p of paths) void openInNewTabOrFocus(p);
+    });
+    let unlistenOpen: (() => void) | undefined;
+    void listen<string[]>('file-open-requested', (event) => {
+      for (const p of event.payload) void openInNewTabOrFocus(p);
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else unlistenOpen = unlisten;
+    });
+
     // native file drag-drop always opens a new tab (or focuses an existing one)
     let unlistenDrop: (() => void) | undefined;
     void getCurrentWebview()
@@ -121,6 +137,7 @@ export default function App() {
       disposed = true;
       cleanupShortcuts();
       unlistenProgress?.();
+      unlistenOpen?.();
       unlistenDrop?.();
       unlistenClose?.();
       clearImagePreviews();

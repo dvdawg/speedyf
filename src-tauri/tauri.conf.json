@@ -36,6 +36,14 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["pdfium/*"]
+    "resources": ["pdfium/*"],
+    "fileAssociations": [
+      {
+        "ext": ["pdf"],
+        "name": "PDF Document",
+        "description": "PDF Document",
+        "role": "Editor"
+      }
+    ]
   }
 }

@@ -221,6 +221,17 @@ pub struct FormFieldDto {
 
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
+pub struct OutlineNodeDto {
+    pub title: String,
+    /// destination page index, if the bookmark resolves to one (a GoTo dest
+    /// or a GoTo action) — None for bookmarks pointing elsewhere (external
+    /// URIs, unrecognized actions).
+    pub page: Option<u32>,
+    pub children: Vec<OutlineNodeDto>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct SaveResultDto {
     pub path: String,
     pub bytes: u64,

@@ -122,6 +122,22 @@ export const IconSidebar = () =>
       <path d="M5.5 2.5v11" />
     </>
   );
+export const IconPages = () =>
+  base(
+    <>
+      <rect x="3" y="2" width="8" height="10.5" rx="0.8" />
+      <path d="M5.2 5h3.6M5.2 7.3h3.6M5.2 9.6h2.4" />
+    </>
+  );
+export const IconList = () =>
+  base(
+    <>
+      <circle cx="2.6" cy="4" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="2.6" cy="8" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="2.6" cy="12" r="0.9" fill="currentColor" stroke="none" />
+      <path d="M5.5 4h8M5.5 8h8M5.5 12h8" />
+    </>
+  );
 export const IconSelect = () => base(<path d="M4 2l8 6-3.5.8L10 13l-2 1-1.5-4L4 12V2z" />);
 export const IconHighlight = () =>
   base(

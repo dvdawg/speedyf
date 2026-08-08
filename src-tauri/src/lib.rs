@@ -5,7 +5,7 @@ pub mod errors;
 mod library;
 mod search;
 
-use commands::EngineState;
+use commands::{EngineState, PendingOpens};
 use engine::types::{DocId, Priority, RenderKey, RenderKind, TileRect};
 use engine::{EngineHandle, Work};
 use tauri::http::{header, Response, StatusCode};
@@ -139,6 +139,7 @@ pub fn run() {
             }));
 
             app.manage(EngineState(engine));
+            app.manage(PendingOpens::default());
             Ok(())
         })
         .register_asynchronous_uri_scheme_protocol("pdfr", |ctx, request, responder| {
@@ -182,6 +183,7 @@ pub fn run() {
             );
         })
         .invoke_handler(tauri::generate_handler![
+            commands::take_pending_opens,
             commands::file_metadata,
             commands::open_document,
             commands::close_document,
@@ -198,6 +200,7 @@ pub fn run() {
             commands::get_match_rects,
             commands::save_document,
             commands::get_form_fields,
+            commands::get_outline,
             commands::image_size,
             commands::image_preview,
             commands::engine_metrics,
@@ -205,8 +208,27 @@ pub fn run() {
             commands::doc_generation,
             commands::bump_generation,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running SpeedyF");
+        .build(tauri::generate_context!())
+        .expect("error while building SpeedyF")
+        .run(|app_handle, event| {
+            // Fired when the OS asks us to open a file: double-click, "Open
+            // With", or a file dropped on the Dock icon. Also fires once on
+            // a cold launch if SpeedyF was opened by opening a PDF.
+            if let tauri::RunEvent::Opened { urls } = event {
+                let paths: Vec<String> = urls
+                    .into_iter()
+                    .filter_map(|u| u.to_file_path().ok())
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .collect();
+                if paths.is_empty() {
+                    return;
+                }
+                if let Some(state) = app_handle.try_state::<PendingOpens>() {
+                    state.0.lock().unwrap().extend(paths.clone());
+                }
+                let _ = app_handle.emit("file-open-requested", &paths);
+            }
+        });
 }
 
 #[cfg(test)]

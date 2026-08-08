@@ -205,6 +205,7 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         Work::MatchRects { respond, .. } => respond(Err(err())),
         Work::Save { respond, .. } => respond(Err(err())),
         Work::FormFields { respond, .. } => respond(Err(err())),
+        Work::Outline { respond, .. } => respond(Err(err())),
         Work::ImageSize { respond, .. } => respond(Err(err())),
         Work::Close { .. } | Work::SetActiveDocument { .. } | Work::IndexNext { .. } | Work::LibraryScanNext => {}
     }
@@ -285,6 +286,7 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
             respond,
         } => respond(do_save(state, doc, plan, dest)),
         Work::FormFields { doc, respond } => respond(do_form_fields(state, doc)),
+        Work::Outline { doc, respond } => respond(do_outline(state, doc)),
         Work::ImageSize { path, respond } => respond(
             image::image_dimensions(&path)
                 .map(|(w, h)| [w, h])
@@ -933,6 +935,83 @@ fn do_save(
         bytes,
         duration_ms: started.elapsed().as_millis() as u64,
     })
+}
+
+/// A bookmark's target is either a direct destination, or (more commonly for
+/// links authored in modern tools) a GoTo action wrapping one. `1` is
+/// PDFium's `PDFACTION_GOTO` constant (not exposed as a Rust const by
+/// pdfium-render, only documented on the raw binding).
+const PDFACTION_GOTO: std::os::raw::c_ulong = 1;
+
+fn resolve_bookmark_page(
+    bindings: &dyn PdfiumLibraryBindings,
+    document: FPDF_DOCUMENT,
+    bookmark: FPDF_BOOKMARK,
+) -> Option<u32> {
+    let dest = bindings.FPDFBookmark_GetDest(document, bookmark);
+    if !dest.is_null() {
+        let index = bindings.FPDFDest_GetDestPageIndex(document, dest);
+        if index >= 0 {
+            return Some(index as u32);
+        }
+    }
+    let action = bindings.FPDFBookmark_GetAction(bookmark);
+    if !action.is_null() && bindings.FPDFAction_GetType(action) == PDFACTION_GOTO {
+        let dest = bindings.FPDFAction_GetDest(document, action);
+        if !dest.is_null() {
+            let index = bindings.FPDFDest_GetDestPageIndex(document, dest);
+            if index >= 0 {
+                return Some(index as u32);
+            }
+        }
+    }
+    None
+}
+
+/// Walks the bookmark tree depth-first. `visited` guards against the
+/// circular sibling/child references PDFium's own docs warn malformed PDFs
+/// can produce; `depth` is a second, cheaper backstop.
+fn walk_bookmarks(
+    bindings: &dyn PdfiumLibraryBindings,
+    document: FPDF_DOCUMENT,
+    parent: FPDF_BOOKMARK,
+    depth: u32,
+    visited: &mut std::collections::HashSet<usize>,
+) -> Vec<OutlineNodeDto> {
+    if depth > 64 {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut current = bindings.FPDFBookmark_GetFirstChild(document, parent);
+    while !current.is_null() {
+        if !visited.insert(current as usize) {
+            break;
+        }
+        let title = read_pdfium_utf16(|buffer, len| {
+            bindings.FPDFBookmark_GetTitle(current, buffer.cast(), len)
+        });
+        let page = resolve_bookmark_page(bindings, document, current);
+        let children = walk_bookmarks(bindings, document, current, depth + 1, visited);
+        out.push(OutlineNodeDto {
+            title,
+            page,
+            children,
+        });
+        current = bindings.FPDFBookmark_GetNextSibling(document, current);
+    }
+    out
+}
+
+fn do_outline(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<OutlineNodeDto>> {
+    let raw = state.doc(doc)?.raw;
+    let mut visited = std::collections::HashSet::new();
+    Ok(walk_bookmarks(
+        state.bindings,
+        raw,
+        std::ptr::null_mut(),
+        0,
+        &mut visited,
+    ))
 }
 
 fn do_form_fields(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<FormFieldDto>> {

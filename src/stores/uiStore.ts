@@ -2,4 +2,9 @@
  * per-document viewport/search/citation state which lives on each tab. */
 import { createStore } from 'solid-js/store';
 
-export const [ui, setUi] = createStore({ sidebarOpen: true });
+export type SidebarMode = 'pages' | 'outline';
+
+export const [ui, setUi] = createStore({
+  sidebarOpen: true,
+  sidebarMode: 'pages' as SidebarMode,
+});

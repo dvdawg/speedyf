@@ -92,6 +92,12 @@ export interface FormFieldInfo {
   readOnly: boolean;
 }
 
+export interface OutlineNode {
+  title: string;
+  page: number | null;
+  children: OutlineNode[];
+}
+
 export interface SaveResult {
   path: string;
   bytes: number;
