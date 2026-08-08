@@ -1,6 +1,12 @@
 /** In-app modals: password prompt, unsaved-changes guard, error notice. */
 import { createEffect, createSignal, Show } from 'solid-js';
-import { dismissError, modal, resolvePassword, resolveUnsaved } from '../stores/modalStore';
+import {
+  dismissError,
+  modal,
+  resolveConfirm,
+  resolvePassword,
+  resolveUnsaved,
+} from '../stores/modalStore';
 
 export default function Modals() {
   const [password, setPassword] = createSignal('');
@@ -28,6 +34,8 @@ export default function Modals() {
       resolveUnsaved('cancel');
     } else if (modal.kind === 'error') {
       dismissError();
+    } else if (modal.kind === 'confirm') {
+      resolveConfirm(false);
     }
   };
 
@@ -124,6 +132,23 @@ export default function Modals() {
                 onClick={() => resolveUnsaved('save')}
               >
                 Save
+              </button>
+            </div>
+          </Show>
+
+          <Show when={modal.kind === 'confirm'}>
+            <p>{modal.message}</p>
+            <div class="modal-actions">
+              <button type="button" class="secondary-btn" onClick={() => resolveConfirm(false)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                class="primary-btn"
+                ref={(el) => queueMicrotask(() => el.isConnected && el.focus())}
+                onClick={() => resolveConfirm(true)}
+              >
+                {modal.confirmLabel ?? 'Confirm'}
               </button>
             </div>
           </Show>

@@ -9,6 +9,31 @@ use std::path::PathBuf;
 
 pub struct EngineState(pub EngineHandle);
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileMetaDto {
+    size_bytes: u64,
+    modified_ms: i64,
+}
+
+/// Pure `std::fs` stat, no worker-thread involvement — used by the home
+/// screen's recent-files list, not a PDFium operation.
+#[tauri::command]
+pub async fn file_metadata(path: String) -> AppResult<FileMetaDto> {
+    let meta =
+        std::fs::metadata(&path).map_err(|e| AppError::Io(format!("cannot stat {path}: {e}")))?;
+    let modified_ms = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    Ok(FileMetaDto {
+        size_bytes: meta.len(),
+        modified_ms,
+    })
+}
+
 #[tauri::command]
 pub async fn open_document(
     state: tauri::State<'_, EngineState>,
@@ -35,6 +60,19 @@ pub async fn close_document(state: tauri::State<'_, EngineState>, doc_id: DocId)
     state
         .0
         .submit(Priority::VisiblePage, doc_id, Work::Close { doc: doc_id });
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_active_document(
+    state: tauri::State<'_, EngineState>,
+    doc_id: Option<DocId>,
+) -> AppResult<()> {
+    state.0.submit(
+        Priority::VisiblePage,
+        doc_id.unwrap_or(0),
+        Work::SetActiveDocument { doc: doc_id },
+    );
     Ok(())
 }
 

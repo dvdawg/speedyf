@@ -41,6 +41,12 @@ pub enum Work {
     Close {
         doc: DocId,
     },
+    /// Marks which document is foreground for citation-hover bookkeeping,
+    /// decoupled from Open/Close so opening a background tab never tears
+    /// down another tab's hover session.
+    SetActiveDocument {
+        doc: Option<DocId>,
+    },
     Sizes {
         doc: DocId,
         from: u32,

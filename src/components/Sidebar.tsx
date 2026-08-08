@@ -1,9 +1,7 @@
 /** Thumbnail sidebar: virtualized (only near-viewport thumbs mount an <img>),
  * current-page tracking, click navigation, and edit-mode page operations
  * (drag reorder, rotate, duplicate, delete, add blank page). */
-import { createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
-import { documentStore } from '../features/document/documentStore';
-import { requestScrollToPage, viewport } from '../stores/viewportStore';
+import { createMemo, createSignal, For, onCleanup, onMount, Show, useContext } from 'solid-js';
 import { renderUrl } from '../lib/rendering/renderSource';
 import type { Layout } from '../lib/coordinates/layout';
 import { visibleRange } from '../lib/coordinates/layout';
@@ -18,12 +16,16 @@ import {
 } from './icons';
 import { addBlankPageAfter } from '../features/editor/editorActions';
 import type { Rotation } from '../types/model';
+import { TabContext } from '../app/TabContext';
 
 const THUMB_W = 148;
 const SLOT_PAD = 30; // label + spacing
 const GAP = 10;
 
 export default function Sidebar() {
+  const tab = useContext(TabContext)!;
+  const { documentStore, viewport: vp } = tab;
+  const requestScrollToPage = vp.requestScrollToPage;
   const doc = documentStore.state;
   let scroller!: HTMLDivElement;
   const [scrollTop, setScrollTop] = createSignal(0);
@@ -43,7 +45,7 @@ export default function Sidebar() {
 
   const geom = createMemo(() =>
     doc.pages.map((p) => {
-      const rot = (p.baseRotation + p.userRotation + viewport.viewRotation) % 360;
+      const rot = (p.baseRotation + p.userRotation + vp.state.viewRotation) % 360;
       const [w, h] = rot % 180 === 0 ? [p.widthPt, p.heightPt] : [p.heightPt, p.widthPt];
       return { thumbH: (h / w) * THUMB_W, rot: rot as Rotation, srcIndex: p.srcIndex, id: p.id };
     })
@@ -80,7 +82,7 @@ export default function Sidebar() {
     if (!g || g.srcIndex === null) return null;
     const p = doc.pages[i]!;
     const rotW = g.rot % 180 === 0 ? p.widthPt : p.heightPt;
-    const scale = (THUMB_W * viewport.dpr) / rotW;
+    const scale = (THUMB_W * vp.state.dpr) / rotW;
     const scaleMilli = Math.max(20, Math.round((scale * 1000) / 10) * 10);
     return renderUrl({
       docId: doc.docId,
@@ -112,11 +114,11 @@ export default function Sidebar() {
                   <div
                     class="thumb-slot"
                     classList={{
-                      'is-current': viewport.currentPage === i,
+                      'is-current': vp.state.currentPage === i,
                       'is-drop-target': dropIndex() === i,
                     }}
                     style={{ top: `${layout().tops[i]}px`, height: `${layout().heights[i]}px` }}
-                    draggable={viewport.editMode}
+                    draggable={vp.state.editMode}
                     onDragStart={(e) => {
                       setDragIndex(i);
                       e.dataTransfer!.effectAllowed = 'move';
@@ -146,7 +148,7 @@ export default function Sidebar() {
                       style={{ height: `${g()!.thumbH}px` }}
                       onClick={() => requestScrollToPage(i)}
                       aria-label={`Go to page ${i + 1}`}
-                      aria-current={viewport.currentPage === i ? 'page' : undefined}
+                      aria-current={vp.state.currentPage === i ? 'page' : undefined}
                     >
                       <Show
                         when={thumbUrl(i)}
@@ -157,7 +159,7 @@ export default function Sidebar() {
                     </button>
                     <div class="thumb-meta">
                       <span class="thumb-num">{i + 1}</span>
-                      <Show when={viewport.editMode}>
+                      <Show when={vp.state.editMode}>
                         <span class="thumb-ops">
                           <IconButton
                             label={`Move page ${i + 1} up`}
@@ -224,12 +226,12 @@ export default function Sidebar() {
           </For>
         </div>
       </div>
-      <Show when={viewport.editMode}>
+      <Show when={vp.state.editMode}>
         <div class="sidebar-footer">
           <button
             type="button"
             class="secondary-btn"
-            onClick={() => addBlankPageAfter(viewport.currentPage)}
+            onClick={() => addBlankPageAfter(documentStore, vp.state.currentPage)}
           >
             <IconPlus /> Blank page
           </button>

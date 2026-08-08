@@ -1,17 +1,21 @@
-import { open as openDialog } from '@tauri-apps/plugin-dialog';
+/** Per-document citation hover/preview session and internal-reference
+ * navigation history. One instance per open tab (see tabsStore.ts);
+ * `createCitationStore()` is the factory, with a temporary module-level
+ * singleton kept below until the tab-registry wiring lands.
+ * Library-folder scan status lives in libraryStore.ts — genuinely global,
+ * independent of any open document. */
 import { createStore } from 'solid-js/store';
 import { engine, isEngineError } from '../../lib/transport/engine';
 import type {
   CitationId,
-  LibraryStatus,
   LinkTarget,
   PageLinks,
   PreviewSpec,
   ResolvedCitation,
 } from '../../types/engine';
-import { documentStore } from '../document/documentStore';
-import { requestScrollToPage, requestScrollToPosition, viewport } from '../../stores/viewportStore';
-import { settings, updateSettings } from '../../stores/settings';
+import type { DocumentStore } from '../document/documentStore';
+import type { ViewportStore } from '../../stores/viewportStore';
+import { libraryStore } from './libraryStore';
 import { citationKey, citationLabel } from './citationLabel';
 
 export type HoverPhase = 'idle' | 'dwelling' | 'loading' | 'shown' | 'leaving';
@@ -233,71 +237,6 @@ export class HoverMachine<Request extends { key: string }, Result> {
   }
 }
 
-const defaultLibraryStatus: LibraryStatus = {
-  root: settings.libraryRoot,
-  indexed: 0,
-  total: 0,
-  scanning: false,
-};
-
-const [state, setState] = createStore<{
-  hover: HoverSnapshot<HoverRequest, HoverPreview>;
-  library: LibraryStatus;
-  libraryError: string | null;
-  navigationDepth: number;
-}>({
-  hover: { phase: 'idle', request: null, result: null, error: null },
-  library: defaultLibraryStatus,
-  libraryError: null,
-  navigationDepth: 0,
-});
-
-async function loadPreview(request: HoverRequest): Promise<HoverPreview> {
-  if (request.target.kind === 'internal') {
-    const target = request.target;
-    const preview = await engine.getPreviewRect(request.docId, target.page, target.x, target.y);
-    return { kind: 'internal', preview, page: target.page, x: target.x, y: target.y };
-  }
-  const { uri, citation } = request.target;
-  if (!citation) {
-    return {
-      kind: 'external-unresolved',
-      id: null,
-      uri,
-      libraryRoot: state.library.root,
-      libraryScanning: state.library.scanning,
-    };
-  }
-  try {
-    const resolved = await engine.resolveCitation(citation);
-    if (resolved) return { kind: 'external', id: citation, uri, resolved };
-    return {
-      kind: 'external-unresolved',
-      id: citation,
-      uri,
-      libraryRoot: state.library.root,
-      libraryScanning: state.library.scanning,
-    };
-  } catch (error) {
-    return {
-      kind: 'error',
-      message: isEngineError(error) ? error.message : String(error),
-      label: citationLabel(citation),
-    };
-  }
-}
-
-const machine = new HoverMachine<HoverRequest, HoverPreview>(loadPreview, {
-  cacheSize: 50,
-  cacheResult: (result) => result.kind !== 'error',
-});
-machine.subscribe((hover) => setState('hover', hover));
-
-const pageLinks = new Map<string, Promise<PageLinks>>();
-const PAGE_LINK_CACHE_ENTRIES = 256;
-let activeDocId = -1;
-let libraryStatusSeq = 0;
-
 export interface ReadingPosition {
   docId: number;
   scrollTop: number;
@@ -334,12 +273,6 @@ export class ReferenceNavigationHistory {
   }
 }
 
-const navigationHistory = new ReferenceNavigationHistory();
-
-function syncNavigationDepth(): void {
-  setState('navigationDepth', navigationHistory.depth);
-}
-
 function targetKey(docId: number, target: HoverableTarget): string {
   if (target.kind === 'internal') {
     return `internal:${docId}:${target.page}:${target.x ?? ''}:${target.y ?? ''}`;
@@ -361,147 +294,174 @@ function toAnchorRect(element: HTMLElement): AnchorRect {
   };
 }
 
-export function navigateInternalTarget(target: Extract<LinkTarget, { kind: 'internal' }>): void {
-  const pageIndex = documentStore.state.pages.findIndex((page) => page.srcIndex === target.page);
-  if (pageIndex < 0) return;
-  navigationHistory.push({
-    docId: documentStore.state.docId,
-    scrollTop: viewport.scrollTop,
-    scrollLeft: viewport.scrollLeft,
-  });
-  syncNavigationDepth();
-  const page = documentStore.state.pages[pageIndex];
-  const offset =
-    target.y === null || !page
-      ? undefined
-      : Math.max(0, (page.heightPt - target.y) * viewport.zoom - viewport.containerH * 0.2);
-  requestScrollToPage(pageIndex, offset);
-}
-
-export function goBackFromInternalTarget(): void {
-  const position = navigationHistory.pop(documentStore.state.docId);
-  syncNavigationDepth();
-  if (position) requestScrollToPosition(position.scrollTop, position.scrollLeft);
-}
-
-export const citationStore = {
-  state,
-
-  async initializeLibrary(): Promise<void> {
-    try {
-      const preferred = settings.libraryRoot;
-      const current = await engine.libraryStatus();
-      if (!current.root && preferred) await engine.setLibraryRoot(preferred);
-      await citationStore.refreshLibraryStatus();
-    } catch (error) {
-      setState('libraryError', isEngineError(error) ? error.message : String(error));
-    }
-  },
-
-  syncDocument(docId: number): void {
-    if (docId === activeDocId) return;
-    activeDocId = docId;
-    pageLinks.clear();
-    machine.reset();
-    navigationHistory.clear();
-    syncNavigationDepth();
-  },
-
-  async linksForPage(docId: number, src: number): Promise<PageLinks> {
-    const key = `${docId}:${src}`;
-    const cached = pageLinks.get(key);
-    if (cached) {
-      pageLinks.delete(key);
-      pageLinks.set(key, cached);
-      return cached;
-    }
-    const pending = engine.getPageLinks(docId, src).catch(() => {
-      pageLinks.delete(key);
-      return { src, links: [] };
-    });
-    pageLinks.set(key, pending);
-    while (pageLinks.size > PAGE_LINK_CACHE_ENTRIES) {
-      const oldest = pageLinks.keys().next().value as string | undefined;
-      if (oldest === undefined) break;
-      pageLinks.delete(oldest);
-    }
-    return pending;
-  },
-
+export interface CitationStore {
+  state: { hover: HoverSnapshot<HoverRequest, HoverPreview>; navigationDepth: number };
+  syncDocument(docId: number): void;
+  linksForPage(docId: number, src: number): Promise<PageLinks>;
   enter(
     docId: number,
     sourceSrc: number,
     target: HoverableTarget,
     element: HTMLElement,
-    keyboard = false
-  ): void {
-    machine.enter(
-      {
-        key: targetKey(docId, target),
-        docId,
-        sourceSrc,
-        target,
-        anchor: toAnchorRect(element),
-      },
-      keyboard
-    );
-  },
+    keyboard?: boolean
+  ): void;
+  leave(): void;
+  enterPopover(): void;
+  close(): void;
+  navigateInternalTarget(target: Extract<LinkTarget, { kind: 'internal' }>): void;
+  goBackFromInternalTarget(): void;
+  dispose(): void;
+}
 
-  leave(): void {
-    machine.leave();
-  },
+export function createCitationStore(doc: DocumentStore, vp: ViewportStore): CitationStore {
+  const [state, setState] = createStore<{
+    hover: HoverSnapshot<HoverRequest, HoverPreview>;
+    navigationDepth: number;
+  }>({
+    hover: { phase: 'idle', request: null, result: null, error: null },
+    navigationDepth: 0,
+  });
 
-  enterPopover(): void {
-    machine.enterPopover();
-  },
-
-  close(): void {
-    machine.close();
-  },
-
-  async refreshLibraryStatus(): Promise<LibraryStatus> {
-    const seq = ++libraryStatusSeq;
+  async function loadPreview(request: HoverRequest): Promise<HoverPreview> {
+    if (request.target.kind === 'internal') {
+      const target = request.target;
+      const preview = await engine.getPreviewRect(request.docId, target.page, target.x, target.y);
+      return { kind: 'internal', preview, page: target.page, x: target.x, y: target.y };
+    }
+    const { uri, citation } = request.target;
+    if (!citation) {
+      return {
+        kind: 'external-unresolved',
+        id: null,
+        uri,
+        libraryRoot: libraryStore.state.library.root,
+        libraryScanning: libraryStore.state.library.scanning,
+      };
+    }
     try {
-      const next = await engine.libraryStatus();
-      if (seq !== libraryStatusSeq) return state.library;
-      const changed =
-        next.root !== state.library.root ||
-        next.indexed !== state.library.indexed ||
-        next.scanning !== state.library.scanning;
-      setState('library', next);
-      setState('libraryError', null);
-      if (next.root !== settings.libraryRoot) updateSettings({ libraryRoot: next.root });
-      if (changed) machine.invalidateCache('external:');
-      return next;
+      const resolved = await engine.resolveCitation(citation);
+      if (resolved) return { kind: 'external', id: citation, uri, resolved };
+      return {
+        kind: 'external-unresolved',
+        id: citation,
+        uri,
+        libraryRoot: libraryStore.state.library.root,
+        libraryScanning: libraryStore.state.library.scanning,
+      };
     } catch (error) {
-      if (seq === libraryStatusSeq) {
-        setState('libraryError', isEngineError(error) ? error.message : String(error));
+      return {
+        kind: 'error',
+        message: isEngineError(error) ? error.message : String(error),
+        label: citationLabel(citation),
+      };
+    }
+  }
+
+  const machine = new HoverMachine<HoverRequest, HoverPreview>(loadPreview, {
+    cacheSize: 50,
+    cacheResult: (result) => result.kind !== 'error',
+  });
+  machine.subscribe((hover) => setState('hover', hover));
+  const unsubscribeLibrary = libraryStore.onChange(() => machine.invalidateCache('external:'));
+
+  const pageLinks = new Map<string, Promise<PageLinks>>();
+  const PAGE_LINK_CACHE_ENTRIES = 256;
+  let activeDocId = -1;
+  const navigationHistory = new ReferenceNavigationHistory();
+
+  function syncNavigationDepth(): void {
+    setState('navigationDepth', navigationHistory.depth);
+  }
+
+  return {
+    state,
+
+    syncDocument(docId: number): void {
+      if (docId === activeDocId) return;
+      activeDocId = docId;
+      pageLinks.clear();
+      machine.reset();
+      navigationHistory.clear();
+      syncNavigationDepth();
+    },
+
+    async linksForPage(docId: number, src: number): Promise<PageLinks> {
+      const key = `${docId}:${src}`;
+      const cached = pageLinks.get(key);
+      if (cached) {
+        pageLinks.delete(key);
+        pageLinks.set(key, cached);
+        return cached;
       }
-      return state.library;
-    }
-  },
+      const pending = engine.getPageLinks(docId, src).catch(() => {
+        pageLinks.delete(key);
+        return { src, links: [] };
+      });
+      pageLinks.set(key, pending);
+      while (pageLinks.size > PAGE_LINK_CACHE_ENTRIES) {
+        const oldest = pageLinks.keys().next().value as string | undefined;
+        if (oldest === undefined) break;
+        pageLinks.delete(oldest);
+      }
+      return pending;
+    },
 
-  async chooseLibraryFolder(): Promise<void> {
-    const selected = await openDialog({ directory: true, multiple: false });
-    if (typeof selected !== 'string') return;
-    try {
-      await engine.setLibraryRoot(selected);
-      updateSettings({ libraryRoot: selected });
-      machine.invalidateCache('external:');
-      await citationStore.refreshLibraryStatus();
-    } catch (error) {
-      setState('libraryError', isEngineError(error) ? error.message : String(error));
-    }
-  },
+    enter(
+      docId: number,
+      sourceSrc: number,
+      target: HoverableTarget,
+      element: HTMLElement,
+      keyboard = false
+    ): void {
+      machine.enter(
+        {
+          key: targetKey(docId, target),
+          docId,
+          sourceSrc,
+          target,
+          anchor: toAnchorRect(element),
+        },
+        keyboard
+      );
+    },
 
-  async disableLibrary(): Promise<void> {
-    try {
-      await engine.setLibraryRoot(null);
-      updateSettings({ libraryRoot: null });
-      machine.invalidateCache('external:');
-      await citationStore.refreshLibraryStatus();
-    } catch (error) {
-      setState('libraryError', isEngineError(error) ? error.message : String(error));
-    }
-  },
-};
+    leave(): void {
+      machine.leave();
+    },
+
+    enterPopover(): void {
+      machine.enterPopover();
+    },
+
+    close(): void {
+      machine.close();
+    },
+
+    navigateInternalTarget(target: Extract<LinkTarget, { kind: 'internal' }>): void {
+      const pageIndex = doc.state.pages.findIndex((page) => page.srcIndex === target.page);
+      if (pageIndex < 0) return;
+      navigationHistory.push({
+        docId: doc.state.docId,
+        scrollTop: vp.state.scrollTop,
+        scrollLeft: vp.state.scrollLeft,
+      });
+      syncNavigationDepth();
+      const page = doc.state.pages[pageIndex];
+      const offset =
+        target.y === null || !page
+          ? undefined
+          : Math.max(0, (page.heightPt - target.y) * vp.state.zoom - vp.state.containerH * 0.2);
+      vp.requestScrollToPage(pageIndex, offset);
+    },
+
+    goBackFromInternalTarget(): void {
+      const position = navigationHistory.pop(doc.state.docId);
+      syncNavigationDepth();
+      if (position) vp.requestScrollToPosition(position.scrollTop, position.scrollLeft);
+    },
+
+    dispose(): void {
+      unsubscribeLibrary();
+    },
+  };
+}

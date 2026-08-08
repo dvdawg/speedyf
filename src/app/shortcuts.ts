@@ -1,9 +1,9 @@
 /** Platform-aware keyboard shortcuts. Text inputs keep their native behavior:
- * while typing, only the file-level meta combos (open/save/search) fire. */
-import { documentStore } from '../features/document/documentStore';
-import { openFromDialog, saveDocument } from '../features/document/controller';
-import { requestScrollToPage, setViewport, viewport } from '../stores/viewportStore';
-import { setZoomAnchored, zoomStep, applyFit } from '../features/viewer/zoomController';
+ * while typing, only the file-level meta combos (open/save/search/close-tab)
+ * fire. */
+import { saveDocument } from '../features/document/controller';
+import { closeTab, cycleTab, jumpToTab, openFromDialog } from '../features/document/tabsController';
+import { activeTab } from '../stores/tabsStore';
 import { setActiveTool, toolState } from '../features/annotations/toolStore';
 import { modal } from '../stores/modalStore';
 
@@ -26,6 +26,15 @@ export function installShortcuts(): () => void {
     const typing = isTypingTarget(e.target);
     const key = e.key;
 
+    // Ctrl+Tab / Ctrl+Shift+Tab cycle tabs regardless of platform (on mac,
+    // Ctrl+Tab doesn't overlap the Cmd-based combos below) — same tier as
+    // close-tab, so it isn't swallowed by focused inputs either.
+    if (e.ctrlKey && key === 'Tab') {
+      e.preventDefault();
+      cycleTab(e.shiftKey ? -1 : 1);
+      return;
+    }
+
     if (meta) {
       const k = key.toLowerCase();
       if (k === 'o') {
@@ -35,44 +44,67 @@ export function installShortcuts(): () => void {
       }
       if (k === 's') {
         e.preventDefault();
-        void saveDocument(e.shiftKey);
+        const tab = activeTab();
+        if (tab) void saveDocument(tab, e.shiftKey);
+        return;
+      }
+      if (k === 'w') {
+        e.preventDefault();
+        const tab = activeTab();
+        if (tab) void closeTab(tab.id);
         return;
       }
       if (k === 'f') {
         e.preventDefault();
-        setViewport('searchOpen', true);
+        activeTab()?.viewport.setState('searchOpen', true);
         return;
       }
       if (typing) return; // browser handles text-editing undo/redo & the rest
       if (k === 'z') {
         e.preventDefault();
-        if (e.shiftKey) documentStore.redo();
-        else documentStore.undo();
+        const tab = activeTab();
+        if (tab) {
+          if (e.shiftKey) tab.documentStore.redo();
+          else tab.documentStore.undo();
+        }
         return;
       }
       if (!isMac && k === 'y') {
         e.preventDefault();
-        documentStore.redo();
+        activeTab()?.documentStore.redo();
+        return;
+      }
+      if (key === ']' && e.shiftKey) {
+        e.preventDefault();
+        cycleTab(1);
+        return;
+      }
+      if (key === '[' && e.shiftKey) {
+        e.preventDefault();
+        cycleTab(-1);
+        return;
+      }
+      if (/^[1-9]$/.test(key)) {
+        e.preventDefault();
+        jumpToTab(Number(key) - 1);
         return;
       }
       if (key === '=' || key === '+') {
         e.preventDefault();
-        zoomStep(1);
+        activeTab()?.zoom.zoomStep(1);
         return;
       }
       if (key === '-') {
         e.preventDefault();
-        zoomStep(-1);
+        activeTab()?.zoom.zoomStep(-1);
         return;
       }
       if (key === '0') {
         e.preventDefault();
-        applyFit('fit-page');
-        return;
-      }
-      if (key === '1') {
-        e.preventDefault();
-        setZoomAnchored(1);
+        // Cmd+1-9 now jumps to a tab, so "zoom to 100%" moved here (mirrors
+        // Cmd+0's existing fit-page binding).
+        if (e.shiftKey) activeTab()?.zoom.setZoomAnchored(1);
+        else activeTab()?.zoom.applyFit('fit-page');
         return;
       }
       return;
@@ -81,39 +113,46 @@ export function installShortcuts(): () => void {
     if (typing) return;
 
     if (key === 'Escape') {
-      if (viewport.searchOpen) {
-        setViewport('searchOpen', false);
+      const tab = activeTab();
+      if (!tab) return;
+      if (tab.viewport.state.searchOpen) {
+        tab.viewport.setState('searchOpen', false);
         return;
       }
-      if (documentStore.state.selected) {
-        documentStore.setSelected(null);
+      if (tab.documentStore.state.selected) {
+        tab.documentStore.setSelected(null);
         return;
       }
       if (toolState.active !== 'select') {
         setActiveTool('select');
         return;
       }
-      if (viewport.formPanelOpen) setViewport('formPanelOpen', false);
+      if (tab.viewport.state.formPanelOpen) tab.viewport.setState('formPanelOpen', false);
       return;
     }
     if (key === 'Delete' || key === 'Backspace') {
-      const sel = documentStore.state.selected;
-      if (sel) {
+      const tab = activeTab();
+      const sel = tab?.documentStore.state.selected;
+      if (tab && sel) {
         e.preventDefault();
-        documentStore.apply({ type: 'deleteAnnot', pageId: sel.pageId, id: sel.annotId });
+        tab.documentStore.apply({ type: 'deleteAnnot', pageId: sel.pageId, id: sel.annotId });
       }
       return;
     }
     if (key === 'PageDown') {
-      if (!documentStore.state.loaded) return;
+      const tab = activeTab();
+      if (!tab?.documentStore.state.loaded) return;
       e.preventDefault();
-      requestScrollToPage(Math.min(viewport.currentPage + 1, documentStore.state.pages.length - 1));
+      tab.viewport.requestScrollToPage(
+        Math.min(tab.viewport.state.currentPage + 1, tab.documentStore.state.pages.length - 1)
+      );
       return;
     }
     if (key === 'PageUp') {
-      if (!documentStore.state.loaded) return;
+      const tab = activeTab();
+      if (!tab?.documentStore.state.loaded) return;
       e.preventDefault();
-      requestScrollToPage(Math.max(viewport.currentPage - 1, 0));
+      tab.viewport.requestScrollToPage(Math.max(tab.viewport.state.currentPage - 1, 0));
     }
   };
 

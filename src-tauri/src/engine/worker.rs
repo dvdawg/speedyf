@@ -128,15 +128,24 @@ impl<'a> WorkerState<'a> {
     }
 
     fn close_doc(&mut self, id: DocId, shared: &EngineShared) {
-        let was_main = self.active_main == Some(id);
         self.close_one(id, shared, true);
         self.library_session_docs
             .retain(|candidate| *candidate != id);
-        if was_main {
-            shared.main_epoch.fetch_add(1, Ordering::AcqRel);
+        if self.active_main == Some(id) {
             self.active_main = None;
-            self.close_library_docs(shared);
         }
+    }
+
+    /// Marks `doc` as the foreground document for citation-hover bookkeeping.
+    /// A no-op if it's already active, so redundant calls (e.g. re-activating
+    /// the same tab) never spuriously invalidate in-flight citation resolves.
+    fn set_active_document(&mut self, doc: Option<DocId>, shared: &EngineShared) {
+        if doc == self.active_main {
+            return;
+        }
+        shared.main_epoch.fetch_add(1, Ordering::AcqRel);
+        self.close_library_docs(shared);
+        self.active_main = doc;
     }
 }
 
@@ -197,7 +206,7 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         Work::Save { respond, .. } => respond(Err(err())),
         Work::FormFields { respond, .. } => respond(Err(err())),
         Work::ImageSize { respond, .. } => respond(Err(err())),
-        Work::Close { .. } | Work::IndexNext { .. } | Work::LibraryScanNext => {}
+        Work::Close { .. } | Work::SetActiveDocument { .. } | Work::IndexNext { .. } | Work::LibraryScanNext => {}
     }
 }
 
@@ -207,8 +216,9 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
             path,
             password,
             respond,
-        } => respond(do_open(state, shared, path, password)),
+        } => respond(do_open(state, path, password)),
         Work::Close { doc } => state.close_doc(doc, shared),
+        Work::SetActiveDocument { doc } => state.set_active_document(doc, shared),
         Work::Sizes {
             doc,
             from,
@@ -283,12 +293,7 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
     }
 }
 
-fn do_open(
-    state: &mut WorkerState,
-    shared: &EngineShared,
-    path: String,
-    password: Option<String>,
-) -> AppResult<DocMetaDto> {
+fn do_open(state: &mut WorkerState, path: String, password: Option<String>) -> AppResult<DocMetaDto> {
     let raw = render::open_document(state.bindings, &path, password.as_deref())?;
     let page_count = state.bindings.FPDF_GetPageCount(raw).max(0) as u32;
     if page_count == 0 {
@@ -298,12 +303,10 @@ fn do_open(
     let id = state.next_id;
     state.next_id += 1;
 
-    // A new user document supersedes every library hover session. The newly
-    // opened raw handle is already validated, so a failed open never tears
-    // down useful preview state from the current document.
-    state.close_library_docs(shared);
-    shared.main_epoch.fetch_add(1, Ordering::AcqRel);
-
+    // Opening a document has no effect on the citation/library subsystem —
+    // becoming the foreground ("active") document for hover bookkeeping is a
+    // separate, explicit step (see `set_active_document`), so opening a
+    // background tab never tears down another tab's library hover session.
     let mut sizes_vec: Vec<Option<[f32; 2]>> = vec![None; page_count as usize];
     let mut sizes = Vec::new();
     for i in 0..page_count.min(FIRST_SIZES) {
@@ -340,7 +343,6 @@ fn do_open(
             form_fields: None,
         },
     );
-    state.active_main = Some(id);
     Ok(DocMetaDto {
         doc_id: id,
         path,

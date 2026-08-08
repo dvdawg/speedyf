@@ -1,16 +1,16 @@
 /** Search panel: debounced incremental querying, match navigation, results
  * grouped by page, indexing progress, image-only messaging. */
-import { createMemo, createSignal, For, onMount, Show } from 'solid-js';
-import { searchStore } from './searchStore';
+import { createMemo, createSignal, For, onMount, Show, useContext } from 'solid-js';
 import type { FlatMatch } from './searchStore';
-import { documentStore } from '../document/documentStore';
-import { requestScrollToPage, setViewport, viewport } from '../../stores/viewportStore';
 import { pdfRectToCssRect } from '../../lib/coordinates/coords';
-import { pagesGeom } from '../viewer/zoomController';
 import IconButton from '../../components/IconButton';
 import { IconChevronDown, IconChevronUp, IconClose } from '../../components/icons';
+import { TabContext } from '../../app/TabContext';
 
 export default function SearchPanel() {
+  const tab = useContext(TabContext)!;
+  const { documentStore, viewport: vp, zoom, searchStore } = tab;
+  const requestScrollToPage = vp.requestScrollToPage;
   const s = searchStore.state;
   let inputEl!: HTMLInputElement;
   const [caseSensitive, setCase] = createSignal(false);
@@ -26,14 +26,14 @@ export default function SearchPanel() {
       const rects = await searchStore.rectsForMatch(m);
       const first = rects[0];
       if (first) {
-        const geom = pagesGeom()[pageIndex];
+        const geom = zoom.pagesGeom()[pageIndex];
         if (geom) {
           const css = pdfRectToCssRect(
             { x: first[0], y: first[1], w: first[2], h: first[3] },
             geom,
-            viewport.zoom
+            vp.state.zoom
           );
-          requestScrollToPage(pageIndex, css.y - viewport.containerH * 0.35);
+          requestScrollToPage(pageIndex, css.y - vp.state.containerH * 0.35);
           return;
         }
       }
@@ -75,7 +75,7 @@ export default function SearchPanel() {
           onInput={(e) => searchStore.setQuery(e.currentTarget.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') step(e.shiftKey ? -1 : 1);
-            if (e.key === 'Escape') setViewport('searchOpen', false);
+            if (e.key === 'Escape') vp.setState('searchOpen', false);
           }}
           aria-label="Search query"
         />
@@ -93,7 +93,7 @@ export default function SearchPanel() {
         >
           <IconChevronDown />
         </IconButton>
-        <IconButton label="Close search (Esc)" onClick={() => setViewport('searchOpen', false)}>
+        <IconButton label="Close search (Esc)" onClick={() => vp.setState('searchOpen', false)}>
           <IconClose />
         </IconButton>
       </div>

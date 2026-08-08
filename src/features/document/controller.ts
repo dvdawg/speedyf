@@ -1,23 +1,24 @@
-/** Open / save / close orchestration. Owns every native file dialog and the
- * post-save reload, keeping components free of workflow logic. */
-import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
+/** Open / save / close orchestration for the active tab. Owns every native
+ * file dialog and the post-save reload, keeping components free of workflow
+ * logic. Multi-tab lifecycle (new tab / dedup-focus / close) lives in
+ * tabsController.ts — this module only ever acts on the currently active
+ * tab's own stores. */
+import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { engine, isEngineError } from '../../lib/transport/engine';
-import { documentStore } from './documentStore';
-import { askPassword, askUnsaved, showError } from '../../stores/modalStore';
-import { requestScrollToPage, setViewport, viewport } from '../../stores/viewportStore';
-import { searchStore } from '../search/searchStore';
-import { clearImagePreviews } from '../editor/editorActions';
+import type { TabRecord } from '../../stores/tabsStore';
+import { askUnsaved, showError } from '../../stores/modalStore';
+import { recentStore } from '../../stores/recentStore';
 
 const SIZE_BATCH = 128;
-let openRequestSeq = 0;
 
-async function hydrateSizes(docId: number, pageCount: number) {
+export async function hydrateSizes(tab: TabRecord, pageCount: number) {
+  const docId = tab.documentStore.state.docId;
   for (let from = 64; from < pageCount; from += SIZE_BATCH) {
-    if (documentStore.state.docId !== docId) return; // doc changed — stop
+    if (tab.documentStore.state.docId !== docId) return; // doc changed — stop
     try {
       const res = await engine.requestPageSizes(docId, from, SIZE_BATCH);
-      if (documentStore.state.docId !== docId) return;
-      documentStore.updateSizes(res.from, res.sizes);
+      if (tab.documentStore.state.docId !== docId) return;
+      tab.documentStore.updateSizes(res.from, res.sizes);
     } catch {
       return; // doc closed mid-flight
     }
@@ -25,67 +26,19 @@ async function hydrateSizes(docId: number, pageCount: number) {
 }
 
 /** Returns false when the user cancels. */
-export async function guardUnsaved(): Promise<boolean> {
-  if (!documentStore.state.loaded || !documentStore.state.dirty) return true;
+export async function guardUnsaved(tab: TabRecord): Promise<boolean> {
+  if (!tab.documentStore.state.loaded || !tab.documentStore.state.dirty) return true;
   const choice = await askUnsaved(
-    `"${documentStore.state.name}" has unsaved changes. Save them before continuing?`
+    `"${tab.documentStore.state.name}" has unsaved changes. Save them before continuing?`
   );
   if (choice === 'cancel') return false;
-  if (choice === 'save') return saveDocument(false);
+  if (choice === 'save') return saveDocument(tab, false);
   return true; // discard
 }
 
-export async function openFromDialog() {
-  const picked = await openDialog({
-    multiple: false,
-    filters: [{ name: 'PDF documents', extensions: ['pdf'] }],
-  });
-  if (typeof picked === 'string') await openPath(picked);
-}
-
-export async function openPath(path: string, opts?: { skipGuard?: boolean }) {
-  if (!opts?.skipGuard && !(await guardUnsaved())) return;
-  const requestSeq = ++openRequestSeq;
-  const previous = documentStore.state.loaded ? documentStore.state.docId : null;
-
-  let password: string | undefined;
-  for (;;) {
-    try {
-      const meta = await engine.open(path, password);
-      if (requestSeq !== openRequestSeq) {
-        void engine.close(meta.docId);
-        return;
-      }
-      if (previous !== null) void engine.close(previous);
-      clearImagePreviews();
-      searchStore.resetForDocument(meta.docId, meta.pageCount);
-      documentStore.initFromMeta(meta);
-      setViewport({ currentPage: 0, scrollTop: 0 });
-      requestScrollToPage(0);
-      void engine.startIndexing(meta.docId);
-      void hydrateSizes(meta.docId, meta.pageCount);
-      return;
-    } catch (e) {
-      if (requestSeq !== openRequestSeq) return;
-      if (isEngineError(e) && e.code === 'password') {
-        const entered = await askPassword(
-          password === undefined
-            ? 'This PDF is password-protected. Enter the password to open it.'
-            : 'Incorrect password. Try again.'
-        );
-        if (entered === null) return;
-        password = entered;
-        continue;
-      }
-      showError(isEngineError(e) ? e.message : `Could not open ${path}: ${String(e)}`);
-      return;
-    }
-  }
-}
-
 /** Save (or Save As). Returns true on success. */
-export async function saveDocument(saveAs: boolean): Promise<boolean> {
-  const state = documentStore.state;
+export async function saveDocument(tab: TabRecord, saveAs: boolean): Promise<boolean> {
+  const state = tab.documentStore.state;
   if (!state.loaded || state.saving) return false;
   if (!saveAs && !state.dirty) return true;
   if (state.pages.length > 65_535) {
@@ -109,20 +62,20 @@ export async function saveDocument(saveAs: boolean): Promise<boolean> {
   }
 
   if (!state.loaded || state.docId !== docId) return false;
-  documentStore.setSaving(true);
-  const rememberPage = viewport.currentPage;
+  tab.documentStore.setSaving(true);
+  const rememberPage = tab.viewport.state.currentPage;
   try {
-    const plan = documentStore.buildEditPlan();
+    const plan = tab.documentStore.buildEditPlan();
     await engine.saveDocument(docId, plan, dest);
     // A discard/open can replace the active document while the native save
     // is running. The file was saved, but its completion must not overwrite
     // the newer session's model or navigation.
     if (!state.loaded || state.docId !== docId) return true;
-    documentStore.markSaved();
+    tab.documentStore.markSaved();
     // Reload from disk so the saved file becomes the new baseline (edits are
     // baked in; undo history restarts clean).
-    await openPath(dest, { skipGuard: true });
-    requestScrollToPage(Math.min(rememberPage, documentStore.state.pages.length - 1));
+    await reloadTabFromDisk(tab, dest);
+    tab.viewport.requestScrollToPage(Math.min(rememberPage, tab.documentStore.state.pages.length - 1));
     return true;
   } catch (e) {
     showError(
@@ -132,6 +85,18 @@ export async function saveDocument(saveAs: boolean): Promise<boolean> {
     );
     return false;
   } finally {
-    if (documentStore.state.docId === docId) documentStore.setSaving(false);
+    if (tab.documentStore.state.docId === docId) tab.documentStore.setSaving(false);
   }
+}
+
+/** Reopens `dest` from disk into `tab`'s own stores in place, without
+ * creating a new tab (used after Save/Save As, and only there — routing a
+ * post-save reload through tabsController.openInNewTabOrFocus would spawn a
+ * duplicate tab for the same file on every save). */
+export async function reloadTabFromDisk(tab: TabRecord, dest: string): Promise<void> {
+  const meta = await engine.open(dest);
+  tab.documentStore.initFromMeta(meta);
+  tab.searchStore.resetForDocument(meta.docId, meta.pageCount);
+  tab.citationStore.syncDocument(meta.docId);
+  recentStore.recordOpen({ path: dest, name: meta.name });
 }

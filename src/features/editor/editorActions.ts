@@ -1,9 +1,11 @@
-/** Page-editing actions shared by Toolbar and Sidebar. */
+/** Page-editing actions shared by Toolbar and Sidebar. Takes the acting
+ * tab's own documentStore/viewport explicitly since this is a plain module
+ * (not a component), so it can't read them via TabContext. */
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { engine } from '../../lib/transport/engine';
-import { documentStore } from '../document/documentStore';
-import { viewport } from '../../stores/viewportStore';
+import type { DocumentStore } from '../document/documentStore';
+import type { ViewportStore } from '../../stores/viewportStore';
 import { showError } from '../../stores/modalStore';
 
 let annotSeq = 0;
@@ -11,7 +13,7 @@ export function newAnnotId(): string {
   return `an-${Date.now().toString(36)}-${++annotSeq}`;
 }
 
-export async function addImageFromDialog() {
+export async function addImageFromDialog(documentStore: DocumentStore, vp: ViewportStore) {
   const state = documentStore.state;
   if (!state.loaded) return;
   const docId = state.docId;
@@ -23,7 +25,7 @@ export async function addImageFromDialog() {
   try {
     const [nw, nh] = await engine.imageSize(picked);
     if (!state.loaded || state.docId !== docId) return;
-    const page = state.pages[Math.min(viewport.currentPage, state.pages.length - 1)];
+    const page = state.pages[Math.min(vp.state.currentPage, state.pages.length - 1)];
     if (!page) return;
     // place at ~40% of page width, centered
     const targetW = Math.min(page.widthPt * 0.4, nw * 0.75);
@@ -55,7 +57,7 @@ export async function addImageFromDialog() {
   }
 }
 
-export function addBlankPageAfter(index: number) {
+export function addBlankPageAfter(documentStore: DocumentStore, index: number) {
   const state = documentStore.state;
   const ref = state.pages[Math.min(index, state.pages.length - 1)];
   documentStore.apply({

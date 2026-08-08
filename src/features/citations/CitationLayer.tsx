@@ -1,8 +1,8 @@
-import { createMemo, createResource, For } from 'solid-js';
+import { createMemo, createResource, For, useContext } from 'solid-js';
 import type { LinkTarget, PageLink } from '../../types/engine';
 import { toolState } from '../annotations/toolStore';
 import { citationLabel } from './citationLabel';
-import { citationStore, navigateInternalTarget } from './linkStore';
+import { TabContext } from '../../app/TabContext';
 
 interface Props {
   docId: number;
@@ -26,6 +26,7 @@ function ariaLabel(target: HoverableLink['target']): string {
 }
 
 export default function CitationLayer(props: Props) {
+  const { citationStore } = useContext(TabContext)!;
   const [pageLinks] = createResource(
     () => [props.docId, props.src] as const,
     ([docId, src]) => citationStore.linksForPage(docId, src)
@@ -76,7 +77,7 @@ export default function CitationLayer(props: Props) {
               }}
               onClick={(event) => {
                 event.preventDefault();
-                if (link.target.kind === 'internal') navigateInternalTarget(link.target);
+                if (link.target.kind === 'internal') citationStore.navigateInternalTarget(link.target);
               }}
             />
           );

@@ -89,6 +89,135 @@ body {
   display: flex;
 }
 
+/* Holds both the tab workspaces and the Home screen as stacked overlays, so
+ * going Home doesn't unmount any tab (tabs stay mounted in the background —
+ * see .tab-workspace below — independent of whether Home is showing on top). */
+.content-area {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.tab-workspaces {
+  position: absolute;
+  inset: 0;
+}
+
+/* Every open tab's subtree stays mounted (correct scroll/zoom/virtualization
+ * state across switches); only the active one is shown. `visibility`, not
+ * `display:none` — a display:none box collapses to zero size and corrupts
+ * the hidden tab's ResizeObserver-driven layout. */
+.tab-workspace {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.tab-workspace.is-active {
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.home-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  overflow-y: auto;
+}
+
+.home-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 28px;
+  border-bottom: 1px solid var(--border);
+}
+
+.home-header h1 {
+  margin: 0;
+  font-size: 20px;
+  color: var(--text);
+}
+
+.home-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--text-dim);
+  padding: 24px;
+}
+
+.home-recent {
+  padding: 8px 28px 28px;
+}
+
+.home-recent-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 10px;
+  color: var(--text-dim);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.home-recent-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.home-recent-row {
+  display: grid;
+  grid-template-columns: 1fr 110px 80px 1.3fr;
+  gap: 16px;
+  align-items: center;
+  width: 100%;
+  padding: 10px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.home-recent-row:hover {
+  background: var(--bg-inset);
+}
+
+.home-recent-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.home-recent-date,
+.home-recent-size {
+  color: var(--text-dim);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.home-recent-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
 /* ---------- toolbar ---------- */
 .toolbar {
   display: flex;
@@ -232,6 +361,78 @@ textarea:focus-visible {
 
 .tb-slider input {
   width: 70px;
+}
+
+/* ---------- tab strip ---------- */
+.tab-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+
+.tab-strip-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.tab-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  min-width: 84px;
+  max-width: 200px;
+  flex: 1 1 0;
+  padding: 0 4px 0 10px;
+  border: 1px solid transparent;
+  border-radius: 6px 6px 0 0;
+  background: var(--bg-inset);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.tab-pill:hover {
+  background: var(--bg);
+}
+
+.tab-pill.is-active {
+  background: var(--bg);
+  color: var(--text);
+  border-color: var(--border);
+  border-bottom-color: transparent;
+}
+
+.tab-pill.is-drop-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+
+.tab-pill-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-pill-dirty {
+  color: var(--accent);
+  font-size: 10px;
+}
+
+.tab-pill-close {
+  flex-shrink: 0;
+  height: 22px;
+  min-width: 22px;
+  padding: 0;
 }
 
 /* ---------- sidebar ---------- */

@@ -1,21 +1,19 @@
 import { createSignal, onCleanup, onMount, Show } from 'solid-js';
-import { documentStore } from '../features/document/documentStore';
-import { searchStore } from '../features/search/searchStore';
-import { viewport } from '../stores/viewportStore';
+import { activeTab } from '../stores/tabsStore';
 import { effectiveTheme, settings, updateSettings } from '../stores/settings';
 import { engine } from '../lib/transport/engine';
 import type { EngineMetrics } from '../lib/transport/engine';
-import { citationStore } from '../features/citations/linkStore';
+import { libraryStore } from '../features/citations/libraryStore';
 
 export default function StatusBar() {
-  const doc = documentStore.state;
-  const s = searchStore.state;
+  const doc = () => activeTab()?.documentStore.state;
+  const s = () => activeTab()?.searchStore.state;
   const [metrics, setMetrics] = createSignal<EngineMetrics | null>(null);
 
   onMount(() => {
     let disposed = false;
     const refresh = async () => {
-      if (!doc.loaded) {
+      if (!doc()?.loaded) {
         setMetrics(null);
         return;
       }
@@ -28,7 +26,7 @@ export default function StatusBar() {
     };
     void refresh();
     const timer = window.setInterval(() => void refresh(), 1_500);
-    const libraryTimer = window.setInterval(() => void citationStore.refreshLibraryStatus(), 1_200);
+    const libraryTimer = window.setInterval(() => void libraryStore.refreshLibraryStatus(), 1_200);
     onCleanup(() => {
       disposed = true;
       window.clearInterval(timer);
@@ -39,43 +37,43 @@ export default function StatusBar() {
   return (
     <footer class="status-bar">
       <div class="sb-left">
-        <Show when={doc.loaded} fallback={<span class="sb-dim">No document</span>}>
-          <span class="sb-name" title={doc.path ?? doc.name}>
-            {doc.name}
+        <Show when={doc()?.loaded} fallback={<span class="sb-dim">No document</span>}>
+          <span class="sb-name" title={doc()!.path ?? doc()!.name}>
+            {doc()!.name}
           </span>
-          <Show when={doc.dirty}>
+          <Show when={doc()!.dirty}>
             <span class="sb-dirty" title="Unsaved changes">
               ● edited
             </span>
           </Show>
-          <Show when={doc.saving}>
+          <Show when={doc()!.saving}>
             <span class="sb-dim">saving…</span>
           </Show>
         </Show>
       </div>
       <div class="sb-center" aria-live="polite">
-        <Show when={doc.loaded && !s.indexingDone && s.total > 0}>
+        <Show when={doc()?.loaded && !s()!.indexingDone && s()!.total > 0}>
           <span class="sb-dim">
-            Indexing text {s.indexed}/{s.total}
+            Indexing text {s()!.indexed}/{s()!.total}
           </span>
         </Show>
-        <Show when={citationStore.state.library.scanning}>
+        <Show when={libraryStore.state.library.scanning}>
           <span class="sb-dim">
-            Citation library {citationStore.state.library.indexed}/
-            {citationStore.state.library.total}
+            Citation library {libraryStore.state.library.indexed}/
+            {libraryStore.state.library.total}
           </span>
         </Show>
-        <Show when={citationStore.state.libraryError}>
-          <span class="sb-warn" title={citationStore.state.libraryError ?? undefined}>
+        <Show when={libraryStore.state.libraryError}>
+          <span class="sb-warn" title={libraryStore.state.libraryError ?? undefined}>
             citation library error
           </span>
         </Show>
-        <Show when={s.truncated}>
+        <Show when={s()?.truncated}>
           <span class="sb-warn" title="Text index reached its memory budget">
             index truncated
           </span>
         </Show>
-        <Show when={doc.loaded && doc.pages.length > 65_535}>
+        <Show when={doc()?.loaded && (doc()?.pages.length ?? 0) > 65_535}>
           <span
             class="sb-warn"
             title="Viewing and search support all pages, but PDFium output documents are limited to 65,535 pages. Delete pages below that limit before saving."
@@ -85,7 +83,7 @@ export default function StatusBar() {
         </Show>
       </div>
       <div class="sb-right">
-        <Show when={doc.loaded && metrics()}>
+        <Show when={doc()?.loaded && metrics()}>
           {(value) => (
             <span
               class="sb-dim"
@@ -96,9 +94,10 @@ export default function StatusBar() {
             </span>
           )}
         </Show>
-        <Show when={doc.loaded}>
+        <Show when={doc()?.loaded}>
           <span class="sb-dim">
-            p. {viewport.currentPage + 1}/{doc.pages.length} · {Math.round(viewport.zoom * 100)}%
+            p. {(activeTab()?.viewport.state.currentPage ?? 0) + 1}/{doc()!.pages.length} ·{' '}
+            {Math.round((activeTab()?.viewport.state.zoom ?? 1) * 100)}%
           </span>
         </Show>
         <label class="sb-control" title="Reduce cache memory budgets">
@@ -115,18 +114,18 @@ export default function StatusBar() {
         <button
           type="button"
           class="sb-control sb-button"
-          title={citationStore.state.library.root ?? 'Choose a folder of local PDF papers'}
-          onClick={() => void citationStore.chooseLibraryFolder()}
+          title={libraryStore.state.library.root ?? 'Choose a folder of local PDF papers'}
+          onClick={() => void libraryStore.chooseLibraryFolder()}
         >
           Citation library…
         </button>
-        <Show when={citationStore.state.library.root}>
+        <Show when={libraryStore.state.library.root}>
           <button
             type="button"
             class="sb-clear"
             title="Disable citation library"
             aria-label="Disable citation library"
-            onClick={() => void citationStore.disableLibrary()}
+            onClick={() => void libraryStore.disableLibrary()}
           >
             ×
           </button>

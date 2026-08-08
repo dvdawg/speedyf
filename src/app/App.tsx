@@ -1,23 +1,30 @@
-import { createEffect, createSignal, onCleanup, onMount, Show } from 'solid-js';
+import { createEffect, onCleanup, onMount, Show } from 'solid-js';
+import { createSignal, For } from 'solid-js';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import Toolbar from '../components/Toolbar';
+import TabStrip from '../features/tabs/TabStrip';
 import Sidebar from '../components/Sidebar';
 import StatusBar from '../components/StatusBar';
 import Modals from '../components/Modals';
 import Viewer from '../features/viewer/Viewer';
 import SearchPanel from '../features/search/SearchPanel';
 import FormPanel from '../features/editor/FormPanel';
-import { documentStore } from '../features/document/documentStore';
-import { guardUnsaved, openPath } from '../features/document/controller';
-import { searchStore } from '../features/search/searchStore';
 import { engine } from '../lib/transport/engine';
-import { viewport } from '../stores/viewportStore';
+import { ui } from '../stores/uiStore';
 import { effectiveTheme, settings } from '../stores/settings';
 import { installShortcuts } from './shortcuts';
 import { clearImagePreviews } from '../features/editor/editorActions';
 import PreviewPopover from '../features/citations/PreviewPopover';
-import { citationStore } from '../features/citations/linkStore';
+import HomeScreen from '../features/home/HomeScreen';
+import { libraryStore } from '../features/citations/libraryStore';
+import { activeTab, tabsStore } from '../stores/tabsStore';
+import {
+  closeAllWithGuard,
+  openInNewTabOrFocus,
+  restoreSession,
+} from '../features/document/tabsController';
+import { TabContext } from './TabContext';
 
 export default function App() {
   const [dropActive, setDropActive] = createSignal(false);
@@ -28,10 +35,6 @@ export default function App() {
     void settings.theme; // dependency
   });
 
-  createEffect(() => {
-    const doc = documentStore.state;
-    citationStore.syncDocument(doc.loaded ? doc.docId : -1);
-  });
   onMount(() => {
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
     const onChange = () => {
@@ -43,10 +46,10 @@ export default function App() {
     onCleanup(() => mq.removeEventListener('change', onChange));
   });
 
-  // window title reflects document + dirty state
+  // window title reflects the active tab's document + dirty state
   createEffect(() => {
-    const doc = documentStore.state;
-    const title = doc.loaded ? `${doc.dirty ? '• ' : ''}${doc.name} — SpeedyF` : 'SpeedyF';
+    const doc = activeTab()?.documentStore.state;
+    const title = doc?.loaded ? `${doc.dirty ? '• ' : ''}${doc.name} — SpeedyF` : 'SpeedyF';
     void getCurrentWindow()
       .setTitle(title)
       .catch(() => undefined);
@@ -56,20 +59,20 @@ export default function App() {
     const cleanupShortcuts = installShortcuts();
     let disposed = false;
 
-    // engine events → search store
+    // engine events → the owning tab's own search store, even if it's a
+    // background tab (not the currently visible one)
     let unlistenProgress: (() => void) | undefined;
     void engine
       .onSearchProgress((p) => {
-        if (p.docId === documentStore.state.docId) {
-          searchStore.onIndexProgress(p.indexed, p.total, p.truncated);
-        }
+        const tab = tabsStore.state.tabs.find((t) => t.documentStore.state.docId === p.docId);
+        tab?.searchStore.onIndexProgress(p.indexed, p.total, p.truncated);
       })
       .then((unlisten) => {
         if (disposed) unlisten();
         else unlistenProgress = unlisten;
       });
 
-    // native file drag-drop
+    // native file drag-drop always opens a new tab (or focuses an existing one)
     let unlistenDrop: (() => void) | undefined;
     void getCurrentWebview()
       .onDragDropEvent((event) => {
@@ -79,7 +82,7 @@ export default function App() {
         else if (t === 'drop') {
           setDropActive(false);
           const pdf = event.payload.paths.find((p) => p.toLowerCase().endsWith('.pdf'));
-          if (pdf) void openPath(pdf);
+          if (pdf) void openInNewTabOrFocus(pdf);
         }
       })
       .then((unlisten) => {
@@ -87,16 +90,17 @@ export default function App() {
         else unlistenDrop = unlisten;
       });
 
-    // unsaved-changes close guard
+    // unsaved-changes close guard, across every open tab
     let closing = false;
     let unlistenClose: (() => void) | undefined;
     const win = getCurrentWindow();
     void win
       .onCloseRequested(async (e) => {
         if (closing) return;
-        if (documentStore.state.dirty) {
+        const anyDirty = tabsStore.state.tabs.some((t) => t.documentStore.state.dirty);
+        if (anyDirty) {
           e.preventDefault();
-          const ok = await guardUnsaved();
+          const ok = await closeAllWithGuard();
           if (ok) {
             closing = true;
             await win.destroy();
@@ -110,7 +114,8 @@ export default function App() {
 
     // apply persisted low-memory budget at startup
     if (settings.lowMemory) void engine.setLowMemory(true);
-    void citationStore.initializeLibrary();
+    void libraryStore.initializeLibrary();
+    void restoreSession();
 
     onCleanup(() => {
       disposed = true;
@@ -125,18 +130,41 @@ export default function App() {
   return (
     <div class="app-shell" classList={{ 'drop-active': dropActive() }}>
       <Toolbar />
-      <div class="app-body">
-        <Show when={viewport.sidebarOpen && documentStore.state.loaded}>
-          <Sidebar />
+      <TabStrip />
+      <div class="content-area">
+        <Show when={tabsStore.state.tabs.length > 0}>
+          <div class="tab-workspaces">
+            <For each={tabsStore.state.tabs}>
+              {(tab) => (
+                <TabContext.Provider value={tab}>
+                  <div
+                    class="tab-workspace"
+                    classList={{ 'is-active': tab.id === tabsStore.state.activeId }}
+                  >
+                    <div class="app-body">
+                      <Show when={ui.sidebarOpen && tab.documentStore.state.loaded}>
+                        <Sidebar />
+                      </Show>
+                      <main class="app-main">
+                        <Viewer />
+                      </main>
+                      <Show when={tab.viewport.state.searchOpen && tab.documentStore.state.loaded}>
+                        <SearchPanel />
+                      </Show>
+                      <Show
+                        when={tab.viewport.state.formPanelOpen && tab.documentStore.state.loaded}
+                      >
+                        <FormPanel />
+                      </Show>
+                    </div>
+                  </div>
+                </TabContext.Provider>
+              )}
+            </For>
+          </div>
         </Show>
-        <main class="app-main">
-          <Viewer />
-        </main>
-        <Show when={viewport.searchOpen && documentStore.state.loaded}>
-          <SearchPanel />
-        </Show>
-        <Show when={viewport.formPanelOpen && documentStore.state.loaded}>
-          <FormPanel />
+        <Show when={tabsStore.state.activeId === null}>
+          <HomeScreen />
         </Show>
       </div>
       <StatusBar />

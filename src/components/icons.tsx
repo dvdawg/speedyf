@@ -21,6 +21,13 @@ export const IconOpen = () =>
   base(
     <path d="M1.5 4.5a1 1 0 0 1 1-1h3l1.5 2h6.5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-8z" />
   );
+export const IconHome = () =>
+  base(
+    <>
+      <path d="M2 7.5 8 2l6 5.5" />
+      <path d="M3.5 6.5V13.5a.5.5 0 0 0 .5.5h3v-4h2v4h3a.5.5 0 0 0 .5-.5V6.5" />
+    </>
+  );
 export const IconSave = () =>
   base(
     <>

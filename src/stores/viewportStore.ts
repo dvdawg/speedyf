@@ -1,6 +1,9 @@
 /** Viewport state: zoom, fit mode, view rotation, scroll, current page.
- * Lightweight values only — layout geometry is derived in components. */
-import { createStore } from 'solid-js/store';
+ * Lightweight values only — layout geometry is derived in components.
+ * One instance per open tab (see tabsStore.ts); `createViewportStore()` is
+ * the factory, with a temporary module-level singleton kept below until the
+ * tab-registry wiring lands. */
+import { createStore, type SetStoreFunction } from 'solid-js/store';
 import type { FitMode, Rotation } from '../types/model';
 
 export interface ViewportState {
@@ -14,7 +17,6 @@ export interface ViewportState {
   containerH: number;
   dpr: number;
   currentPage: number;
-  sidebarOpen: boolean;
   searchOpen: boolean;
   formPanelOpen: boolean;
   editMode: boolean;
@@ -31,49 +33,64 @@ export const MAX_ZOOM = 6;
 export const PAGE_GAP = 16;
 export const VIEW_PADDING = 24;
 
-const [viewport, setViewport] = createStore<ViewportState>({
-  zoom: 1,
-  fitMode: 'fit-width',
-  viewRotation: 0,
-  scrollTop: 0,
-  scrollLeft: 0,
-  containerW: 800,
-  containerH: 600,
-  dpr: typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1,
-  currentPage: 0,
-  sidebarOpen: true,
-  searchOpen: false,
-  formPanelOpen: false,
-  editMode: false,
-  scrollRequest: null,
-});
-
-export { viewport, setViewport };
-
 export function clampZoom(z: number): number {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
 }
 
-let scrollSeq = 0;
-export function requestScrollToPage(page: number, offsetCss?: number) {
-  setViewport('scrollRequest', {
-    kind: 'page',
-    page,
-    seq: ++scrollSeq,
-    ...(offsetCss !== undefined ? { offsetCss } : {}),
-  });
+export interface ViewportStore {
+  state: ViewportState;
+  setState: SetStoreFunction<ViewportState>;
+  requestScrollToPage(page: number, offsetCss?: number): void;
+  requestScrollToPosition(top: number, left: number): void;
+  rotateView(): void;
 }
 
-/** Restore an exact reading position, used by internal-reference history. */
-export function requestScrollToPosition(top: number, left: number) {
-  setViewport('scrollRequest', {
-    kind: 'position',
-    top: Math.max(0, top),
-    left: Math.max(0, left),
-    seq: ++scrollSeq,
-  });
+function emptyState(): ViewportState {
+  return {
+    zoom: 1,
+    fitMode: 'fit-width',
+    viewRotation: 0,
+    scrollTop: 0,
+    scrollLeft: 0,
+    containerW: 800,
+    containerH: 600,
+    dpr: typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1,
+    currentPage: 0,
+    searchOpen: false,
+    formPanelOpen: false,
+    editMode: false,
+    scrollRequest: null,
+  };
 }
 
-export function rotateView() {
-  setViewport('viewRotation', ((viewport.viewRotation + 90) % 360) as Rotation);
+export function createViewportStore(): ViewportStore {
+  const [state, setState] = createStore<ViewportState>(emptyState());
+  let scrollSeq = 0;
+
+  return {
+    state,
+    setState,
+
+    requestScrollToPage(page: number, offsetCss?: number) {
+      setState('scrollRequest', {
+        kind: 'page',
+        page,
+        seq: ++scrollSeq,
+        ...(offsetCss !== undefined ? { offsetCss } : {}),
+      });
+    },
+
+    requestScrollToPosition(top: number, left: number) {
+      setState('scrollRequest', {
+        kind: 'position',
+        top: Math.max(0, top),
+        left: Math.max(0, left),
+        seq: ++scrollSeq,
+      });
+    },
+
+    rotateView() {
+      setState('viewRotation', ((state.viewRotation + 90) % 360) as Rotation);
+    },
+  };
 }

@@ -5,15 +5,15 @@
  * and is mapped through lib/coordinates. Annotations stay pure vectors during
  * interaction — the page raster is never re-rendered for annotation edits.
  */
-import { createMemo, createResource, createSignal, For, Show } from 'solid-js';
+import { createMemo, createResource, createSignal, For, Show, useContext } from 'solid-js';
 import type { Annotation, PageEntry, PdfPoint, PdfQuad, PdfRect } from '../../types/model';
 import type { PageGeom } from '../../lib/coordinates/coords';
 import { cssToPdf } from '../../lib/coordinates/coords';
 import type { TextRunDto } from '../../types/engine';
-import { documentStore } from '../document/documentStore';
 import { toolState, activeStyle, setActiveTool } from './toolStore';
 import { imagePreviewUrl, newAnnotId } from '../editor/editorActions';
 import { IconTrash } from '../../components/icons';
+import { TabContext } from '../../app/TabContext';
 
 interface Props {
   page: PageEntry;
@@ -32,6 +32,7 @@ interface DragState {
 }
 
 export default function AnnotationLayer(props: Props) {
+  const { documentStore } = useContext(TabContext)!;
   const H = () => props.page.heightPt;
   const annots = () => documentStore.state.annotations[props.page.id] ?? [];
   const selectedId = () =>

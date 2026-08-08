@@ -46,6 +46,12 @@ export interface EngineMetrics {
 export interface EngineApi {
   open(path: string, password?: string): Promise<DocMeta>;
   close(docId: number): Promise<void>;
+  /** Marks which doc is foreground for citation-hover bookkeeping; opening a
+   * background tab does not implicitly change this. */
+  setActiveDocument(docId: number | null): Promise<void>;
+  /** Plain filesystem stat (not a PDFium operation) for the home screen's
+   * recent-files list. */
+  fileMetadata(path: string): Promise<{ sizeBytes: number; modifiedMs: number }>;
   requestPageSizes(
     docId: number,
     from: number,
@@ -82,6 +88,8 @@ export interface EngineApi {
 export const engine: EngineApi = {
   open: (path, password) => invoke('open_document', { path, password: password ?? null }),
   close: (docId) => invoke('close_document', { docId }),
+  setActiveDocument: (docId) => invoke('set_active_document', { docId }),
+  fileMetadata: (path) => invoke('file_metadata', { path }),
   requestPageSizes: (docId, from, count) => invoke('request_page_sizes', { docId, from, count }),
   getTextLayout: (docId, src) => invoke('get_text_layout', { docId, src }),
   getPageLinks: (docId, src) => invoke('get_page_links', { docId, src }),

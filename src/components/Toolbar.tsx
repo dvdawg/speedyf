@@ -26,10 +26,10 @@ import {
   IconZoomIn,
   IconZoomOut,
 } from './icons';
-import { documentStore } from '../features/document/documentStore';
-import { openFromDialog, saveDocument } from '../features/document/controller';
-import { requestScrollToPage, rotateView, setViewport, viewport } from '../stores/viewportStore';
-import { applyFit, refreshFit, setZoomAnchored, zoomStep } from '../features/viewer/zoomController';
+import { saveDocument } from '../features/document/controller';
+import { openFromDialog } from '../features/document/tabsController';
+import { activeTab } from '../stores/tabsStore';
+import { setUi, ui } from '../stores/uiStore';
 import {
   activeStyle,
   toggleTool,
@@ -37,13 +37,12 @@ import {
   updateActiveStyle,
 } from '../features/annotations/toolStore';
 import { addImageFromDialog } from '../features/editor/editorActions';
-import { citationStore, goBackFromInternalTarget } from '../features/citations/linkStore';
 
 export default function Toolbar() {
   const maxSavePages = 65_535;
-  const doc = documentStore.state;
-  const loaded = () => doc.loaded;
-  const pageCount = () => doc.pages.length;
+  const doc = () => activeTab()?.documentStore.state;
+  const loaded = () => doc()?.loaded ?? false;
+  const pageCount = () => doc()?.pages.length ?? 0;
   const saveSupported = () => pageCount() <= maxSavePages;
   const [pageInput, setPageInput] = createSignal<string | null>(null);
   const [zoomInput, setZoomInput] = createSignal<string | null>(null);
@@ -51,13 +50,13 @@ export default function Toolbar() {
   const commitPageInput = (raw: string) => {
     setPageInput(null);
     const n = parseInt(raw, 10);
-    if (Number.isFinite(n) && n >= 1 && n <= pageCount()) requestScrollToPage(n - 1);
+    if (Number.isFinite(n) && n >= 1 && n <= pageCount()) activeTab()?.viewport.requestScrollToPage(n - 1);
   };
 
   const commitZoomInput = (raw: string) => {
     setZoomInput(null);
     const n = parseFloat(raw.replace('%', ''));
-    if (Number.isFinite(n) && n > 0) setZoomAnchored(n / 100);
+    if (Number.isFinite(n) && n > 0) activeTab()?.zoom.setZoomAnchored(n / 100);
   };
 
   const showStroke = () => toolState.active === 'ink' || toolState.active === 'rect';
@@ -69,8 +68,8 @@ export default function Toolbar() {
       <div class="tb-group">
         <IconButton
           label="Toggle sidebar"
-          active={viewport.sidebarOpen}
-          onClick={() => setViewport('sidebarOpen', !viewport.sidebarOpen)}
+          active={ui.sidebarOpen}
+          onClick={() => setUi('sidebarOpen', !ui.sidebarOpen)}
         >
           <IconSidebar />
         </IconButton>
@@ -82,15 +81,21 @@ export default function Toolbar() {
         </IconButton>
         <IconButton
           label="Save (⌘S)"
-          disabled={!loaded() || !doc.dirty || doc.saving || !saveSupported()}
-          onClick={() => void saveDocument(false)}
+          disabled={!loaded() || !doc()?.dirty || doc()?.saving || !saveSupported()}
+          onClick={() => {
+            const tab = activeTab();
+            if (tab) void saveDocument(tab, false);
+          }}
         >
           <IconSave />
         </IconButton>
         <IconButton
           label="Save As… (⇧⌘S)"
-          disabled={!loaded() || doc.saving || !saveSupported()}
-          onClick={() => void saveDocument(true)}
+          disabled={!loaded() || doc()?.saving || !saveSupported()}
+          onClick={() => {
+            const tab = activeTab();
+            if (tab) void saveDocument(tab, true);
+          }}
         >
           <IconSaveAs />
         </IconButton>
@@ -99,15 +104,15 @@ export default function Toolbar() {
       <div class="tb-group">
         <IconButton
           label="Undo (⌘Z)"
-          disabled={doc.historyDepth === 0}
-          onClick={() => documentStore.undo()}
+          disabled={(doc()?.historyDepth ?? 0) === 0}
+          onClick={() => activeTab()?.documentStore.undo()}
         >
           <IconUndo />
         </IconButton>
         <IconButton
           label="Redo (⇧⌘Z)"
-          disabled={doc.redoDepth === 0}
-          onClick={() => documentStore.redo()}
+          disabled={(doc()?.redoDepth ?? 0) === 0}
+          onClick={() => activeTab()?.documentStore.redo()}
         >
           <IconRedo />
         </IconButton>
@@ -116,22 +121,28 @@ export default function Toolbar() {
       <div class="tb-group">
         <IconButton
           label="Back to previous view"
-          disabled={!loaded() || citationStore.state.navigationDepth === 0}
-          onClick={() => goBackFromInternalTarget()}
+          disabled={!loaded() || (activeTab()?.citationStore.state.navigationDepth ?? 0) === 0}
+          onClick={() => activeTab()?.citationStore.goBackFromInternalTarget()}
         >
           <IconBack />
         </IconButton>
         <IconButton
           label="Previous page (Page Up)"
-          disabled={!loaded() || viewport.currentPage <= 0}
-          onClick={() => requestScrollToPage(viewport.currentPage - 1)}
+          disabled={!loaded() || (activeTab()?.viewport.state.currentPage ?? 0) <= 0}
+          onClick={() => {
+            const tab = activeTab();
+            if (tab) tab.viewport.requestScrollToPage(tab.viewport.state.currentPage - 1);
+          }}
         >
           <IconChevronUp />
         </IconButton>
         <IconButton
           label="Next page (Page Down)"
-          disabled={!loaded() || viewport.currentPage >= pageCount() - 1}
-          onClick={() => requestScrollToPage(viewport.currentPage + 1)}
+          disabled={!loaded() || (activeTab()?.viewport.state.currentPage ?? 0) >= pageCount() - 1}
+          onClick={() => {
+            const tab = activeTab();
+            if (tab) tab.viewport.requestScrollToPage(tab.viewport.state.currentPage + 1);
+          }}
         >
           <IconChevronDown />
         </IconButton>
@@ -142,7 +153,7 @@ export default function Toolbar() {
             type="text"
             inputmode="numeric"
             disabled={!loaded()}
-            value={pageInput() ?? (loaded() ? String(viewport.currentPage + 1) : '–')}
+            value={pageInput() ?? (loaded() ? String((activeTab()?.viewport.state.currentPage ?? 0) + 1) : '–')}
             onFocus={(e) => {
               setPageInput(e.currentTarget.value);
               e.currentTarget.select();
@@ -165,14 +176,18 @@ export default function Toolbar() {
       </div>
 
       <div class="tb-group">
-        <IconButton label="Zoom out (⌘−)" disabled={!loaded()} onClick={() => zoomStep(-1)}>
+        <IconButton
+          label="Zoom out (⌘−)"
+          disabled={!loaded()}
+          onClick={() => activeTab()?.zoom.zoomStep(-1)}
+        >
           <IconZoomOut />
         </IconButton>
         <input
           class="tb-input zoom-input"
           type="text"
           disabled={!loaded()}
-          value={zoomInput() ?? `${Math.round(viewport.zoom * 100)}%`}
+          value={zoomInput() ?? `${Math.round((activeTab()?.viewport.state.zoom ?? 1) * 100)}%`}
           onFocus={(e) => {
             setZoomInput(e.currentTarget.value);
             e.currentTarget.select();
@@ -188,22 +203,26 @@ export default function Toolbar() {
           }}
           aria-label="Zoom percentage"
         />
-        <IconButton label="Zoom in (⌘+)" disabled={!loaded()} onClick={() => zoomStep(1)}>
+        <IconButton
+          label="Zoom in (⌘+)"
+          disabled={!loaded()}
+          onClick={() => activeTab()?.zoom.zoomStep(1)}
+        >
           <IconZoomIn />
         </IconButton>
         <IconButton
           label="Fit page"
           disabled={!loaded()}
-          active={viewport.fitMode === 'fit-page'}
-          onClick={() => applyFit('fit-page')}
+          active={activeTab()?.viewport.state.fitMode === 'fit-page'}
+          onClick={() => activeTab()?.zoom.applyFit('fit-page')}
         >
           <IconFitPage />
         </IconButton>
         <IconButton
           label="Fit width"
           disabled={!loaded()}
-          active={viewport.fitMode === 'fit-width'}
-          onClick={() => applyFit('fit-width')}
+          active={activeTab()?.viewport.state.fitMode === 'fit-width'}
+          onClick={() => activeTab()?.zoom.applyFit('fit-width')}
         >
           <IconFitWidth />
         </IconButton>
@@ -211,8 +230,10 @@ export default function Toolbar() {
           label="Rotate view 90°"
           disabled={!loaded()}
           onClick={() => {
-            rotateView();
-            refreshFit();
+            const tab = activeTab();
+            if (!tab) return;
+            tab.viewport.rotateView();
+            tab.zoom.refreshFit();
           }}
         >
           <IconRotate />
@@ -330,32 +351,44 @@ export default function Toolbar() {
       <div class="tb-group tb-right">
         <IconButton
           label="Add image to page"
-          disabled={!loaded() || !viewport.editMode}
-          onClick={() => void addImageFromDialog()}
+          disabled={!loaded() || !activeTab()?.viewport.state.editMode}
+          onClick={() => {
+            const tab = activeTab();
+            if (tab) void addImageFromDialog(tab.documentStore, tab.viewport);
+          }}
         >
           <IconImage />
         </IconButton>
         <IconButton
           label="Form fields"
           disabled={!loaded()}
-          active={viewport.formPanelOpen}
-          onClick={() => setViewport('formPanelOpen', !viewport.formPanelOpen)}
+          active={activeTab()?.viewport.state.formPanelOpen ?? false}
+          onClick={() => {
+            const tab = activeTab();
+            if (tab) tab.viewport.setState('formPanelOpen', !tab.viewport.state.formPanelOpen);
+          }}
         >
           <IconForm />
         </IconButton>
         <IconButton
           label="Edit mode (page reorder, delete, rotate)"
           disabled={!loaded()}
-          active={viewport.editMode}
-          onClick={() => setViewport('editMode', !viewport.editMode)}
+          active={activeTab()?.viewport.state.editMode ?? false}
+          onClick={() => {
+            const tab = activeTab();
+            if (tab) tab.viewport.setState('editMode', !tab.viewport.state.editMode);
+          }}
         >
           <IconEdit />
         </IconButton>
         <IconButton
           label="Search (⌘F)"
           disabled={!loaded()}
-          active={viewport.searchOpen}
-          onClick={() => setViewport('searchOpen', !viewport.searchOpen)}
+          active={activeTab()?.viewport.state.searchOpen ?? false}
+          onClick={() => {
+            const tab = activeTab();
+            if (tab) tab.viewport.setState('searchOpen', !tab.viewport.state.searchOpen);
+          }}
         >
           <IconSearch />
         </IconButton>

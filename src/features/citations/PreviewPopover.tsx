@@ -2,10 +2,12 @@ import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from
 import { Portal } from 'solid-js/web';
 import { renderUrl } from '../../lib/rendering/renderSource';
 import type { PreviewSpec } from '../../types/engine';
-import { documentStore } from '../document/documentStore';
-import { openPath } from '../document/controller';
+import { openInNewTabOrFocus } from '../document/tabsController';
+import { activeTab } from '../../stores/tabsStore';
+import type { TabRecord } from '../../stores/tabsStore';
 import { citationLabel } from './citationLabel';
-import { citationStore, navigateInternalTarget, type HoverPreview } from './linkStore';
+import type { HoverPreview } from './linkStore';
+import { libraryStore } from './libraryStore';
 import {
   positionPreviewPopover,
   previewContentSize,
@@ -14,19 +16,21 @@ import {
   type PreviewPopoverVariant,
 } from './previewLayout';
 
-function urlFor(preview: PreviewSpec): string {
+function urlFor(tab: TabRecord, preview: PreviewSpec): string {
+  const doc = tab.documentStore.state;
   return renderUrl({
     docId: preview.docId,
     srcIndex: preview.src,
     rotation: 0,
     scaleMilli: preview.scaleMilli,
-    generation: preview.docId === documentStore.state.docId ? documentStore.state.generation : 0,
+    generation: preview.docId === doc.docId ? doc.generation : 0,
     kind: 'preview',
     tile: preview.tile,
   });
 }
 
 function RasterCard(props: {
+  tab: TabRecord;
   preview: PreviewSpec;
   alt: string;
   caption?: string;
@@ -36,7 +40,7 @@ function RasterCard(props: {
   pageNumber?: number;
   activate: () => void;
 }) {
-  const url = createMemo(() => urlFor(props.preview));
+  const url = createMemo(() => urlFor(props.tab, props.preview));
   const rasterStyle = createMemo(() => previewRasterStyle(props.preview));
   const [loaded, setLoaded] = createSignal(false);
   const [failed, setFailed] = createSignal(false);
@@ -114,23 +118,24 @@ function RasterCard(props: {
   );
 }
 
-function PreviewContent(props: { result: HoverPreview }) {
+function PreviewContent(props: { tab: TabRecord; result: HoverPreview }) {
   return (
     <>
       <Show when={props.result.kind === 'internal' ? props.result : null}>
         {(result) => (
           <RasterCard
+            tab={props.tab}
             preview={result().preview}
             alt={`Preview of page ${result().page + 1}`}
             pageNumber={result().page + 1}
             activate={() => {
-              navigateInternalTarget({
+              props.tab.citationStore.navigateInternalTarget({
                 kind: 'internal',
                 page: result().page,
                 x: result().x,
                 y: result().y,
               });
-              citationStore.close();
+              props.tab.citationStore.close();
             }}
           />
         )}
@@ -138,6 +143,7 @@ function PreviewContent(props: { result: HoverPreview }) {
       <Show when={props.result.kind === 'external' ? props.result : null}>
         {(result) => (
           <RasterCard
+            tab={props.tab}
             preview={result().resolved.preview}
             alt={`First page of ${result().resolved.title ?? result().resolved.fileName}`}
             caption={result().resolved.title ?? citationLabel(result().id)}
@@ -146,8 +152,8 @@ function PreviewContent(props: { result: HoverPreview }) {
             fullPage
             activate={() => {
               const path = result().resolved.path;
-              citationStore.close();
-              void openPath(path);
+              props.tab.citationStore.close();
+              void openInNewTabOrFocus(path);
             }}
           />
         )}
@@ -172,7 +178,7 @@ function PreviewContent(props: { result: HoverPreview }) {
               <button
                 type="button"
                 class="citation-library-action"
-                onClick={() => void citationStore.chooseLibraryFolder()}
+                onClick={() => void libraryStore.chooseLibraryFolder()}
               >
                 Choose library folder…
               </button>
@@ -193,8 +199,11 @@ function PreviewContent(props: { result: HoverPreview }) {
 }
 
 export default function PreviewPopover() {
-  const hover = () => citationStore.state.hover;
-  const visible = () => ['loading', 'shown', 'leaving'].includes(hover().phase);
+  const hover = () => activeTab()?.citationStore.state.hover;
+  const visible = () => {
+    const phase = hover()?.phase;
+    return phase !== undefined && ['loading', 'shown', 'leaving'].includes(phase);
+  };
   const [viewportSize, setViewportSize] = createSignal({
     width: typeof window === 'undefined' ? 1_024 : window.innerWidth,
     height: typeof window === 'undefined' ? 768 : window.innerHeight,
@@ -206,10 +215,10 @@ export default function PreviewPopover() {
   });
 
   const variant = (): PreviewPopoverVariant =>
-    hover().request?.target.kind === 'internal' ? 'internal' : 'default';
+    hover()?.request?.target.kind === 'internal' ? 'internal' : 'default';
 
   const internalContentSize = () => {
-    const result = hover().result;
+    const result = hover()?.result;
     return result?.kind === 'internal' ? previewContentSize(result.preview) : undefined;
   };
 
@@ -219,7 +228,7 @@ export default function PreviewPopover() {
 
   const position = createMemo(() =>
     positionPreviewPopover(
-      hover().request?.anchor,
+      hover()?.request?.anchor,
       viewportSize(),
       variant(),
       internalContentSize()
@@ -232,34 +241,38 @@ export default function PreviewPopover() {
   }));
 
   return (
-    <Show when={visible()}>
-      <Portal>
-        <section
-          class="citation-popover"
-          classList={{ 'is-internal': variant() === 'internal' }}
-          style={style()}
-          role="dialog"
-          aria-label="Citation preview"
-          onPointerEnter={() => citationStore.enterPopover()}
-          onPointerLeave={() => citationStore.leave()}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-              event.preventDefault();
-              citationStore.close();
-            }
-          }}
-        >
-          <Show when={hover().phase === 'loading' && !hover().result && !hover().error}>
-            <div class="citation-preview-skeleton is-popover" aria-label="Loading preview" />
-          </Show>
-          <Show when={hover().result}>{(result) => <PreviewContent result={result()} />}</Show>
-          <Show when={!hover().result && hover().error}>
-            <div class="citation-metadata-card citation-preview-error" role="status">
-              {hover().error || 'Preview unavailable.'}
-            </div>
-          </Show>
-        </section>
-      </Portal>
+    <Show when={visible() ? activeTab() : null}>
+      {(tab) => (
+        <Portal>
+          <section
+            class="citation-popover"
+            classList={{ 'is-internal': variant() === 'internal' }}
+            style={style()}
+            role="dialog"
+            aria-label="Citation preview"
+            onPointerEnter={() => tab().citationStore.enterPopover()}
+            onPointerLeave={() => tab().citationStore.leave()}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                tab().citationStore.close();
+              }
+            }}
+          >
+            <Show when={hover()?.phase === 'loading' && !hover()?.result && !hover()?.error}>
+              <div class="citation-preview-skeleton is-popover" aria-label="Loading preview" />
+            </Show>
+            <Show when={hover()?.result}>
+              {(result) => <PreviewContent tab={tab()} result={result()} />}
+            </Show>
+            <Show when={!hover()?.result && hover()?.error}>
+              <div class="citation-metadata-card citation-preview-error" role="status">
+                {hover()?.error || 'Preview unavailable.'}
+              </div>
+            </Show>
+          </section>
+        </Portal>
+      )}
     </Show>
   );
 }

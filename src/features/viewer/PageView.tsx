@@ -13,19 +13,18 @@ import {
   For,
   onCleanup,
   Show,
+  useContext,
 } from 'solid-js';
 import type { Layout } from '../../lib/coordinates/layout';
 import type { PageGeom } from '../../lib/coordinates/coords';
 import { tileGrid } from '../../lib/coordinates/coords';
 import { renderUrl } from '../../lib/rendering/renderSource';
-import { documentStore } from '../document/documentStore';
-import { viewport } from '../../stores/viewportStore';
 import { engine } from '../../lib/transport/engine';
-import { searchStore } from '../search/searchStore';
 import TextLayer from './TextLayer';
 import AnnotationLayer from '../annotations/AnnotationLayer';
 import CitationLayer from '../citations/CitationLayer';
 import type { Rotation } from '../../types/model';
+import { TabContext } from '../../app/TabContext';
 
 // Keep single PDFium jobs bounded. Normal letter pages remain whole-page at
 // typical Retina zoom, while large/complex sheets switch to ~1Mpx tiles.
@@ -40,7 +39,9 @@ interface Props {
 }
 
 export default function PageView(props: Props) {
-  const doc = documentStore.state;
+  const tab = useContext(TabContext)!;
+  const { viewport: vp, searchStore } = tab;
+  const doc = tab.documentStore.state;
   const page = () => doc.pages[props.index];
   const srcIndex = () => page()?.srcIndex ?? null;
 
@@ -95,15 +96,15 @@ export default function PageView(props: Props) {
     const scaleX = devW() / Math.max(1, cssW());
     const scaleY = devH() / Math.max(1, cssH());
     const margin = 768;
-    const x0 = Math.max(0, (viewport.scrollLeft - left()) * scaleX - margin);
+    const x0 = Math.max(0, (vp.state.scrollLeft - left()) * scaleX - margin);
     const x1 = Math.min(
       devW(),
-      (viewport.scrollLeft + viewport.containerW - left()) * scaleX + margin
+      (vp.state.scrollLeft + vp.state.containerW - left()) * scaleX + margin
     );
-    const y0 = Math.max(0, (viewport.scrollTop - top()) * scaleY - margin);
+    const y0 = Math.max(0, (vp.state.scrollTop - top()) * scaleY - margin);
     const y1 = Math.min(
       devH(),
-      (viewport.scrollTop + viewport.containerH - top()) * scaleY + margin
+      (vp.state.scrollTop + vp.state.containerH - top()) * scaleY + margin
     );
     if (x1 <= 0 || x0 >= devW() || y1 <= 0 || y0 >= devH()) return [];
     return allTiles().filter(
@@ -157,8 +158,8 @@ export default function PageView(props: Props) {
 
   // unrotated page-space container transform
   const spaceTransform = () => {
-    const w = props.geom.widthPt * viewport.zoom;
-    const h = props.geom.heightPt * viewport.zoom;
+    const w = props.geom.widthPt * vp.state.zoom;
+    const h = props.geom.heightPt * vp.state.zoom;
     switch (props.geom.rotation) {
       case 90:
         return `translate(${h}px, 0) rotate(90deg)`;
@@ -230,8 +231,8 @@ export default function PageView(props: Props) {
       <div
         class="page-space"
         style={{
-          width: `${props.geom.widthPt * viewport.zoom}px`,
-          height: `${props.geom.heightPt * viewport.zoom}px`,
+          width: `${props.geom.widthPt * vp.state.zoom}px`,
+          height: `${props.geom.heightPt * vp.state.zoom}px`,
           transform: spaceTransform(),
         }}
       >
@@ -239,7 +240,7 @@ export default function PageView(props: Props) {
           <TextLayer
             runs={textLayout()!.runs}
             pageHeightPt={props.geom.heightPt}
-            zoom={viewport.zoom}
+            zoom={vp.state.zoom}
           />
         </Show>
         <div class="search-highlights" aria-hidden="true">
@@ -251,10 +252,10 @@ export default function PageView(props: Props) {
                     class="search-hit"
                     classList={{ 'is-current': entry.index === searchStore.state.current }}
                     style={{
-                      left: `${r[0] * viewport.zoom}px`,
-                      top: `${(props.geom.heightPt - r[1] - r[3]) * viewport.zoom}px`,
-                      width: `${r[2] * viewport.zoom}px`,
-                      height: `${r[3] * viewport.zoom}px`,
+                      left: `${r[0] * vp.state.zoom}px`,
+                      top: `${(props.geom.heightPt - r[1] - r[3]) * vp.state.zoom}px`,
+                      width: `${r[2] * vp.state.zoom}px`,
+                      height: `${r[3] * vp.state.zoom}px`,
                     }}
                   />
                 )}
@@ -267,14 +268,14 @@ export default function PageView(props: Props) {
             docId={doc.docId}
             src={srcIndex()!}
             pageHeightPt={props.geom.heightPt}
-            zoom={viewport.zoom}
+            zoom={vp.state.zoom}
           />
         </Show>
         <Show when={page()}>
           <AnnotationLayer
             page={page()!}
             geom={props.geom}
-            zoom={viewport.zoom}
+            zoom={vp.state.zoom}
             runs={textLayout()?.runs ?? []}
           />
         </Show>

@@ -182,8 +182,10 @@ pub fn run() {
             );
         })
         .invoke_handler(tauri::generate_handler![
+            commands::file_metadata,
             commands::open_document,
             commands::close_document,
+            commands::set_active_document,
             commands::request_page_sizes,
             commands::get_text_layout,
             commands::get_page_links,

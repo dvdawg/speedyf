@@ -1,14 +1,15 @@
 /** AcroForm text-field editor. Values are stored as model edits (undoable)
  * and applied by the engine at save time. Non-text fields are listed but
  * read-only in this version. */
-import { createResource, For, Show } from 'solid-js';
+import { createResource, For, Show, useContext } from 'solid-js';
 import { engine } from '../../lib/transport/engine';
-import { documentStore } from '../document/documentStore';
-import { setViewport } from '../../stores/viewportStore';
 import IconButton from '../../components/IconButton';
 import { IconClose } from '../../components/icons';
+import { TabContext } from '../../app/TabContext';
 
 export default function FormPanel() {
+  const tab = useContext(TabContext)!;
+  const { documentStore, viewport: vp } = tab;
   const doc = documentStore.state;
   const [fields] = createResource(
     () => (doc.loaded ? doc.docId : null),
@@ -21,7 +22,7 @@ export default function FormPanel() {
     <div class="form-panel" aria-label="Form fields">
       <div class="panel-head">
         <h2>Form fields</h2>
-        <IconButton label="Close form panel" onClick={() => setViewport('formPanelOpen', false)}>
+        <IconButton label="Close form panel" onClick={() => vp.setState('formPanelOpen', false)}>
           <IconClose />
         </IconButton>
       </div>

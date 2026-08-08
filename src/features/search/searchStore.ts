@@ -1,5 +1,8 @@
 /** Search orchestration: debounced querying over the incrementally built
- * Rust index, match bookkeeping, lazy rect resolution for visible pages. */
+ * Rust index, match bookkeeping, lazy rect resolution for visible pages.
+ * One instance per open tab (see tabsStore.ts); `createSearchStore()` is the
+ * factory, with a temporary module-level singleton kept below until the
+ * tab-registry wiring lands. */
 import { createStore, produce } from 'solid-js/store';
 import { engine } from '../../lib/transport/engine';
 import type { PageMatches } from '../../types/engine';
@@ -27,193 +30,218 @@ interface SearchState {
   resultLimit: number;
 }
 
-const [state, setState] = createStore<SearchState>({
-  docId: -1,
-  query: '',
-  caseSensitive: false,
-  results: [],
-  flat: [],
-  current: -1,
-  running: false,
-  indexed: 0,
-  total: 0,
-  truncated: false,
-  indexingDone: false,
-  resultsTruncated: false,
-  resultLimit: 500,
-});
-
-/** rects per "src:start:len", resolved lazily for mounted pages */
-const rectsCache = new Map<string, [number, number, number, number][]>();
-const rectsPending = new Set<string>();
-const [rectsVersion, setRectsVersion] = createStore({ n: 0 });
-
-let debounceTimer: ReturnType<typeof setTimeout> | undefined;
-let querySeq = 0;
-let activeDocId = -1;
-const rectKey = (docId: number, match: Pick<FlatMatch, 'src' | 'start' | 'len'>) =>
-  `${docId}:${match.src}:${match.start}:${match.len}`;
-
-async function runQuery() {
-  const seq = ++querySeq;
-  // Intentional event/timer snapshot; querySeq rejects later reactive changes.
-  // eslint-disable-next-line solid/reactivity
-  const { docId, query, caseSensitive } = state;
-  if (docId < 0 || query.trim().length === 0) {
-    setState({
-      results: [],
-      flat: [],
-      current: -1,
-      running: false,
-      resultsTruncated: false,
-    });
-    return;
-  }
-  setState('running', true);
-  try {
-    const response = await engine.searchQuery(docId, query, caseSensitive);
-    if (seq !== querySeq) return; // superseded
-    const flat: FlatMatch[] = [];
-    for (const page of response.pages) {
-      for (const m of page.matches) {
-        flat.push({ src: page.src, start: m.start, len: m.len, snippet: m.snippet });
-      }
-    }
-    setState(
-      produce((s) => {
-        s.results = response.pages;
-        s.flat = flat;
-        s.resultsTruncated = response.truncated;
-        s.resultLimit = response.limit;
-        s.current = flat.length > 0 ? Math.min(Math.max(s.current, 0), flat.length - 1) : -1;
-        s.running = false;
-      })
-    );
-  } catch {
-    if (seq === querySeq) setState('running', false);
-  }
+function emptyState(): SearchState {
+  return {
+    docId: -1,
+    query: '',
+    caseSensitive: false,
+    results: [],
+    flat: [],
+    current: -1,
+    running: false,
+    indexed: 0,
+    total: 0,
+    truncated: false,
+    indexingDone: false,
+    resultsTruncated: false,
+    resultLimit: 500,
+  };
 }
 
-export const searchStore = {
-  state,
-
-  resetForDocument(docId: number, total: number) {
-    activeDocId = docId;
-    clearTimeout(debounceTimer);
-    debounceTimer = undefined;
-    querySeq += 1;
-    rectsCache.clear();
-    rectsPending.clear();
-    setState({
-      docId,
-      query: '',
-      results: [],
-      flat: [],
-      current: -1,
-      running: false,
-      indexed: 0,
-      total,
-      truncated: false,
-      indexingDone: false,
-      resultsTruncated: false,
-      resultLimit: 500,
-    });
-  },
-
-  setQuery(query: string) {
-    setState('query', query);
-    rectsCache.clear();
-    rectsPending.clear();
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(runQuery, 250);
-  },
-
-  setCaseSensitive(v: boolean) {
-    setState('caseSensitive', v);
-    rectsCache.clear();
-    rectsPending.clear();
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(runQuery, 50);
-  },
-
-  onIndexProgress(indexed: number, total: number, truncated: boolean) {
-    setState(
-      produce((s) => {
-        s.indexed = indexed;
-        if (total > 0) s.total = total;
-        s.truncated = truncated;
-        s.indexingDone = total > 0 && indexed >= total;
-      })
-    );
-    // new pages became searchable — refresh an active query (lightly debounced)
-    if (state.query.trim().length > 0) {
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(runQuery, 300);
-    }
-  },
-
-  setCurrent(i: number) {
-    if (state.flat.length === 0) return;
-    const n = state.flat.length;
-    setState('current', ((i % n) + n) % n);
-  },
-
-  next() {
-    this.setCurrent(state.current + 1);
-  },
-
-  prev() {
-    this.setCurrent(state.current - 1);
-  },
-
-  currentMatch(): FlatMatch | null {
-    return state.current >= 0 ? (state.flat[state.current] ?? null) : null;
-  },
-
-  /** Matches on a given source page with rects when resolved (mounted pages
-   * call this; rect fetches are queued only for what is actually visible). */
+export interface SearchStore {
+  state: SearchState;
+  resetForDocument(docId: number, total: number): void;
+  setQuery(query: string): void;
+  setCaseSensitive(v: boolean): void;
+  onIndexProgress(indexed: number, total: number, truncated: boolean): void;
+  setCurrent(i: number): void;
+  next(): void;
+  prev(): void;
+  currentMatch(): FlatMatch | null;
   rectsForPage(
     src: number
-  ): { match: FlatMatch; index: number; rects: [number, number, number, number][] }[] {
-    void rectsVersion.n; // reactive dependency for lazily arriving rects
-    const out: { match: FlatMatch; index: number; rects: [number, number, number, number][] }[] =
-      [];
-    state.flat.forEach((match, index) => {
-      if (match.src !== src) return;
-      const docId = state.docId;
-      const key = rectKey(docId, match);
-      const rects = rectsCache.get(key);
-      if (rects) {
-        out.push({ match, index, rects });
-      } else if (!rectsPending.has(key) && docId >= 0) {
-        rectsPending.add(key);
-        void engine
-          .getMatchRects(docId, match.src, match.start, match.len)
-          .then((r) => {
-            if (activeDocId !== docId) return;
-            rectsCache.set(key, r);
-            setRectsVersion('n', (n) => n + 1);
-          })
-          .catch(() => undefined)
-          .finally(() => rectsPending.delete(key));
+  ): { match: FlatMatch; index: number; rects: [number, number, number, number][] }[];
+  rectsForMatch(m: FlatMatch): Promise<[number, number, number, number][]>;
+  clear(): void;
+}
+
+export function createSearchStore(): SearchStore {
+  const [state, setState] = createStore<SearchState>(emptyState());
+
+  /** rects per "src:start:len", resolved lazily for mounted pages */
+  const rectsCache = new Map<string, [number, number, number, number][]>();
+  const rectsPending = new Set<string>();
+  const [rectsVersion, setRectsVersion] = createStore({ n: 0 });
+
+  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+  let querySeq = 0;
+  let activeDocId = -1;
+  const rectKey = (docId: number, match: Pick<FlatMatch, 'src' | 'start' | 'len'>) =>
+    `${docId}:${match.src}:${match.start}:${match.len}`;
+
+  async function runQuery() {
+    const seq = ++querySeq;
+    // Intentional event/timer snapshot; querySeq rejects later reactive changes.
+    // eslint-disable-next-line solid/reactivity
+    const { docId, query, caseSensitive } = state;
+    if (docId < 0 || query.trim().length === 0) {
+      setState({
+        results: [],
+        flat: [],
+        current: -1,
+        running: false,
+        resultsTruncated: false,
+      });
+      return;
+    }
+    setState('running', true);
+    try {
+      const response = await engine.searchQuery(docId, query, caseSensitive);
+      if (seq !== querySeq) return; // superseded
+      const flat: FlatMatch[] = [];
+      for (const page of response.pages) {
+        for (const m of page.matches) {
+          flat.push({ src: page.src, start: m.start, len: m.len, snippet: m.snippet });
+        }
       }
-    });
-    return out;
-  },
+      setState(
+        produce((s) => {
+          s.results = response.pages;
+          s.flat = flat;
+          s.resultsTruncated = response.truncated;
+          s.resultLimit = response.limit;
+          s.current = flat.length > 0 ? Math.min(Math.max(s.current, 0), flat.length - 1) : -1;
+          s.running = false;
+        })
+      );
+    } catch {
+      if (seq === querySeq) setState('running', false);
+    }
+  }
 
-  async rectsForMatch(m: FlatMatch): Promise<[number, number, number, number][]> {
-    const docId = state.docId;
-    const key = rectKey(docId, m);
-    const hit = rectsCache.get(key);
-    if (hit) return hit;
-    const r = await engine.getMatchRects(docId, m.src, m.start, m.len);
-    if (activeDocId !== docId) return [];
-    rectsCache.set(key, r);
-    setRectsVersion('n', (n) => n + 1);
-    return r;
-  },
+  const store: SearchStore = {
+    state,
 
-  clear() {
-    this.setQuery('');
-  },
-};
+    resetForDocument(docId: number, total: number) {
+      activeDocId = docId;
+      clearTimeout(debounceTimer);
+      debounceTimer = undefined;
+      querySeq += 1;
+      rectsCache.clear();
+      rectsPending.clear();
+      setState({
+        docId,
+        query: '',
+        results: [],
+        flat: [],
+        current: -1,
+        running: false,
+        indexed: 0,
+        total,
+        truncated: false,
+        indexingDone: false,
+        resultsTruncated: false,
+        resultLimit: 500,
+      });
+    },
+
+    setQuery(query: string) {
+      setState('query', query);
+      rectsCache.clear();
+      rectsPending.clear();
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(runQuery, 250);
+    },
+
+    setCaseSensitive(v: boolean) {
+      setState('caseSensitive', v);
+      rectsCache.clear();
+      rectsPending.clear();
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(runQuery, 50);
+    },
+
+    onIndexProgress(indexed: number, total: number, truncated: boolean) {
+      setState(
+        produce((s) => {
+          s.indexed = indexed;
+          if (total > 0) s.total = total;
+          s.truncated = truncated;
+          s.indexingDone = total > 0 && indexed >= total;
+        })
+      );
+      // new pages became searchable — refresh an active query (lightly debounced)
+      if (state.query.trim().length > 0) {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(runQuery, 300);
+      }
+    },
+
+    setCurrent(i: number) {
+      if (state.flat.length === 0) return;
+      const n = state.flat.length;
+      setState('current', ((i % n) + n) % n);
+    },
+
+    next() {
+      store.setCurrent(state.current + 1);
+    },
+
+    prev() {
+      store.setCurrent(state.current - 1);
+    },
+
+    currentMatch(): FlatMatch | null {
+      return state.current >= 0 ? (state.flat[state.current] ?? null) : null;
+    },
+
+    /** Matches on a given source page with rects when resolved (mounted pages
+     * call this; rect fetches are queued only for what is actually visible). */
+    rectsForPage(
+      src: number
+    ): { match: FlatMatch; index: number; rects: [number, number, number, number][] }[] {
+      void rectsVersion.n; // reactive dependency for lazily arriving rects
+      const out: { match: FlatMatch; index: number; rects: [number, number, number, number][] }[] =
+        [];
+      state.flat.forEach((match, index) => {
+        if (match.src !== src) return;
+        const docId = state.docId;
+        const key = rectKey(docId, match);
+        const rects = rectsCache.get(key);
+        if (rects) {
+          out.push({ match, index, rects });
+        } else if (!rectsPending.has(key) && docId >= 0) {
+          rectsPending.add(key);
+          void engine
+            .getMatchRects(docId, match.src, match.start, match.len)
+            .then((r) => {
+              if (activeDocId !== docId) return;
+              rectsCache.set(key, r);
+              setRectsVersion('n', (n) => n + 1);
+            })
+            .catch(() => undefined)
+            .finally(() => rectsPending.delete(key));
+        }
+      });
+      return out;
+    },
+
+    async rectsForMatch(m: FlatMatch): Promise<[number, number, number, number][]> {
+      const docId = state.docId;
+      const key = rectKey(docId, m);
+      const hit = rectsCache.get(key);
+      if (hit) return hit;
+      const r = await engine.getMatchRects(docId, m.src, m.start, m.len);
+      if (activeDocId !== docId) return [];
+      rectsCache.set(key, r);
+      setRectsVersion('n', (n) => n + 1);
+      return r;
+    },
+
+    clear() {
+      store.setQuery('');
+    },
+  };
+
+  return store;
+}
