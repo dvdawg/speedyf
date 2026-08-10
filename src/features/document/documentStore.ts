@@ -466,7 +466,10 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
   };
 
   return {
-    state,
+    // getter, not a data property — see the note in tabsStore.ts
+    get state() {
+      return state;
+    },
     initFromMeta,
     updateSizes,
     apply,

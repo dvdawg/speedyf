@@ -160,23 +160,68 @@ export function fitWidthZoom(page: PageGeom, viewW: number, margin: number): num
   return (viewW - 2 * margin) / w;
 }
 
+export interface ScrollPos {
+  top: number;
+  left: number;
+}
+
+/** A point in the scroll container's own viewport, CSS px from its top-left. */
+export interface AnchorPoint {
+  x: number;
+  y: number;
+}
+
 /**
- * New scrollTop that keeps the content under `anchorViewportY` stable across a
- * layout change (zoom / rotation / resize). Uses the page-relative fraction so
- * it is independent of the coordinate details of the change.
+ * New scroll position that keeps the content under `anchor` stable across a
+ * layout change (zoom / rotation / resize). Uses page-relative fractions so it
+ * is independent of the coordinate details of the change.
+ *
+ * Both axes are anchored against the page under the anchor. Horizontal matters
+ * once a page is wider than the viewport: pages are centred by layoutPages, so
+ * without it the content slides sideways out from under the cursor as a pinch
+ * grows the page. Fractions are clamped to the page box, so an anchor in the
+ * margin or in an inter-page gap pins the nearest edge instead of
+ * extrapolating across constant (unscaled) padding and gaps.
  */
-export function anchorScrollTop(
+export function anchorScroll(
   oldLayout: Layout,
   newLayout: Layout,
-  oldScrollTop: number,
-  anchorViewportY: number
-): number {
-  if (oldLayout.tops.length === 0) return 0;
-  const cy = oldScrollTop + anchorViewportY;
+  oldScroll: ScrollPos,
+  anchor: AnchorPoint
+): ScrollPos {
+  if (oldLayout.tops.length === 0) return { top: 0, left: 0 };
+  const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+
+  const cy = oldScroll.top + anchor.y;
   const i = pageIndexAt(oldLayout, cy);
-  const oldTop = oldLayout.tops[i]!;
-  const oldH = oldLayout.heights[i]!;
-  const frac = Math.min(1, Math.max(0, (cy - oldTop) / oldH));
-  const newCy = newLayout.tops[i]! + frac * newLayout.heights[i]!;
-  return Math.max(0, newCy - anchorViewportY);
+  const fracY = clamp01((cy - oldLayout.tops[i]!) / oldLayout.heights[i]!);
+  const newCy = newLayout.tops[i]! + fracY * newLayout.heights[i]!;
+
+  const cx = oldScroll.left + anchor.x;
+  const fracX = clamp01((cx - oldLayout.lefts[i]!) / oldLayout.widths[i]!);
+  const newCx = newLayout.lefts[i]! + fracX * newLayout.widths[i]!;
+
+  return {
+    top: Math.max(0, newCy - anchor.y),
+    left: Math.max(0, newCx - anchor.x),
+  };
+}
+
+/**
+ * Multiplicative zoom factor for one wheel event.
+ *
+ * `deltaY` arrives in different units per device and engine, so it is
+ * normalised to CSS px first (line mode is what Firefox and some mice report;
+ * page mode is rare but real). The per-event clamp keeps a coarse mouse notch
+ * — often a single ±100px event — to a ~12% step instead of the ~25% jump raw
+ * exponentiation gives it, while leaving fine-grained trackpad deltas
+ * untouched so a pinch stays continuous.
+ */
+export function wheelZoomFactor(deltaY: number, deltaMode: number, viewportH: number): number {
+  const LINE_PX = 16;
+  const MAX_STEP_PX = 48;
+  const SENSITIVITY = 0.0022;
+  const unit = deltaMode === 1 ? LINE_PX : deltaMode === 2 ? Math.max(1, viewportH) : 1;
+  const px = Math.min(MAX_STEP_PX, Math.max(-MAX_STEP_PX, deltaY * unit));
+  return Math.exp(-px * SENSITIVITY);
 }

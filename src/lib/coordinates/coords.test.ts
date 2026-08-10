@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  anchorScrollTop,
+  anchorScroll,
   bucketForScale,
   cssToPdf,
   fitPageZoom,
@@ -12,8 +12,10 @@ import {
   pdfUserToPageNorm,
   RENDER_SCALE_BUCKETS,
   tileGrid,
+  wheelZoomFactor,
+  type ScrollPos,
 } from './coords';
-import { layoutPages } from './layout';
+import { layoutPages, pageIndexAt } from './layout';
 import type { Rotation } from '../../types/model';
 
 const page = (w = 600, h = 800, rotation: Rotation = 0) => ({
@@ -142,24 +144,109 @@ describe('fit zoom calculations', () => {
   });
 });
 
-describe('anchorScrollTop', () => {
+describe('anchorScroll', () => {
+  const opts = { gap: 16, padding: 16, containerW: 1000 };
+
   it('keeps the content under the anchor stable across a zoom change', () => {
     const pages = [page(), page(), page()];
-    const oldLayout = layoutPages(pages, 1, { gap: 16, padding: 16, containerW: 1000 });
-    const newLayout = layoutPages(pages, 2, { gap: 16, padding: 16, containerW: 1000 });
+    const oldLayout = layoutPages(pages, 1, opts);
+    const newLayout = layoutPages(pages, 2, opts);
     // content point: oldScrollTop 300 + anchor 100 = 400 → page 0, fraction (400-16)/800
-    const next = anchorScrollTop(oldLayout, newLayout, 300, 100);
+    const next = anchorScroll(oldLayout, newLayout, { top: 300, left: 0 }, { x: 500, y: 100 });
     // new page0: top 16, cssH 1600 → content y = 16 + 0.48*1600 = 784 → scrollTop 684
-    expect(next).toBeCloseTo(684, 6);
+    expect(next.top).toBeCloseTo(684, 6);
   });
 
   it('clamps into the nearest page when the anchor sits in a gap', () => {
     const pages = [page(), page()];
-    const oldLayout = layoutPages(pages, 1, { gap: 16, padding: 16, containerW: 1000 });
-    const newLayout = layoutPages(pages, 2, { gap: 16, padding: 16, containerW: 1000 });
+    const oldLayout = layoutPages(pages, 1, opts);
+    const newLayout = layoutPages(pages, 2, opts);
     // anchor lands in the gap between pages (y = 820)
-    const next = anchorScrollTop(oldLayout, newLayout, 800, 20);
-    expect(Number.isFinite(next)).toBe(true);
-    expect(next).toBeGreaterThanOrEqual(0);
+    const next = anchorScroll(oldLayout, newLayout, { top: 800, left: 0 }, { x: 500, y: 20 });
+    expect(Number.isFinite(next.top)).toBe(true);
+    expect(next.top).toBeGreaterThanOrEqual(0);
+  });
+
+  it('anchors horizontally once the page is wider than the viewport', () => {
+    const pages = [page()];
+    // at zoom 2 the page is 1200 wide in a 1000 viewport, so it can scroll
+    const oldLayout = layoutPages(pages, 2, opts);
+    const newLayout = layoutPages(pages, 4, opts);
+    // cursor 250px into the viewport, scrolled 300 right → content x = 550
+    // page0 left = 16, w = 1200 → fracX = (550-16)/1200 = 0.445
+    // new page0: left 16, w 2400 → content x = 16 + 0.445*2400 = 1084 → left 834
+    const next = anchorScroll(oldLayout, newLayout, { top: 0, left: 300 }, { x: 250, y: 10 });
+    expect(next.left).toBeCloseTo(834, 6);
+  });
+
+  it('holds the anchored content point across many small steps', () => {
+    const pages = [page(), page(), page()];
+    // Walk a pinch: repeated small zoom steps, each anchored off the result of
+    // the last. Drift here is exactly what a user sees as the page sliding
+    // away under the cursor mid-gesture.
+    const anchor = { x: 480, y: 220 };
+    const contentPointAt = (zoom: number, scroll: ScrollPos) => {
+      const l = layoutPages(pages, zoom, opts);
+      const cy = scroll.top + anchor.y;
+      const i = pageIndexAt(l, cy);
+      return {
+        page: i,
+        fracY: (cy - l.tops[i]!) / l.heights[i]!,
+        fracX: (scroll.left + anchor.x - l.lefts[i]!) / l.widths[i]!,
+      };
+    };
+
+    let zoom = 1;
+    let scroll: ScrollPos = { top: 900, left: 0 };
+    const start = contentPointAt(zoom, scroll);
+
+    for (let step = 0; step < 40; step++) {
+      const next = zoom * 1.03;
+      scroll = anchorScroll(
+        layoutPages(pages, zoom, opts),
+        layoutPages(pages, next, opts),
+        scroll,
+        anchor
+      );
+      zoom = next;
+    }
+
+    const end = contentPointAt(zoom, scroll);
+    expect(end.page).toBe(start.page);
+    expect(end.fracY).toBeCloseTo(start.fracY, 6);
+  });
+});
+
+describe('wheelZoomFactor', () => {
+  it('is a no-op at zero delta and inverts with direction', () => {
+    expect(wheelZoomFactor(0, 0, 800)).toBe(1);
+    expect(wheelZoomFactor(-10, 0, 800)).toBeGreaterThan(1);
+    expect(wheelZoomFactor(10, 0, 800)).toBeLessThan(1);
+    expect(wheelZoomFactor(-10, 0, 800) * wheelZoomFactor(10, 0, 800)).toBeCloseTo(1, 12);
+  });
+
+  it('keeps a coarse mouse notch to a usable step instead of a 25% jump', () => {
+    // A mouse wheel commonly reports a single ±100px event per notch.
+    const factor = wheelZoomFactor(-100, 0, 800);
+    expect(factor).toBeGreaterThan(1.05);
+    expect(factor).toBeLessThan(1.15);
+  });
+
+  it('scales line and page delta modes into the same range as pixels', () => {
+    // Firefox and some mice report lines (~3 per notch), not pixels: raw, that
+    // is a 0.7% step — effectively an inert zoom control.
+    const line = wheelZoomFactor(-3, 1, 800);
+    expect(line).toBeGreaterThan(1.05);
+    // Page mode scrolls a viewport at a time; it must still clamp, not explode.
+    const pageMode = wheelZoomFactor(-1, 2, 800);
+    expect(pageMode).toBeLessThan(1.15);
+  });
+
+  it('leaves fine trackpad deltas continuous and un-clamped', () => {
+    // Successive small deltas must compose to the same factor as their sum,
+    // or a pinch would quantize into visible steps.
+    const a = wheelZoomFactor(-4, 0, 800);
+    const b = wheelZoomFactor(-6, 0, 800);
+    expect(a * b).toBeCloseTo(wheelZoomFactor(-10, 0, 800), 12);
   });
 });

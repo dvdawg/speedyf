@@ -374,7 +374,10 @@ export function createCitationStore(doc: DocumentStore, vp: ViewportStore): Cita
   }
 
   return {
-    state,
+    // getter, not a data property — see the note in tabsStore.ts
+    get state() {
+      return state;
+    },
 
     syncDocument(docId: number): void {
       if (docId === activeDocId) return;

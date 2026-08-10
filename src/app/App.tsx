@@ -146,8 +146,8 @@ export default function App() {
 
   return (
     <div class="app-shell" classList={{ 'drop-active': dropActive() }}>
-      <Toolbar />
       <TabStrip />
+      <Toolbar />
       <div class="content-area">
         <Show when={tabsStore.state.tabs.length > 0}>
           <div class="tab-workspaces">

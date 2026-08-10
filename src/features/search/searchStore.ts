@@ -120,7 +120,10 @@ export function createSearchStore(): SearchStore {
   }
 
   const store: SearchStore = {
-    state,
+    // getter, not a data property — see the note in tabsStore.ts
+    get state() {
+      return state;
+    },
 
     resetForDocument(docId: number, total: number) {
       activeDocId = docId;

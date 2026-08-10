@@ -1,7 +1,21 @@
 /** Tab registry: one TabRecord per open document, each holding its own
  * independent document/viewport/zoom/citation/search stores. Only tab
  * lifecycle (add/remove/reorder/activate) lives here — actual open/close/
- * save orchestration lives in features/document/tabsController.ts. */
+ * save orchestration lives in features/document/tabsController.ts.
+ *
+ * TabRecords live inside a Solid store, which means every record passes
+ * through solid-js/store's `unwrap()` on the way in. `unwrap` walks plain
+ * objects and rewrites any data property holding a store proxy down to that
+ * proxy's raw target, mutating the object in place. Sub-stores therefore
+ * expose `state` as a GETTER (`get state() { return state; }`): `unwrap`
+ * skips accessor properties, so the reactive proxy survives registration.
+ *
+ * This matters because zoomController and citationStore capture their sibling
+ * stores by reference at createTab() time. With a plain `state` data property
+ * those captured references were downgraded to inert raw objects the instant
+ * addTab() ran — reads still returned current values but tracked nothing, so
+ * memos built on them (notably the Viewer's page-geometry memo) never
+ * re-ran. */
 import { createStore } from 'solid-js/store';
 import { createDocumentStore, type DocumentStore } from '../features/document/documentStore';
 import { createViewportStore, type ViewportStore } from './viewportStore';

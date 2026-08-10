@@ -68,7 +68,10 @@ export function createViewportStore(): ViewportStore {
   let scrollSeq = 0;
 
   return {
-    state,
+    // getter, not a data property — see the note in tabsStore.ts
+    get state() {
+      return state;
+    },
     setState,
 
     requestScrollToPage(page: number, offsetCss?: number) {

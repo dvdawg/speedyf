@@ -6,8 +6,8 @@
  * tab-registry wiring lands. */
 import type { DocumentStore } from '../document/documentStore';
 import { clampZoom, PAGE_GAP, VIEW_PADDING, type ViewportStore } from '../../stores/viewportStore';
-import type { PageGeom } from '../../lib/coordinates/coords';
-import { anchorScrollTop, fitPageZoom, fitWidthZoom } from '../../lib/coordinates/coords';
+import type { AnchorPoint, PageGeom, ScrollPos } from '../../lib/coordinates/coords';
+import { anchorScroll, fitPageZoom, fitWidthZoom } from '../../lib/coordinates/coords';
 import type { Layout } from '../../lib/coordinates/layout';
 import { layoutPages } from '../../lib/coordinates/layout';
 import type { FitMode, Rotation } from '../../types/model';
@@ -16,7 +16,7 @@ export interface ZoomController {
   registerScroller(el: HTMLElement | null): void;
   pagesGeom(): PageGeom[];
   layoutFor(zoom: number, geoms?: PageGeom[]): Layout;
-  setZoomAnchored(zoom: number, anchorY?: number, fitMode?: FitMode): void;
+  setZoomAnchored(zoom: number, anchor?: AnchorPoint, fitMode?: FitMode): void;
   zoomStep(direction: 1 | -1): void;
   applyFit(mode: 'fit-page' | 'fit-width'): void;
   refreshFit(): void;
@@ -41,23 +41,43 @@ export function createZoomController(doc: DocumentStore, vp: ViewportStore): Zoo
     });
   }
 
-  function setZoomAnchored(zoom: number, anchorY?: number, fitMode: FitMode = 'custom') {
+  function setZoomAnchored(zoom: number, anchor?: AnchorPoint, fitMode: FitMode = 'custom') {
     const target = clampZoom(zoom);
     if (target === vp.state.zoom) {
       vp.setState('fitMode', fitMode);
       return;
     }
-    const anchor = anchorY ?? vp.state.containerH / 2;
+    // The scroll element is the source of truth for the current position, not
+    // vp.state: the store is written from a rAF-throttled scroll handler and
+    // so lags the DOM by up to a frame. Anchoring off the stale value made
+    // every step of a continuous gesture compound the same offset, which is
+    // what walked the page out from under the cursor mid-pinch.
+    const from: ScrollPos = scroller
+      ? { top: scroller.scrollTop, left: scroller.scrollLeft }
+      : { top: vp.state.scrollTop, left: vp.state.scrollLeft };
+    const point = anchor ?? { x: vp.state.containerW / 2, y: vp.state.containerH / 2 };
     const geoms = pagesGeom();
     const oldLayout = layoutFor(vp.state.zoom, geoms);
     const newLayout = layoutFor(target, geoms);
-    const newScroll = anchorScrollTop(oldLayout, newLayout, vp.state.scrollTop, anchor);
+    const next = anchorScroll(oldLayout, newLayout, from, point);
     vp.setState({ zoom: target, fitMode });
     if (scroller) {
-      // layout heights update synchronously with the store; re-anchor next frame
-      requestAnimationFrame(() => {
-        if (scroller) scroller.scrollTop = newScroll;
-      });
+      // Zoom and scroll must land in the SAME frame. Handing the scroll off to
+      // rAF (as this used to) let the browser paint one frame at the new zoom
+      // with the old offset — a visible jump on every step of a gesture.
+      //
+      // Assigning here is safe because the setState above has already flushed
+      // the canvas's new size to the DOM, so the browser clamps against the
+      // right bounds. That holds for every caller today — rAF callbacks, the
+      // ResizeObserver, and Solid's delegated event handlers all run outside
+      // any batch. It would NOT hold inside an explicit batch(), where render
+      // effects are deferred to the end and this would clamp to a stale
+      // scrollHeight; don't wrap a zoom call in one.
+      scroller.scrollTop = next.top;
+      scroller.scrollLeft = next.left;
+      // Publish what the browser actually settled on, so the next step of the
+      // gesture and the tile-visibility math both read a current value.
+      vp.setState({ scrollTop: scroller.scrollTop, scrollLeft: scroller.scrollLeft });
     }
   }
 

@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { createMemo, createRoot } from 'solid-js';
+import { unwrap } from 'solid-js/store';
 import {
   activeTab,
   addTab,
@@ -98,6 +100,85 @@ describe('setTabOpening', () => {
 
     setTabOpening(a.id, false);
     expect(tabsStore.state.tabs.find((t) => t.id === a.id)?.opening).toBe(false);
+  });
+});
+
+// A TabRecord holds live sub-stores, and Solid's store setter runs unwrap()
+// over whatever you hand it — which walks plain objects and swaps any nested
+// store proxy for its raw target IN PLACE. That used to strip
+// `viewport.state` / `documentStore.state` the moment a tab was registered,
+// leaving every holder of a direct reference (zoomController and citationStore
+// both capture their sibling stores at createTab() time) reading dead,
+// untracked objects.
+describe('registering a tab preserves its sub-stores', () => {
+  it('leaves the sub-store state proxies reactive', () => {
+    const a = createTab();
+    addTab(a);
+    expect(unwrap(a.viewport.state)).not.toBe(a.viewport.state);
+    expect(unwrap(a.documentStore.state)).not.toBe(a.documentStore.state);
+  });
+
+  it('keeps zoomController geometry reactive to view rotation', () => {
+    const a = createTab();
+    addTab(a);
+    setActiveId(a.id);
+    a.documentStore.initFromMeta({
+      docId: 1,
+      path: '/tmp/a.pdf',
+      name: 'a.pdf',
+      pageCount: 1,
+      sizes: [[600, 800, 0, 0, 0]],
+      estimatedSize: [600, 800],
+    });
+
+    /* eslint-disable solid/reactivity -- assertions read the memos directly,
+       which is the point: they must recompute after rotateView(). */
+    createRoot((dispose) => {
+      // Mirrors ViewerContent: geoms/layout memos over the controller the tab
+      // was built with. If these stop tracking, "Rotate view 90°" changes
+      // viewRotation but nothing re-lays-out or re-renders.
+      const geoms = createMemo(() => a.zoom.pagesGeom());
+      const layout = createMemo(() => a.zoom.layoutFor(a.viewport.state.zoom, geoms()));
+      expect(geoms()[0]!.rotation).toBe(0);
+      expect([layout().widths[0], layout().heights[0]]).toEqual([600, 800]);
+
+      a.viewport.rotateView();
+
+      expect(a.viewport.state.viewRotation).toBe(90);
+      expect(geoms()[0]!.rotation).toBe(90);
+      expect([layout().widths[0], layout().heights[0]]).toEqual([800, 600]);
+      dispose();
+    });
+    /* eslint-enable solid/reactivity */
+  });
+
+  it('keeps zoomController geometry reactive to page-list edits', () => {
+    const a = createTab();
+    addTab(a);
+    a.documentStore.initFromMeta({
+      docId: 1,
+      path: '/tmp/a.pdf',
+      name: 'a.pdf',
+      pageCount: 3,
+      sizes: [
+        [600, 800, 0, 0, 0],
+        [600, 800, 0, 0, 0],
+        [600, 800, 0, 0, 0],
+      ],
+      estimatedSize: [600, 800],
+    });
+
+    /* eslint-disable solid/reactivity -- see above */
+    createRoot((dispose) => {
+      const geoms = createMemo(() => a.zoom.pagesGeom());
+      expect(geoms()).toHaveLength(3);
+
+      a.documentStore.apply({ type: 'delete', pageId: a.documentStore.state.pages[0]!.id });
+
+      expect(geoms()).toHaveLength(2);
+      dispose();
+    });
+    /* eslint-enable solid/reactivity */
   });
 });
 
