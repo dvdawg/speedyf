@@ -51,6 +51,14 @@ struct WorkerState<'a> {
     /// Includes LRU-evicted library handles whose encoded preview can still be
     /// served from the bounded preview cache until the main document changes.
     library_session_docs: Vec<DocId>,
+    /// Documents with text-index work left to do, oldest request first.
+    index_pending: Vec<DocId>,
+    /// The single indexing chain currently cycling, as (document, chain id).
+    /// Only one runs at a time: N open tabs each spinning their own IndexNext
+    /// loop would interleave N page extractions onto this one thread for no
+    /// gain, since only the foreground document's index is ever queried.
+    index_active: Option<(DocId, u64)>,
+    index_chain_seq: u64,
 }
 
 impl<'a> WorkerState<'a> {
@@ -134,6 +142,9 @@ impl<'a> WorkerState<'a> {
         if self.active_main == Some(id) {
             self.active_main = None;
         }
+        // Hand the indexer to the next document rather than stalling on a
+        // chain whose document no longer exists.
+        self.end_indexing(id, true, shared);
     }
 
     /// Marks `doc` as the foreground document for citation-hover bookkeeping.
@@ -146,6 +157,62 @@ impl<'a> WorkerState<'a> {
         shared.main_epoch.fetch_add(1, Ordering::AcqRel);
         self.close_library_docs(shared);
         self.active_main = doc;
+        // The document you are looking at is the one whose search index you
+        // can actually use, so hand it the indexer immediately.
+        if let Some(doc) = doc {
+            if self.index_pending.contains(&doc) && self.index_active.map(|(d, _)| d) != Some(doc) {
+                self.index_active = None;
+                self.pump_indexing(shared);
+            }
+        }
+    }
+
+    /// Register `doc` as wanting text indexing and start it if the indexer is
+    /// idle. Repeat requests for an already-pending document are no-ops.
+    fn request_indexing(&mut self, doc: DocId, shared: &EngineShared) {
+        if !self.index_pending.contains(&doc) {
+            self.index_pending.push(doc);
+        }
+        self.pump_indexing(shared);
+    }
+
+    /// Start the next indexing chain if none is running. Prefers the
+    /// foreground document, then falls back to oldest-request-first.
+    fn pump_indexing(&mut self, shared: &EngineShared) {
+        if self.index_active.is_some() {
+            return;
+        }
+        let pick = self
+            .active_main
+            .filter(|d| self.index_pending.contains(d))
+            .or_else(|| self.index_pending.first().copied());
+        let Some(doc) = pick else {
+            return;
+        };
+        self.index_chain_seq += 1;
+        let chain = self.index_chain_seq;
+        self.index_active = Some((doc, chain));
+        shared.queue.push(
+            Priority::TextExtract,
+            JobMeta {
+                doc,
+                gen: shared.gens.current(doc),
+                epoch: shared.cancels.current(doc),
+            },
+            Work::IndexNext { doc, chain },
+        );
+    }
+
+    /// Retire the running chain. `done` means the document needs no further
+    /// indexing (finished, truncated, or gone) and should leave the queue.
+    fn end_indexing(&mut self, doc: DocId, done: bool, shared: &EngineShared) {
+        if self.index_active.map(|(d, _)| d) == Some(doc) {
+            self.index_active = None;
+        }
+        if done {
+            self.index_pending.retain(|candidate| *candidate != doc);
+        }
+        self.pump_indexing(shared);
     }
 }
 
@@ -174,12 +241,15 @@ pub fn run(shared: Arc<EngineShared>, hints: Vec<PathBuf>) {
         active_main: None,
         library_docs: Vec::new(),
         library_session_docs: Vec::new(),
+        index_pending: Vec::new(),
+        index_active: None,
+        index_chain_seq: 0,
     };
 
     while let Some((meta, work)) = shared.queue.pop_blocking() {
-        // A generation represents render state (principally the scale bucket).
-        // Never let a zoom gesture cancel indexing, text, save, or form work.
-        let stale = shared.gens.is_stale(&meta) && is_generation_cancellable(&work);
+        // Generation/cancel stamps represent render state only. Never let a
+        // zoom gesture or a page turn cancel indexing, text, save, or form work.
+        let stale = shared.is_render_stale(&meta) && is_generation_cancellable(&work);
         if stale {
             shared.metrics.skipped_stale.fetch_add(1, Ordering::Relaxed);
             fail_work(work, || AppError::Stale);
@@ -207,7 +277,11 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         Work::FormFields { respond, .. } => respond(Err(err())),
         Work::Outline { respond, .. } => respond(Err(err())),
         Work::ImageSize { respond, .. } => respond(Err(err())),
-        Work::Close { .. } | Work::SetActiveDocument { .. } | Work::IndexNext { .. } | Work::LibraryScanNext => {}
+        Work::Close { .. }
+        | Work::SetActiveDocument { .. }
+        | Work::StartIndexing { .. }
+        | Work::IndexNext { .. }
+        | Work::LibraryScanNext => {}
     }
 }
 
@@ -270,7 +344,8 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
                 respond(Ok(None));
             }
         }
-        Work::IndexNext { doc } => do_index_next(state, shared, meta, doc),
+        Work::StartIndexing { doc } => state.request_indexing(doc, shared),
+        Work::IndexNext { doc, chain } => do_index_next(state, shared, meta, doc, chain),
         Work::LibraryScanNext => do_library_scan_next(state, shared),
         Work::MatchRects {
             doc,
@@ -399,7 +474,7 @@ fn do_render(
         key.scale_milli as f32 / 1000.0,
         key.rot,
         key.tile,
-        || shared.gens.is_stale(&meta),
+        || shared.is_render_stale(&meta),
     )?;
     let bytes = Arc::new(out.png);
     // The Rust cache stores encoded PNG bytes. Browser-decoded memory is
@@ -580,9 +655,24 @@ fn do_preview_rect(
     })
 }
 
-fn do_index_next(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, doc: DocId) {
-    let Ok(d) = state.doc(doc) else { return };
+fn do_index_next(
+    state: &mut WorkerState,
+    shared: &EngineShared,
+    meta: JobMeta,
+    doc: DocId,
+    chain: u64,
+) {
+    // Drop chains the scheduler has since superseded (document closed, or a
+    // tab switch handed the indexer to the newly foreground document).
+    if state.index_active != Some((doc, chain)) {
+        return;
+    }
+    let Ok(d) = state.doc(doc) else {
+        state.end_indexing(doc, true, shared);
+        return;
+    };
     if shared.search.lock().is_truncated(doc) {
+        state.end_indexing(doc, true, shared);
         return;
     }
     let total = d.page_count;
@@ -596,6 +686,7 @@ fn do_index_next(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, 
     }
     if next >= total {
         emit_progress(shared, doc, total, total, false);
+        state.end_indexing(doc, true, shared);
         return;
     }
     let ok = match ensure_search_extracted(state, shared, doc, next) {
@@ -612,13 +703,18 @@ fn do_index_next(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, 
     }
     if !ok {
         log::warn!("search index budget exhausted for doc {doc} after {indexed}/{total} pages");
+        state.end_indexing(doc, true, shared);
         return;
     }
-    // Requeue at the same generation: closing/reloading the doc cancels this.
+    // Requeue at the same stamps: closing/reloading the doc cancels this.
     shared.queue.push(
         Priority::TextExtract,
-        JobMeta { doc, gen: meta.gen },
-        Work::IndexNext { doc },
+        JobMeta {
+            doc,
+            gen: meta.gen,
+            epoch: meta.epoch,
+        },
+        Work::IndexNext { doc, chain },
     );
 }
 
@@ -667,6 +763,7 @@ fn do_library_scan_next(state: &mut WorkerState, shared: &EngineShared) {
             JobMeta {
                 doc: 0,
                 gen: shared.gens.current(0),
+                epoch: shared.cancels.current(0),
             },
             Work::LibraryScanNext,
         );
@@ -1194,7 +1291,10 @@ mod tests {
             main_epoch: 0,
             respond: Box::new(|_| {}),
         }));
-        assert!(!is_generation_cancellable(&Work::IndexNext { doc: 1 }));
+        assert!(!is_generation_cancellable(&Work::IndexNext {
+            doc: 1,
+            chain: 1
+        }));
         assert!(!is_generation_cancellable(&Work::LibraryScanNext));
         assert!(!is_generation_cancellable(&Work::Close { doc: 1 }));
     }

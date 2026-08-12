@@ -79,10 +79,18 @@ pub enum Work {
         main_epoch: u64,
         respond: Respond<Option<ResolvedCitationDto>>,
     },
+    /// Register a document as wanting text indexing. The worker runs exactly
+    /// one indexing chain at a time (foreground document first), so opening
+    /// many tabs at once cannot stampede the engine thread.
+    StartIndexing {
+        doc: DocId,
+    },
     /// Extract the next unindexed page, then requeue itself (yields between
-    /// pages so visible work always wins).
+    /// pages so visible work always wins). `chain` identifies the scheduling
+    /// run that issued it; orphaned chains are dropped on arrival.
     IndexNext {
         doc: DocId,
+        chain: u64,
     },
     LibraryScanNext,
     MatchRects {
@@ -156,6 +164,10 @@ impl CacheBudgets {
 pub struct EngineShared {
     pub queue: PrioQueue<Work>,
     pub gens: GenerationMap,
+    /// Per-document render-cancel stamps. Bumped when queued render work is
+    /// known to be pointless (the page it was for scrolled away); unlike
+    /// `gens` this never invalidates a URL or a cache entry.
+    pub cancels: GenerationMap,
     pub page_cache: Mutex<ByteLru<RenderKey>>,
     pub thumb_cache: Mutex<ByteLru<RenderKey>>,
     pub preview_cache: Mutex<ByteLru<RenderKey>>,
@@ -170,6 +182,14 @@ pub struct EngineShared {
     pub main_epoch: AtomicU64,
     pub progress: Mutex<Option<ProgressCallback>>,
     pub last_metrics: Mutex<EngineMetricsDto>,
+}
+
+impl EngineShared {
+    /// A render job is worthless if either its URL generation has been
+    /// superseded or its work has been explicitly cancelled since submission.
+    pub fn is_render_stale(&self, meta: &JobMeta) -> bool {
+        self.gens.is_stale(meta) || self.cancels.is_stale_at(meta.doc, meta.epoch)
+    }
 }
 
 #[derive(Clone)]
@@ -196,6 +216,7 @@ impl EngineHandle {
         let shared = Arc::new(EngineShared {
             queue: PrioQueue::new(),
             gens: GenerationMap::default(),
+            cancels: GenerationMap::default(),
             page_cache: Mutex::new(ByteLru::new(budgets.pages)),
             thumb_cache: Mutex::new(ByteLru::new(budgets.thumbs)),
             preview_cache: Mutex::new(ByteLru::new(budgets.previews)),
@@ -225,6 +246,7 @@ impl EngineHandle {
         let meta = JobMeta {
             doc,
             gen: self.0.gens.current(doc),
+            epoch: self.0.cancels.current(doc),
         };
         self.0.queue.push(prio, meta, work);
     }
@@ -232,16 +254,31 @@ impl EngineHandle {
     /// Submit pinned to a caller-known generation (used by the protocol so a
     /// URL minted for gen N can never be satisfied by gen N+1 state).
     pub fn submit_at_gen(&self, prio: Priority, doc: DocId, gen: u64, work: Work) {
-        self.0.queue.push(prio, JobMeta { doc, gen }, work);
+        let epoch = self.0.cancels.current(doc);
+        self.0.queue.push(prio, JobMeta { doc, gen, epoch }, work);
     }
 
+    /// Invalidate every outstanding URL for `doc` and flag its cached rasters
+    /// as first-choice eviction victims. Reserved for changes that make the
+    /// cached pixels themselves wrong — it forces the webview to re-fetch and
+    /// re-decode every mounted image, so it is far from free. To merely
+    /// abandon queued work, use `cancel_renders`.
     pub fn bump_generation(&self, doc: DocId) -> u64 {
         let g = self.0.gens.bump(doc);
-        // wrong-generation renders are now eviction candidates before anything else
+        // Rasters at the superseded scale are now eviction candidates before
+        // anything else. Only the page cache: thumbnails and hover previews
+        // are rendered at their own fixed scales, so a viewer zoom never makes
+        // them wrong, and sweeping them here just evicted work the sidebar was
+        // about to ask for again.
         self.0.page_cache.lock().mark_stale(|k| k.doc == doc);
-        self.0.thumb_cache.lock().mark_stale(|k| k.doc == doc);
-        self.0.preview_cache.lock().mark_stale(|k| k.doc == doc);
         g
+    }
+
+    /// Abandon queued and in-flight render work for `doc`. Cached rasters and
+    /// already-minted URLs stay valid, so this costs nothing to recover from:
+    /// anything still on screen is served straight from cache.
+    pub fn cancel_renders(&self, doc: DocId) {
+        self.0.cancels.bump(doc);
     }
 
     pub fn current_generation(&self, doc: DocId) -> u64 {

@@ -24,12 +24,19 @@ import { openFromDialog } from '../document/tabsController';
 import { IconOpen } from '../../components/icons';
 import { engine } from '../../lib/transport/engine';
 import { TabContext } from '../../app/TabContext';
-import type { TabRecord } from '../../stores/tabsStore';
+import { tabsStore, type TabRecord } from '../../stores/tabsStore';
 
 function ViewerContent(props: { tab: TabRecord }) {
   const { documentStore, viewport: vp, zoom } = props.tab;
   let scroller!: HTMLDivElement;
   const doc = documentStore.state;
+
+  /** Background tabs stay mounted (see .tab-workspace in global.css) so their
+   * scroller, layout and scroll position survive a switch — but they must not
+   * hold page rasters. A hidden tab still has a real laid-out height, so
+   * without this every open document keeps ~3 viewport-heights of full-scale
+   * PNGs decoded in the webview, and re-requests them on every change. */
+  const isActive = createMemo(() => tabsStore.state.activeId === props.tab.id);
 
   const geoms = createMemo(() => zoom.pagesGeom());
   const layout = createMemo(() => zoom.layoutFor(vp.state.zoom, geoms()));
@@ -37,6 +44,7 @@ function ViewerContent(props: { tab: TabRecord }) {
     visibleRange(layout(), vp.state.scrollTop, vp.state.containerH, vp.state.containerH)
   );
   const indices = createMemo(() => {
+    if (!isActive()) return [];
     const [first, last] = range();
     return Array.from({ length: Math.max(0, last - first + 1) }, (_, k) => first + k);
   });
@@ -82,8 +90,12 @@ function ViewerContent(props: { tab: TabRecord }) {
   });
 
   // A page change means an expensive render for the page left behind is no
-  // longer useful. Bump after a short scroll debounce; PDFium's progressive
-  // pause callback observes the generation and aborts in-flight stale work.
+  // longer useful. Cancel it after a short scroll debounce; PDFium's
+  // progressive pause callback observes the cancel stamp and aborts in-flight
+  // work. Deliberately NOT a generation bump: the scale hasn't changed, so
+  // every cached raster and minted URL is still correct, and invalidating
+  // them would make each page turn re-fetch and re-decode the whole visible
+  // document — the expensive thing this is trying to avoid.
   let previousPage = -1;
   createEffect(() => {
     const currentPage = vp.state.currentPage;
@@ -92,7 +104,10 @@ function ViewerContent(props: { tab: TabRecord }) {
       return;
     }
     previousPage = currentPage;
-    const timer = setTimeout(() => applyRenderScale(renderScaleMilli()), 80);
+    const docId = doc.docId;
+    const timer = setTimeout(() => {
+      if (doc.docId === docId) void engine.cancelRenders(docId);
+    }, 80);
     onCleanup(() => clearTimeout(timer));
   });
   onCleanup(() => {

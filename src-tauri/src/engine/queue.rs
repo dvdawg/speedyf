@@ -1,9 +1,19 @@
 //! Blocking priority queue + per-document generation registry.
 //!
-//! Jobs are ordered by (priority, submission sequence). Every job carries the
-//! generation current at submission time; the worker skips (and counts)
-//! obsolete render jobs whose generation has since been bumped. Non-render
-//! work such as search and save is never cancelled by a zoom change.
+//! Jobs are ordered by (priority, submission sequence). Every job carries two
+//! per-document stamps taken at submission time, and the worker skips (and
+//! counts) obsolete render jobs whose stamps have since been superseded:
+//!
+//! * `gen` — the *URL* generation. Bumping it changes every pdfr:// URL the
+//!   frontend mints and flags the document's cached rasters as preferred
+//!   eviction victims. Reserved for changes that make cached pixels wrong
+//!   (page edits), because it forces the webview to re-fetch and re-decode
+//!   every mounted image.
+//! * `epoch` — the *cancel* stamp. Bumping it abandons queued and in-flight
+//!   render work for a document without touching URLs or caches, which is all
+//!   that scrolling past a page needs.
+//!
+//! Non-render work such as search and save is never cancelled by either.
 
 use super::types::{DocId, Priority};
 use parking_lot::{Condvar, Mutex};
@@ -14,6 +24,7 @@ use std::collections::{BinaryHeap, HashMap};
 pub struct JobMeta {
     pub doc: DocId,
     pub gen: u64,
+    pub epoch: u64,
 }
 
 struct Item<T> {
@@ -130,8 +141,13 @@ impl GenerationMap {
         *e
     }
 
+    /// True when `stamp` predates the document's current value.
+    pub fn is_stale_at(&self, doc: DocId, stamp: u64) -> bool {
+        stamp < self.current(doc)
+    }
+
     pub fn is_stale(&self, meta: &JobMeta) -> bool {
-        meta.gen < self.current(meta.doc)
+        self.is_stale_at(meta.doc, meta.gen)
     }
 }
 
@@ -144,6 +160,7 @@ mod tests {
         JobMeta {
             doc,
             gen: generation,
+            epoch: 0,
         }
     }
 
@@ -183,6 +200,27 @@ mod tests {
         assert!(gens.is_stale(&m), "job submitted at g0 is stale after bump");
         let fresh = meta(7, g1);
         assert!(!gens.is_stale(&fresh));
+    }
+
+    #[test]
+    fn cancel_stamps_are_independent_of_url_generations() {
+        // Cancelling a document's queued renders (a page turn) must not look
+        // like a generation bump, which would invalidate every minted URL.
+        let gens = GenerationMap::default();
+        let cancels = GenerationMap::default();
+        let m = meta(7, gens.current(7));
+        cancels.bump(7);
+        assert!(!gens.is_stale(&m), "URL generation is untouched by a cancel");
+        assert!(
+            cancels.is_stale_at(m.doc, m.epoch),
+            "work submitted before the cancel is abandoned"
+        );
+        let after = JobMeta {
+            doc: 7,
+            gen: gens.current(7),
+            epoch: cancels.current(7),
+        };
+        assert!(!cancels.is_stale_at(after.doc, after.epoch));
     }
 
     #[test]

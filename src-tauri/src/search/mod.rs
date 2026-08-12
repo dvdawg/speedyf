@@ -156,6 +156,9 @@ pub struct DocIndex {
     pub pages: HashMap<u32, Arc<PageEntry>>,
     pub truncated: bool,
     chars_indexed: u64,
+    /// Retained bytes for this document alone, so the shared budget can be
+    /// rebalanced between documents without summing every page.
+    used: u64,
 }
 
 pub struct SearchStore {
@@ -324,6 +327,7 @@ impl SearchStore {
             if let Some(index) = self.docs.get_mut(&doc) {
                 if let Some(entry) = index.pages.remove(&src) {
                     self.used = self.used.saturating_sub(entry.cost);
+                    index.used = index.used.saturating_sub(entry.cost);
                     index.chars_indexed =
                         index.chars_indexed.saturating_sub(entry.char_count as u64);
                 }
@@ -344,6 +348,19 @@ impl SearchStore {
     /// by `TextLayoutCache`, not here.
     pub fn store_page(&mut self, doc: DocId, src: u32, raw: &str, char_count: u32) -> bool {
         let entry = Arc::new(PageEntry::new(raw, char_count));
+        let old_cost = self
+            .docs
+            .get(&doc)
+            .and_then(|index| index.pages.get(&src))
+            .map(|old| old.cost)
+            .unwrap_or(0);
+        let projected = self.used.saturating_sub(old_cost) + entry.cost;
+        if projected > self.budget {
+            // The budget is shared by every open document. Reclaim from
+            // whichever document is hogging it rather than letting whoever
+            // filled it first permanently starve the others.
+            self.reclaim_for(doc, projected - self.budget);
+        }
         let index = self.docs.entry(doc).or_default();
         let old_cost = index.pages.get(&src).map(|old| old.cost).unwrap_or(0);
         if self.used.saturating_sub(old_cost) + entry.cost > self.budget {
@@ -352,11 +369,53 @@ impl SearchStore {
         }
         if let Some(old) = index.pages.insert(src, Arc::clone(&entry)) {
             self.used = self.used.saturating_sub(old.cost);
+            index.used = index.used.saturating_sub(old.cost);
             index.chars_indexed = index.chars_indexed.saturating_sub(old.char_count as u64);
         }
         self.used += entry.cost;
+        index.used += entry.cost;
         index.chars_indexed += entry.char_count as u64;
         true
+    }
+
+    /// Free at least `need` bytes on behalf of `doc` by trimming whichever
+    /// document currently holds the most, dropping its highest page indices
+    /// first (search degrades to prefix coverage, matching `set_budget`).
+    /// Stops once `doc` itself is the largest holder — a document never robs
+    /// others to grow past them, so the steady state is an even split.
+    fn reclaim_for(&mut self, doc: DocId, need: u64) {
+        let mut freed = 0u64;
+        while freed < need {
+            let Some((victim_doc, _)) = self
+                .docs
+                .iter()
+                .filter(|(candidate, index)| **candidate != doc && !index.pages.is_empty())
+                .map(|(candidate, index)| (*candidate, index.used))
+                .max_by_key(|(_, used)| *used)
+            else {
+                return;
+            };
+            let own_used = self.docs.get(&doc).map(|index| index.used).unwrap_or(0);
+            let victim_used = self.docs.get(&victim_doc).map(|index| index.used).unwrap_or(0);
+            if victim_used <= own_used {
+                return;
+            }
+            let Some(index) = self.docs.get_mut(&victim_doc) else {
+                return;
+            };
+            let Some(src) = index.pages.keys().max().copied() else {
+                return;
+            };
+            if let Some(entry) = index.pages.remove(&src) {
+                self.used = self.used.saturating_sub(entry.cost);
+                index.used = index.used.saturating_sub(entry.cost);
+                index.chars_indexed = index.chars_indexed.saturating_sub(entry.char_count as u64);
+                freed += entry.cost;
+            }
+            // The victim no longer holds a complete index; its own chain will
+            // observe this and stop rather than fight for the space back.
+            index.truncated = true;
+        }
     }
 
     pub fn contains_page(&self, doc: DocId, src: u32) -> bool {
@@ -643,6 +702,59 @@ mod tests {
         store.remove_doc(1);
         assert_eq!(store.used(), 0);
         assert_eq!(store.chars_indexed(1), 0);
+    }
+
+    #[test]
+    fn a_second_document_reclaims_budget_from_the_one_that_filled_it() {
+        // The budget is shared by every open tab. Whoever indexes first must
+        // not be able to lock every later document out of search entirely.
+        let mut store = SearchStore::new(4_000);
+        let page = "lorem ipsum dolor sit amet ".repeat(8);
+        let mut src = 0;
+        while store.store_page(1, src, &page, page.len() as u32) {
+            src += 1;
+        }
+        assert!(store.is_truncated(1), "doc 1 should have filled the budget");
+        let doc_one_pages = store.indexed_count(1);
+        assert!(doc_one_pages > 2, "need room for a meaningful split");
+
+        assert!(
+            store.store_page(2, 0, &page, page.len() as u32),
+            "doc 2 must be able to index despite a full budget"
+        );
+        assert!(store.store_page(2, 1, &page, page.len() as u32));
+
+        assert!(store.used() <= store.budget(), "hard bound still holds");
+        assert!(
+            store.indexed_count(1) < doc_one_pages,
+            "space came out of the largest holder"
+        );
+        // Reclaim drops the highest page indices, so prefix coverage survives.
+        assert!(store.contains_page(1, 0));
+    }
+
+    #[test]
+    fn reclaim_stops_once_the_requesting_document_is_the_largest_holder() {
+        // Otherwise two documents would trade pages back and forth forever
+        // instead of settling on a share each.
+        let mut store = SearchStore::new(4_000);
+        let page = "lorem ipsum dolor sit amet ".repeat(8);
+        let mut src = 0;
+        while store.store_page(1, src, &page, page.len() as u32) {
+            src += 1;
+        }
+        let mut src = 0;
+        while store.store_page(2, src, &page, page.len() as u32) {
+            src += 1;
+        }
+        let one = store.indexed_count(1);
+        let two = store.indexed_count(2);
+        assert!(one > 0 && two > 0, "both documents keep a share");
+        assert!(
+            one.abs_diff(two) <= 1,
+            "shares should settle roughly even, got {one} vs {two}"
+        );
+        assert!(store.used() <= store.budget());
     }
 
     #[test]

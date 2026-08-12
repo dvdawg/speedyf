@@ -57,6 +57,11 @@ impl<K: Eq + Hash + Clone + Ord> ByteLru<K> {
     }
 
     /// Look up an entry, refreshing its recency on hit.
+    ///
+    /// A hit also clears the stale flag: staleness marks entries *believed*
+    /// unwanted, and a live request is proof otherwise. Without this, every
+    /// page still on screen when a generation bump swept the document would
+    /// stay a preferred eviction victim for the rest of its life.
     pub fn get(&mut self, key: &K) -> Option<Arc<Vec<u8>>> {
         self.lookups += 1;
         self.tick += 1;
@@ -64,9 +69,9 @@ impl<K: Eq + Hash + Clone + Ord> ByteLru<K> {
         match self.map.get_mut(key) {
             Some(e) => {
                 e.last_used = tick;
+                e.stale = false;
                 self.hits += 1;
-                self.order
-                    .push(Reverse((u8::from(!e.stale), tick, key.clone())));
+                self.order.push(Reverse((1, tick, key.clone())));
                 Some(Arc::clone(&e.bytes))
             }
             None => None,
@@ -104,11 +109,14 @@ impl<K: Eq + Hash + Clone + Ord> ByteLru<K> {
         self.evict_to(budget);
     }
 
-    /// Flag matching entries as stale so they are evicted first.
+    /// Flag matching entries as stale so they are evicted first. Entries that
+    /// are already stale are skipped: re-marking them would push duplicate
+    /// heap records on every call, and repeated marking with no intervening
+    /// insert (which is what compacts `order`) would grow it without bound.
     pub fn mark_stale(&mut self, pred: impl Fn(&K) -> bool) {
         let mut newly_stale = Vec::new();
         for (k, e) in self.map.iter_mut() {
-            if pred(k) {
+            if !e.stale && pred(k) {
                 e.stale = true;
                 newly_stale.push((k.clone(), e.last_used));
             }
@@ -118,6 +126,7 @@ impl<K: Eq + Hash + Clone + Ord> ByteLru<K> {
                 .into_iter()
                 .map(|(key, tick)| Reverse((0, tick, key))),
         );
+        self.compact_order_if_needed();
     }
 
     /// Drop matching entries immediately.
@@ -195,6 +204,39 @@ mod tests {
         c.insert(3, arc(1), 400);
         assert!(c.get(&2).is_none(), "stale entry evicted first");
         assert!(c.get(&1).is_some(), "fresh LRU entry survives");
+    }
+
+    #[test]
+    fn a_hit_clears_staleness_so_visible_entries_stop_being_victims() {
+        let mut c: ByteLru<u32> = ByteLru::new(1000);
+        c.insert(1, arc(1), 400);
+        c.insert(2, arc(1), 400);
+        c.mark_stale(|k| *k == 1);
+        // 1 is stale but demonstrably still wanted; 2 has not been touched.
+        assert!(c.get(&1).is_some());
+        c.insert(3, arc(1), 400);
+        assert!(c.get(&1).is_some(), "re-requested entry survives");
+        assert!(c.get(&2).is_none(), "untouched LRU entry evicted instead");
+    }
+
+    #[test]
+    fn repeated_marking_does_not_grow_the_order_heap() {
+        // mark_stale used to push a record per matching entry per call, with
+        // no compaction of its own — repeated marking with no intervening
+        // insert grew the heap without bound.
+        let mut c: ByteLru<u32> = ByteLru::new(10_000);
+        for k in 0..20 {
+            c.insert(k, arc(1), 100);
+        }
+        let baseline = c.order.len();
+        for _ in 0..500 {
+            c.mark_stale(|_| true);
+        }
+        assert!(
+            c.order.len() <= baseline + c.map.len(),
+            "order heap grew to {} from {baseline}",
+            c.order.len()
+        );
     }
 
     #[test]

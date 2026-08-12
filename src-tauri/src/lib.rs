@@ -207,6 +207,7 @@ pub fn run() {
             commands::set_low_memory,
             commands::doc_generation,
             commands::bump_generation,
+            commands::cancel_renders,
         ])
         .build(tauri::generate_context!())
         .expect("error while building SpeedyF")

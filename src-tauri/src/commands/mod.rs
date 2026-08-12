@@ -203,8 +203,17 @@ pub async fn start_indexing(state: tauri::State<'_, EngineState>, doc_id: DocId)
     state.0.submit(
         Priority::TextExtract,
         doc_id,
-        Work::IndexNext { doc: doc_id },
+        Work::StartIndexing { doc: doc_id },
     );
+    Ok(())
+}
+
+/// Abandon queued render work for a document whose visible region moved on.
+/// Deliberately not `bump_generation`: cached rasters and minted URLs stay
+/// valid, so nothing already on screen has to be fetched or decoded again.
+#[tauri::command]
+pub async fn cancel_renders(state: tauri::State<'_, EngineState>, doc_id: DocId) -> AppResult<()> {
+    state.0.cancel_renders(doc_id);
     Ok(())
 }
 
