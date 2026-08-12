@@ -152,31 +152,35 @@ export default function App() {
         <Show when={tabsStore.state.tabs.length > 0}>
           <div class="tab-workspaces">
             <For each={tabsStore.state.tabs}>
-              {(tab) => (
-                <TabContext.Provider value={tab}>
-                  <div
-                    class="tab-workspace"
-                    classList={{ 'is-active': tab.id === tabsStore.state.activeId }}
-                  >
-                    <div class="app-body">
-                      <Show when={ui.sidebarOpen && tab.documentStore.state.loaded}>
-                        <Sidebar />
-                      </Show>
-                      <main class="app-main">
-                        <Viewer />
-                      </main>
-                      <Show when={tab.viewport.state.searchOpen && tab.documentStore.state.loaded}>
-                        <SearchPanel />
-                      </Show>
-                      <Show
-                        when={tab.viewport.state.formPanelOpen && tab.documentStore.state.loaded}
-                      >
-                        <FormPanel />
-                      </Show>
+              {(tab) => {
+                // Sidebar state (open/mode) is window-level, so without this
+                // every open document would mount its own thumbnail list and
+                // race the others for the one engine thread — for panels
+                // nobody can see. The Viewer stays mounted either way and
+                // sheds its own page rasters internally.
+                const active = () => tab.id === tabsStore.state.activeId;
+                const visible = () => active() && tab.documentStore.state.loaded;
+                return (
+                  <TabContext.Provider value={tab}>
+                    <div class="tab-workspace" classList={{ 'is-active': active() }}>
+                      <div class="app-body">
+                        <Show when={ui.sidebarOpen && visible()}>
+                          <Sidebar />
+                        </Show>
+                        <main class="app-main">
+                          <Viewer />
+                        </main>
+                        <Show when={tab.viewport.state.searchOpen && visible()}>
+                          <SearchPanel />
+                        </Show>
+                        <Show when={tab.viewport.state.formPanelOpen && visible()}>
+                          <FormPanel />
+                        </Show>
+                      </div>
                     </div>
-                  </div>
-                </TabContext.Provider>
-              )}
+                  </TabContext.Provider>
+                );
+              }}
             </For>
           </div>
         </Show>

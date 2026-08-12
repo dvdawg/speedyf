@@ -12,11 +12,17 @@ export default function StatusBar() {
 
   onMount(() => {
     let disposed = false;
+    // Both polls cross the IPC boundary and take engine locks, so they are
+    // skipped whenever their answer cannot be seen or cannot have changed:
+    // metrics while the window is hidden, library status while no scan is
+    // running. Idling with tabs open should cost nothing.
+    const hidden = () => document.visibilityState === 'hidden';
     const refresh = async () => {
       if (!doc()?.loaded) {
         setMetrics(null);
         return;
       }
+      if (hidden()) return;
       try {
         const next = await engine.metrics();
         if (!disposed) setMetrics(next);
@@ -24,13 +30,28 @@ export default function StatusBar() {
         // Diagnostics must never interfere with document interaction.
       }
     };
+    // Only a running scan changes this status, and every scan is started by a
+    // command that refreshes explicitly — so an idle library needs no polling.
+    const refreshLibrary = async () => {
+      if (hidden() || !libraryStore.state.library.scanning) return;
+      await libraryStore.refreshLibraryStatus();
+    };
     void refresh();
     const timer = window.setInterval(() => void refresh(), 1_500);
-    const libraryTimer = window.setInterval(() => void libraryStore.refreshLibraryStatus(), 1_200);
+    const libraryTimer = window.setInterval(() => void refreshLibrary(), 1_200);
+    // A hidden window skips its polls entirely; catch up as soon as it returns.
+    const onVisibility = () => {
+      if (!hidden()) {
+        void refresh();
+        void refreshLibrary();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
     onCleanup(() => {
       disposed = true;
       window.clearInterval(timer);
       window.clearInterval(libraryTimer);
+      document.removeEventListener('visibilitychange', onVisibility);
     });
   });
 

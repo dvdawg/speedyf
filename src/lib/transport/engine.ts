@@ -83,7 +83,12 @@ export interface EngineApi {
   imageSize(path: string): Promise<[number, number]>;
   metrics(): Promise<EngineMetrics>;
   setLowMemory(enabled: boolean): Promise<void>;
+  /** Invalidates every outstanding render URL for the document and flags its
+   * cached rasters for eviction. Only for changes that make cached pixels
+   * wrong — it forces the webview to re-decode every mounted image. */
   bumpGeneration(docId: number): Promise<number>;
+  /** Drops queued render work without invalidating URLs or caches. */
+  cancelRenders(docId: number): Promise<void>;
   onSearchProgress(cb: (p: SearchProgress) => void): Promise<() => void>;
 }
 
@@ -110,6 +115,7 @@ export const engine: EngineApi = {
   metrics: () => invoke('engine_metrics'),
   setLowMemory: (enabled) => invoke('set_low_memory', { enabled }),
   bumpGeneration: (docId) => invoke('bump_generation', { docId }),
+  cancelRenders: (docId) => invoke('cancel_renders', { docId }),
   onSearchProgress: async (cb) => listen<SearchProgress>('search:progress', (e) => cb(e.payload)),
 };
 

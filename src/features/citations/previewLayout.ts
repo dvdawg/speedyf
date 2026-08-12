@@ -16,8 +16,8 @@ const TARGET_SIZE: Record<PreviewPopoverVariant, PreviewSize> = {
 // Border + popover padding + the white paper-card margins. Keeping these in
 // step with global.css lets positioning use the same content-aware footprint
 // that the browser renders.
-const INTERNAL_CHROME_WIDTH = 34;
-const INTERNAL_CHROME_HEIGHT = 50;
+const INTERNAL_CHROME_WIDTH = 26;
+const INTERNAL_CHROME_HEIGHT = 42;
 const INTERNAL_MIN_WIDTH = 140;
 
 /** Convert the encoded crop back to document-sized CSS pixels. Preview PNGs

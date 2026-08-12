@@ -76,6 +76,15 @@ export async function openInNewTabOrFocus(
   setActiveId(record.id);
   setActiveDocument(null); // will be set once the open resolves
 
+  /** Every abandoned-open path must go through here: a TabRecord owns store
+   * subscriptions (citation ↔ library) that outlive the DOM, so dropping it
+   * from the registry alone leaks a listener per failed open. */
+  const abandon = () => {
+    record.citationStore.dispose();
+    removeTab(record.id);
+    if (tabsStore.state.activeId === record.id) setActiveId(null);
+  };
+
   let password: string | undefined;
   for (;;) {
     try {
@@ -98,8 +107,7 @@ export async function openInNewTabOrFocus(
         if (opts?.fromSessionRestore) {
           // Prompting for N passwords at launch would conflict with
           // modalStore's single in-flight prompt — just drop this tab.
-          removeTab(record.id);
-          if (tabsStore.state.activeId === record.id) setActiveId(null);
+          abandon();
           return false;
         }
         const entered = await askPassword(
@@ -108,8 +116,7 @@ export async function openInNewTabOrFocus(
             : 'Incorrect password. Try again.'
         );
         if (entered === null) {
-          removeTab(record.id);
-          if (tabsStore.state.activeId === record.id) setActiveId(null);
+          abandon();
           return false;
         }
         password = entered;
@@ -121,8 +128,7 @@ export async function openInNewTabOrFocus(
       if (!opts?.fromSessionRestore) {
         showError(isEngineError(e) ? e.message : `Could not open ${path}: ${String(e)}`);
       }
-      removeTab(record.id);
-      if (tabsStore.state.activeId === record.id) setActiveId(null);
+      abandon();
       return false;
     }
   }
@@ -205,11 +211,13 @@ export async function restoreSession(): Promise<void> {
   const session = loadSession();
   if (session.tabs.length === 0) return;
 
-  await Promise.all(
-    session.tabs.map((t) =>
-      openInNewTabOrFocus(t.path, { skipGuard: true, fromSessionRestore: true })
-    )
-  );
+  // Sequential, not Promise.all: every open costs a PDFium parse plus a page-
+  // size hydration sweep on the single engine thread, so firing ten at once
+  // just queues them behind each other while starving the first tab's pages
+  // of the renders it needs to actually show something.
+  for (const t of session.tabs) {
+    await openInNewTabOrFocus(t.path, { skipGuard: true, fromSessionRestore: true });
+  }
 
   const restored = tabsStore.state.tabs;
   if (restored.length === 0) return;
