@@ -707,7 +707,7 @@ textarea:focus-visible {
   width: min(420px, calc(100vw - 16px));
   max-height: min(320px, calc(100vh - 16px));
   overflow: auto;
-  padding: 8px;
+  padding: 4px;
   border: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
   border-radius: 10px;
   background: var(--bg-elev);
@@ -750,7 +750,7 @@ textarea:focus-visible {
 }
 
 .citation-preview-viewport.is-scrollable {
-  max-height: min(334px, calc(100vh - 66px));
+  max-height: min(342px, calc(100vh - 58px));
   overflow: auto;
   overscroll-behavior: contain;
   background: white;
@@ -783,7 +783,7 @@ textarea:focus-visible {
 }
 
 .citation-popover.is-internal > .citation-preview-skeleton.is-popover {
-  height: 334px;
+  height: 342px;
 }
 
 .citation-preview-image {

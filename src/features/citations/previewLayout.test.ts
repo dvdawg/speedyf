@@ -46,7 +46,7 @@ describe('preview popover geometry', () => {
     const content = { width: 100, height: 60 };
     expect(previewPopoverSize(viewport, 'internal', content)).toEqual({
       width: 140,
-      height: 110,
+      height: 102,
     });
   });
 
@@ -54,14 +54,14 @@ describe('preview popover geometry', () => {
     const content = { width: 600, height: 400 };
     expect(previewPopoverSize(viewport, 'internal', content)).toEqual({
       width: 504,
-      height: 364,
+      height: 361,
     });
   });
 
   it('caps tall content at the scrollable internal-card height', () => {
     const content = { width: 200, height: 800 };
     expect(previewPopoverSize(viewport, 'internal', content)).toEqual({
-      width: 234,
+      width: 226,
       height: 384,
     });
   });
