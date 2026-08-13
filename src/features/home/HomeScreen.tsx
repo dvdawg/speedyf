@@ -1,93 +1,70 @@
 /** Shown when no tab is active (App boots with no tabs, or Home is clicked).
- * Independent of open tabs — going Home never closes anything. */
-import { For, Show } from 'solid-js';
-import { openFromDialog, openInNewTabOrFocus } from '../document/tabsController';
-import { IconOpen } from '../../components/icons';
-import { recentStore } from '../../stores/recentStore';
-import { askConfirm } from '../../stores/modalStore';
+ * Independent of open tabs — going Home never closes anything.
+ *
+ * A fixed rail on the left holds the open action and the section list; the
+ * right column renders the selected section. Selection is local state, and
+ * App unmounts this whole screen once a tab becomes active, so returning home
+ * always lands back on Recents. */
+import { createSignal, For } from 'solid-js';
+import { Dynamic } from 'solid-js/web';
+import type { Component } from 'solid-js';
+import { openFromDialog } from '../document/tabsController';
+import { IconExtension, IconHome, IconList, IconOpen, IconSettings } from '../../components/icons';
+import RecentsPanel from './RecentsPanel';
+import LibraryPanel from './LibraryPanel';
+import ExtensionsPanel from './ExtensionsPanel';
+import SettingsPanel from './SettingsPanel';
 
-function formatSize(bytes: number | null): string {
-  if (bytes === null) return '–';
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ['KB', 'MB', 'GB'];
-  let value = bytes / 1024;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
-}
+type PanelId = 'recents' | 'library' | 'extensions' | 'settings';
 
-function formatDate(ms: number): string {
-  const d = new Date(ms);
-  const now = new Date();
-  const sameDay =
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate();
-  if (sameDay) {
-    return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-  }
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-}
+const SECTIONS: { id: PanelId; label: string; icon: Component }[] = [
+  { id: 'recents', label: 'Recents', icon: IconHome },
+  { id: 'library', label: 'Library', icon: IconList },
+  { id: 'extensions', label: 'Extensions', icon: IconExtension },
+  { id: 'settings', label: 'Settings', icon: IconSettings },
+];
+
+const PANELS: Record<PanelId, Component> = {
+  recents: RecentsPanel,
+  library: LibraryPanel,
+  extensions: ExtensionsPanel,
+  settings: SettingsPanel,
+};
 
 export default function HomeScreen() {
-  const openRecent = async (path: string) => {
-    const ok = await openInNewTabOrFocus(path);
-    if (!ok) recentStore.remove(path);
-  };
-
-  const clearRecent = async () => {
-    if (await askConfirm('Clear all recent files?', 'Clear')) recentStore.clear();
-  };
+  const [active, setActive] = createSignal<PanelId>('recents');
 
   return (
     <div class="home-screen">
-      <div class="home-header">
-        <h1>SpeedyF</h1>
-        <button type="button" class="primary-btn" onClick={() => void openFromDialog()}>
+      <aside class="home-rail">
+        <h1 class="home-wordmark">SpeedyF</h1>
+        <button
+          type="button"
+          class="primary-btn home-rail-action"
+          onClick={() => void openFromDialog()}
+        >
           <IconOpen /> Open PDF…
         </button>
-      </div>
-      <Show
-        when={recentStore.state.entries.length > 0}
-        fallback={
-          <div class="home-empty">
-            <p>
-              No recent files. Open a PDF to get started, or drop a file anywhere in this window.
-            </p>
-          </div>
-        }
-      >
-        <div class="home-recent">
-          <div class="home-recent-head">
-            <span>Recent</span>
-            <button type="button" class="secondary-btn" onClick={() => void clearRecent()}>
-              Clear recent
-            </button>
-          </div>
-          <div class="home-recent-list" role="list">
-            <For each={recentStore.state.entries}>
-              {(entry) => (
-                <button
-                  type="button"
-                  class="home-recent-row"
-                  role="listitem"
-                  onClick={() => void openRecent(entry.path)}
-                >
-                  <span class="home-recent-name">{entry.name}</span>
-                  <span class="home-recent-date">{formatDate(entry.lastOpened)}</span>
-                  <span class="home-recent-size">{formatSize(entry.sizeBytes)}</span>
-                  <span class="home-recent-path" title={entry.path}>
-                    {entry.path}
-                  </span>
-                </button>
-              )}
-            </For>
-          </div>
-        </div>
-      </Show>
+        <nav class="home-nav" aria-label="Home sections">
+          <For each={SECTIONS}>
+            {(section) => (
+              <button
+                type="button"
+                class="home-nav-item"
+                classList={{ 'is-active': active() === section.id }}
+                aria-current={active() === section.id ? 'page' : undefined}
+                onClick={() => setActive(section.id)}
+              >
+                <Dynamic component={section.icon} />
+                <span>{section.label}</span>
+              </button>
+            )}
+          </For>
+        </nav>
+      </aside>
+      <main class="home-panel">
+        <Dynamic component={PANELS[active()]} />
+      </main>
     </div>
   );
 }

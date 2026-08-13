@@ -121,82 +121,186 @@ body {
   pointer-events: auto;
 }
 
+/* ---------- home screen ---------- */
+/* Fixed rail + scrolling panel. The rail never scrolls, so a long recents
+ * list can't push the section list out of reach. */
 .home-screen {
   position: absolute;
   inset: 0;
   display: flex;
-  flex-direction: column;
   background: var(--bg);
-  overflow-y: auto;
+  overflow: hidden;
 }
 
-.home-header {
+.home-rail {
+  flex: 0 0 240px;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 20px 28px;
-  border-bottom: 1px solid var(--border);
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px 14px;
+  background: var(--bg);
+  border-right: 1px solid var(--border);
 }
 
-.home-header h1 {
+.home-wordmark {
   margin: 0;
+  padding: 0 6px;
   font-size: 20px;
+  font-weight: 400;
   color: var(--text);
 }
 
-.home-empty {
-  flex: 1;
+.home-rail-action {
+  justify-content: center;
+  width: 100%;
+}
+
+.home-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.home-nav-item {
   display: flex;
   align-items: center;
-  justify-content: center;
-  text-align: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
   color: var(--text-dim);
-  padding: 24px;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
 }
 
-.home-recent {
-  padding: 8px 28px 28px;
+.home-nav-item:hover {
+  background: var(--bg-inset);
+  color: var(--text);
 }
 
-.home-recent-head {
+.home-nav-item.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.home-nav-item:focus-visible,
+.home-recent-row:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.home-panel {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+/* Sticky so the panel title and its action stay put while the body scrolls. */
+.home-panel-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 10px;
-  color: var(--text-dim);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  gap: 16px;
+  min-height: 62px;
+  padding: 26px 28px 6px;
+  background: var(--bg);
 }
 
+.home-panel-head h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 400;
+  color: var(--text);
+}
+
+.home-panel-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 2px 28px 28px;
+}
+
+.home-panel-intro {
+  margin: 0;
+  max-width: 62ch;
+  color: var(--text-dim);
+}
+
+.home-placeholder {
+  align-self: center;
+  max-width: 42ch;
+  margin: 12vh 0;
+  text-align: center;
+  color: var(--text-dim);
+}
+
+.home-placeholder p {
+  margin: 0;
+}
+
+.home-placeholder-icon {
+  display: inline-flex;
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-dim);
+}
+
+.home-placeholder p.home-placeholder-title {
+  margin-bottom: 6px;
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* ---------- home: recents ---------- */
 .home-recent-list {
   display: flex;
   flex-direction: column;
+  width: 100%;
 }
 
+/* Two lines rather than four columns — the panel is too narrow for the path
+ * to share a row with name, date and size and stay readable. */
 .home-recent-row {
-  display: grid;
-  grid-template-columns: 1fr 110px 80px 1.3fr;
-  gap: 16px;
-  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
   width: 100%;
-  padding: 10px;
+  padding: 9px 10px;
   border: none;
-  border-bottom: 1px solid var(--border);
+  border-radius: 6px;
   background: transparent;
   color: var(--text);
   text-align: left;
   font: inherit;
   cursor: pointer;
-  border-radius: 6px;
 }
 
 .home-recent-row:hover {
   background: var(--bg-inset);
 }
 
+.home-recent-top {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  width: 100%;
+}
+
 .home-recent-name {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -205,9 +309,15 @@ body {
 
 .home-recent-date,
 .home-recent-size {
+  flex: none;
   color: var(--text-dim);
   font-size: 13px;
   white-space: nowrap;
+}
+
+.home-recent-size {
+  min-width: 58px;
+  text-align: right;
 }
 
 .home-recent-path {
@@ -215,6 +325,99 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-dim);
+  font-size: 12px;
+}
+
+/* ---------- home: settings ---------- */
+.home-setting {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  width: 100%;
+  max-width: 620px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.home-setting-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  cursor: pointer;
+}
+
+.home-setting-title {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.home-setting-desc {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+/* ---------- home: library ---------- */
+.home-library-root {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  min-width: 0;
+}
+
+.home-library-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.home-library-empty {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-style: italic;
+}
+
+.home-library-scan {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+/* The default progress widget renders system blue, which fights the accent.
+ * Reset the appearance and repaint both the track and the value. */
+.home-library-progress {
+  appearance: none;
+  width: 180px;
+  height: 6px;
+  border: none;
+  border-radius: 3px;
+  background: var(--bg-inset);
+  overflow: hidden;
+}
+
+.home-library-progress::-webkit-progress-bar {
+  background: var(--bg-inset);
+}
+
+.home-library-progress::-webkit-progress-value {
+  background: var(--accent);
+}
+
+.home-library-progress::-moz-progress-bar {
+  background: var(--accent);
+}
+
+.home-library-error {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  color: var(--danger);
   font-size: 12px;
 }
 

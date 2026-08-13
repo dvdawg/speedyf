@@ -1,6 +1,6 @@
 import { createSignal, onCleanup, onMount, Show } from 'solid-js';
 import { activeTab } from '../stores/tabsStore';
-import { effectiveTheme, settings, updateSettings } from '../stores/settings';
+import { applyLowMemory, effectiveTheme, settings, updateSettings } from '../stores/settings';
 import { engine } from '../lib/transport/engine';
 import type { EngineMetrics } from '../lib/transport/engine';
 import { libraryStore } from '../features/citations/libraryStore';
@@ -80,8 +80,7 @@ export default function StatusBar() {
         </Show>
         <Show when={libraryStore.state.library.scanning}>
           <span class="sb-dim">
-            Citation library {libraryStore.state.library.indexed}/
-            {libraryStore.state.library.total}
+            Citation library {libraryStore.state.library.indexed}/{libraryStore.state.library.total}
           </span>
         </Show>
         <Show when={libraryStore.state.libraryError}>
@@ -125,10 +124,7 @@ export default function StatusBar() {
           <input
             type="checkbox"
             checked={settings.lowMemory}
-            onInput={(e) => {
-              updateSettings({ lowMemory: e.currentTarget.checked });
-              void engine.setLowMemory(e.currentTarget.checked);
-            }}
+            onInput={(e) => applyLowMemory(e.currentTarget.checked)}
           />
           low&nbsp;memory
         </label>

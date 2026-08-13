@@ -138,6 +138,17 @@ export const IconList = () =>
       <path d="M5.5 4h8M5.5 8h8M5.5 12h8" />
     </>
   );
+export const IconSettings = () =>
+  base(
+    <>
+      <circle cx="8" cy="8" r="2.1" />
+      <path d="M8 1.5l1 1.6a5.6 5.6 0 0 1 1.5.6l1.8-.4.9 1.6-1.2 1.4c.1.5.1 1 0 1.5l1.2 1.4-.9 1.6-1.8-.4a5.6 5.6 0 0 1-1.5.6l-1 1.6h-1.8l-1-1.6a5.6 5.6 0 0 1-1.5-.6l-1.8.4-.9-1.6 1.2-1.4a5.6 5.6 0 0 1 0-1.5L1.2 4.9l.9-1.6 1.8.4a5.6 5.6 0 0 1 1.5-.6l1-1.6z" />
+    </>
+  );
+export const IconExtension = () =>
+  base(
+    <path d="M6.3 2.2a1.4 1.4 0 0 1 2.8 0v.9h2.3a.6.6 0 0 1 .6.6v2.3h.9a1.4 1.4 0 0 1 0 2.8h-.9v2.9a.6.6 0 0 1-.6.6H8.8v-1.2a1.4 1.4 0 0 0-2.8 0v1.2H3.1a.6.6 0 0 1-.6-.6V3.7a.6.6 0 0 1 .6-.6h3.2v-.9z" />
+  );
 export const IconSelect = () => base(<path d="M4 2l8 6-3.5.8L10 13l-2 1-1.5-4L4 12V2z" />);
 export const IconHighlight = () =>
   base(
