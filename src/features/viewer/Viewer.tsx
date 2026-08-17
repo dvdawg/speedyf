@@ -124,6 +124,7 @@ function ViewerContent(props: { tab: TabRecord }) {
   });
 
   let scrollRaf = 0;
+  let scrollRequestRaf = 0;
   const onScroll = () => {
     if (scrollRaf) return;
     scrollRaf = requestAnimationFrame(() => {
@@ -269,6 +270,7 @@ function ViewerContent(props: { tab: TabRecord }) {
       window.removeEventListener('resize', dprListener);
       window.visualViewport?.removeEventListener('resize', dprListener);
       if (scrollRaf) cancelAnimationFrame(scrollRaf);
+      if (scrollRequestRaf) cancelAnimationFrame(scrollRequestRaf);
       if (zoomRaf) cancelAnimationFrame(zoomRaf);
       zoom.registerScroller(null);
     });
@@ -276,19 +278,27 @@ function ViewerContent(props: { tab: TabRecord }) {
 
   // Programmatic scroll requests (page navigation, search jumps).
   createEffect(() => {
-    const req = vp.state.scrollRequest;
+    // These are commands, not durable viewport state. Leaving the last page
+    // request in the store made this effect subscribe to layout(); the first
+    // zoom update then replayed that old request (the initial one targets page
+    // 0), overriding the zoom controller's anchored scroll correction.
+    const req = vp.takeScrollRequest();
     if (!req) return;
-    if (req.kind === 'position') {
-      requestAnimationFrame(() => {
+
+    if (scrollRequestRaf) cancelAnimationFrame(scrollRequestRaf);
+    scrollRequestRaf = requestAnimationFrame(() => {
+      scrollRequestRaf = 0;
+      if (req.kind === 'position') {
         scroller.scrollTop = req.top;
         scroller.scrollLeft = req.left;
-      });
-      return;
-    }
-    const l = layout();
-    const top = l.tops[req.page];
-    if (top === undefined) return;
-    requestAnimationFrame(() => {
+        return;
+      }
+
+      // Resolve against the layout in effect when the frame runs. A zoom or
+      // resize between the request and this callback must not use stale page
+      // coordinates.
+      const top = layout().tops[req.page];
+      if (top === undefined) return;
       scroller.scrollTop = Math.max(0, top - VIEW_PADDING + (req.offsetCss ?? 0));
     });
   });

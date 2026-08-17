@@ -42,6 +42,8 @@ export interface ViewportStore {
   setState: SetStoreFunction<ViewportState>;
   requestScrollToPage(page: number, offsetCss?: number): void;
   requestScrollToPosition(top: number, left: number): void;
+  /** Returns and clears the pending request. Scroll requests are one-shot commands. */
+  takeScrollRequest(): ScrollRequest | null;
   rotateView(): void;
 }
 
@@ -90,6 +92,25 @@ export function createViewportStore(): ViewportStore {
         left: Math.max(0, left),
         seq: ++scrollSeq,
       });
+    },
+
+    takeScrollRequest() {
+      const request = state.scrollRequest;
+      if (!request) return null;
+
+      // Copy before clearing: nested store values are proxies whose backing
+      // object must not be kept alive as an asynchronous scroll command.
+      const snapshot: ScrollRequest =
+        request.kind === 'page'
+          ? {
+              kind: 'page',
+              page: request.page,
+              seq: request.seq,
+              ...(request.offsetCss !== undefined ? { offsetCss: request.offsetCss } : {}),
+            }
+          : { kind: 'position', top: request.top, left: request.left, seq: request.seq };
+      setState('scrollRequest', null);
+      return snapshot;
     },
 
     rotateView() {
