@@ -370,7 +370,11 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
     }
 }
 
-fn do_open(state: &mut WorkerState, path: String, password: Option<String>) -> AppResult<DocMetaDto> {
+fn do_open(
+    state: &mut WorkerState,
+    path: String,
+    password: Option<String>,
+) -> AppResult<DocMetaDto> {
     let raw = render::open_document(state.bindings, &path, password.as_deref())?;
     let page_count = state.bindings.FPDF_GetPageCount(raw).max(0) as u32;
     if page_count == 0 {

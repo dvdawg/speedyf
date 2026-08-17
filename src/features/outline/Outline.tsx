@@ -5,7 +5,11 @@ import { engine } from '../../lib/transport/engine';
 import type { OutlineNode } from '../../types/engine';
 import { TabContext } from '../../app/TabContext';
 
-function OutlineEntry(props: { node: OutlineNode; depth: number; onNavigate: (page: number) => void }) {
+function OutlineEntry(props: {
+  node: OutlineNode;
+  depth: number;
+  onNavigate: (page: number) => void;
+}) {
   return (
     <div class="outline-entry">
       <button

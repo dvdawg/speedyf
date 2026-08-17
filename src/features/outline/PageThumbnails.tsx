@@ -2,7 +2,16 @@
  * current-page tracking, click navigation, and edit-mode page operations
  * (drag reorder, rotate, duplicate, delete, add blank page). Auto-scrolls to
  * keep the current page's thumbnail in view as the main viewer scrolls. */
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, useContext } from 'solid-js';
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  onCleanup,
+  onMount,
+  Show,
+  useContext,
+} from 'solid-js';
 import { renderUrl } from '../../lib/rendering/renderSource';
 import type { Layout } from '../../lib/coordinates/layout';
 import { visibleRange } from '../../lib/coordinates/layout';

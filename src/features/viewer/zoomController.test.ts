@@ -10,7 +10,10 @@ const meta: DocMeta = {
   path: '/tmp/a.pdf',
   name: 'a.pdf',
   pageCount: 5,
-  sizes: Array.from({ length: 5 }, () => [612, 792, 0, 0, 0] as [number, number, number, number, number]),
+  sizes: Array.from(
+    { length: 5 },
+    () => [612, 792, 0, 0, 0] as [number, number, number, number, number]
+  ),
   estimatedSize: [612, 792],
 };
 
