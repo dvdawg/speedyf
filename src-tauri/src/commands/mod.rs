@@ -319,6 +319,24 @@ pub async fn get_outline(
         .await
 }
 
+/// Theorems, lemmas, definitions and captions recovered from a LaTeX-compiled
+/// document. Empty for PDFs that were not built with hyperref.
+#[tauri::command]
+pub async fn get_formal_envs(
+    state: tauri::State<'_, EngineState>,
+    doc_id: DocId,
+) -> AppResult<Vec<FormalEntryDto>> {
+    state
+        .0
+        .call_async(Priority::AdjacentPage, doc_id, move |respond| {
+            Work::FormalEnvs {
+                doc: doc_id,
+                respond,
+            }
+        })
+        .await
+}
+
 #[tauri::command]
 pub async fn image_size(state: tauri::State<'_, EngineState>, path: String) -> AppResult<[u32; 2]> {
     state

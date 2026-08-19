@@ -4,8 +4,13 @@ import { createResource, For, Show, useContext } from 'solid-js';
 import { engine } from '../../lib/transport/engine';
 import type { OutlineNode } from '../../types/engine';
 import { TabContext } from '../../app/TabContext';
+import { jumpToAnchor } from './jumpToAnchor';
 
-function OutlineEntry(props: { node: OutlineNode; depth: number; onNavigate: (page: number) => void }) {
+function OutlineEntry(props: {
+  node: OutlineNode;
+  depth: number;
+  onNavigate: (page: number, y: number | null) => void;
+}) {
   return (
     <div class="outline-entry">
       <button
@@ -14,7 +19,7 @@ function OutlineEntry(props: { node: OutlineNode; depth: number; onNavigate: (pa
         style={{ 'padding-left': `${10 + props.depth * 14}px` }}
         disabled={props.node.page === null}
         onClick={() => {
-          if (props.node.page !== null) props.onNavigate(props.node.page);
+          if (props.node.page !== null) props.onNavigate(props.node.page, props.node.y);
         }}
       >
         {props.node.title.trim() || 'Untitled'}
@@ -38,7 +43,8 @@ export default function Outline() {
     (docId) => engine.getOutline(docId).catch(() => [] as OutlineNode[])
   );
 
-  const navigate = (page: number) => tab.viewport.requestScrollToPage(page);
+  const navigate = (page: number, y: number | null) =>
+    jumpToAnchor(tab.viewport, doc, page, y);
 
   return (
     <div class="sidebar-scroll outline-panel" aria-label="Table of contents">

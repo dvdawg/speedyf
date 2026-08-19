@@ -38,6 +38,9 @@ struct DocState {
     pages: Vec<(u32, FPDF_PAGE)>,
     index_cursor: u32,
     form_fields: Option<Vec<FormFieldDto>>,
+    /// Computed lazily; invalidated (left None) whenever the page set changes,
+    /// since every entry carries a page index.
+    formal_envs: Option<Vec<FormalEntryDto>>,
 }
 
 struct WorkerState<'a> {
@@ -276,6 +279,7 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         Work::Save { respond, .. } => respond(Err(err())),
         Work::FormFields { respond, .. } => respond(Err(err())),
         Work::Outline { respond, .. } => respond(Err(err())),
+        Work::FormalEnvs { respond, .. } => respond(Err(err())),
         Work::ImageSize { respond, .. } => respond(Err(err())),
         Work::Close { .. }
         | Work::SetActiveDocument { .. }
@@ -362,6 +366,7 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
         } => respond(do_save(state, doc, plan, dest)),
         Work::FormFields { doc, respond } => respond(do_form_fields(state, doc)),
         Work::Outline { doc, respond } => respond(do_outline(state, doc)),
+        Work::FormalEnvs { doc, respond } => respond(do_formal_envs(state, doc)),
         Work::ImageSize { path, respond } => respond(
             image::image_dimensions(&path)
                 .map(|(w, h)| [w, h])
@@ -418,6 +423,7 @@ fn do_open(state: &mut WorkerState, path: String, password: Option<String>) -> A
             pages: Vec::new(),
             index_cursor: 0,
             form_fields: None,
+            formal_envs: None,
         },
     );
     Ok(DocMetaDto {
@@ -829,6 +835,7 @@ fn open_library_document(
             pages: Vec::new(),
             index_cursor: 0,
             form_fields: None,
+            formal_envs: None,
         },
     );
     state.library_docs.push(id);
@@ -1013,6 +1020,8 @@ fn do_save(
                                 pages: Vec::new(),
                                 index_cursor,
                                 form_fields,
+                                // page indices moved; recompute on next ask
+                                formal_envs: None,
                             },
                         );
                     }
@@ -1040,29 +1049,35 @@ fn do_save(
 /// pdfium-render, only documented on the raw binding).
 const PDFACTION_GOTO: std::os::raw::c_ulong = 1;
 
-fn resolve_bookmark_page(
+/// The page a bookmark lands on, plus the y of its destination when the
+/// destination carries one — which lets the table of contents land on the
+/// heading itself rather than the top of its page.
+fn resolve_bookmark_target(
     bindings: &dyn PdfiumLibraryBindings,
     document: FPDF_DOCUMENT,
     bookmark: FPDF_BOOKMARK,
-) -> Option<u32> {
-    let dest = bindings.FPDFBookmark_GetDest(document, bookmark);
-    if !dest.is_null() {
-        let index = bindings.FPDFDest_GetDestPageIndex(document, dest);
-        if index >= 0 {
-            return Some(index as u32);
+) -> (Option<u32>, Option<f32>) {
+    let mut dest = bindings.FPDFBookmark_GetDest(document, bookmark);
+    if dest.is_null() {
+        let action = bindings.FPDFBookmark_GetAction(bookmark);
+        if !action.is_null() && bindings.FPDFAction_GetType(action) == PDFACTION_GOTO {
+            dest = bindings.FPDFAction_GetDest(document, action);
         }
     }
-    let action = bindings.FPDFBookmark_GetAction(bookmark);
-    if !action.is_null() && bindings.FPDFAction_GetType(action) == PDFACTION_GOTO {
-        let dest = bindings.FPDFAction_GetDest(document, action);
-        if !dest.is_null() {
-            let index = bindings.FPDFDest_GetDestPageIndex(document, dest);
-            if index >= 0 {
-                return Some(index as u32);
-            }
-        }
+    if dest.is_null() {
+        return (None, None);
     }
-    None
+    let index = bindings.FPDFDest_GetDestPageIndex(document, dest);
+    if index < 0 {
+        return (None, None);
+    }
+    let (mut has_x, mut has_y, mut has_zoom) = (0, 0, 0);
+    let (mut x, mut y, mut zoom) = (0.0f32, 0.0f32, 0.0f32);
+    bindings.FPDFDest_GetLocationInPage(
+        dest, &mut has_x, &mut has_y, &mut has_zoom, &mut x, &mut y, &mut zoom,
+    );
+    // A /Fit destination has no coordinates; the page alone is the answer.
+    (Some(index as u32), (has_y != 0).then_some(y))
 }
 
 /// Walks the bookmark tree depth-first. `visited` guards against the
@@ -1087,11 +1102,12 @@ fn walk_bookmarks(
         let title = read_pdfium_utf16(|buffer, len| {
             bindings.FPDFBookmark_GetTitle(current, buffer.cast(), len)
         });
-        let page = resolve_bookmark_page(bindings, document, current);
+        let (page, y) = resolve_bookmark_target(bindings, document, current);
         let children = walk_bookmarks(bindings, document, current, depth + 1, visited);
         out.push(OutlineNodeDto {
             title,
             page,
+            y,
             children,
         });
         current = bindings.FPDFBookmark_GetNextSibling(document, current);
@@ -1109,6 +1125,88 @@ fn do_outline(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<OutlineNodeD
         0,
         &mut visited,
     ))
+}
+
+/// Formal environments (theorems, figures, …) recovered from hyperref's named
+/// destinations, cross-checked against the text printed at each anchor. See
+/// engine::formal for why both halves are needed.
+fn do_formal_envs(
+    state: &mut WorkerState,
+    doc: DocId,
+) -> AppResult<Vec<FormalEntryDto>> {
+    if let Some(cached) = state.doc(doc)?.formal_envs.clone() {
+        return Ok(cached);
+    }
+    let raw = state.doc(doc)?.raw;
+    let page_count = state.doc(doc)?.page_count;
+    let b = state.bindings;
+
+    let mut anchors = crate::engine::formal::enumerate_anchors(b, raw, page_count);
+
+    // Document order: page, then down the page (display space is y-up).
+    anchors.sort_by(|a, b| a.page.cmp(&b.page).then(b.y.total_cmp(&a.y)));
+
+    // One text layout per page, shared by every anchor on it. Sections and
+    // environments interleave in this single ordered pass, so the section a
+    // given environment falls under is simply the last one seen before it.
+    // Sections and environments interleave in one ordered pass, so a section
+    // heading is simply emitted before the rows that follow it. A heading is
+    // held back until something actually lands under it — a section with no
+    // environments is noise in a list that exists to find environments.
+    let mut out: Vec<FormalEntryDto> = Vec::new();
+    let mut pending_section: Option<FormalEntryDto> = None;
+    // Environments only indent once a section heading has actually been shown;
+    // otherwise a document whose headings we cannot verify would render as a
+    // list that is uniformly indented under nothing.
+    let mut has_section = false;
+    let mut current: Option<(u32, crate::engine::text::ExtractedPage)> = None;
+    for anchor in anchors {
+        let (name, page, x, y) = (anchor.name, anchor.page, anchor.x, anchor.y);
+        let extracted = match &current {
+            Some((p, e)) if *p == page => e,
+            _ => {
+                let (Ok(handle), Ok(size)) =
+                    (state.page_handle(doc, page), state.display_size(doc, page))
+                else {
+                    continue;
+                };
+                let e = crate::engine::text::extract_page(b, handle, size[0], size[1]);
+                current = Some((page, e));
+                &current.as_ref().unwrap().1
+            }
+        };
+        if crate::engine::formal::is_section_destination(&name) {
+            pending_section =
+                crate::engine::formal::anchor_line_text(&extracted.raw, &extracted.boxes, x, y)
+                    .and_then(|text| crate::engine::formal::reconcile_section(&name, &text))
+                    .map(|label| FormalEntryDto {
+                        depth: 0,
+                        label,
+                        page,
+                        y,
+                    });
+            continue;
+        }
+        let Some(text) = crate::engine::formal::anchor_text(&extracted.raw, &extracted.boxes, x, y)
+        else {
+            continue;
+        };
+        if let Some(heading) = crate::engine::formal::reconcile(&name, &text) {
+            if let Some(section) = pending_section.take() {
+                out.push(section);
+                has_section = true;
+            }
+            out.push(FormalEntryDto {
+                depth: u8::from(has_section),
+                label: format!("{} {}", heading.kind, heading.number),
+                page,
+                y,
+            });
+        }
+    }
+
+    state.doc(doc)?.formal_envs = Some(out.clone());
+    Ok(out)
 }
 
 fn do_form_fields(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<FormFieldDto>> {
@@ -1228,6 +1326,7 @@ fn form_field_kind(field_type: i32) -> &'static str {
 }
 
 const MAX_FORM_STRING_BYTES: usize = 16 * 1024 * 1024;
+
 
 fn read_pdfium_utf16(
     mut read: impl FnMut(*mut FPDF_WCHAR, std::os::raw::c_ulong) -> std::os::raw::c_ulong,

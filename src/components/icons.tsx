@@ -138,6 +138,13 @@ export const IconList = () =>
       <path d="M5.5 4h8M5.5 8h8M5.5 12h8" />
     </>
   );
+export const IconQed = () =>
+  base(
+    <>
+      <path d="M2.5 3.5h11M2.5 6.5h8.5M2.5 9.5h6" />
+      <rect x="10.5" y="10.5" width="3" height="3" rx="0.3" fill="currentColor" />
+    </>
+  );
 export const IconSelect = () => base(<path d="M4 2l8 6-3.5.8L10 13l-2 1-1.5-4L4 12V2z" />);
 export const IconHighlight = () =>
   base(

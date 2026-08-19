@@ -201,6 +201,7 @@ pub fn run() {
             commands::save_document,
             commands::get_form_fields,
             commands::get_outline,
+            commands::get_formal_envs,
             commands::image_size,
             commands::image_preview,
             commands::engine_metrics,

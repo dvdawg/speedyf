@@ -98,6 +98,21 @@ pub struct TextRun {
     pub h: f32,
 }
 
+/// One row of the formal-environment list: either a section heading or an
+/// environment sitting under it, flattened into document order so the panel
+/// renders exactly like the table of contents.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct FormalEntryDto {
+    /// 0 for a section heading, 1 for an environment inside it
+    pub depth: u8,
+    /// as printed: "2 Results", "Theorem 3.1"
+    pub label: String,
+    pub page: u32,
+    /// display-space y of the anchor (points, y-up) for precise scrolling
+    pub y: f32,
+}
+
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct PageTextDto {
@@ -227,6 +242,9 @@ pub struct OutlineNodeDto {
     /// or a GoTo action) — None for bookmarks pointing elsewhere (external
     /// URIs, unrecognized actions).
     pub page: Option<u32>,
+    /// destination y in page space (points, y-up), when the destination
+    /// specifies one — /Fit destinations do not
+    pub y: Option<f32>,
     pub children: Vec<OutlineNodeDto>,
 }
 

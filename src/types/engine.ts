@@ -92,9 +92,23 @@ export interface FormFieldInfo {
   readOnly: boolean;
 }
 
+/** A theorem, lemma, definition or caption recovered from a LaTeX PDF.
+ * `kind` is the word as printed, which is not the LaTeX counter it was
+ * anchored on — see src-tauri/src/engine/formal.rs. */
+/** One row of the formal-environment list: a section heading (depth 0) or an
+ * environment under it (depth 1), already in document order. */
+export interface FormalEntry {
+  depth: number;
+  label: string;
+  page: number;
+  y: number;
+}
+
 export interface OutlineNode {
   title: string;
   page: number | null;
+  /** destination y in page space, when the destination specifies one */
+  y: number | null;
   children: OutlineNode[];
 }
 

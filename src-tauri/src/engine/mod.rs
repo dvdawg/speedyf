@@ -8,6 +8,7 @@
 //! process pool can replace the thread without changing any caller.
 
 pub mod citation;
+pub mod formal;
 pub mod links;
 pub mod pdfium_init;
 pub mod preview;
@@ -113,6 +114,10 @@ pub enum Work {
     Outline {
         doc: DocId,
         respond: Respond<Vec<OutlineNodeDto>>,
+    },
+    FormalEnvs {
+        doc: DocId,
+        respond: Respond<Vec<FormalEntryDto>>,
     },
     ImageSize {
         path: String,
