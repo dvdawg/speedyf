@@ -102,6 +102,8 @@ export interface FormalEntry {
   label: string;
   page: number;
   y: number;
+  /** index of the anchor's first character in the page's character stream */
+  charIndex: number;
 }
 
 export interface OutlineNode {

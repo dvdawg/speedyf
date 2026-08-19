@@ -111,6 +111,9 @@ pub struct FormalEntryDto {
     pub page: u32,
     /// display-space y of the anchor (points, y-up) for precise scrolling
     pub y: f32,
+    /// index of the anchor's first character in the page's character stream,
+    /// so a search hit on the same page can be placed relative to it
+    pub char_index: u32,
 }
 
 #[derive(Serialize, Clone, Debug)]

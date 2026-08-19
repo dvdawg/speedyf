@@ -25,7 +25,17 @@ export interface ViewportState {
 }
 
 export type ScrollRequest =
-  | { kind: 'page'; page: number; offsetCss?: number; seq: number }
+  | {
+      kind: 'page';
+      page: number;
+      offsetCss?: number;
+      /** 0..1 down the page, resolved against the layout at apply time so a
+       * restore is correct whatever zoom the document settles at */
+      fraction?: number;
+      /** wait for the initial fit before applying (see Viewer) */
+      settle?: boolean;
+      seq: number;
+    }
   | { kind: 'position'; top: number; left: number; seq: number };
 
 export const MIN_ZOOM = 0.2;
@@ -41,6 +51,8 @@ export interface ViewportStore {
   state: ViewportState;
   setState: SetStoreFunction<ViewportState>;
   requestScrollToPage(page: number, offsetCss?: number): void;
+  /** Restores a remembered reading position once the initial fit has settled. */
+  requestRestorePosition(page: number, fraction: number): void;
   requestScrollToPosition(top: number, left: number): void;
   rotateView(): void;
 }
@@ -80,6 +92,16 @@ export function createViewportStore(): ViewportStore {
         page,
         seq: ++scrollSeq,
         ...(offsetCss !== undefined ? { offsetCss } : {}),
+      });
+    },
+
+    requestRestorePosition(page: number, fraction: number) {
+      setState('scrollRequest', {
+        kind: 'page',
+        page,
+        fraction,
+        settle: true,
+        seq: ++scrollSeq,
       });
     },
 

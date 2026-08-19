@@ -1175,6 +1175,8 @@ fn do_formal_envs(
                 &current.as_ref().unwrap().1
             }
         };
+        let char_index = crate::engine::formal::anchor_start(&extracted.boxes, x, y)
+            .unwrap_or(0) as u32;
         if crate::engine::formal::is_section_destination(&name) {
             pending_section =
                 crate::engine::formal::anchor_line_text(&extracted.raw, &extracted.boxes, x, y)
@@ -1184,6 +1186,7 @@ fn do_formal_envs(
                         label,
                         page,
                         y,
+                        char_index,
                     });
             continue;
         }
@@ -1201,6 +1204,7 @@ fn do_formal_envs(
                 label: format!("{} {}", heading.kind, heading.number),
                 page,
                 y,
+                char_index,
             });
         }
     }

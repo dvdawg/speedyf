@@ -22,6 +22,10 @@
   --danger: #c62828;
   --shadow: 0 1px 3px rgba(15, 20, 26, 0.14), 0 4px 14px rgba(15, 20, 26, 0.08);
   --focus-ring: 0 0 0 2px var(--bg-elev), 0 0 0 4px var(--accent);
+  /* search hits sit on the page, which is white in either theme */
+  --hit: color-mix(in srgb, var(--accent) 22%, transparent);
+  --hit-current: color-mix(in srgb, var(--accent) 42%, transparent);
+  --hit-current-edge: color-mix(in srgb, var(--accent) 85%, transparent);
 }
 
 :root[data-theme='dark'] {
@@ -38,6 +42,9 @@
   --warn: #e0a24a;
   --danger: #ef6f6c;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.5), 0 4px 16px rgba(0, 0, 0, 0.35);
+  --hit: color-mix(in srgb, var(--accent) 30%, transparent);
+  --hit-current: color-mix(in srgb, var(--accent) 52%, transparent);
+  --hit-current-edge: color-mix(in srgb, var(--accent) 90%, transparent);
 }
 
 * {
@@ -714,13 +721,13 @@ textarea:focus-visible {
 
 .search-hit {
   position: absolute;
-  background: rgba(255, 200, 40, 0.4);
   border-radius: 2px;
+  background: var(--hit);
 }
 
 .search-hit.is-current {
-  background: rgba(255, 140, 0, 0.55);
-  outline: 1.5px solid rgba(200, 90, 0, 0.9);
+  background: var(--hit-current);
+  outline: 1.5px solid var(--hit-current-edge);
 }
 
 /* ---------- citation links + hover previews ---------- */
@@ -1271,6 +1278,29 @@ textarea:focus-visible {
 
 .search-result:hover {
   background: var(--bg-inset);
+}
+
+.search-result-text {
+  display: block;
+}
+
+/* Where the hit sits in the document's own structure, kept subordinate to the
+ * matched text so the list still scans as a list of matches. */
+.search-result-where {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.search-result-env {
+  color: var(--accent);
+}
+
+.search-result.is-current .search-result-where,
+.search-result.is-current .search-result-env {
+  color: inherit;
+  opacity: 0.85;
 }
 
 .search-result.is-current {

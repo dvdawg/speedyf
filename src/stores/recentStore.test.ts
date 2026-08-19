@@ -98,3 +98,36 @@ describe('load', () => {
     expect(reloaded.state.entries).toEqual([]);
   });
 });
+
+describe('reading position', () => {
+  it('remembers and returns a position', () => {
+    recentStore.recordOpen({ path: '/tmp/a.pdf', name: 'a.pdf' });
+    recentStore.recordPosition('/tmp/a.pdf', { page: 7, fraction: 0.25 });
+    expect(recentStore.positionFor('/tmp/a.pdf')).toEqual({ page: 7, fraction: 0.25 });
+  });
+
+  it('survives reopening the same file', () => {
+    recentStore.recordOpen({ path: '/tmp/a.pdf', name: 'a.pdf' });
+    recentStore.recordPosition('/tmp/a.pdf', { page: 7, fraction: 0.25 });
+    // reopening moves the entry to the front by rebuilding it
+    recentStore.recordOpen({ path: '/tmp/a.pdf', name: 'a.pdf' });
+    expect(recentStore.positionFor('/tmp/a.pdf')).toEqual({ page: 7, fraction: 0.25 });
+  });
+
+  it('ignores a path that is not in the list', () => {
+    recentStore.recordPosition('/tmp/missing.pdf', { page: 1, fraction: 0 });
+    expect(recentStore.positionFor('/tmp/missing.pdf')).toBeNull();
+  });
+
+  it('rejects a malformed position', () => {
+    recentStore.recordOpen({ path: '/tmp/a.pdf', name: 'a.pdf' });
+    recentStore.recordPosition('/tmp/a.pdf', { page: -1, fraction: 0.5 });
+    recentStore.recordPosition('/tmp/a.pdf', { page: 2, fraction: 1.5 });
+    expect(recentStore.positionFor('/tmp/a.pdf')).toBeNull();
+  });
+
+  it('has no position for a file never read', () => {
+    recentStore.recordOpen({ path: '/tmp/b.pdf', name: 'b.pdf' });
+    expect(recentStore.positionFor('/tmp/b.pdf')).toBeNull();
+  });
+});

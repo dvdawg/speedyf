@@ -291,6 +291,14 @@ const LINE_GROUPING_PT: f32 = 5.0;
 const ANCHOR_X_TOLERANCE_PT: f32 = 4.0;
 const ANCHOR_TEXT_CHARS: usize = 220;
 
+/// Index of the first character an anchor points at, in the page's character
+/// stream. Search matches carry indices into that same stream, which is what
+/// lets a hit be attributed to the environment containing it without going
+/// anywhere near geometry.
+pub fn anchor_start(boxes: &[[f32; 4]], anchor_x: Option<f32>, anchor_y: f32) -> Option<usize> {
+    anchored_line(boxes, anchor_x, anchor_y).map(|(start, _)| start)
+}
+
 /// Text starting at a destination anchor, in reading order, capped at enough
 /// characters to cover a name or caption.
 ///

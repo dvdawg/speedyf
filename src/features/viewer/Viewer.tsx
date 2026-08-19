@@ -26,6 +26,7 @@ import { IconOpen } from '../../components/icons';
 import { engine } from '../../lib/transport/engine';
 import { TabContext } from '../../app/TabContext';
 import { tabsStore, type TabRecord } from '../../stores/tabsStore';
+import { recentStore } from '../../stores/recentStore';
 
 /** WebKit's non-standard pinch event. Not in lib.dom, and deliberately typed
  * as only the fields used here — `scale` is cumulative since gesturestart. */
@@ -131,8 +132,28 @@ function ViewerContent(props: { tab: TabRecord }) {
       const top = scroller.scrollTop;
       const current = pageIndexAt(layout(), top + vp.state.containerH * 0.4);
       vp.setState({ scrollTop: top, scrollLeft: scroller.scrollLeft, currentPage: current });
+      rememberPosition();
     });
   };
+
+  // Persist where reading stopped, debounced: this writes to localStorage, so
+  // it must not run on every scroll frame.
+  let rememberTimer: ReturnType<typeof setTimeout> | undefined;
+  const rememberPosition = () => {
+    clearTimeout(rememberTimer);
+    rememberTimer = setTimeout(() => {
+      const path = documentStore.state.path;
+      if (!path) return;
+      const l = layout();
+      const page = vp.state.currentPage;
+      const top = l.tops[page];
+      const height = l.heights[page];
+      if (top === undefined || !height) return;
+      const fraction = Math.min(1, Math.max(0, (scroller.scrollTop - top + VIEW_PADDING) / height));
+      recentStore.recordPosition(path, { page, fraction });
+    }, 500);
+  };
+  onCleanup(() => clearTimeout(rememberTimer));
 
   // --- pinch / ctrl-wheel zoom -------------------------------------------
   //
@@ -287,10 +308,24 @@ function ViewerContent(props: { tab: TabRecord }) {
     }
     const l = layout();
     const top = l.tops[req.page];
-    if (top === undefined) return;
-    requestAnimationFrame(() => {
-      scroller.scrollTop = Math.max(0, top - VIEW_PADDING + (req.offsetCss ?? 0));
-    });
+    const height = l.heights[req.page];
+    if (top === undefined || height === undefined) return;
+    const apply = () => {
+      const current = layout();
+      const settledTop = current.tops[req.page] ?? top;
+      const settledHeight = current.heights[req.page] ?? height;
+      scroller.scrollTop = Math.max(
+        0,
+        settledTop - VIEW_PADDING + (req.fraction ?? 0) * settledHeight + (req.offsetCss ?? 0)
+      );
+    };
+    // A restore has to outlast the initial fit: the ResizeObserver that applies
+    // fit-width runs *after* rAF callbacks, so a single frame's delay would
+    // place the view at the pre-fit zoom and then have the fit re-anchor it
+    // somewhere else. A second frame lands after the zoom has settled, and the
+    // layout is re-read there so the fraction resolves against the real page.
+    if (req.settle) requestAnimationFrame(() => requestAnimationFrame(apply));
+    else requestAnimationFrame(apply);
   });
 
   return (

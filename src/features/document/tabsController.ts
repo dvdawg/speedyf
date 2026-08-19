@@ -95,7 +95,15 @@ export async function openInNewTabOrFocus(
       record.searchStore.resetForDocument(meta.docId, meta.pageCount);
       record.citationStore.syncDocument(meta.docId);
       record.viewport.setState({ currentPage: 0, scrollTop: 0 });
-      record.viewport.requestScrollToPage(0);
+      // Pick up where this document was last left, when we have a position for
+      // it and it still points inside the document.
+      const resume = recentStore.positionFor(path);
+      if (resume && resume.page < meta.pageCount) {
+        record.viewport.setState('currentPage', resume.page);
+        record.viewport.requestRestorePosition(resume.page, resume.fraction);
+      } else {
+        record.viewport.requestScrollToPage(0);
+      }
       void engine.startIndexing(meta.docId);
       void hydrateSizes(record, meta.pageCount);
       if (activeTab()?.id === record.id) setActiveDocument(meta.docId);

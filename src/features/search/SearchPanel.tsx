@@ -1,7 +1,18 @@
 /** Search panel: debounced incremental querying, match navigation, results
  * grouped by page, indexing progress, image-only messaging. */
-import { createMemo, createSignal, For, onMount, Show, useContext } from 'solid-js';
+import {
+  createMemo,
+  createResource,
+  createSignal,
+  For,
+  onMount,
+  Show,
+  useContext,
+} from 'solid-js';
 import type { FlatMatch } from './searchStore';
+import { engine } from '../../lib/transport/engine';
+import type { FormalEntry } from '../../types/engine';
+import { contextForMatch } from './matchContext';
 import { pdfRectToCssRect } from '../../lib/coordinates/coords';
 import IconButton from '../../components/IconButton';
 import { IconChevronDown, IconChevronUp, IconClose } from '../../components/icons';
@@ -13,6 +24,14 @@ export default function SearchPanel() {
   const requestScrollToPage = vp.requestScrollToPage;
   const s = searchStore.state;
   let inputEl!: HTMLInputElement;
+
+  // The structure index, used only to label results. Failure is silent: a
+  // document with no LaTeX anchors simply gets unlabelled results.
+  const [structure] = createResource(
+    () => (documentStore.state.loaded ? documentStore.state.docId : null),
+    (docId) => engine.getFormalEnvs(docId).catch(() => [] as FormalEntry[])
+  );
+  const contextOf = (m: FlatMatch) => contextForMatch(structure() ?? [], m.src, m.start);
   const [caseSensitive, setCase] = createSignal(false);
 
   onMount(() => inputEl.focus());
@@ -33,7 +52,10 @@ export default function SearchPanel() {
             geom,
             vp.state.zoom
           );
-          requestScrollToPage(pageIndex, css.y - vp.state.containerH * 0.35);
+          // Never scroll above the page's own top: for a match in the first
+          // few lines the framing offset goes negative, which would land the
+          // view on the end of the previous page instead of on the hit.
+          requestScrollToPage(pageIndex, Math.max(0, css.y - vp.state.containerH * 0.35));
           return;
         }
       }
@@ -151,16 +173,32 @@ export default function SearchPanel() {
             <div class="search-group">
               <div class="search-group-title">Page {src + 1}</div>
               <For each={items}>
-                {({ match, index }) => (
-                  <button
-                    type="button"
-                    class="search-result"
-                    classList={{ 'is-current': index === s.current }}
-                    onClick={() => void navigateTo(match, index)}
-                  >
-                    {match.snippet.trim() || '(match)'}
-                  </button>
-                )}
+                {({ match, index }) => {
+                  const where = createMemo(() => contextOf(match));
+                  return (
+                    <button
+                      type="button"
+                      class="search-result"
+                      classList={{ 'is-current': index === s.current }}
+                      onClick={() => void navigateTo(match, index)}
+                    >
+                      <span class="search-result-text">
+                        {match.snippet.trim() || '(match)'}
+                      </span>
+                      <Show when={where().section || where().environment}>
+                        <span class="search-result-where">
+                          <Show when={where().section}>
+                            <span class="search-result-section">{where().section}</span>
+                          </Show>
+                          <Show when={where().section && where().environment}> › </Show>
+                          <Show when={where().environment}>
+                            <span class="search-result-env">{where().environment}</span>
+                          </Show>
+                        </span>
+                      </Show>
+                    </button>
+                  );
+                }}
               </For>
             </div>
           )}
