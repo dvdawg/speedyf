@@ -50,7 +50,8 @@ export default function Toolbar() {
   const commitPageInput = (raw: string) => {
     setPageInput(null);
     const n = parseInt(raw, 10);
-    if (Number.isFinite(n) && n >= 1 && n <= pageCount()) activeTab()?.viewport.requestScrollToPage(n - 1);
+    if (Number.isFinite(n) && n >= 1 && n <= pageCount())
+      activeTab()?.viewport.requestScrollToPage(n - 1);
   };
 
   const commitZoomInput = (raw: string) => {
@@ -153,7 +154,10 @@ export default function Toolbar() {
             type="text"
             inputmode="numeric"
             disabled={!loaded()}
-            value={pageInput() ?? (loaded() ? String((activeTab()?.viewport.state.currentPage ?? 0) + 1) : '–')}
+            value={
+              pageInput() ??
+              (loaded() ? String((activeTab()?.viewport.state.currentPage ?? 0) + 1) : '–')
+            }
             onFocus={(e) => {
               setPageInput(e.currentTarget.value);
               e.currentTarget.select();

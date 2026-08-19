@@ -1,5 +1,6 @@
 /** User settings persisted to localStorage. */
 import { createStore } from 'solid-js/store';
+import { engine } from '../lib/transport/engine';
 
 export type ThemePref = 'system' | 'light' | 'dark';
 
@@ -46,6 +47,14 @@ export function updateSettings(patch: Partial<Settings>) {
   } catch {
     /* storage unavailable (private mode) — settings stay session-only */
   }
+}
+
+/** Low memory is the one setting with an effect beyond the store — the engine
+ * has to shrink its cache budgets too. Both surfaces that expose the toggle
+ * (StatusBar, home Settings panel) go through here so they can't drift. */
+export function applyLowMemory(value: boolean) {
+  updateSettings({ lowMemory: value });
+  void engine.setLowMemory(value);
 }
 
 /** Resolve the effective theme, honoring the OS preference in system mode. */

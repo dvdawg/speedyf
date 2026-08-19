@@ -75,7 +75,9 @@ export async function saveDocument(tab: TabRecord, saveAs: boolean): Promise<boo
     // Reload from disk so the saved file becomes the new baseline (edits are
     // baked in; undo history restarts clean).
     await reloadTabFromDisk(tab, dest);
-    tab.viewport.requestScrollToPage(Math.min(rememberPage, tab.documentStore.state.pages.length - 1));
+    tab.viewport.requestScrollToPage(
+      Math.min(rememberPage, tab.documentStore.state.pages.length - 1)
+    );
     return true;
   } catch (e) {
     showError(

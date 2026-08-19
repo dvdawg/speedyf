@@ -210,7 +210,10 @@ mod tests {
         let cancels = GenerationMap::default();
         let m = meta(7, gens.current(7));
         cancels.bump(7);
-        assert!(!gens.is_stale(&m), "URL generation is untouched by a cancel");
+        assert!(
+            !gens.is_stale(&m),
+            "URL generation is untouched by a cancel"
+        );
         assert!(
             cancels.is_stale_at(m.doc, m.epoch),
             "work submitted before the cancel is abandoned"

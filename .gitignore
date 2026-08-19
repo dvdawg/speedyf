@@ -26,3 +26,4 @@ Thumbs.db
 # Local env overrides (none required by the app)
 *.local
 docs/
+.claude/

@@ -396,7 +396,11 @@ impl SearchStore {
                 return;
             };
             let own_used = self.docs.get(&doc).map(|index| index.used).unwrap_or(0);
-            let victim_used = self.docs.get(&victim_doc).map(|index| index.used).unwrap_or(0);
+            let victim_used = self
+                .docs
+                .get(&victim_doc)
+                .map(|index| index.used)
+                .unwrap_or(0);
             if victim_used <= own_used {
                 return;
             }

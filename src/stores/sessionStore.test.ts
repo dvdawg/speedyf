@@ -45,10 +45,7 @@ describe('loadSession', () => {
   });
 
   it('ignores a non-string activePath', () => {
-    storage.setItem(
-      'speedyf-session',
-      JSON.stringify({ version: 1, tabs: [], activePath: 123 })
-    );
+    storage.setItem('speedyf-session', JSON.stringify({ version: 1, tabs: [], activePath: 123 }));
     expect(loadSession().activePath).toBeNull();
   });
 });
