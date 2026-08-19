@@ -475,6 +475,7 @@ textarea:focus-visible {
 }
 
 .thumb-btn {
+  position: relative;
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 0;
@@ -500,6 +501,68 @@ textarea:focus-visible {
   width: 100%;
   height: 100%;
   background: white;
+}
+
+/* The slice of this page currently visible in the main viewer: a tinted
+ * selection box rather than a cut-out, so the sidebar stays light and the
+ * thumbnail underneath stays readable. Sits outside .thumb-btn on purpose —
+ * that element clips overflow, which would slice the corner grip in half
+ * whenever the box reaches the edge of the page (i.e. at fit-width). */
+.thumb-viewport {
+  position: absolute;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  cursor: grab;
+  touch-action: none;
+}
+
+.thumb-viewport.is-panning {
+  cursor: grabbing;
+}
+
+/* Hold the resize cursor across the whole box while the grip is being dragged,
+ * so it does not flicker back to grab when the pointer leaves the grip. */
+.thumb-viewport.is-zooming,
+.thumb-viewport.is-zooming .thumb-viewport-grip {
+  cursor: nwse-resize;
+}
+
+/* Edit mode hands the thumb back to the drag-reorder interaction. */
+.thumb-viewport.is-static {
+  pointer-events: none;
+  cursor: default;
+}
+
+/* Zoom grip, centred on the bottom-right corner. The element is an oversized
+ * invisible hit target; ::after draws the ring at a grabbable-but-small size. */
+.thumb-viewport-grip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 20px;
+  height: 20px;
+  transform: translate(50%, 50%);
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
+.thumb-viewport-grip::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border: 1.5px solid var(--accent);
+  border-radius: 50%;
+  background: var(--bg-elev);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+.thumb-viewport.is-static .thumb-viewport-grip {
+  display: none;
 }
 
 .thumb-meta {
