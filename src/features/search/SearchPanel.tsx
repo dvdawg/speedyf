@@ -12,7 +12,7 @@ import {
 import type { FlatMatch } from './searchStore';
 import { engine } from '../../lib/transport/engine';
 import type { FormalEntry } from '../../types/engine';
-import { contextForMatch } from './matchContext';
+import { contextForMatch } from '../../lib/structure/context';
 import { pdfRectToCssRect } from '../../lib/coordinates/coords';
 import IconButton from '../../components/IconButton';
 import { IconChevronDown, IconChevronUp, IconClose } from '../../components/icons';

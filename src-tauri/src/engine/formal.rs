@@ -16,6 +16,7 @@
 /// anchor and the number, the text at that anchor supplies the real name, and
 /// the number appearing in *both* is what lets us reject a bad pairing rather
 /// than emit a mislabelled entry.
+use crate::engine::types::FormalEntryDto;
 use pdfium_render::prelude::{FPDF_DOCUMENT, PdfiumLibraryBindings};
 
 /// Destinations hyperref emits that are never formal environments. Most junk
@@ -23,14 +24,18 @@ use pdfium_render::prelude::{FPDF_DOCUMENT, PdfiumLibraryBindings};
 /// text work for them at all.
 const STRUCTURAL_PREFIXES: &[&str] = &[
     "page.",
-    "subsection.",
     "subsubsection.",
     "part.",
-    "chapter.",
     "paragraph.",
     "subparagraph.",
     "cite.",
     "Item.",
+    // thmtools anchors every theorem-like environment on a dummy counter as
+    // well as its own, so half a paper's destinations are these
+    "thmt@dummyctr",
+    // unnumbered headings: nothing to verify a name against
+    "section*.",
+    "chapter*.",
     "Hfootnote.",
     "footnote.",
     // Anchor text for an equation is the equation itself, so it can never pass
@@ -38,9 +43,22 @@ const STRUCTURAL_PREFIXES: &[&str] = &[
     "equation.",
 ];
 
-/// Top-level structure, used to group the list rather than populate it.
+/// Headings group the list rather than populate it. The depth is the nesting
+/// the panel and the breadcrumb show: section, then subsection, then the
+/// environments themselves.
+pub fn heading_depth(name: &str) -> Option<u8> {
+    if name.starts_with("section.") || name.starts_with("chapter.") || name.starts_with("appendix.")
+    {
+        Some(0)
+    } else if name.starts_with("subsection.") {
+        Some(1)
+    } else {
+        None
+    }
+}
+
 pub fn is_section_destination(name: &str) -> bool {
-    name.starts_with("section.") || name.starts_with("chapter.")
+    heading_depth(name).is_some()
 }
 
 pub fn is_structural_destination(name: &str) -> bool {
@@ -53,47 +71,19 @@ pub fn is_structural_destination(name: &str) -> bool {
 /// Returns None when the name has no dotted numeric tail.
 pub fn destination_number(name: &str) -> Option<&str> {
     let (_, tail) = name.split_once('.')?;
-    let ok = !tail.is_empty()
-        && tail
-            .chars()
-            .all(|c| c.is_ascii_digit() || c == '.' || c.is_ascii_alphabetic());
-    // Require at least one digit so `table.of.contents` and similar are out.
-    if ok && tail.chars().any(|c| c.is_ascii_digit()) {
-        Some(tail)
-    } else {
-        None
-    }
+    is_counter_value(tail).then_some(tail)
 }
 
-/// Long enough for a real section title, short enough to stay one line.
-const TITLE_MAX_CHARS: usize = 120;
-
-/// Titles are read out of a page's character stream, so they arrive carrying
-/// the line breaks of the typeset column. Flatten them for a one-line label.
-fn clean_title(s: &str, max: usize) -> String {
-    let mut flat = String::with_capacity(s.len());
-    let mut pending = false;
-    for ch in s.chars() {
-        if ch.is_whitespace() {
-            pending = !flat.is_empty();
-        } else {
-            if pending {
-                flat.push(' ');
-                pending = false;
-            }
-            flat.push(ch);
-        }
-    }
-    truncate_chars(&flat, max)
-}
-
-fn truncate_chars(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        return s.to_string();
-    }
-    let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
-    out.push('\u{2026}');
-    out
+/// A printed counter: dotted components that are each a number, or a short
+/// letter like the `A` of an appendix. The letter length is what keeps whole
+/// words out, so `table.of.contents` is not mistaken for a counter.
+fn is_counter_value(value: &str) -> bool {
+    !value.is_empty()
+        && value.split('.').all(|part| {
+            !part.is_empty()
+                && (part.chars().all(|c| c.is_ascii_digit())
+                    || (part.len() <= 3 && part.chars().all(|c| c.is_ascii_alphabetic())))
+        })
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -161,54 +151,43 @@ pub fn parse_heading(text: &str) -> Option<Heading> {
     })
 }
 
-/// A section heading prints its number *first* — `1 Setup` — which is exactly
-/// the shape `parse_heading` rejects. Returns (number, title).
-pub fn parse_section_heading(text: &str) -> Option<(String, String)> {
-    let text = text.trim_start();
-    let bytes = text.as_bytes();
-    let mut n = 0usize;
-    while n < bytes.len() {
-        let c = bytes[n];
-        if c.is_ascii_digit() {
-            n += 1;
-        } else if c == b'.' && n + 1 < bytes.len() && bytes[n + 1].is_ascii_digit() {
-            n += 1;
-        } else {
-            break;
-        }
-    }
-    if n == 0 {
-        return None;
-    }
-    let title = clean_title(text[n..].trim(), TITLE_MAX_CHARS);
-    if title.is_empty() {
-        return None;
-    }
-    Some((text[..n].to_string(), title))
-}
-
-/// Label for a section heading, or None unless the printed number matches the
-/// destination's — the same check `reconcile` makes, and for the same reason.
-///
-/// Without it anything starting with digits passes: on an arXiv paper the
-/// stamp running down the margin, `2211.11320v3 [stat.ML] 22 Jun 2022 …`,
-/// parsed as section "2211.11320" and dragged the paper title and author list
-/// in as its name. `section.1` says the number is "1", which settles it.
-pub fn reconcile_section(dest_name: &str, line: &str) -> Option<String> {
-    let dest_number = destination_number(dest_name)?;
-    let (number, title) = parse_section_heading(line)?;
-    (number == dest_number).then(|| format!("{number} {title}"))
-}
-
 /// Pair a destination with the text found at it. Returns None unless the two
 /// agree on the number — that agreement is the whole verification story.
 pub fn reconcile(dest_name: &str, anchor_text: &str) -> Option<Heading> {
     if is_structural_destination(dest_name) {
         return None;
     }
-    let dest_number = destination_number(dest_name)?;
-    let heading = parse_heading(anchor_text)?;
-    (heading.number == dest_number).then_some(heading)
+    find_heading(anchor_text, destination_number(dest_name)?)
+}
+
+/// The heading somewhere in the text after an anchor, if its number is the one
+/// the destination names.
+///
+/// hyperref fires an anchor as the counter steps — before the environment's
+/// own vertical space and heading — so it routinely lands on the last line of
+/// the *preceding* paragraph, leaving the heading a line or two further down:
+///
+///   "as follows.  Definition 1.2 (Gaussian Mixtures). The ..."
+///
+/// Demanding the heading start the text dropped most of a real paper. Scanning
+/// forward is safe precisely because the number still has to match: another
+/// environment's heading caught in the window simply does not. */
+fn find_heading(text: &str, dest_number: &str) -> Option<Heading> {
+    let mut at_boundary = true;
+    for (i, ch) in text.char_indices() {
+        if i > HEADING_SEARCH_CHARS {
+            break;
+        }
+        if at_boundary && ch.is_uppercase() {
+            if let Some(heading) = parse_heading(&text[i..]) {
+                if heading.number == dest_number {
+                    return Some(heading);
+                }
+            }
+        }
+        at_boundary = ch.is_whitespace();
+    }
+    None
 }
 
 /// A destination's position in the document.
@@ -289,7 +268,9 @@ const LINE_GROUPING_PT: f32 = 5.0;
 /// How far left of a destination's own x a character may start and still be
 /// counted as part of the text it points at.
 const ANCHOR_X_TOLERANCE_PT: f32 = 4.0;
-const ANCHOR_TEXT_CHARS: usize = 220;
+const ANCHOR_TEXT_CHARS: usize = 400;
+/// How far into that text a heading may start and still belong to the anchor.
+const HEADING_SEARCH_CHARS: usize = 320;
 
 /// Index of the first character an anchor points at, in the page's character
 /// stream. Search matches carry indices into that same stream, which is what
@@ -374,27 +355,46 @@ pub fn anchor_text(
     (!text.trim().is_empty()).then_some(text)
 }
 
-/// As `anchor_text`, but stopping at the end of the anchored line. A section
-/// heading occupies its own line, and letting it run on would swallow the
-/// first paragraph of the section as its title.
-pub fn anchor_line_text(
-    raw: &str,
-    boxes: &[[f32; 4]],
-    anchor_x: Option<f32>,
-    anchor_y: f32,
-) -> Option<String> {
-    let (start, nearest) = anchored_line(boxes, anchor_x, anchor_y)?;
-    let mut text = String::new();
-    for (offset, ch) in raw.chars().skip(start).enumerate().take(ANCHOR_TEXT_CHARS) {
-        // A character with no geometry (a space) belongs to the line it sits in.
-        if let Some(b) = boxes.get(start + offset).filter(|b| b[2] > 0.0 && b[3] > 0.0) {
-            if anchor_y - (b[1] + b[3]) > nearest + LINE_GROUPING_PT {
-                break;
+/// Interleaves headings and environments into the list the panel renders.
+///
+/// A heading is emitted only once something lands under it — a section with no
+/// environments is noise in a list that exists to find environments — and an
+/// environment indents to however many heading levels are currently standing.
+/// Both inputs must be in document order.
+pub fn merge_structure(
+    headings: Vec<FormalEntryDto>,
+    environments: Vec<FormalEntryDto>,
+) -> Vec<FormalEntryDto> {
+    let mut out: Vec<FormalEntryDto> = Vec::new();
+    let mut pending: [Option<FormalEntryDto>; 2] = [None, None];
+    let mut shown: u8 = 0;
+    let mut heads = headings.into_iter().peekable();
+
+    for mut env in environments {
+        while heads
+            .peek()
+            .is_some_and(|h| h.page < env.page || (h.page == env.page && h.y >= env.y))
+        {
+            let head = heads.next().expect("peeked");
+            let depth = (head.depth as usize).min(1);
+            pending[depth] = Some(head);
+            if depth == 0 {
+                pending[1] = None; // a new section closes the subsection under it
+                shown = 0;
+            } else {
+                shown = shown.min(1);
             }
         }
-        text.push(ch);
+        for depth in 0..2usize {
+            if let Some(entry) = pending[depth].take() {
+                out.push(entry);
+                shown = depth as u8 + 1;
+            }
+        }
+        env.depth = shown;
+        out.push(env);
     }
-    (!text.trim().is_empty()).then_some(text)
+    out
 }
 
 #[cfg(test)]
@@ -406,7 +406,6 @@ mod tests {
         for name in [
             "Doc-Start",
             "page.7",
-            "subsection.2.1",
             "cite.Knuth1984",
             "Item.12",
             "equation.4",
@@ -415,9 +414,12 @@ mod tests {
         }
         assert!(!is_structural_destination("theorem.1.1"));
         assert!(!is_structural_destination("figure.3"));
-        // sections are kept, but to group the list rather than populate it
+        // headings are kept, but to group the list rather than populate it
         assert!(!is_structural_destination("section.2"));
-        assert!(is_section_destination("section.2"));
+        assert_eq!(heading_depth("section.2"), Some(0));
+        assert_eq!(heading_depth("subsection.2.1"), Some(1));
+        assert_eq!(heading_depth("appendix.A"), Some(0));
+        assert_eq!(heading_depth("theorem.1.1"), None);
     }
 
     #[test]
@@ -452,14 +454,6 @@ mod tests {
         assert_eq!(
             parse_heading("Corollary 1.3.An unlabeled corollary.").unwrap().kind,
             "Corollary"
-        );
-    }
-
-    #[test]
-    fn flattens_a_section_title_too() {
-        assert_eq!(
-            parse_section_heading("2 Results\r\n"),
-            Some(("2".into(), "Results".into()))
         );
     }
 
@@ -542,46 +536,77 @@ mod tests {
         assert!(anchor_text("", &[], None, 700.0).is_none());
     }
 
-    #[test]
-    fn a_section_title_stops_at_its_own_line() {
-        let (raw, boxes) = page(&[("1 Setup", 667.0), ("Definition 1.1 (Feedback).", 642.0)]);
-        assert_eq!(anchor_line_text(&raw, &boxes, None, 670.0).unwrap(), "1 Setup");
-        // the unbounded form runs on into the body, as it should
-        assert!(anchor_text(&raw, &boxes, None, 670.0).unwrap().contains("Definition"));
+    fn head(depth: u8, label: &str, page: u32, y: f32) -> FormalEntryDto {
+        FormalEntryDto { heading: true, depth, label: label.into(), page, y, char_index: 0 }
+    }
+    fn env(label: &str, page: u32, y: f32) -> FormalEntryDto {
+        FormalEntryDto { heading: false, depth: 0, label: label.into(), page, y, char_index: 0 }
+    }
+    fn shape(entries: &[FormalEntryDto]) -> Vec<String> {
+        entries.iter().map(|e| format!("{}{}", "  ".repeat(e.depth as usize), e.label)).collect()
     }
 
     #[test]
-    fn a_section_heading_is_number_first() {
-        assert_eq!(
-            parse_section_heading("1 Setup"),
-            Some(("1".into(), "Setup".into()))
+    fn nests_environments_under_their_section_and_subsection() {
+        let merged = merge_structure(
+            vec![
+                head(0, "1 Introduction", 0, 700.0),
+                head(1, "1.2 Preliminaries", 1, 600.0),
+                head(0, "2 Results", 3, 700.0),
+            ],
+            vec![
+                env("Theorem 1.1", 0, 500.0),
+                env("Definition 1.2", 1, 400.0),
+                env("Lemma 2.1", 3, 500.0),
+            ],
         );
-        // an environment heading is the other way round and must not match
-        assert_eq!(parse_section_heading("Theorem 1.1."), None);
+        assert_eq!(
+            shape(&merged),
+            vec![
+                "1 Introduction",
+                "  Theorem 1.1",
+                "  1.2 Preliminaries",
+                "    Definition 1.2",
+                "2 Results",
+                "  Lemma 2.1",
+            ]
+        );
     }
 
     #[test]
-    fn rejects_a_section_whose_number_is_not_the_destinations() {
-        // the arXiv stamp running down the margin of page one, which this
-        // panel used to show as a section spanning the whole paper
-        let stamp = "2211.11320v3 [stat.ML] 22 Jun 2022 Private and polynomial time \
-                     algorithms for learning Gaussians and beyond Hassan Ashtiani";
-        assert!(reconcile_section("section.1", stamp).is_none());
-
-        // a real heading still resolves
-        assert_eq!(
-            reconcile_section("section.1", "1 Introduction\r\n").as_deref(),
-            Some("1 Introduction")
+    fn a_new_section_closes_the_subsection_under_it() {
+        let merged = merge_structure(
+            vec![
+                head(0, "1 One", 0, 700.0),
+                head(1, "1.1 Sub", 0, 600.0),
+                head(0, "2 Two", 1, 700.0),
+            ],
+            vec![env("Lemma 1.1", 0, 500.0), env("Lemma 2.1", 1, 500.0)],
         );
-        // and a heading that is not the one this destination names does not
-        assert_eq!(reconcile_section("section.2", "2.1 A subsection"), None);
+        // the second lemma sits directly under section 2, not under 1.1
+        assert_eq!(shape(&merged), vec!["1 One", "  1.1 Sub", "    Lemma 1.1", "2 Two", "  Lemma 2.1"]);
+    }
+
+    #[test]
+    fn drops_headings_that_contain_nothing() {
+        let merged = merge_structure(
+            vec![head(0, "1 Empty", 0, 700.0), head(0, "2 Full", 1, 700.0)],
+            vec![env("Theorem 2.1", 1, 500.0)],
+        );
+        assert_eq!(shape(&merged), vec!["2 Full", "  Theorem 2.1"]);
+    }
+
+    #[test]
+    fn leaves_environments_flat_when_a_document_has_no_headings() {
+        let merged = merge_structure(vec![], vec![env("Theorem 1", 0, 500.0)]);
+        assert_eq!(shape(&merged), vec!["Theorem 1"]);
     }
 
     #[test]
     fn only_top_level_structure_groups_the_list() {
         assert!(is_section_destination("section.2"));
         assert!(is_section_destination("chapter.4"));
-        assert!(!is_section_destination("subsection.2.1"));
+        assert!(is_section_destination("subsection.2.1"));
         assert!(!is_section_destination("theorem.1.1"));
     }
 

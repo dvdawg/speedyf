@@ -98,6 +98,10 @@ export interface FormFieldInfo {
 /** One row of the formal-environment list: a section heading (depth 0) or an
  * environment under it (depth 1), already in document order. */
 export interface FormalEntry {
+  /** true for a section/subsection heading, false for an environment. Depth
+   * alone cannot tell them apart — an environment indents to however many
+   * headings stand above it, so it can sit at any depth. */
+  heading: boolean;
   depth: number;
   label: string;
   page: number;

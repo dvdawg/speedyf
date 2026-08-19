@@ -136,6 +136,38 @@ function ViewerContent(props: { tab: TabRecord }) {
     });
   };
 
+  // Publish where a text selection sits, in the same page space anchors use,
+  // so the context header can name what was highlighted. Computed from the
+  // range's client rect rather than the DOM: the text layer is one span per
+  // run, with nothing on it that identifies a page.
+  const onSelectionChange = () => {
+    const selection = document.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+      if (vp.state.selectionAnchor) vp.setState('selectionAnchor', null);
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    if (!scroller.contains(range.commonAncestorContainer)) return;
+    const rect = range.getBoundingClientRect();
+    if (rect.height === 0 && rect.width === 0) return;
+    const contentY = rect.top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    const l = layout();
+    const page = pageIndexAt(l, contentY);
+    const geom = documentStore.state.pages[page];
+    const pageTop = l.tops[page];
+    if (!geom || pageTop === undefined) return;
+    const rotation = (geom.baseRotation + geom.userRotation + vp.state.viewRotation) % 360;
+    const heightPt = rotation % 180 === 0 ? geom.heightPt : geom.widthPt;
+    vp.setState('selectionAnchor', {
+      page,
+      y: heightPt - (contentY - pageTop) / vp.state.zoom,
+    });
+  };
+  onMount(() => {
+    document.addEventListener('selectionchange', onSelectionChange);
+    onCleanup(() => document.removeEventListener('selectionchange', onSelectionChange));
+  });
+
   // Persist where reading stopped, debounced: this writes to localStorage, so
   // it must not run on every scroll frame.
   let rememberTimer: ReturnType<typeof setTimeout> | undefined;

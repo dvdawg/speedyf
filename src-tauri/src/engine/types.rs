@@ -104,7 +104,11 @@ pub struct TextRun {
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct FormalEntryDto {
-    /// 0 for a section heading, 1 for an environment inside it
+    /// true for a section or subsection heading, false for an environment.
+    /// Depth alone cannot tell them apart: an environment indents to however
+    /// many headings are standing above it, so it can sit at any depth.
+    pub heading: bool,
+    /// nesting level: section 0, subsection 1, environments below them
     pub depth: u8,
     /// as printed: "2 Results", "Theorem 3.1"
     pub label: String,

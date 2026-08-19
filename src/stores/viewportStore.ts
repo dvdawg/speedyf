@@ -22,6 +22,10 @@ export interface ViewportState {
   editMode: boolean;
   /** bumped to request programmatic page navigation or exact view restore */
   scrollRequest: ScrollRequest | null;
+  /** where the current text selection sits, so the context header can follow
+   * what is being read rather than what is merely on screen. Null when there
+   * is no selection inside the document. */
+  selectionAnchor: { page: number; y: number } | null;
 }
 
 export type ScrollRequest =
@@ -72,6 +76,7 @@ function emptyState(): ViewportState {
     formPanelOpen: false,
     editMode: false,
     scrollRequest: null,
+    selectionAnchor: null,
   };
 }
 

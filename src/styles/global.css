@@ -94,6 +94,8 @@ body {
   flex: 1;
   min-width: 0;
   display: flex;
+  /* the context header stacks above the viewer, which takes the rest */
+  flex-direction: column;
 }
 
 /* Holds both the tab workspaces and the Home screen as stacked overlays, so
@@ -598,6 +600,70 @@ textarea:focus-visible {
 .sidebar-footer {
   padding: 8px;
   border-top: 1px solid var(--border);
+}
+
+/* ---------- context header ---------- */
+/* Where the viewport currently sits in the document. Deliberately quiet: it is
+ * ambient orientation, not a control surface, so it reads as a caption on the
+ * viewer rather than a second toolbar. */
+.context-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 12px;
+  min-height: 26px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.context-trail {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* The file this is, kept at the far end and first to give up space. */
+.context-path {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.75;
+}
+
+.context-crumb {
+  border: none;
+  background: transparent;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.context-crumb:hover {
+  background: var(--bg-inset);
+  color: var(--text);
+}
+
+/* The deepest heading is where you actually are, so it reads as the label and
+ * the ones above it as the path to it. */
+.context-crumb.is-deepest {
+  color: var(--text);
+}
+
+.context-sep {
+  flex: none;
+  opacity: 0.6;
 }
 
 /* ---------- viewer ---------- */

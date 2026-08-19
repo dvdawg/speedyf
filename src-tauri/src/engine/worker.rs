@@ -1153,15 +1153,46 @@ fn do_formal_envs(
     // heading is simply emitted before the rows that follow it. A heading is
     // held back until something actually lands under it — a section with no
     // environments is noise in a list that exists to find environments.
-    let mut out: Vec<FormalEntryDto> = Vec::new();
-    let mut pending_section: Option<FormalEntryDto> = None;
-    // Environments only indent once a section heading has actually been shown;
-    // otherwise a document whose headings we cannot verify would render as a
-    // list that is uniformly indented under nothing.
-    let mut has_section = false;
+    // Headings come from the bookmark tree, not from the page text. hyperref
+    // writes the same titles there, already numbered and already nested, and
+    // reading them avoids a problem the page cannot solve: a run-in heading
+    // shares its line with the paragraph it introduces, so
+    // "1.2 Preliminaries We use kvk2 to denote..." has no boundary to find.
+    let mut headings: Vec<FormalEntryDto> = Vec::new();
+    let mut visited = std::collections::HashSet::new();
+    let outline = walk_bookmarks(b, raw, std::ptr::null_mut(), 0, &mut visited);
+    fn collect(nodes: &[OutlineNodeDto], depth: u8, out: &mut Vec<FormalEntryDto>) {
+        for node in nodes {
+            if let Some(page) = node.page {
+                let label = node.title.trim();
+                if !label.is_empty() {
+                    out.push(FormalEntryDto {
+                        heading: true,
+                        // Only two heading levels are shown; deeper bookmarks
+                        // still group, they just stop indenting further.
+                        depth: depth.min(1),
+                        label: label.to_string(),
+                        page,
+                        // no coordinates means the bookmark points at the page
+                        // itself, which sorts as the very top of it
+                        y: node.y.unwrap_or(f32::MAX),
+                        char_index: 0,
+                    });
+                }
+            }
+            collect(&node.children, depth + 1, out);
+        }
+    }
+    collect(&outline, 0, &mut headings);
+    headings.sort_by(|a, c| a.page.cmp(&c.page).then(c.y.total_cmp(&a.y)));
+
+    let mut environments: Vec<FormalEntryDto> = Vec::new();
     let mut current: Option<(u32, crate::engine::text::ExtractedPage)> = None;
     for anchor in anchors {
         let (name, page, x, y) = (anchor.name, anchor.page, anchor.x, anchor.y);
+        if crate::engine::formal::heading_depth(&name).is_some() {
+            continue; // the bookmark tree already has this one
+        }
         let extracted = match &current {
             Some((p, e)) if *p == page => e,
             _ => {
@@ -1175,39 +1206,24 @@ fn do_formal_envs(
                 &current.as_ref().unwrap().1
             }
         };
-        let char_index = crate::engine::formal::anchor_start(&extracted.boxes, x, y)
-            .unwrap_or(0) as u32;
-        if crate::engine::formal::is_section_destination(&name) {
-            pending_section =
-                crate::engine::formal::anchor_line_text(&extracted.raw, &extracted.boxes, x, y)
-                    .and_then(|text| crate::engine::formal::reconcile_section(&name, &text))
-                    .map(|label| FormalEntryDto {
-                        depth: 0,
-                        label,
-                        page,
-                        y,
-                        char_index,
-                    });
-            continue;
-        }
         let Some(text) = crate::engine::formal::anchor_text(&extracted.raw, &extracted.boxes, x, y)
         else {
             continue;
         };
         if let Some(heading) = crate::engine::formal::reconcile(&name, &text) {
-            if let Some(section) = pending_section.take() {
-                out.push(section);
-                has_section = true;
-            }
-            out.push(FormalEntryDto {
-                depth: u8::from(has_section),
+            environments.push(FormalEntryDto {
+                heading: false,
+                depth: 0, // set below, once its heading context is known
                 label: format!("{} {}", heading.kind, heading.number),
                 page,
                 y,
-                char_index,
+                char_index: crate::engine::formal::anchor_start(&extracted.boxes, x, y)
+                    .unwrap_or(0) as u32,
             });
         }
     }
+
+    let out = crate::engine::formal::merge_structure(headings, environments);
 
     state.doc(doc)?.formal_envs = Some(out.clone());
     Ok(out)

@@ -10,6 +10,7 @@ import Sidebar from '../components/Sidebar';
 import StatusBar from '../components/StatusBar';
 import Modals from '../components/Modals';
 import Viewer from '../features/viewer/Viewer';
+import ContextHeader from '../features/viewer/ContextHeader';
 import SearchPanel from '../features/search/SearchPanel';
 import FormPanel from '../features/editor/FormPanel';
 import { engine } from '../lib/transport/engine';
@@ -168,6 +169,7 @@ export default function App() {
                           <Sidebar />
                         </Show>
                         <main class="app-main">
+                          <ContextHeader />
                           <Viewer />
                         </main>
                         <Show when={tab.viewport.state.searchOpen && visible()}>
