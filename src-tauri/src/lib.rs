@@ -228,6 +228,17 @@ pub fn run() {
                     state.0.lock().unwrap().extend(paths.clone());
                 }
                 let _ = app_handle.emit("file-open-requested", &paths);
+
+                // The OS hands us the file but does not raise us. Without this,
+                // an already-running SpeedyF loads the PDF behind whatever the
+                // user was looking at, and the open looks like it did nothing.
+                #[cfg(target_os = "macos")]
+                let _ = app_handle.show();
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
             }
         });
 }
