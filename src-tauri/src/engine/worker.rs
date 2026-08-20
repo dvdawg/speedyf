@@ -280,6 +280,7 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         Work::FormFields { respond, .. } => respond(Err(err())),
         Work::Outline { respond, .. } => respond(Err(err())),
         Work::FormalEnvs { respond, .. } => respond(Err(err())),
+        Work::Figures { respond, .. } => respond(Err(err())),
         Work::ImageSize { respond, .. } => respond(Err(err())),
         Work::Close { .. }
         | Work::SetActiveDocument { .. }
@@ -367,6 +368,10 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
         Work::FormFields { doc, respond } => respond(do_form_fields(state, doc)),
         Work::Outline { doc, respond } => respond(do_outline(state, doc)),
         Work::FormalEnvs { doc, respond } => respond(do_formal_envs(state, doc)),
+        Work::Figures { doc, respond } => {
+            let result = do_figures(state, doc);
+            respond(result)
+        }
         Work::ImageSize { path, respond } => respond(
             image::image_dimensions(&path)
                 .map(|(w, h)| [w, h])
@@ -1125,16 +1130,141 @@ fn walk_bookmarks(
     out
 }
 
+/// Headings recovered from hyperref's named destinations, for documents that
+/// ship no bookmark tree.
+///
+/// Plenty of arXiv papers are in that position: `/Outlines` is simply absent,
+/// while `section.4`, `subsection.4.1` and `appendix.A` are all still there in
+/// `/Dests`. The destination gives the position and the nesting depth; the
+/// title has to be read off the page, because the name encodes only a counter.
+///
+/// Returned flat, in document order, with the depth `heading_depth` assigns.
+fn headings_from_destinations(state: &mut WorkerState, doc: DocId) -> Vec<(u8, FormalEntryDto)> {
+    let (Ok(raw), Ok(page_count)) = (
+        state.doc(doc).map(|d| d.raw),
+        state.doc(doc).map(|d| d.page_count),
+    ) else {
+        return Vec::new();
+    };
+    let mut anchors = crate::engine::formal::enumerate_anchors(state.bindings, raw, page_count);
+    anchors.sort_by(|a, b| a.page.cmp(&b.page).then(b.y.total_cmp(&a.y)));
+
+    let mut out: Vec<(u8, u8, FormalEntryDto)> = Vec::new();
+    let mut current: Option<(
+        u32,
+        crate::engine::text::ExtractedPage,
+        Vec<crate::engine::tagged::MathSpan>,
+    )> = None;
+    for anchor in anchors {
+        let Some(depth) = crate::engine::formal::heading_depth(&anchor.name) else {
+            continue;
+        };
+        if crate::engine::formal::is_structural_destination(&anchor.name) {
+            continue;
+        }
+        let (extracted, spans) = match &current {
+            Some((p, e, s)) if *p == anchor.page => (e, s),
+            _ => {
+                let Some((e, s)) = extract_with_tags(state, doc, anchor.page) else {
+                    continue;
+                };
+                current = Some((anchor.page, e, s));
+                let entry = current.as_ref().unwrap();
+                (&entry.1, &entry.2)
+            }
+        };
+        // The counter in the destination's own name is what makes the title
+        // checkable; without one there is nothing to verify against, so the
+        // entry is skipped rather than guessed at.
+        let Some(counter) = crate::engine::formal::destination_number(&anchor.name) else {
+            continue;
+        };
+        let meta = crate::engine::formal::GlyphMeta::new(&extracted.sizes, &extracted.math)
+            .with_spans(spans);
+        let Some(hit) = crate::engine::formal::heading_line(
+            &extracted.raw,
+            &extracted.boxes,
+            meta,
+            anchor.x,
+            anchor.y,
+            counter,
+        )
+        .or_else(|| {
+            // The column filter keeps the arXiv margin stamp out, but it also
+            // hides a heading whose anchor x landed in the other column.
+            crate::engine::formal::heading_line(
+                &extracted.raw,
+                &extracted.boxes,
+                meta,
+                None,
+                anchor.y,
+                counter,
+            )
+        }) else {
+            continue;
+        };
+        // Document order comes from where the heading *is*. On a two-column
+        // page that is column-major: a heading low in the left column still
+        // precedes one high in the right, which sorting on y alone reverses.
+        let page_w = state
+            .display_size(doc, anchor.page)
+            .map(|size| size[0])
+            .unwrap_or(612.0);
+        let column = u8::from(hit.x > page_w / 2.0);
+        out.push((
+            depth,
+            column,
+            FormalEntryDto {
+                heading: true,
+                depth: depth.min(1),
+                label: hit.title,
+                page: anchor.page,
+                y: hit.y,
+                char_index: 0,
+                x: Some(hit.x),
+            },
+        ));
+    }
+    out.sort_by(|a, b| {
+        a.2.page
+            .cmp(&b.2.page)
+            .then(a.1.cmp(&b.1))
+            .then(b.2.y.total_cmp(&a.2.y))
+    });
+    out.into_iter()
+        .map(|(depth, _, entry)| (depth, entry))
+        .collect()
+}
+
+/// Nest a flat depth-tagged heading list into the tree the outline renders.
+fn nest_headings(flat: Vec<(u8, FormalEntryDto)>) -> Vec<OutlineNodeDto> {
+    let mut roots: Vec<OutlineNodeDto> = Vec::new();
+    for (depth, entry) in flat {
+        let node = OutlineNodeDto {
+            title: entry.label,
+            page: Some(entry.page),
+            y: Some(entry.y),
+            children: Vec::new(),
+        };
+        // Only two levels exist here (heading_depth yields 0 or 1), so a
+        // subsection attaches to the section standing above it, and one with
+        // no section above it stays at the top rather than being dropped.
+        match (depth, roots.last_mut()) {
+            (0, _) | (_, None) => roots.push(node),
+            (_, Some(parent)) => parent.children.push(node),
+        }
+    }
+    roots
+}
+
 fn do_outline(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<OutlineNodeDto>> {
     let raw = state.doc(doc)?.raw;
     let mut visited = std::collections::HashSet::new();
-    Ok(walk_bookmarks(
-        state.bindings,
-        raw,
-        std::ptr::null_mut(),
-        0,
-        &mut visited,
-    ))
+    let bookmarks = walk_bookmarks(state.bindings, raw, std::ptr::null_mut(), 0, &mut visited);
+    if !bookmarks.is_empty() {
+        return Ok(bookmarks);
+    }
+    Ok(nest_headings(headings_from_destinations(state, doc)))
 }
 
 /// Formal environments (theorems, figures, …) recovered from hyperref's named
@@ -1184,6 +1314,7 @@ fn do_formal_envs(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<FormalEn
                         // itself, which sorts as the very top of it
                         y: node.y.unwrap_or(f32::MAX),
                         char_index: 0,
+                        x: None,
                     });
                 }
             }
@@ -1192,6 +1323,16 @@ fn do_formal_envs(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<FormalEn
     }
     collect(&outline, 0, &mut headings);
     headings.sort_by(|a, c| a.page.cmp(&c.page).then(c.y.total_cmp(&a.y)));
+    // No bookmark tree: recover the same headings from the section
+    // destinations, so the panel still groups by section instead of showing a
+    // flat list of theorems. Already in document order, and deliberately not
+    // re-sorted here — that sort is y-only, which reverses two-column pages.
+    if headings.is_empty() {
+        headings = headings_from_destinations(state, doc)
+            .into_iter()
+            .map(|(_, entry)| entry)
+            .collect();
+    }
 
     let mut environments: Vec<FormalEntryDto> = Vec::new();
     let mut current: Option<(u32, crate::engine::text::ExtractedPage)> = None;
@@ -1213,19 +1354,33 @@ fn do_formal_envs(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<FormalEn
                 &current.as_ref().unwrap().1
             }
         };
-        let Some(text) = crate::engine::formal::anchor_text(&extracted.raw, &extracted.boxes, x, y)
-        else {
-            continue;
-        };
-        if let Some(heading) = crate::engine::formal::reconcile(&name, &text) {
+        // Read from the anchor first; it is right whenever the destination
+        // actually sits on the statement.
+        let anchored = crate::engine::formal::anchor_text(&extracted.raw, &extracted.boxes, x, y)
+            .and_then(|text| crate::engine::formal::reconcile(&name, &text))
+            .map(|heading| (heading, y));
+        // Otherwise search the page for the statement the counter names — the
+        // anchor may have landed in a formula, or on the page number.
+        let found = anchored.or_else(|| {
+            let counter = crate::engine::formal::destination_number(&name)?;
+            crate::engine::formal::environment_line(
+                &extracted.raw,
+                &extracted.boxes,
+                crate::engine::formal::GlyphMeta::new(&extracted.sizes, &extracted.math),
+                y,
+                counter,
+            )
+        });
+        if let Some((heading, found_y)) = found {
             environments.push(FormalEntryDto {
                 heading: false,
                 depth: 0, // set below, once its heading context is known
                 label: format!("{} {}", heading.kind, heading.number),
                 page,
-                y,
-                char_index: crate::engine::formal::anchor_start(&extracted.boxes, x, y).unwrap_or(0)
-                    as u32,
+                y: found_y,
+                char_index: crate::engine::formal::anchor_start(&extracted.boxes, x, found_y)
+                    .unwrap_or(0) as u32,
+                x,
             });
         }
     }
@@ -1233,6 +1388,82 @@ fn do_formal_envs(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<FormalEn
     let out = crate::engine::formal::merge_structure(headings, environments);
 
     state.doc(doc)?.formal_envs = Some(out.clone());
+    Ok(out)
+}
+
+/// Extract a page's text along with any mathematics its structure tree tags.
+///
+/// Tagging is rare — most papers carry no structure tree — so the extra text
+/// page is only opened when one exists, and the span list is empty otherwise.
+fn extract_with_tags(
+    state: &mut WorkerState,
+    doc: DocId,
+    page: u32,
+) -> Option<(
+    crate::engine::text::ExtractedPage,
+    Vec<crate::engine::tagged::MathSpan>,
+)> {
+    let (Ok(handle), Ok(size)) = (state.page_handle(doc, page), state.display_size(doc, page))
+    else {
+        return None;
+    };
+    let extracted = crate::engine::text::extract_page(state.bindings, handle, size[0], size[1]);
+    let mut spans = Vec::new();
+    let text_page = state.bindings.FPDFText_LoadPage(handle);
+    if !text_page.is_null() {
+        spans = crate::engine::tagged::page_math(state.bindings, handle, text_page, &extracted.raw);
+        state.bindings.FPDFText_ClosePage(text_page);
+    }
+    Some((extracted, spans))
+}
+
+/// Figure rows: every caption in the document, each paired with a crop of the
+/// artwork sitting above it.
+///
+/// Captions come from page text rather than hyperref anchors, so this works on
+/// papers whose figures carry no `\label` — which is most of them. The cost is
+/// one text extraction per page, paid when the panel is opened.
+fn do_figures(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<FigureDto>> {
+    use crate::engine::figures::{
+        figure_crop_rect, find_captions, FigureCropInput, FIGURE_THUMB_SCALE_MILLI,
+    };
+
+    let page_count = state.doc(doc)?.page_count;
+    let mut out = Vec::new();
+    for page in 0..page_count {
+        let Ok([page_w, page_h]) = state.display_size(doc, page) else {
+            continue;
+        };
+        // The character stream, not the cached run layout: runs drop the
+        // inter-word spaces a caption needs, and carry no per-glyph geometry,
+        // so neither the caption text nor its scripts survive them.
+        let Some((extracted, spans)) = extract_with_tags(state, doc, page) else {
+            continue;
+        };
+        let lines = crate::engine::formal::page_lines(
+            &extracted.raw,
+            &extracted.boxes,
+            crate::engine::formal::GlyphMeta::new(&extracted.sizes, &extracted.math)
+                .with_spans(&spans),
+        );
+        for caption in find_captions(&lines) {
+            let rect = figure_crop_rect(&FigureCropInput {
+                page_w_pt: page_w,
+                page_h_pt: page_h,
+                caption_y: caption.y,
+                caption_x: Some(caption.x),
+                runs: &extracted.runs,
+            });
+            out.push(FigureDto {
+                label: caption.label,
+                title: caption.title,
+                page,
+                y: caption.y,
+                tile: preview::rect_to_tile(rect, page_h, FIGURE_THUMB_SCALE_MILLI),
+                scale_milli: FIGURE_THUMB_SCALE_MILLI,
+            });
+        }
+    }
     Ok(out)
 }
 

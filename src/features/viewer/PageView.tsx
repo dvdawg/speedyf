@@ -305,6 +305,7 @@ export default function PageView(props: Props) {
             runs={textLayout()!.runs}
             pageHeightPt={props.geom.heightPt}
             zoom={vp.state.zoom}
+            page={props.index}
           />
         </Show>
         <div class="search-highlights" aria-hidden="true">

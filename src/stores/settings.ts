@@ -8,6 +8,9 @@ interface Settings {
   theme: ThemePref;
   lowMemory: boolean;
   libraryRoot: string | null;
+  /** Hosts the user chose not to be asked about again before following a
+   * document's link out to the browser. Exact hosts only — see lib/links. */
+  trustedLinkHosts: string[];
 }
 
 const KEY = 'speedyf-settings';
@@ -21,12 +24,15 @@ function load(): Settings {
         theme: parsed.theme === 'light' || parsed.theme === 'dark' ? parsed.theme : 'system',
         lowMemory: parsed.lowMemory === true,
         libraryRoot: typeof parsed.libraryRoot === 'string' ? parsed.libraryRoot : null,
+        trustedLinkHosts: Array.isArray(parsed.trustedLinkHosts)
+          ? parsed.trustedLinkHosts.filter((host): host is string => typeof host === 'string')
+          : [],
       };
     }
   } catch {
     /* corrupted settings fall back to defaults */
   }
-  return { theme: 'system', lowMemory: false, libraryRoot: null };
+  return { theme: 'system', lowMemory: false, libraryRoot: null, trustedLinkHosts: [] };
 }
 
 const [settings, setSettingsStore] = createStore<Settings>(load());
@@ -42,6 +48,7 @@ export function updateSettings(patch: Partial<Settings>) {
         theme: settings.theme,
         lowMemory: settings.lowMemory,
         libraryRoot: settings.libraryRoot,
+        trustedLinkHosts: settings.trustedLinkHosts,
       })
     );
   } catch {

@@ -15,9 +15,9 @@ pub struct CropInput<'a> {
 }
 
 #[derive(Clone, Copy)]
-struct Interval {
-    start: f32,
-    end: f32,
+pub struct Interval {
+    pub start: f32,
+    pub end: f32,
 }
 
 fn median_height(runs: &[&TextRun]) -> f32 {
@@ -34,13 +34,19 @@ fn median_height(runs: &[&TextRun]) -> f32 {
     }
 }
 
-pub fn crop_rect(input: &CropInput<'_>) -> [f32; 4] {
-    let page_w = input.page_w_pt.max(1.0);
-    let page_h = input.page_h_pt.max(1.0);
-    let anchor_y = input.dest_y.unwrap_or(page_h).clamp(0.0, page_h);
-
-    let mut intervals: Vec<Interval> = input
-        .runs
+/// Horizontal extent of the text column holding `anchor_y` (and `dest_x`, when
+/// the destination named one). Runs are clustered by their x extents, so a
+/// two-column page yields two clusters and a destination picks its own.
+///
+/// Shared with the figure crop, which needs the same answer for a caption.
+pub fn column_bounds(
+    runs: &[TextRun],
+    page_w_pt: f32,
+    anchor_y: f32,
+    dest_x: Option<f32>,
+) -> Interval {
+    let page_w = page_w_pt.max(1.0);
+    let mut intervals: Vec<Interval> = runs
         .iter()
         .filter(|run| run.w > 0.0 && run.y >= anchor_y - 400.0 && run.y <= anchor_y + 8.0)
         .map(|run| Interval {
@@ -51,7 +57,12 @@ pub fn crop_rect(input: &CropInput<'_>) -> [f32; 4] {
         .collect();
     intervals.sort_by(|left, right| left.start.total_cmp(&right.start));
 
-    let gap_limit = 0.04 * page_w;
+    // A two-column gutter is about 18pt on a letter page, while gaps *within*
+    // a line rarely reach 10pt. 4% of the page width (24pt) sat above the
+    // gutter, so real two-column papers merged into one column-spanning
+    // cluster and every crop taken from them was twice as wide as the text it
+    // meant to show.
+    let gap_limit = 0.02 * page_w;
     let mut clusters: Vec<Interval> = Vec::new();
     for interval in intervals {
         if let Some(last) = clusters.last_mut() {
@@ -67,29 +78,32 @@ pub fn crop_rect(input: &CropInput<'_>) -> [f32; 4] {
         start: 0.06 * page_w,
         end: 0.94 * page_w,
     };
-    let column = if clusters.is_empty() {
-        fallback
-    } else if let Some(x) = input.dest_x {
-        clusters
-            .iter()
-            .copied()
-            .find(|cluster| x >= cluster.start && x <= cluster.end)
-            .unwrap_or_else(|| {
-                clusters
-                    .iter()
-                    .copied()
-                    .max_by(|left, right| {
-                        (left.end - left.start).total_cmp(&(right.end - right.start))
-                    })
-                    .unwrap_or(fallback)
-            })
-    } else {
+    let widest = |clusters: &[Interval]| {
         clusters
             .iter()
             .copied()
             .max_by(|left, right| (left.end - left.start).total_cmp(&(right.end - right.start)))
             .unwrap_or(fallback)
     };
+    if clusters.is_empty() {
+        return fallback;
+    }
+    match dest_x {
+        Some(x) => clusters
+            .iter()
+            .copied()
+            .find(|cluster| x >= cluster.start && x <= cluster.end)
+            .unwrap_or_else(|| widest(&clusters)),
+        None => widest(&clusters),
+    }
+}
+
+pub fn crop_rect(input: &CropInput<'_>) -> [f32; 4] {
+    let page_w = input.page_w_pt.max(1.0);
+    let page_h = input.page_h_pt.max(1.0);
+    let anchor_y = input.dest_y.unwrap_or(page_h).clamp(0.0, page_h);
+
+    let column = column_bounds(input.runs, page_w, anchor_y, input.dest_x);
 
     // Leave headroom above the linked line itself, not just a hairline sliver,
     // so the preview shows a bit of what precedes the target (context: the
@@ -207,6 +221,31 @@ mod tests {
         });
         assert!(rect[0] > 300.0, "right-column crop started at {}", rect[0]);
         assert!(rect[0] + rect[2] <= 575.0);
+    }
+
+    #[test]
+    fn a_narrow_two_column_gutter_still_separates_the_columns() {
+        // Real arXiv geometry: 233pt columns with an 18pt gutter. The old 4%
+        // threshold (24pt on this page) swallowed the gutter, merging both
+        // columns into one cluster and doubling the width of every crop.
+        let mut runs = Vec::new();
+        for line in 0..14 {
+            let y = 700.0 - line as f32 * 14.0;
+            runs.push(run("left", 55.0, y, 233.0, 10.0));
+            runs.push(run("right", 307.0, y, 233.0, 10.0));
+        }
+        let rect = crop_rect(&CropInput {
+            page_w_pt: 612.0,
+            page_h_pt: 792.0,
+            dest_x: Some(330.0),
+            dest_y: Some(700.0),
+            runs: &runs,
+        });
+        assert!(
+            rect[0] > 295.0,
+            "crop reached into the left column: {rect:?}"
+        );
+        assert!(rect[2] < 260.0, "crop spans both columns: {rect:?}");
     }
 
     #[test]

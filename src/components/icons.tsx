@@ -145,6 +145,15 @@ export const IconQed = () =>
       <rect x="10.5" y="10.5" width="3" height="3" rx="0.3" fill="currentColor" />
     </>
   );
+/** A framed picture: the artwork a caption belongs to. */
+export const IconFigure = () =>
+  base(
+    <>
+      <rect x="2" y="3" width="12" height="10" rx="1" />
+      <path d="M2.4 10.6l3.1-3 2.4 2.3 2.3-2.6 3.4 3.7" />
+      <circle cx="5.6" cy="6.1" r="1" />
+    </>
+  );
 export const IconSettings = () =>
   base(
     <>

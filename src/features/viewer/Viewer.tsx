@@ -24,6 +24,7 @@ import PageView from './PageView';
 import { openFromDialog } from '../document/tabsController';
 import { IconOpen } from '../../components/icons';
 import { engine } from '../../lib/transport/engine';
+import { smartCopyForSelection } from '../../lib/text/copySelection';
 import { TabContext } from '../../app/TabContext';
 import { tabsStore, type TabRecord } from '../../stores/tabsStore';
 import { recentStore } from '../../stores/recentStore';
@@ -164,9 +165,27 @@ function ViewerContent(props: { tab: TabRecord }) {
       y: heightPt - (contentY - pageTop) / vp.state.zoom,
     });
   };
+  // A PDF selection copies as one fragment per positioned run: broken lines,
+  // ligature glyphs, and words split at line ends. Rebuild it from the run
+  // geometry instead, and only for selections that are actually in this
+  // document's pages.
+  const onCopy = (event: ClipboardEvent) => {
+    const selection = document.getSelection();
+    if (!selection || selection.rangeCount === 0) return;
+    if (!scroller.contains(selection.getRangeAt(0).commonAncestorContainer)) return;
+    const text = smartCopyForSelection(selection, scroller);
+    if (text === null || !event.clipboardData) return;
+    event.preventDefault();
+    event.clipboardData.setData('text/plain', text);
+  };
+
   onMount(() => {
     document.addEventListener('selectionchange', onSelectionChange);
-    onCleanup(() => document.removeEventListener('selectionchange', onSelectionChange));
+    document.addEventListener('copy', onCopy);
+    onCleanup(() => {
+      document.removeEventListener('selectionchange', onSelectionChange);
+      document.removeEventListener('copy', onCopy);
+    });
   });
 
   // Persist where reading stopped, debounced: this writes to localStorage, so

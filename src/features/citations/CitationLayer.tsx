@@ -1,5 +1,6 @@
 import { createMemo, createResource, For, useContext } from 'solid-js';
 import type { LinkTarget, PageLink } from '../../types/engine';
+import { followExternalLink } from '../../lib/links/followExternalLink';
 import { toolState } from '../annotations/toolStore';
 import { citationLabel } from './citationLabel';
 import { TabContext } from '../../app/TabContext';
@@ -80,6 +81,9 @@ export default function CitationLayer(props: Props) {
                 if (link.target.kind === 'internal') {
                   citationStore.navigateInternalTarget(link.target);
                   citationStore.close();
+                } else if (link.target.kind === 'uri') {
+                  citationStore.close();
+                  void followExternalLink(link.target.uri);
                 }
               }}
             />

@@ -8,6 +8,7 @@ import { listen } from '@tauri-apps/api/event';
 import type {
   DocMeta,
   CitationId,
+  Figure,
   FormalEntry,
   FormFieldInfo,
   LibraryStatus,
@@ -82,6 +83,7 @@ export interface EngineApi {
   getFormFields(docId: number): Promise<FormFieldInfo[]>;
   getOutline(docId: number): Promise<OutlineNode[]>;
   getFormalEnvs(docId: number): Promise<FormalEntry[]>;
+  getFigures(docId: number): Promise<Figure[]>;
   imageSize(path: string): Promise<[number, number]>;
   metrics(): Promise<EngineMetrics>;
   setLowMemory(enabled: boolean): Promise<void>;
@@ -91,6 +93,9 @@ export interface EngineApi {
   bumpGeneration(docId: number): Promise<number>;
   /** Drops queued render work without invalidating URLs or caches. */
   cancelRenders(docId: number): Promise<void>;
+  /** Opens a document link in the user's browser. Rejects anything outside
+   * the engine's scheme allowlist, whatever the frontend passed. */
+  openExternalUrl(url: string): Promise<void>;
   onSearchProgress(cb: (p: SearchProgress) => void): Promise<() => void>;
 }
 
@@ -114,11 +119,13 @@ export const engine: EngineApi = {
   getFormFields: (docId) => invoke('get_form_fields', { docId }),
   getOutline: (docId) => invoke('get_outline', { docId }),
   getFormalEnvs: (docId) => invoke('get_formal_envs', { docId }),
+  getFigures: (docId) => invoke('get_figures', { docId }),
   imageSize: (path) => invoke('image_size', { path }),
   metrics: () => invoke('engine_metrics'),
   setLowMemory: (enabled) => invoke('set_low_memory', { enabled }),
   bumpGeneration: (docId) => invoke('bump_generation', { docId }),
   cancelRenders: (docId) => invoke('cancel_renders', { docId }),
+  openExternalUrl: (url) => invoke('open_external_url', { url }),
   onSearchProgress: async (cb) => listen<SearchProgress>('search:progress', (e) => cb(e.payload)),
 };
 

@@ -2,6 +2,7 @@ mod cache;
 mod commands;
 pub mod engine;
 pub mod errors;
+mod external;
 mod library;
 mod search;
 
@@ -236,6 +237,7 @@ pub fn run() {
             commands::get_form_fields,
             commands::get_outline,
             commands::get_formal_envs,
+            commands::get_figures,
             commands::image_size,
             commands::image_preview,
             commands::engine_metrics,
@@ -243,6 +245,7 @@ pub fn run() {
             commands::doc_generation,
             commands::bump_generation,
             commands::cancel_renders,
+            commands::open_external_url,
         ])
         .build(tauri::generate_context!())
         .expect("error while building SpeedyF")

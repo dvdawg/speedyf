@@ -20,6 +20,17 @@ export interface TextRunDto {
   h: number;
 }
 
+/** A figure, table or algorithm, with a crop of the artwork above its caption. */
+export interface Figure {
+  label: string;
+  /** caption text after the label, with LaTeX scripts restored */
+  title: string;
+  page: number;
+  y: number;
+  tile: { x: number; y: number; w: number; h: number };
+  scaleMilli: number;
+}
+
 export interface PageTextLayout {
   src: number;
   runs: TextRunDto[];

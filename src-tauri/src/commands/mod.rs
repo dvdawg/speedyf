@@ -217,6 +217,16 @@ pub async fn cancel_renders(state: tauri::State<'_, EngineState>, doc_id: DocId)
     Ok(())
 }
 
+/// Follow a link the document points at, out to the user's browser.
+///
+/// The frontend asks the user before calling this. The scheme check inside is
+/// the second gate and the one the document cannot influence — see
+/// `crate::external` for what is refused and why.
+#[tauri::command]
+pub async fn open_external_url(url: String) -> AppResult<()> {
+    crate::external::open_external_url(&url)
+}
+
 #[tauri::command]
 pub async fn search_query(
     state: tauri::State<'_, EngineState>,
@@ -321,6 +331,23 @@ pub async fn get_outline(
 
 /// Theorems, lemmas, definitions and captions recovered from a LaTeX-compiled
 /// document. Empty for PDFs that were not built with hyperref.
+/// Figures, tables and algorithms with a crop of each, for the figure panel.
+#[tauri::command]
+pub async fn get_figures(
+    state: tauri::State<'_, EngineState>,
+    doc_id: DocId,
+) -> AppResult<Vec<FigureDto>> {
+    state
+        .0
+        .call_async(Priority::AdjacentPage, doc_id, move |respond| {
+            Work::Figures {
+                doc: doc_id,
+                respond,
+            }
+        })
+        .await
+}
+
 #[tauri::command]
 pub async fn get_formal_envs(
     state: tauri::State<'_, EngineState>,

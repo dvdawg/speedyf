@@ -118,6 +118,26 @@ pub struct FormalEntryDto {
     /// index of the anchor's first character in the page's character stream,
     /// so a search hit on the same page can be placed relative to it
     pub char_index: u32,
+    /// display-space x of the anchor, when the destination carried one. Only
+    /// the figure crop reads it, to tell which column a caption sits in.
+    pub x: Option<f32>,
+}
+
+/// One row of the figure panel: a caption, and a crop of the artwork it
+/// belongs to, ready to request through the render protocol.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct FigureDto {
+    /// as printed: "Figure 3", "Table 1"
+    pub label: String,
+    /// the caption text after the label, with LaTeX scripts restored
+    pub title: String,
+    pub page: u32,
+    /// caption anchor (display space, y-up) — where clicking the row goes
+    pub y: f32,
+    /// the artwork above the caption, in device pixels at `scale_milli`
+    pub tile: TileRect,
+    pub scale_milli: u32,
 }
 
 #[derive(Serialize, Clone, Debug)]

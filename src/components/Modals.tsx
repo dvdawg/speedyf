@@ -4,14 +4,21 @@ import {
   dismissError,
   modal,
   resolveConfirm,
+  resolveExternalLink,
   resolvePassword,
   resolveUnsaved,
 } from '../stores/modalStore';
 
 export default function Modals() {
   const [password, setPassword] = createSignal('');
+  const [rememberHost, setRememberHost] = createSignal(false);
   let modalEl: HTMLDivElement | undefined;
   let restoreFocus: HTMLElement | null = null;
+
+  // Each link is its own decision: never carry a ticked box into the next one.
+  createEffect(() => {
+    if (modal.kind === 'external-link') setRememberHost(false);
+  });
 
   createEffect(() => {
     const kind = modal.kind;
@@ -36,6 +43,8 @@ export default function Modals() {
       dismissError();
     } else if (modal.kind === 'confirm') {
       resolveConfirm(false);
+    } else if (modal.kind === 'external-link') {
+      resolveExternalLink({ open: false, remember: false });
     }
   };
 
@@ -149,6 +158,44 @@ export default function Modals() {
                 onClick={() => resolveConfirm(true)}
               >
                 {modal.confirmLabel ?? 'Confirm'}
+              </button>
+            </div>
+          </Show>
+
+          <Show when={modal.kind === 'external-link'}>
+            <h2>Open this link?</h2>
+            <p>
+              This link comes from the document and opens outside SpeedyF, in your default browser.
+            </p>
+            <p class="link-host">{modal.link?.host ?? 'Your mail app'}</p>
+            <p class="link-href">{modal.link?.href}</p>
+            <Show when={modal.link?.host}>
+              {(host) => (
+                <label class="modal-check">
+                  <input
+                    type="checkbox"
+                    checked={rememberHost()}
+                    onChange={(e) => setRememberHost(e.currentTarget.checked)}
+                  />
+                  <span>Don't ask again for {host()}</span>
+                </label>
+              )}
+            </Show>
+            <div class="modal-actions">
+              <button
+                type="button"
+                class="secondary-btn"
+                onClick={() => resolveExternalLink({ open: false, remember: false })}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                class="primary-btn"
+                ref={(el) => queueMicrotask(() => el.isConnected && el.focus())}
+                onClick={() => resolveExternalLink({ open: true, remember: rememberHost() })}
+              >
+                Open link
               </button>
             </div>
           </Show>

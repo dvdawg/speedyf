@@ -6,7 +6,8 @@
 //! indices so search matches can be mapped back to page rects.
 
 use crate::engine::types::TextRun;
-use pdfium_render::prelude::{PdfiumLibraryBindings, FPDF_PAGE};
+use pdfium_render::prelude::{PdfiumLibraryBindings, FPDF_PAGE, FPDF_TEXTPAGE};
+use std::os::raw::{c_int, c_ulong};
 
 const PREC: f64 = 100.0;
 
@@ -17,7 +18,63 @@ pub struct ExtractedPage {
     /// display-space character boxes keyed by PDFium character index; a zero
     /// box means PDFium reported no usable geometry for that character.
     pub boxes: Vec<[f32; 4]>,
+    /// nominal point size of each character's font.
+    ///
+    /// This is what a superscript actually is — a glyph set at a smaller size
+    /// — and it is not recoverable from the character box, whose height is a
+    /// property of the glyph's shape. A period and a hyphen are short at any
+    /// size, which is exactly how they came to be read as raised scripts.
+    pub sizes: Vec<f32>,
+    /// whether each character is set in a math font (Computer Modern Math,
+    /// Symbol, Extension, or the AMS symbol fonts). Font identity is a fact
+    /// where glyph geometry is only ever an inference.
+    pub math: Vec<bool>,
     pub char_count: u32,
+}
+
+/// Font families TeX reserves for mathematics. `CMMI` carries variables,
+/// `CMSY` operators and relations, `CMEX` the large braces and integrals,
+/// `MSAM`/`MSBM` the AMS symbols. A subsetted font keeps the family name after
+/// its six-letter tag — "EWJNXA+CMMI10".
+const MATH_FONT_FAMILIES: &[&str] = &[
+    "CMMI",
+    "CMSY",
+    "CMEX",
+    "MSAM",
+    "MSBM",
+    "MathItalic",
+    "MathSymbol",
+    "Math-Italic",
+];
+
+/// Whether `font_name` belongs to a family used for mathematics.
+pub fn is_math_font(font_name: &str) -> bool {
+    let family = font_name
+        .split_once('+')
+        .map_or(font_name, |(_, rest)| rest);
+    MATH_FONT_FAMILIES.iter().any(|candidate| {
+        family
+            .to_ascii_uppercase()
+            .contains(&candidate.to_ascii_uppercase())
+    })
+}
+
+/// Name of the font a character is set in, or an empty string.
+fn font_name_at(b: &dyn PdfiumLibraryBindings, tp: FPDF_TEXTPAGE, index: i32) -> String {
+    let mut flags: c_int = 0;
+    let mut buffer = [0u8; 128];
+    let written = b.FPDFText_GetFontInfo(
+        tp,
+        index,
+        buffer.as_mut_ptr().cast(),
+        buffer.len() as c_ulong,
+        &mut flags,
+    ) as usize;
+    if written == 0 || written > buffer.len() {
+        return String::new();
+    }
+    // The name comes back NUL-terminated and the count includes it.
+    String::from_utf8_lossy(&buffer[..written.saturating_sub(1)]).into_owned()
 }
 
 pub struct ExtractedSearchText {
@@ -110,6 +167,8 @@ pub fn extract_page(
             raw: String::new(),
             runs: Vec::new(),
             boxes: Vec::new(),
+            sizes: Vec::new(),
+            math: Vec::new(),
             char_count: 0,
         };
     }
@@ -119,6 +178,11 @@ pub fn extract_page(
     let mut raw = String::with_capacity(n as usize);
     let mut runs: Vec<TextRun> = Vec::new();
     let mut boxes = vec![[0.0; 4]; n as usize];
+    let mut sizes = vec![0.0f32; n as usize];
+    let mut math = vec![false; n as usize];
+    // Font names repeat for every glyph of a run; classify each name once.
+    let mut math_by_font: std::collections::HashMap<String, bool> =
+        std::collections::HashMap::new();
 
     struct Run {
         text: String,
@@ -150,6 +214,11 @@ pub fn extract_page(
     for i in 0..n {
         let u = b.FPDFText_GetUnicode(tp, i);
         let ch = char::from_u32(u).unwrap_or(' ');
+        sizes[i as usize] = b.FPDFText_GetFontSize(tp, i) as f32;
+        let font = font_name_at(b, tp, i);
+        math[i as usize] = *math_by_font
+            .entry(font)
+            .or_insert_with_key(|name| is_math_font(name));
         if ch == '\n' || ch == '\r' {
             raw.push(ch);
             flush(&mut cur, &mut runs);
@@ -204,6 +273,8 @@ pub fn extract_page(
         raw,
         runs,
         boxes,
+        sizes,
+        math,
         char_count: n as u32,
     }
 }
@@ -240,6 +311,35 @@ pub fn merge_match_rects(boxes: &[[f32; 4]], start: u32, len: u32) -> Vec<[f32; 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recognizes_the_families_tex_sets_mathematics_in() {
+        // Names arrive subsetted, with a six-letter tag: "EWJNXA+CMMI10".
+        for name in [
+            "EWJNXA+CMMI10",
+            "AUHLHB+CMSY10",
+            "ZUKTGO+CMEX10",
+            "TONINC+MSAM10",
+            "XSBJNE+MSBM10",
+            "CMMI7",
+        ] {
+            assert!(is_math_font(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn does_not_mistake_text_families_for_mathematics() {
+        for name in [
+            "FVZQGE+NimbusRomNo9L-Regu",
+            "XKNVGO+CMR10",
+            "Times-Roman",
+            "Helvetica",
+            "XTETFA+NimbusMonL-Regu",
+            "",
+        ] {
+            assert!(!is_math_font(name), "{name}");
+        }
+    }
 
     #[test]
     fn cached_match_boxes_merge_visual_lines_without_pdfium_reload() {

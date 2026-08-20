@@ -5,6 +5,7 @@ import { engine } from '../../lib/transport/engine';
 import type { OutlineNode } from '../../types/engine';
 import { TabContext } from '../../app/TabContext';
 import { jumpToAnchor } from './jumpToAnchor';
+import ScriptText from '../../components/ScriptText';
 
 function OutlineEntry(props: {
   node: OutlineNode;
@@ -22,7 +23,7 @@ function OutlineEntry(props: {
           if (props.node.page !== null) props.onNavigate(props.node.page, props.node.y);
         }}
       >
-        {props.node.title.trim() || 'Untitled'}
+        <ScriptText value={props.node.title.trim() || 'Untitled'} />
       </button>
       <Show when={props.node.children.length > 0}>
         <For each={props.node.children}>

@@ -25,6 +25,7 @@ import {
 import { pageIndexAt } from '../../lib/coordinates/layout';
 import { TabContext } from '../../app/TabContext';
 import { jumpToAnchor } from '../outline/jumpToAnchor';
+import ScriptText from '../../components/ScriptText';
 
 const EMPTY: StructureAnchors = { section: null, subsection: null, environment: null };
 
@@ -101,7 +102,7 @@ export default function ContextHeader() {
         jumpToAnchor(vp, doc, target.page, target.y);
       }}
     >
-      {entry().label}
+      <ScriptText value={entry().label} />
     </button>
   );
 

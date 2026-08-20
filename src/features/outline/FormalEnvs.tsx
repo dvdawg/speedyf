@@ -12,6 +12,7 @@ import { engine } from '../../lib/transport/engine';
 import type { FormalEntry } from '../../types/engine';
 import { TabContext } from '../../app/TabContext';
 import { jumpToAnchor } from './jumpToAnchor';
+import ScriptText from '../../components/ScriptText';
 
 export default function FormalEnvs() {
   const tab = useContext(TabContext)!;
@@ -37,7 +38,7 @@ export default function FormalEnvs() {
                   style={{ 'padding-left': `${10 + entry.depth * 14}px` }}
                   onClick={() => jumpToAnchor(tab.viewport, doc, entry.page, entry.y)}
                 >
-                  {entry.label}
+                  <ScriptText value={entry.label} />
                 </button>
               </div>
             )}

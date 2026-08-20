@@ -9,6 +9,7 @@ import { pdfRectToCssRect } from '../../lib/coordinates/coords';
 import IconButton from '../../components/IconButton';
 import { IconChevronDown, IconChevronUp, IconClose } from '../../components/icons';
 import { TabContext } from '../../app/TabContext';
+import ScriptText from '../../components/ScriptText';
 
 export default function SearchPanel() {
   const tab = useContext(TabContext)!;
@@ -178,11 +179,15 @@ export default function SearchPanel() {
                       <Show when={where().section || where().environment}>
                         <span class="search-result-where">
                           <Show when={where().section}>
-                            <span class="search-result-section">{where().section}</span>
+                            <span class="search-result-section">
+                              <ScriptText value={where().section!} />
+                            </span>
                           </Show>
                           <Show when={where().section && where().environment}> › </Show>
                           <Show when={where().environment}>
-                            <span class="search-result-env">{where().environment}</span>
+                            <span class="search-result-env">
+                              <ScriptText value={where().environment!} />
+                            </span>
                           </Show>
                         </span>
                       </Show>

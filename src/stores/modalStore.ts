@@ -5,10 +5,19 @@ import { createStore } from 'solid-js/store';
 
 export type UnsavedChoice = 'save' | 'discard' | 'cancel';
 
+export interface ExternalLinkChoice {
+  open: boolean;
+  /** stop asking about this host in future */
+  remember: boolean;
+}
+
 interface ModalState {
-  kind: null | 'password' | 'unsaved' | 'error' | 'confirm';
+  kind: null | 'password' | 'unsaved' | 'error' | 'confirm' | 'external-link';
   message: string;
   confirmLabel?: string;
+  /** explicitly optional-or-undefined: clearing the modal writes undefined
+   * back, which exactOptionalPropertyTypes otherwise rejects */
+  link?: { href: string; host: string | null } | undefined;
 }
 
 const [modal, setModal] = createStore<ModalState>({ kind: null, message: '' });
@@ -17,6 +26,7 @@ export { modal };
 let passwordResolve: ((v: string | null) => void) | null = null;
 let unsavedResolve: ((v: UnsavedChoice) => void) | null = null;
 let confirmResolve: ((v: boolean) => void) | null = null;
+let externalLinkResolve: ((v: ExternalLinkChoice) => void) | null = null;
 
 export function askPassword(message: string): Promise<string | null> {
   setModal({ kind: 'password', message });
@@ -55,6 +65,24 @@ export function resolveConfirm(value: boolean) {
   setModal({ kind: null, message: '' });
   confirmResolve?.(value);
   confirmResolve = null;
+}
+
+/** Ask before following a document's link out of the app. The document chose
+ * this destination, so the user gets to see it named before anything opens. */
+export function askExternalLink(link: {
+  href: string;
+  host: string | null;
+}): Promise<ExternalLinkChoice> {
+  setModal({ kind: 'external-link', message: '', link });
+  return new Promise((resolve) => {
+    externalLinkResolve = resolve;
+  });
+}
+
+export function resolveExternalLink(choice: ExternalLinkChoice) {
+  setModal({ kind: null, message: '', link: undefined });
+  externalLinkResolve?.(choice);
+  externalLinkResolve = null;
 }
 
 export function showError(message: string) {

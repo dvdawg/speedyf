@@ -4,6 +4,7 @@
  * rotation, so this layer only flips y. */
 import { For } from 'solid-js';
 import type { TextRunDto } from '../../types/engine';
+import { registerCopyRun } from '../../lib/text/copySelection';
 
 const measureCache = new Map<string, number>();
 let measureCtx: CanvasRenderingContext2D | null = null;
@@ -26,6 +27,8 @@ interface Props {
   runs: TextRunDto[];
   pageHeightPt: number;
   zoom: number;
+  /** position in the document, so a selection spanning pages can be ordered */
+  page: number;
 }
 
 export default function TextLayer(props: Props) {
@@ -40,6 +43,7 @@ export default function TextLayer(props: Props) {
           };
           return (
             <span
+              ref={(el) => registerCopyRun(el, { ...run, page: props.page })}
               style={{
                 left: `${run.x * props.zoom}px`,
                 top: `${(props.pageHeightPt - run.y - run.h) * props.zoom}px`,

@@ -1,12 +1,14 @@
 /** Left panel shell: a small mode toggle (page thumbnails, table of contents,
- * or formal environments) plus whichever content is currently selected. */
+ * formal environments, or figures) plus whichever content is currently
+ * selected. */
 import { Show } from 'solid-js';
 import IconButton from './IconButton';
-import { IconList, IconPages, IconQed } from './icons';
+import { IconFigure, IconList, IconPages, IconQed } from './icons';
 import { ui, setUi } from '../stores/uiStore';
 import PageThumbnails from '../features/outline/PageThumbnails';
 import Outline from '../features/outline/Outline';
 import FormalEnvs from '../features/outline/FormalEnvs';
+import Figures from '../features/outline/Figures';
 
 export default function Sidebar() {
   return (
@@ -33,6 +35,13 @@ export default function Sidebar() {
         >
           <IconQed />
         </IconButton>
+        <IconButton
+          label="Figures and tables"
+          active={ui.sidebarMode === 'figures'}
+          onClick={() => setUi('sidebarMode', 'figures')}
+        >
+          <IconFigure />
+        </IconButton>
       </div>
       <Show when={ui.sidebarMode === 'pages'}>
         <PageThumbnails />
@@ -42,6 +51,9 @@ export default function Sidebar() {
       </Show>
       <Show when={ui.sidebarMode === 'formal'}>
         <FormalEnvs />
+      </Show>
+      <Show when={ui.sidebarMode === 'figures'}>
+        <Figures />
       </Show>
     </aside>
   );
