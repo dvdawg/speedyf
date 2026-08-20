@@ -103,6 +103,14 @@ pub enum Work {
         len: u32,
         respond: Respond<Vec<[f32; 4]>>,
     },
+    /// Build a print-ready PDF at a throwaway path. Same materialization as
+    /// Save, but the destination is never the document's own file.
+    BuildPrintPdf {
+        doc: DocId,
+        plan: EditPlan,
+        dest: PathBuf,
+        respond: Respond<()>,
+    },
     Save {
         doc: DocId,
         plan: EditPlan,

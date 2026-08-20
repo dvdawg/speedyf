@@ -6,6 +6,7 @@ import { closeTab, cycleTab, jumpToTab, openFromDialog } from '../features/docum
 import { activeTab } from '../stores/tabsStore';
 import { setActiveTool, toolState } from '../features/annotations/toolStore';
 import { modal } from '../stores/modalStore';
+import { beginPrint } from '../features/print/printStore';
 
 const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.userAgent);
 
@@ -40,6 +41,14 @@ export function installShortcuts(): () => void {
       if (k === 'o') {
         e.preventDefault();
         void openFromDialog();
+        return;
+      }
+      if (k === 'p') {
+        // Before the typing guard, and always prevented: otherwise the
+        // webview opens its own print dialog for the viewer's DOM.
+        e.preventDefault();
+        const tab = activeTab();
+        if (tab) void beginPrint(tab);
         return;
       }
       if (k === 's') {

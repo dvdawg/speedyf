@@ -13,6 +13,7 @@ import {
   IconInk,
   IconNote,
   IconOpen,
+  IconPrint,
   IconRect,
   IconRedo,
   IconRotate,
@@ -37,6 +38,7 @@ import {
   updateActiveStyle,
 } from '../features/annotations/toolStore';
 import { addImageFromDialog } from '../features/editor/editorActions';
+import { beginPrint } from '../features/print/printStore';
 
 export default function Toolbar() {
   const maxSavePages = 65_535;
@@ -99,6 +101,16 @@ export default function Toolbar() {
           }}
         >
           <IconSaveAs />
+        </IconButton>
+        <IconButton
+          label="Print (⌘P)"
+          disabled={!loaded()}
+          onClick={() => {
+            const tab = activeTab();
+            if (tab) void beginPrint(tab);
+          }}
+        >
+          <IconPrint />
         </IconButton>
       </div>
 

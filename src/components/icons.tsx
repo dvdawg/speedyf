@@ -145,6 +145,15 @@ export const IconQed = () =>
       <rect x="10.5" y="10.5" width="3" height="3" rx="0.3" fill="currentColor" />
     </>
   );
+/** A printer: paper going in above, sheet coming out below. */
+export const IconPrint = () =>
+  base(
+    <>
+      <path d="M4.5 6V2.5h7V6" />
+      <rect x="2" y="6" width="12" height="5" rx="1" />
+      <path d="M4.5 9.5h7v4h-7z" />
+    </>
+  );
 /** A framed picture: the artwork a caption belongs to. */
 export const IconFigure = () =>
   base(

@@ -4,6 +4,7 @@ pub mod engine;
 pub mod errors;
 mod external;
 mod library;
+mod printing;
 mod search;
 
 use commands::{EngineState, PendingOpens};
@@ -214,6 +215,10 @@ pub fn run() {
             app.manage(EngineState(engine));
             app.manage(PendingOpens::default());
 
+            // Print jobs a crash left behind. Best effort — never a reason
+            // the app fails to open.
+            printing::sweep_stale_prints();
+
             // How Windows and Linux deliver "open with SpeedyF", and how a
             // terminal launch delivers it anywhere. macOS additionally raises
             // RunEvent::Opened for a double-click; its GUI argv carries a
@@ -264,6 +269,12 @@ pub fn run() {
             commands::search_query,
             commands::get_match_rects,
             commands::save_document,
+            commands::build_print_pdf,
+            commands::discard_print_pdf,
+            commands::export_print_pdf,
+            commands::list_printers,
+            commands::printer_options,
+            commands::submit_print,
             commands::get_form_fields,
             commands::get_outline,
             commands::get_formal_envs,

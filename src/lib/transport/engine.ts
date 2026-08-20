@@ -9,6 +9,9 @@ import type {
   DocMeta,
   CitationId,
   Figure,
+  Printer,
+  PrintJob,
+  PrintOption,
   FormalEntry,
   FormFieldInfo,
   LibraryStatus,
@@ -96,6 +99,17 @@ export interface EngineApi {
   /** Opens a document link in the user's browser. Rejects anything outside
    * the engine's scheme allowlist, whatever the frontend passed. */
   openExternalUrl(url: string): Promise<void>;
+  /** Writes the document, including unsaved edits, to a temp file for
+   * printing and returns its path. The user's own file is untouched. */
+  buildPrintPdf(docId: number, plan: EditPlan): Promise<string>;
+  /** Deletes a prepared print job. Refuses any path the engine did not make. */
+  discardPrintPdf(path: string): Promise<void>;
+  /** Saves a prepared print job where the user chose — "print to PDF". */
+  exportPrintPdf(path: string, destPath: string): Promise<void>;
+  listPrinters(): Promise<Printer[]>;
+  printerOptions(printer: string): Promise<PrintOption[]>;
+  /** Hands a prepared job to the printer. Re-validates every field. */
+  submitPrint(job: PrintJob, path: string): Promise<void>;
   onSearchProgress(cb: (p: SearchProgress) => void): Promise<() => void>;
 }
 
@@ -126,6 +140,12 @@ export const engine: EngineApi = {
   bumpGeneration: (docId) => invoke('bump_generation', { docId }),
   cancelRenders: (docId) => invoke('cancel_renders', { docId }),
   openExternalUrl: (url) => invoke('open_external_url', { url }),
+  buildPrintPdf: (docId, plan) => invoke('build_print_pdf', { docId, plan }),
+  discardPrintPdf: (path) => invoke('discard_print_pdf', { path }),
+  exportPrintPdf: (path, destPath) => invoke('export_print_pdf', { path, destPath }),
+  listPrinters: () => invoke('list_printers'),
+  printerOptions: (printer) => invoke('printer_options', { printer }),
+  submitPrint: (job, path) => invoke('submit_print', { job, path }),
   onSearchProgress: async (cb) => listen<SearchProgress>('search:progress', (e) => cb(e.payload)),
 };
 

@@ -277,6 +277,7 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         Work::ResolveCitation { respond, .. } => respond(Err(err())),
         Work::MatchRects { respond, .. } => respond(Err(err())),
         Work::Save { respond, .. } => respond(Err(err())),
+        Work::BuildPrintPdf { respond, .. } => respond(Err(err())),
         Work::FormFields { respond, .. } => respond(Err(err())),
         Work::Outline { respond, .. } => respond(Err(err())),
         Work::FormalEnvs { respond, .. } => respond(Err(err())),
@@ -365,6 +366,12 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
             dest,
             respond,
         } => respond(do_save(state, doc, plan, dest)),
+        Work::BuildPrintPdf {
+            doc,
+            plan,
+            dest,
+            respond,
+        } => respond(do_build_print_pdf(state, doc, plan, &dest)),
         Work::FormFields { doc, respond } => respond(do_form_fields(state, doc)),
         Work::Outline { doc, respond } => respond(do_outline(state, doc)),
         Work::FormalEnvs { doc, respond } => respond(do_formal_envs(state, doc)),
@@ -945,6 +952,38 @@ fn do_match_rects(
 ) -> AppResult<Vec<[f32; 4]>> {
     let layout = ensure_text_layout(state, shared, doc, src)?;
     Ok(text::merge_match_rects(&layout.boxes, start, len))
+}
+
+/// Materialize the document as it currently stands into a throwaway file, for
+/// printing.
+///
+/// The same page assembly, rotation, annotation and form work `do_save`
+/// performs — this is what puts unsaved edits on paper — but without the
+/// atomic-replace machinery around it. That exists to protect a destination
+/// worth protecting; here the destination is a temp file nobody has yet seen,
+/// so the rename dance and the reopen-verify pass would be pure cost. And
+/// because the destination is never the document's own path, the close-and-
+/// reopen that `do_save` needs on Windows cannot apply: the open document is
+/// left entirely alone.
+fn do_build_print_pdf(
+    state: &mut WorkerState,
+    doc: DocId,
+    plan: EditPlan,
+    dest: &std::path::Path,
+) -> AppResult<()> {
+    if plan.pages.is_empty() {
+        return Err(AppError::Unsupported("nothing to print".into()));
+    }
+    if plan.pages.len() > u16::MAX as usize {
+        return Err(AppError::Unsupported(
+            "printing is limited to 65,535 pages".into(),
+        ));
+    }
+    let (src_path, password) = {
+        let d = state.doc(doc)?;
+        (d.path.clone(), d.password.clone())
+    };
+    save::build_output(state.pdfium, &src_path, password.as_deref(), &plan, dest)
 }
 
 fn do_save(

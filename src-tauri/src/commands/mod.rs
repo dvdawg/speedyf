@@ -274,6 +274,65 @@ pub async fn get_match_rects(
         .await
 }
 
+/// Materialize the document — including every unsaved edit — into a temp file
+/// for printing, and return where it went.
+///
+/// The caller opens that path as an ordinary document to preview it, then
+/// prints it, then discards it. Nothing here touches the user's own file.
+#[tauri::command]
+pub async fn build_print_pdf(
+    state: tauri::State<'_, EngineState>,
+    doc_id: DocId,
+    plan: EditPlan,
+) -> AppResult<String> {
+    let dest = crate::printing::temp_print_path();
+    let path = dest.to_string_lossy().into_owned();
+    state
+        .0
+        .call_async(Priority::VisiblePage, doc_id, move |respond| {
+            Work::BuildPrintPdf {
+                doc: doc_id,
+                plan,
+                dest,
+                respond,
+            }
+        })
+        .await?;
+    Ok(path)
+}
+
+/// Delete a finished print job. Refuses any path we did not create.
+#[tauri::command]
+pub async fn discard_print_pdf(path: String) -> AppResult<()> {
+    crate::printing::discard(&path)
+}
+
+/// Save a prepared print job where the user asked — "print to PDF".
+#[tauri::command]
+pub async fn export_print_pdf(path: String, dest_path: String) -> AppResult<()> {
+    crate::printing::export_to(&path, &dest_path)
+}
+
+/// Printers CUPS knows about. An empty list is a valid answer.
+#[tauri::command]
+pub async fn list_printers() -> AppResult<Vec<crate::printing::PrinterDto>> {
+    crate::printing::list_printers()
+}
+
+/// What one printer can vary — duplex, paper, quality — as it reports it, so
+/// the dialog offers real capabilities instead of a guessed subset.
+#[tauri::command]
+pub async fn printer_options(printer: String) -> AppResult<Vec<crate::printing::PrintOptionDto>> {
+    crate::printing::printer_options(&printer)
+}
+
+/// Hand a prepared print job to CUPS. Every field is re-validated here against
+/// a grammar — the job description comes from the webview.
+#[tauri::command]
+pub async fn submit_print(job: crate::printing::PrintJobDto, path: String) -> AppResult<()> {
+    crate::printing::submit(&job, std::path::Path::new(&path))
+}
+
 #[tauri::command]
 pub async fn save_document(
     state: tauri::State<'_, EngineState>,

@@ -20,6 +20,30 @@ export interface TextRunDto {
   h: number;
 }
 
+export interface Printer {
+  name: string;
+  isDefault: boolean;
+}
+
+/** One thing a printer can vary, as the printer itself reports it. */
+export interface PrintOption {
+  /** what CUPS calls it: "Duplex" */
+  key: string;
+  /** what a person calls it: "2-Sided Printing" */
+  label: string;
+  choices: string[];
+  default: string;
+}
+
+export interface PrintJob {
+  printer: string;
+  copies: number;
+  /** null prints everything */
+  range: string | null;
+  /** chosen values as [key, value] */
+  options: [string, string][];
+}
+
 /** A figure, table or algorithm, with a crop of the artwork above its caption. */
 export interface Figure {
   label: string;

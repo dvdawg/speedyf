@@ -21,6 +21,7 @@ import { clearImagePreviews } from '../editor/editorActions';
 import { guardUnsaved, hydrateSizes } from './controller';
 import { recentStore } from '../../stores/recentStore';
 import { loadSession, saveSession } from '../../stores/sessionStore';
+import { abandonPrintFor } from '../print/printStore';
 
 const MAX_TABS = 30;
 
@@ -156,7 +157,12 @@ export async function closeTab(id: string): Promise<void> {
     const ok = await guardUnsaved(tab);
     if (!ok) return;
   }
-  if (tab.documentStore.state.loaded) void engine.close(tab.documentStore.state.docId);
+  if (tab.documentStore.state.loaded) {
+    // A print dialog open on this document is now previewing something that
+    // is about to be closed underneath it.
+    abandonPrintFor(tab.documentStore.state.docId);
+    void engine.close(tab.documentStore.state.docId);
+  }
   tab.citationStore.dispose();
   removeTab(id);
 
