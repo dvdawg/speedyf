@@ -98,9 +98,7 @@ export function contextForPosition(
 }
 
 export function hasAnchors(anchors: StructureAnchors): boolean {
-  return (
-    anchors.section !== null || anchors.subsection !== null || anchors.environment !== null
-  );
+  return anchors.section !== null || anchors.subsection !== null || anchors.environment !== null;
 }
 
 /** The bookmark tree flattened into the same shape, preserving its nesting as

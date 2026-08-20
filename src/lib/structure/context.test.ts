@@ -36,13 +36,21 @@ describe('contextForMatch', () => {
   });
 
   it('reports the section alone before the first environment in it', () => {
-    expect(contextForMatch(doc, 0, 20)).toEqual({ section: '1 Setup', subsection: null, environment: null });
+    expect(contextForMatch(doc, 0, 20)).toEqual({
+      section: '1 Setup',
+      subsection: null,
+      environment: null,
+    });
   });
 
   it('does not carry an environment across a section boundary', () => {
     // page 1 char 10 is past "2 Results" but before "Theorem 2.1"; the answer
     // is the new section, not the last theorem of the previous one
-    expect(contextForMatch(doc, 1, 10)).toEqual({ section: '2 Results', subsection: null, environment: null });
+    expect(contextForMatch(doc, 1, 10)).toEqual({
+      section: '2 Results',
+      subsection: null,
+      environment: null,
+    });
   });
 
   it('crosses pages correctly', () => {
@@ -54,11 +62,19 @@ describe('contextForMatch', () => {
   });
 
   it('reports nothing for a hit before any structure', () => {
-    expect(contextForMatch(doc, 0, 1)).toEqual({ section: null, subsection: null, environment: null });
+    expect(contextForMatch(doc, 0, 1)).toEqual({
+      section: null,
+      subsection: null,
+      environment: null,
+    });
   });
 
   it('reports nothing when the document has no index', () => {
-    expect(contextForMatch([], 3, 50)).toEqual({ section: null, subsection: null, environment: null });
+    expect(contextForMatch([], 3, 50)).toEqual({
+      section: null,
+      subsection: null,
+      environment: null,
+    });
   });
 });
 
