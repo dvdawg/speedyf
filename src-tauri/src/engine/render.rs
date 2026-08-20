@@ -44,7 +44,14 @@ pub fn open_document(
 ) -> AppResult<FPDF_DOCUMENT> {
     let doc = b.FPDF_LoadDocument(path, password);
     if doc.is_null() {
-        return Err(match b.FPDF_GetLastError() as u32 {
+        // FPDF_GetLastError returns c_ulong: 32-bit on Windows, 64-bit on
+        // Unix. Clippy only ever sees the target it runs on, so on Windows
+        // this reads as a no-op cast — but dropping it fails to compile on
+        // Unix, where it is a real narrowing. The mirror of the cast in
+        // engine::formal, which is redundant on Unix and required on Windows.
+        #[allow(clippy::unnecessary_cast)]
+        let code = b.FPDF_GetLastError() as u32;
+        return Err(match code {
             2 => AppError::Io(format!("cannot open file: {path}")),
             3 => AppError::Malformed("file is not a valid PDF".into()),
             4 => AppError::PasswordRequired,
