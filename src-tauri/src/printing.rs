@@ -299,6 +299,13 @@ pub fn parse_lpoptions(text: &str) -> Vec<PrintOptionDto> {
         .collect()
 }
 
+/// Run one of the CUPS command-line tools and hand back its stdout.
+///
+/// This is the *only* platform-gated thing in the module, and deliberately so.
+/// Gating the callers instead left every parser and validator below
+/// unreachable on Windows, which is a dead-code error under `-D warnings` —
+/// the same shape of bug as the ungated `RunEvent::Opened`. Keeping one code
+/// path for every platform means a lint can no longer disagree across them.
 #[cfg(unix)]
 fn run(program: &str, args: &[String]) -> AppResult<String> {
     let output = std::process::Command::new(program)
@@ -320,16 +327,27 @@ fn run(program: &str, args: &[String]) -> AppResult<String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-#[cfg(unix)]
+/// Windows ships no CUPS tools. Refusing here rather than at each call site
+/// is what keeps the rest of this module platform-independent.
+#[cfg(not(unix))]
+fn run(_program: &str, _args: &[String]) -> AppResult<String> {
+    Err(AppError::Unsupported(
+        "printing is not supported on this platform yet".into(),
+    ))
+}
+
+/// Printers CUPS knows about.
+///
+/// A machine with no printers is not an error — `lpstat` exits non-zero for
+/// it, and so does a platform with no `lpstat` at all. An empty list is
+/// exactly what the dialog should show in both cases, and "Save as PDF" keeps
+/// working regardless, since that path never touches a printer.
 pub fn list_printers() -> AppResult<Vec<PrinterDto>> {
-    // No printers at all is not an error — lpstat exits non-zero for it, and
-    // an empty list is exactly what the dialog should show.
     let printers = run("lpstat", &["-p".to_string()]).unwrap_or_default();
     let default = run("lpstat", &["-d".to_string()]).unwrap_or_default();
     Ok(parse_printers(&printers, &default))
 }
 
-#[cfg(unix)]
 pub fn printer_options(printer: &str) -> AppResult<Vec<PrintOptionDto>> {
     if !is_safe_token(printer) {
         return Err(AppError::Unsupported(
@@ -348,30 +366,12 @@ pub fn printer_options(printer: &str) -> AppResult<Vec<PrintOptionDto>> {
 ///
 /// Waits for `lp` and reports what it said. Unlike opening a browser, a print
 /// that did not happen is worth telling the user about — and `lp` fails
-/// cheaply and immediately when a queue is wrong.
-#[cfg(unix)]
+/// cheaply and immediately when a queue is wrong. The job is validated before
+/// the platform is consulted, so a malformed one is refused the same way
+/// everywhere.
 pub fn submit(job: &PrintJobDto, path: &Path) -> AppResult<()> {
     let args = lp_arguments(job, path)?;
     run("lp", &args).map(|_| ())
-}
-
-#[cfg(not(unix))]
-pub fn list_printers() -> AppResult<Vec<PrinterDto>> {
-    Ok(Vec::new())
-}
-
-#[cfg(not(unix))]
-pub fn printer_options(_printer: &str) -> AppResult<Vec<PrintOptionDto>> {
-    Ok(Vec::new())
-}
-
-/// Windows has no `lp`. Refusing at runtime keeps the crate building
-/// everywhere, which is the lesson of the `RunEvent::Opened` gating bug.
-#[cfg(not(unix))]
-pub fn submit(_job: &PrintJobDto, _path: &Path) -> AppResult<()> {
-    Err(AppError::Unsupported(
-        "printing is not supported on this platform yet".into(),
-    ))
 }
 
 #[cfg(test)]
