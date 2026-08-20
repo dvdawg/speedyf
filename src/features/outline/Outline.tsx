@@ -43,8 +43,7 @@ export default function Outline() {
     (docId) => engine.getOutline(docId).catch(() => [] as OutlineNode[])
   );
 
-  const navigate = (page: number, y: number | null) =>
-    jumpToAnchor(tab.viewport, doc, page, y);
+  const navigate = (page: number, y: number | null) => jumpToAnchor(tab.viewport, doc, page, y);
 
   return (
     <div class="sidebar-scroll outline-panel" aria-label="Table of contents">

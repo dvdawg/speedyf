@@ -1,14 +1,6 @@
 /** Search panel: debounced incremental querying, match navigation, results
  * grouped by page, indexing progress, image-only messaging. */
-import {
-  createMemo,
-  createResource,
-  createSignal,
-  For,
-  onMount,
-  Show,
-  useContext,
-} from 'solid-js';
+import { createMemo, createResource, createSignal, For, onMount, Show, useContext } from 'solid-js';
 import type { FlatMatch } from './searchStore';
 import { engine } from '../../lib/transport/engine';
 import type { FormalEntry } from '../../types/engine';
@@ -182,9 +174,7 @@ export default function SearchPanel() {
                       classList={{ 'is-current': index === s.current }}
                       onClick={() => void navigateTo(match, index)}
                     >
-                      <span class="search-result-text">
-                        {match.snippet.trim() || '(match)'}
-                      </span>
+                      <span class="search-result-text">{match.snippet.trim() || '(match)'}</span>
                       <Show when={where().section || where().environment}>
                         <span class="search-result-where">
                           <Show when={where().section}>

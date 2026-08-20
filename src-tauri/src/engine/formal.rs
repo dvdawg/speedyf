@@ -17,7 +17,7 @@
 /// the number appearing in *both* is what lets us reject a bad pairing rather
 /// than emit a mislabelled entry.
 use crate::engine::types::FormalEntryDto;
-use pdfium_render::prelude::{FPDF_DOCUMENT, PdfiumLibraryBindings};
+use pdfium_render::prelude::{PdfiumLibraryBindings, FPDF_DOCUMENT};
 
 /// Destinations hyperref emits that are never formal environments. Most junk
 /// would fail the text check anyway; skipping these up front avoids doing the
@@ -132,13 +132,12 @@ pub fn parse_heading(text: &str) -> Option<Heading> {
     let mut n = 0usize;
     while n < bytes.len() {
         let c = bytes[n];
-        if c.is_ascii_digit() {
-            n += 1;
-        } else if c == b'.' && n + 1 < bytes.len() && bytes[n + 1].is_ascii_digit() {
-            n += 1;
-        } else {
+        let part_of_number = c.is_ascii_digit()
+            || (c == b'.' && n + 1 < bytes.len() && bytes[n + 1].is_ascii_digit());
+        if !part_of_number {
             break;
         }
+        n += 1;
     }
     if n == 0 {
         return None;
@@ -213,6 +212,10 @@ pub fn enumerate_anchors(
     raw: FPDF_DOCUMENT,
     page_count: u32,
 ) -> Vec<Anchor> {
+    // FPDF_DWORD is c_ulong: 64-bit on Unix, 32-bit on Windows. Clippy only
+    // ever sees the target it runs on, so on Unix it reads as a no-op cast —
+    // but dropping it fails to compile on Windows, where it is a real widening.
+    #[allow(clippy::unnecessary_cast)]
     let total = (b.FPDF_CountNamedDests(raw) as u64).min(MAX_NAMED_DESTS);
     let mut anchors = Vec::new();
     for index in 0..total {
@@ -245,7 +248,13 @@ pub fn enumerate_anchors(
         let (mut has_x, mut has_y, mut has_zoom) = (0, 0, 0);
         let (mut x, mut y, mut zoom) = (0.0f32, 0.0f32, 0.0f32);
         b.FPDFDest_GetLocationInPage(
-            dest, &mut has_x, &mut has_y, &mut has_zoom, &mut x, &mut y, &mut zoom,
+            dest,
+            &mut has_x,
+            &mut has_y,
+            &mut has_zoom,
+            &mut x,
+            &mut y,
+            &mut zoom,
         );
         if has_y == 0 {
             continue;
@@ -311,9 +320,7 @@ fn anchored_line(boxes: &[[f32; 4]], anchor_x: Option<f32>, anchor_y: f32) -> Op
     // character indices and won every "first match on this line" search.
     // It cost the panel a theorem per collision and, when the stamp happened
     // to start with the right digit, produced a section named after the paper.
-    let in_column = |b: &[f32; 4]| {
-        anchor_x.is_none_or(|x| b[0] >= x - ANCHOR_X_TOLERANCE_PT)
-    };
+    let in_column = |b: &[f32; 4]| anchor_x.is_none_or(|x| b[0] >= x - ANCHOR_X_TOLERANCE_PT);
     let top_of = |b: &[f32; 4]| (b[2] > 0.0 && b[3] > 0.0 && in_column(b)).then(|| b[1] + b[3]);
     let nearest = boxes
         .iter()
@@ -385,8 +392,8 @@ pub fn merge_structure(
                 shown = shown.min(1);
             }
         }
-        for depth in 0..2usize {
-            if let Some(entry) = pending[depth].take() {
+        for (depth, slot) in pending.iter_mut().enumerate() {
+            if let Some(entry) = slot.take() {
                 out.push(entry);
                 shown = depth as u8 + 1;
             }
@@ -450,9 +457,14 @@ mod tests {
     #[test]
     fn keeps_the_printed_name_for_shared_counter_environments() {
         // the whole point: these anchor as theorem.1.2 / theorem.1.3
-        assert_eq!(parse_heading("Lemma 1.2.An unlabeled lemma.").unwrap().kind, "Lemma");
         assert_eq!(
-            parse_heading("Corollary 1.3.An unlabeled corollary.").unwrap().kind,
+            parse_heading("Lemma 1.2.An unlabeled lemma.").unwrap().kind,
+            "Lemma"
+        );
+        assert_eq!(
+            parse_heading("Corollary 1.3.An unlabeled corollary.")
+                .unwrap()
+                .kind,
             "Corollary"
         );
     }
@@ -537,13 +549,30 @@ mod tests {
     }
 
     fn head(depth: u8, label: &str, page: u32, y: f32) -> FormalEntryDto {
-        FormalEntryDto { heading: true, depth, label: label.into(), page, y, char_index: 0 }
+        FormalEntryDto {
+            heading: true,
+            depth,
+            label: label.into(),
+            page,
+            y,
+            char_index: 0,
+        }
     }
     fn env(label: &str, page: u32, y: f32) -> FormalEntryDto {
-        FormalEntryDto { heading: false, depth: 0, label: label.into(), page, y, char_index: 0 }
+        FormalEntryDto {
+            heading: false,
+            depth: 0,
+            label: label.into(),
+            page,
+            y,
+            char_index: 0,
+        }
     }
     fn shape(entries: &[FormalEntryDto]) -> Vec<String> {
-        entries.iter().map(|e| format!("{}{}", "  ".repeat(e.depth as usize), e.label)).collect()
+        entries
+            .iter()
+            .map(|e| format!("{}{}", "  ".repeat(e.depth as usize), e.label))
+            .collect()
     }
 
     #[test]
@@ -584,7 +613,16 @@ mod tests {
             vec![env("Lemma 1.1", 0, 500.0), env("Lemma 2.1", 1, 500.0)],
         );
         // the second lemma sits directly under section 2, not under 1.1
-        assert_eq!(shape(&merged), vec!["1 One", "  1.1 Sub", "    Lemma 1.1", "2 Two", "  Lemma 2.1"]);
+        assert_eq!(
+            shape(&merged),
+            vec![
+                "1 One",
+                "  1.1 Sub",
+                "    Lemma 1.1",
+                "2 Two",
+                "  Lemma 2.1"
+            ]
+        );
     }
 
     #[test]

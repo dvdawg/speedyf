@@ -1078,7 +1078,13 @@ fn resolve_bookmark_target(
     let (mut has_x, mut has_y, mut has_zoom) = (0, 0, 0);
     let (mut x, mut y, mut zoom) = (0.0f32, 0.0f32, 0.0f32);
     bindings.FPDFDest_GetLocationInPage(
-        dest, &mut has_x, &mut has_y, &mut has_zoom, &mut x, &mut y, &mut zoom,
+        dest,
+        &mut has_x,
+        &mut has_y,
+        &mut has_zoom,
+        &mut x,
+        &mut y,
+        &mut zoom,
     );
     // A /Fit destination has no coordinates; the page alone is the answer.
     (Some(index as u32), (has_y != 0).then_some(y))
@@ -1134,10 +1140,7 @@ fn do_outline(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<OutlineNodeD
 /// Formal environments (theorems, figures, …) recovered from hyperref's named
 /// destinations, cross-checked against the text printed at each anchor. See
 /// engine::formal for why both halves are needed.
-fn do_formal_envs(
-    state: &mut WorkerState,
-    doc: DocId,
-) -> AppResult<Vec<FormalEntryDto>> {
+fn do_formal_envs(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<FormalEntryDto>> {
     if let Some(cached) = state.doc(doc)?.formal_envs.clone() {
         return Ok(cached);
     }
@@ -1221,8 +1224,8 @@ fn do_formal_envs(
                 label: format!("{} {}", heading.kind, heading.number),
                 page,
                 y,
-                char_index: crate::engine::formal::anchor_start(&extracted.boxes, x, y)
-                    .unwrap_or(0) as u32,
+                char_index: crate::engine::formal::anchor_start(&extracted.boxes, x, y).unwrap_or(0)
+                    as u32,
             });
         }
     }
@@ -1350,7 +1353,6 @@ fn form_field_kind(field_type: i32) -> &'static str {
 }
 
 const MAX_FORM_STRING_BYTES: usize = 16 * 1024 * 1024;
-
 
 fn read_pdfium_utf16(
     mut read: impl FnMut(*mut FPDF_WCHAR, std::os::raw::c_ulong) -> std::os::raw::c_ulong,

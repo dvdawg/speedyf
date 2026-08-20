@@ -47,19 +47,21 @@ function load(): RecentEntry[] {
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<RecentFile>;
       if (Array.isArray(parsed.entries)) {
-        return parsed.entries.filter(
-          (e): e is RecentEntry =>
-            typeof e === 'object' &&
-            e !== null &&
-            typeof e.path === 'string' &&
-            typeof e.name === 'string' &&
-            typeof e.lastOpened === 'number'
-        ).map((e) => {
-          // drop a malformed position rather than the whole entry
-          if (validPosition(e.position)) return e;
-          const { position: _discarded, ...rest } = e;
-          return rest;
-        });
+        return parsed.entries
+          .filter(
+            (e): e is RecentEntry =>
+              typeof e === 'object' &&
+              e !== null &&
+              typeof e.path === 'string' &&
+              typeof e.name === 'string' &&
+              typeof e.lastOpened === 'number'
+          )
+          .map((e) => {
+            // drop a malformed position rather than the whole entry
+            if (validPosition(e.position)) return e;
+            const { position: _discarded, ...rest } = e;
+            return rest;
+          });
       }
     }
   } catch {
