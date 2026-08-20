@@ -16,9 +16,9 @@ import {
   useContext,
 } from 'solid-js';
 import type { Layout } from '../../lib/coordinates/layout';
-import type { PageGeom } from '../../lib/coordinates/coords';
+import type { PageGeom, TileRect } from '../../lib/coordinates/coords';
 import { tileGrid } from '../../lib/coordinates/coords';
-import { renderUrl } from '../../lib/rendering/renderSource';
+import { RENDER_RETRIES, renderUrl, retryUrl } from '../../lib/rendering/renderSource';
 import { engine } from '../../lib/transport/engine';
 import TextLayer from './TextLayer';
 import AnnotationLayer from '../annotations/AnnotationLayer';
@@ -112,24 +112,67 @@ export default function PageView(props: Props) {
     );
   });
 
+  // Per-tile state, keyed by grid position. Rows drop their own keys on
+  // dispose, so both sets only ever describe currently mounted tiles.
+  const tileKey = (t: TileRect) => `${t.x},${t.y}`;
+  const [loadedTiles, setLoadedTiles] = createSignal<ReadonlySet<string>>(new Set());
+  const [failedTiles, setFailedTiles] = createSignal<ReadonlySet<string>>(new Set());
+  const withTile = (set: ReadonlySet<string>, key: string, present: boolean) => {
+    if (set.has(key) === present) return set;
+    const next = new Set(set);
+    if (present) next.add(key);
+    else next.delete(key);
+    return next;
+  };
+
+  /** Every tile the viewport currently wants has settled — decoded, or given
+   * up on. A tiled page has no whole-page raster to swap in, so without this
+   * its loading placeholder would shimmer under the tiles forever. */
+  const tilesSettled = createMemo(() => {
+    const tiles = visibleTiles();
+    if (!tiled() || tiles.length === 0) return false;
+    const loaded = loadedTiles();
+    const failed = failedTiles();
+    return tiles.every((t) => loaded.has(tileKey(t)) || failed.has(tileKey(t)));
+  });
+
   // Progressive swap: keep the last loaded raster on screen until the newer
   // one has actually decoded (the browser CSS-scales the old one meanwhile).
   const [displayed, setDisplayed] = createSignal<string | null>(null);
-  const [renderError, setRenderError] = createSignal(false);
+  const [pageRenderError, setPageRenderError] = createSignal(false);
+  /** Tiles clear their own failure on a later success, so the warning tracks
+   * what is actually missing rather than latching on the first hole. */
+  const renderError = createMemo(() => pageRenderError() || failedTiles().size > 0);
+  /** The fullUrl() that displayed() satisfies. displayed() may carry a retry
+   * suffix, so it is not comparable with fullUrl() directly. */
+  let loadedFor: string | null = null;
   createEffect(() => {
     const url = fullUrl();
-    if (!url || displayed() === url) return;
-    setRenderError(false);
+    if (!url || loadedFor === url) return;
+    setPageRenderError(false);
     let cancelled = false;
+    let attempt = 0;
     const img = new Image();
     img.decoding = 'async';
-    img.src = url;
     img.onload = () => {
-      if (!cancelled) setDisplayed(url);
+      if (cancelled) return;
+      loadedFor = url;
+      // Mount the URL that actually decoded: the webview holds those bytes,
+      // where the plain URL would replay the empty response that failed.
+      setDisplayed(img.src);
     };
     img.onerror = () => {
-      if (!cancelled) setRenderError(true);
+      if (cancelled) return;
+      // An engine-side cancel answers 204, which reads here as a load error.
+      // The URL is unchanged, so nothing else would ever ask again.
+      if (attempt < RENDER_RETRIES) {
+        attempt += 1;
+        img.src = retryUrl(url, attempt);
+        return;
+      }
+      setPageRenderError(true);
     };
+    img.src = url;
     onCleanup(() => {
       cancelled = true;
       img.onload = null;
@@ -188,7 +231,7 @@ export default function PageView(props: Props) {
         when={srcIndex() !== null}
         fallback={<div class="page-blank" aria-label="Blank page" />}
       >
-        <Show when={!displayed()}>
+        <Show when={!displayed() && !tilesSettled()}>
           <div class="page-loading" aria-hidden="true">
             <Show when={previewUrl()}>
               <img class="page-img" src={previewUrl()!} alt="" draggable={false} />
@@ -202,13 +245,34 @@ export default function PageView(props: Props) {
           <For each={visibleTiles()}>
             {(t) => {
               const factor = () => cssW() / devW();
+              const key = tileKey(t);
+              const base = createMemo(() => urlFor('tile', props.scaleMilli, t)!);
+              const [attempt, setAttempt] = createSignal(0);
+              const record = (loaded: boolean, failed: boolean) => {
+                setLoadedTiles((prev) => withTile(prev, key, loaded));
+                setFailedTiles((prev) => withTile(prev, key, failed));
+              };
+              // A new URL for this tile (generation bump) is a fresh attempt.
+              createEffect(() => {
+                base();
+                setAttempt(0);
+                record(false, false);
+              });
+              onCleanup(() => record(false, false));
               return (
                 <img
                   class="page-tile"
-                  src={urlFor('tile', props.scaleMilli, t)!}
+                  src={retryUrl(base(), attempt())}
                   alt=""
                   draggable={false}
-                  onError={() => setRenderError(true)}
+                  onLoad={() => record(true, false)}
+                  onError={() => {
+                    if (attempt() < RENDER_RETRIES) {
+                      setAttempt(attempt() + 1);
+                      return;
+                    }
+                    record(false, true);
+                  }}
                   style={{
                     left: `${t.x * factor()}px`,
                     top: `${t.y * (cssH() / devH())}px`,

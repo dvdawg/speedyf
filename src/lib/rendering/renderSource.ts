@@ -34,6 +34,19 @@ export function buildRenderUrl(spec: RenderUrlSpec, isWindows: boolean): string 
   return url;
 }
 
+/** How many times a blank raster is re-requested before it is reported as a
+ * failed render. A render abandoned by an engine cancel answers 204, which an
+ * <img> reports as a load error; since the URL is unchanged nothing would ever
+ * ask again, so the frontend has to. */
+export const RENDER_RETRIES = 2;
+
+/** Same raster, cache-busted. `retry` is not part of the render query, so the
+ * engine resolves this to the byte-identical cache key — it only stops the
+ * webview from replaying the empty response it already has. */
+export function retryUrl(url: string, attempt: number): string {
+  return attempt > 0 ? `${url}&retry=${attempt}` : url;
+}
+
 let cachedIsWindows: boolean | null = null;
 
 /** Runtime variant using the current platform (detected once). */
