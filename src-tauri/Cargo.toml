@@ -32,6 +32,14 @@ log = "0.4"
 env_logger = "0.11"
 libc = "0.2"
 
+# Windows and Linux start a fresh process for every "open with"; without this
+# a second PDF opens a second copy of the app instead of reaching the one
+# already running. macOS needs none of it — the OS keeps a bundle single and
+# delivers RunEvent::Opened to it — and registering it there would only get in
+# the way of that.
+[target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = "2"
+
 [profile.release]
 lto = "thin"
 strip = true

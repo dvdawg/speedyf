@@ -71,7 +71,18 @@ fn spawn_opener(url: &str) -> AppResult<()> {
     spawn(std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", url]))
 }
 
+/// Any other Unix. Not an error at compile time — the same mistake that left
+/// `RunEvent::Opened` ungated and stopped the crate building anywhere but
+/// macOS. A platform with no opener we know refuses at runtime instead.
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+fn spawn_opener(_url: &str) -> AppResult<()> {
+    Err(AppError::Unsupported(
+        "opening links is not supported on this platform".into(),
+    ))
+}
+
 /// Detached: the browser outlives us, and we neither wait for it nor read it.
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 fn spawn(command: &mut std::process::Command) -> AppResult<()> {
     command
         .stdin(std::process::Stdio::null())

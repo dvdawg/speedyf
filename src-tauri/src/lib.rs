@@ -10,6 +10,8 @@ use commands::{EngineState, PendingOpens};
 use engine::types::{DocId, Priority, RenderKey, RenderKind, TileRect};
 use engine::{EngineHandle, Work};
 use errors::AppError;
+use std::path::Path;
+use std::path::PathBuf;
 use tauri::http::{header, Response, StatusCode};
 use tauri::{Emitter, Manager, UriSchemeResponder};
 
@@ -166,7 +168,25 @@ pub fn run() {
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .try_init();
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    // Must be registered before anything else so a duplicate launch is caught
+    // before it can start building a second app.
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(
+        |app_handle, argv, cwd| {
+            // A second process was started to open a document — most likely a
+            // double-click while SpeedyF was already running. Take its
+            // arguments, then raise the window that already exists.
+            let paths = file_arguments(argv, Path::new(&cwd));
+            if !paths.is_empty() {
+                deliver_opens(app_handle, paths);
+            }
+            raise_main_window(app_handle);
+        },
+    ));
+
+    builder
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let mut hints = Vec::new();
@@ -193,6 +213,16 @@ pub fn run() {
 
             app.manage(EngineState(engine));
             app.manage(PendingOpens::default());
+
+            // How Windows and Linux deliver "open with SpeedyF", and how a
+            // terminal launch delivers it anywhere. macOS additionally raises
+            // RunEvent::Opened for a double-click; its GUI argv carries a
+            // process-serial-number flag, which is filtered out below.
+            let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let opened_with = file_arguments(std::env::args(), &cwd);
+            if !opened_with.is_empty() {
+                deliver_opens(app.handle(), opened_with);
+            }
             Ok(())
         })
         .register_asynchronous_uri_scheme_protocol("pdfr", |ctx, request, responder| {
@@ -249,41 +279,138 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building SpeedyF")
-        .run(|app_handle, event| {
-            // Fired when the OS asks us to open a file: double-click, "Open
-            // With", or a file dropped on the Dock icon. Also fires once on
-            // a cold launch if SpeedyF was opened by opening a PDF.
-            if let tauri::RunEvent::Opened { urls } = event {
-                let paths: Vec<String> = urls
-                    .into_iter()
-                    .filter_map(|u| u.to_file_path().ok())
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .collect();
-                if paths.is_empty() {
-                    return;
-                }
-                if let Some(state) = app_handle.try_state::<PendingOpens>() {
-                    state.0.lock().unwrap().extend(paths.clone());
-                }
-                let _ = app_handle.emit("file-open-requested", &paths);
+        .run(handle_run_event);
+}
 
-                // The OS hands us the file but does not raise us. Without this,
-                // an already-running SpeedyF loads the PDF behind whatever the
-                // user was looking at, and the open looks like it did nothing.
-                #[cfg(target_os = "macos")]
-                let _ = app_handle.show();
-                if let Some(window) = app_handle.get_webview_window("main") {
-                    let _ = window.unminimize();
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
-            }
-        });
+/// The OS asking us to open a file: double-click, "Open With", or a file
+/// dropped on the Dock icon. Also fires once on a cold launch when SpeedyF was
+/// started by opening a PDF.
+///
+/// macOS and iOS only. `RunEvent::Opened` does not exist on the other
+/// platforms — referring to it there is a compile error, not a no-op — and
+/// they do not need it: Windows and Linux hand the path to a fresh process on
+/// the command line instead. See `file_arguments`.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn handle_run_event(app_handle: &tauri::AppHandle, event: tauri::RunEvent) {
+    let tauri::RunEvent::Opened { urls } = event else {
+        return;
+    };
+    let paths: Vec<String> = urls
+        .into_iter()
+        .filter_map(|u| u.to_file_path().ok())
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    if paths.is_empty() {
+        return;
+    }
+    deliver_opens(app_handle, paths);
+
+    raise_main_window(app_handle);
+}
+
+/// Bring the window forward. The OS hands us a file but does not raise us:
+/// without this an already-running SpeedyF loads the PDF behind whatever the
+/// user was looking at, and the open looks like it did nothing.
+fn raise_main_window(app_handle: &tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    let _ = app_handle.show();
+    if let Some(window) = app_handle.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+fn handle_run_event(_app_handle: &tauri::AppHandle, _event: tauri::RunEvent) {}
+
+/// Hand opened paths to the frontend, and stash them for a frontend that is
+/// not listening yet — a cold launch reaches here before the webview exists.
+fn deliver_opens(app_handle: &tauri::AppHandle, paths: Vec<String>) {
+    if let Some(state) = app_handle.try_state::<PendingOpens>() {
+        state.0.lock().unwrap().extend(paths.clone());
+    }
+    let _ = app_handle.emit("file-open-requested", &paths);
+}
+
+/// Files named on the command line, which is how every platform except macOS
+/// delivers "open this document with SpeedyF" — and how a terminal launch
+/// delivers it on macOS too.
+///
+/// `base` is the directory a relative path is relative *to*. For a launch that
+/// is our own working directory; for a second instance handing its arguments
+/// over, it is that process's, which is not ours and is the whole reason this
+/// is a parameter.
+///
+/// Flags are skipped, and so is anything that is not a file that exists: a
+/// mistyped path should leave the app open on the home screen rather than
+/// reporting a failure the user did not ask for.
+fn file_arguments<I: IntoIterator<Item = String>>(args: I, base: &Path) -> Vec<String> {
+    args.into_iter()
+        .skip(1)
+        .filter(|arg| !arg.is_empty() && !arg.starts_with('-'))
+        .filter_map(|arg| {
+            let path = Path::new(&arg);
+            let resolved = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                base.join(path)
+            };
+            resolved
+                .is_file()
+                .then(|| resolved.to_string_lossy().into_owned())
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn command_line_opens_keep_only_real_files() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let pdf = dir.path().join("paper.pdf");
+        std::fs::write(&pdf, b"%PDF-1.7\n").expect("write");
+        let missing = dir.path().join("gone.pdf");
+
+        let args = vec![
+            "speedyf".to_string(),
+            "--some-flag".to_string(),
+            String::new(),
+            missing.to_string_lossy().into_owned(),
+            pdf.to_string_lossy().into_owned(),
+        ];
+        assert_eq!(
+            file_arguments(args, dir.path()),
+            vec![pdf.to_string_lossy().into_owned()],
+            "only the file that exists, and never the flag"
+        );
+    }
+
+    #[test]
+    fn a_relative_path_resolves_against_the_callers_directory() {
+        // A second instance hands over its own working directory, which is not
+        // ours. Resolving against the wrong one silently opens nothing.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let pdf = dir.path().join("paper.pdf");
+        std::fs::write(&pdf, b"%PDF-1.7\n").expect("write");
+
+        let args = vec!["speedyf".to_string(), "paper.pdf".to_string()];
+        assert_eq!(
+            file_arguments(args.clone(), dir.path()),
+            vec![dir.path().join("paper.pdf").to_string_lossy().into_owned()]
+        );
+        // ...and the same argument means nothing from somewhere else.
+        let elsewhere = tempfile::tempdir().expect("temp dir");
+        assert!(file_arguments(args, elsewhere.path()).is_empty());
+    }
+
+    #[test]
+    fn an_argument_free_launch_opens_nothing() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        assert!(file_arguments(vec!["speedyf".to_string()], dir.path()).is_empty());
+    }
 
     #[test]
     fn parses_native_custom_scheme_render_urls() {
