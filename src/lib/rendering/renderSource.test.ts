@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildRenderUrl, protocolBase } from './renderSource';
+import { buildRenderUrl, protocolBase, retryUrl } from './renderSource';
 
 describe('protocolBase', () => {
   it('uses scheme://localhost on macOS/Linux and http://scheme.localhost on Windows', () => {
@@ -47,5 +47,29 @@ describe('buildRenderUrl', () => {
     expect(url).toBe(
       'pdfr://localhost/render?doc=3&src=12&rot=90&scale=2000&gen=7&kind=preview&tx=20&ty=40&tw=840&th=600'
     );
+  });
+});
+
+describe('retryUrl', () => {
+  const url = 'pdfr://localhost/render?doc=3&src=12&rot=90&scale=1500&gen=7&kind=page';
+
+  it('returns the URL untouched for the first attempt', () => {
+    expect(retryUrl(url, 0)).toBe(url);
+  });
+
+  it('appends a distinct cache-buster per attempt', () => {
+    expect(retryUrl(url, 1)).toBe(`${url}&retry=1`);
+    expect(retryUrl(url, 2)).toBe(`${url}&retry=2`);
+  });
+
+  it('leaves the render query itself intact so the engine cache key is unchanged', () => {
+    // The Rust parser ignores unknown params; a retry must not become a
+    // different raster. Guarded on the Rust side by
+    // `cache_busting_retry_param_does_not_change_the_render_key`.
+    const [base, query] = retryUrl(url, 1).split('?');
+    expect(base).toBe('pdfr://localhost/render');
+    const params = new URLSearchParams(query);
+    params.delete('retry');
+    expect(params.toString()).toBe(new URL(url).searchParams.toString());
   });
 });

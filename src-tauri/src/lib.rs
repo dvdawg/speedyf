@@ -8,8 +8,9 @@ mod search;
 use commands::{EngineState, PendingOpens};
 use engine::types::{DocId, Priority, RenderKey, RenderKind, TileRect};
 use engine::{EngineHandle, Work};
+use errors::AppError;
 use tauri::http::{header, Response, StatusCode};
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, UriSchemeResponder};
 
 fn bad_request(msg: &str) -> Response<Vec<u8>> {
     Response::builder()
@@ -109,6 +110,57 @@ fn parse_render_query(uri: &str) -> Option<RenderQuery> {
     })
 }
 
+/// How many times a render abandoned by a *cancel* stamp is put back on the
+/// queue before the request is answered empty.
+///
+/// A cancel abandons queued and in-flight renders, but the webview has no way
+/// to learn that. The `<img>` the request came from holds a src that is a pure
+/// function of (doc, src, rotation, scale, generation, tile), so answering 204
+/// leaves a page or tile permanently blank: the URL never changes, so nothing
+/// ever asks again. Cancellation is a scheduling signal — "not right now", not
+/// "never" — so a cancelled render goes back on the queue at the *current*
+/// stamp instead. Aborting still hands PDFium straight back to visible work,
+/// which is the point of cancelling; the abandoned request just finishes later.
+///
+/// The URL generation check stays authoritative: a superseded URL is genuinely
+/// dead, and the frontend mints a replacement for it.
+const CANCEL_RETRIES: u8 = 2;
+
+fn submit_render(
+    engine: EngineHandle,
+    prio: Priority,
+    gen: u64,
+    key: RenderKey,
+    responder: UriSchemeResponder,
+    retries_left: u8,
+) {
+    let doc = key.doc;
+    let retry = (retries_left > 0).then(|| (engine.clone(), key.clone()));
+    engine.submit_at_gen(
+        prio,
+        doc,
+        gen,
+        Work::Render {
+            key,
+            respond: Box::new(move |result| match result {
+                Ok(bytes) => responder.respond(png_response(&bytes)),
+                Err(AppError::Stale) => match retry {
+                    // Re-queued at the cancel stamp current *now*, so it only
+                    // dies again if a further cancel lands after this point.
+                    Some((engine, key)) => {
+                        submit_render(engine, prio, gen, key, responder, retries_left - 1)
+                    }
+                    None => responder.respond(status_response(StatusCode::NO_CONTENT)),
+                },
+                Err(e) => {
+                    log::warn!("render failed: {e}");
+                    responder.respond(status_response(StatusCode::INTERNAL_SERVER_ERROR))
+                }
+            }),
+        },
+    );
+}
+
 pub fn run() {
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .try_init();
@@ -162,25 +214,7 @@ pub fn run() {
                 return;
             }
             // Slow path: enqueue; the worker calls back with bytes or an error.
-            let doc = q.key.doc;
-            engine.submit_at_gen(
-                q.prio,
-                doc,
-                q.gen,
-                Work::Render {
-                    key: q.key,
-                    respond: Box::new(move |result| match result {
-                        Ok(bytes) => responder.respond(png_response(&bytes)),
-                        Err(crate::errors::AppError::Stale) => {
-                            responder.respond(status_response(StatusCode::NO_CONTENT))
-                        }
-                        Err(e) => {
-                            log::warn!("render failed: {e}");
-                            responder.respond(status_response(StatusCode::INTERNAL_SERVER_ERROR))
-                        }
-                    }),
-                },
-            );
+            submit_render(engine, q.prio, q.gen, q.key, responder, CANCEL_RETRIES);
         })
         .invoke_handler(tauri::generate_handler![
             commands::take_pending_opens,
@@ -309,6 +343,20 @@ mod tests {
         .expect("large source indices and the maximum sharp zoom are valid");
         assert_eq!(query.key.src, 69_999);
         assert_eq!(query.key.scale_milli, 12_000);
+    }
+
+    #[test]
+    fn cache_busting_retry_param_does_not_change_the_render_key() {
+        // The frontend retries a blank <img> by appending a throwaway param:
+        // it defeats the webview's request cache without minting a different
+        // raster, so the retry must resolve to the byte-identical RenderKey.
+        let base = "pdfr://localhost/render?doc=3&src=8&rot=0&scale=2000&gen=5&kind=tile&tx=0&ty=1024&tw=1024&th=1024";
+        let plain = parse_render_query(base).expect("valid render URL");
+        let retried =
+            parse_render_query(&format!("{base}&retry=2")).expect("retry URL stays valid");
+        assert_eq!(plain.key, retried.key);
+        assert_eq!(plain.gen, retried.gen);
+        assert_eq!(plain.prio, retried.prio);
     }
 
     #[test]
