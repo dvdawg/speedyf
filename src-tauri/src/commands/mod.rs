@@ -182,15 +182,51 @@ pub async fn resolve_citation(
         .await
 }
 
+/// Add a folder to the library, or remove one.
+///
+/// Runs off the main thread: adding a root walks the whole tree to find its
+/// PDFs, which on a large or networked folder is not instant.
 #[tauri::command]
-pub async fn set_library_root(
+pub async fn change_library_root(
     state: tauri::State<'_, EngineState>,
-    path: Option<String>,
+    path: String,
+    add: bool,
 ) -> AppResult<()> {
     let engine = state.0.clone();
-    tauri::async_runtime::spawn_blocking(move || engine.set_library_root(path))
+    tauri::async_runtime::spawn_blocking(move || engine.change_library_root(path, add))
         .await
         .map_err(|error| AppError::Internal(format!("library task failed: {error}")))?
+}
+
+/// Search every indexed document in the library.
+///
+/// On a blocking thread rather than the engine thread — it reads text sidecars
+/// and never touches PDFium, so it cannot stall the page being read.
+#[tauri::command]
+pub async fn library_search(
+    state: tauri::State<'_, EngineState>,
+    query: String,
+    case_sensitive: bool,
+) -> AppResult<LibrarySearchDto> {
+    /// Enough hits from one document to show it is the right one; the document
+    /// is opened for a full search past that.
+    const PER_DOCUMENT_LIMIT: usize = 20;
+    /// Enough documents to choose between. More than this is not a result
+    /// list, it is a second search.
+    const DOCUMENT_LIMIT: usize = 60;
+
+    if query.trim().is_empty() {
+        return Ok(LibrarySearchDto {
+            documents: Vec::new(),
+            truncated: false,
+        });
+    }
+    let engine = state.0.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        engine.library_search(&query, case_sensitive, PER_DOCUMENT_LIMIT, DOCUMENT_LIMIT)
+    })
+    .await
+    .map_err(|error| AppError::Internal(format!("library search failed: {error}")))
 }
 
 #[tauri::command]

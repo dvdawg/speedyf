@@ -287,7 +287,8 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         | Work::SetActiveDocument { .. }
         | Work::StartIndexing { .. }
         | Work::IndexNext { .. }
-        | Work::LibraryScanNext => {}
+        | Work::LibraryScanNext
+        | Work::LibraryTextNext => {}
     }
 }
 
@@ -353,6 +354,7 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
         Work::StartIndexing { doc } => state.request_indexing(doc, shared),
         Work::IndexNext { doc, chain } => do_index_next(state, shared, meta, doc, chain),
         Work::LibraryScanNext => do_library_scan_next(state, shared),
+        Work::LibraryTextNext => do_library_text_next(state, shared),
         Work::MatchRects {
             doc,
             src,
@@ -740,6 +742,72 @@ fn do_index_next(
     );
 }
 
+/// Extract one library document's full text to its sidecar.
+///
+/// One document per job, then back to the queue — the same yielding shape as
+/// `do_library_scan_next`, and the reason a library indexing pass does not
+/// make the app feel slow: anything visible outranks `Idle`.
+///
+/// A document that cannot be read is marked done rather than retried. It will
+/// not start being readable, and leaving it at the head of the queue would
+/// stall every document behind it forever.
+fn do_library_text_next(state: &mut WorkerState, shared: &EngineShared) {
+    let (app_data_dir, candidate) = {
+        let library = shared.library.lock();
+        (library.app_data_dir(), library.next_text_candidate())
+    };
+    let Some(entry) = candidate else {
+        return;
+    };
+
+    if let Some(pages) = extract_library_text(state, &entry.path) {
+        if let Err(error) = crate::search::librarytext::write_sidecar(
+            &app_data_dir,
+            &entry.path,
+            entry.mtime_ms,
+            entry.size,
+            &pages,
+        ) {
+            log::warn!("cannot index {} for search: {error}", entry.path.display());
+        }
+    }
+    shared.library.lock().finish_text(&entry.path);
+
+    if shared.library.lock().has_text_work() {
+        shared.queue.push(
+            Priority::Idle,
+            JobMeta {
+                doc: 0,
+                gen: shared.gens.current(0),
+                epoch: shared.cancels.current(0),
+            },
+            Work::LibraryTextNext,
+        );
+    }
+}
+
+/// Every page's text, using the cheap extraction path — no character boxes, no
+/// font info, which is thousands of FFI calls a page the index does not need.
+fn extract_library_text(state: &mut WorkerState, path: &Path) -> Option<Vec<(u32, String)>> {
+    let path = path.to_str()?;
+    let doc = render::open_document(state.bindings, path, None).ok()?;
+    let count = state.bindings.FPDF_GetPageCount(doc).max(0);
+    let mut pages = Vec::new();
+    for index in 0..count {
+        let page = state.bindings.FPDF_LoadPage(doc, index);
+        if page.is_null() {
+            continue;
+        }
+        let extracted = crate::engine::text::extract_search_text(state.bindings, page);
+        state.bindings.FPDF_ClosePage(page);
+        if !extracted.raw.trim().is_empty() {
+            pages.push((index as u32, extracted.raw));
+        }
+    }
+    state.bindings.FPDF_CloseDocument(doc);
+    Some(pages)
+}
+
 fn scan_library_candidate(
     state: &mut WorkerState,
     candidate: &library::ScanCandidate,
@@ -779,7 +847,11 @@ fn do_library_scan_next(state: &mut WorkerState, shared: &EngineShared) {
     };
     let entry = (!candidate.unchanged).then(|| scan_library_candidate(state, &candidate));
     shared.library.lock().finish_candidate(&candidate, entry);
-    if shared.library.lock().has_scan_work() {
+    let (more_scan, more_text) = {
+        let library = shared.library.lock();
+        (library.has_scan_work(), library.has_text_work())
+    };
+    let requeue = |work| {
         shared.queue.push(
             Priority::Idle,
             JobMeta {
@@ -787,8 +859,15 @@ fn do_library_scan_next(state: &mut WorkerState, shared: &EngineShared) {
                 gen: shared.gens.current(0),
                 epoch: shared.cancels.current(0),
             },
-            Work::LibraryScanNext,
+            work,
         );
+    };
+    if more_scan {
+        requeue(Work::LibraryScanNext);
+    } else if more_text {
+        // The metadata pass is what discovers files, so the text pass starts
+        // once it has nothing left to find.
+        requeue(Work::LibraryTextNext);
     }
 }
 

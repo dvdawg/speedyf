@@ -20,6 +20,21 @@ export interface TextRunDto {
   h: number;
 }
 
+/** One document that matched a library-wide search. Carries the file, not a
+ * docId — nothing is open when a library search runs. */
+export interface LibraryHit {
+  path: string;
+  name: string;
+  title: string | null;
+  totalMatches: number;
+  pages: PageMatches[];
+}
+
+export interface LibrarySearchResult {
+  documents: LibraryHit[];
+  truncated: boolean;
+}
+
 export interface Printer {
   name: string;
   isDefault: boolean;
@@ -96,10 +111,14 @@ export interface ResolvedCitation {
 }
 
 export interface LibraryStatus {
-  root: string | null;
+  /** every folder in the library; was a single optional root */
+  roots: string[];
   indexed: number;
   total: number;
   scanning: boolean;
+  /** documents whose full text is searchable, which lags metadata indexing */
+  textIndexed: number;
+  textTotal: number;
 }
 
 export interface MatchDto {

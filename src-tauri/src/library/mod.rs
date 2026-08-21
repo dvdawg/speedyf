@@ -7,7 +7,7 @@ use crate::engine::types::{CitationIdDto, LibraryStatusDto};
 use crate::errors::{AppError, AppResult};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -28,11 +28,37 @@ pub struct LibraryEntry {
     pub doi: Option<String>,
     pub arxiv: Option<String>,
     pub title: Option<String>,
+    /// Whether this file's full text has been extracted to a sidecar for
+    /// library-wide search. Defaulted so an index written before search
+    /// existed still loads — it simply reports nothing indexed yet.
+    #[serde(default)]
+    pub text_indexed: bool,
 }
 
-#[derive(Serialize, Deserialize, Default)]
+/// The shape written to disk today. Both persisted files carry a version now:
+/// they had none, and an unrecognized shape was silently discarded along with
+/// the whole index.
+const FORMAT_VERSION: u32 = 2;
+
+#[derive(Serialize, Deserialize)]
 struct RootConfig {
+    #[serde(default)]
+    version: u32,
+    /// v2 and later. Several folders, because papers are never all in one.
+    #[serde(default)]
+    roots: Vec<PathBuf>,
+    /// v1. Read on load so an existing library survives the upgrade, never
+    /// written.
+    #[serde(default)]
     root: Option<PathBuf>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct IndexFile {
+    #[serde(default)]
+    version: u32,
+    #[serde(default)]
+    entries: Vec<LibraryEntry>,
 }
 
 #[derive(Clone, Debug)]
@@ -46,8 +72,11 @@ pub struct ScanCandidate {
 
 pub struct LibraryState {
     app_data_dir: PathBuf,
-    root: Option<PathBuf>,
-    entries: Vec<LibraryEntry>,
+    roots: Vec<PathBuf>,
+    /// Keyed by path. Was a `Vec` with a linear containment check per scanned
+    /// file, which is O(n²) across a scan — tolerable for one folder, not for
+    /// several.
+    entries: HashMap<PathBuf, LibraryEntry>,
     pending: VecDeque<PathBuf>,
     processed: u32,
     total: u32,
@@ -60,39 +89,50 @@ impl LibraryState {
         if let Err(error) = fs::create_dir_all(&app_data_dir) {
             log::warn!("cannot create app-data directory for citation library: {error}");
         }
-        let configured = fs::read(app_data_dir.join(ROOT_FILE))
+        let configured: Vec<PathBuf> = fs::read(app_data_dir.join(ROOT_FILE))
             .ok()
             .and_then(|bytes| serde_json::from_slice::<RootConfig>(&bytes).ok())
-            .and_then(|config| config.root)
-            .and_then(|root| canonical_directory(&root).ok());
-
-        let mut entries = match fs::read(app_data_dir.join(INDEX_FILE)) {
-            Ok(bytes) => match serde_json::from_slice::<Vec<LibraryEntry>>(&bytes) {
-                Ok(entries) => entries,
-                Err(error) => {
-                    log::warn!("discarding corrupt citation library index: {error}");
-                    Vec::new()
+            .map(|config| {
+                // A v1 file names a single root; carry it forward rather than
+                // making the user pick their folder again.
+                let mut roots = config.roots;
+                if let Some(legacy) = config.root {
+                    if !roots.contains(&legacy) {
+                        roots.push(legacy);
+                    }
                 }
-            },
+                roots
+            })
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|root| canonical_directory(root).ok())
+            .collect();
+
+        let stored = match fs::read(app_data_dir.join(INDEX_FILE)) {
+            Ok(bytes) => read_index(&bytes),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
             Err(error) => {
                 log::warn!("cannot read citation library index: {error}");
                 Vec::new()
             }
         };
-        entries.retain(|entry| {
-            configured.as_ref().is_some_and(|root| {
-                contained_canonical_path(root, &entry.path)
+        // Drop anything that has moved out of the roots or changed on disk, so
+        // a stale entry can never resolve a citation or answer a search.
+        let entries: HashMap<PathBuf, LibraryEntry> = stored
+            .into_iter()
+            .filter(|entry| {
+                contained_in_any(&configured, &entry.path)
                     .and_then(|path| file_fingerprint(&path).map(|fingerprint| (path, fingerprint)))
                     .is_some_and(|(path, (mtime_ms, size))| {
                         path == entry.path && mtime_ms == entry.mtime_ms && size == entry.size
                     })
             })
-        });
+            .map(|entry| (entry.path.clone(), entry))
+            .collect();
 
         let mut state = Self {
             app_data_dir,
-            root: configured,
+            roots: configured,
             entries,
             pending: VecDeque::new(),
             processed: 0,
@@ -105,38 +145,70 @@ impl LibraryState {
     }
 
     pub fn status(&self) -> LibraryStatusDto {
+        let cap = |value: usize| value.min(u32::MAX as usize) as u32;
         LibraryStatusDto {
-            root: self
-                .root
-                .as_ref()
-                .map(|root| root.to_string_lossy().into_owned()),
+            roots: self
+                .roots
+                .iter()
+                .map(|root| root.to_string_lossy().into_owned())
+                .collect(),
             indexed: if self.scanning {
                 self.processed
             } else {
-                self.entries.len().min(u32::MAX as usize) as u32
+                cap(self.entries.len())
             },
             total: self.total,
             scanning: self.scanning,
+            text_indexed: cap(self.entries.values().filter(|e| e.text_indexed).count()),
+            text_total: cap(self.entries.len()),
         }
     }
 
-    pub fn root(&self) -> Option<&Path> {
-        self.root.as_deref()
+    pub fn app_data_dir(&self) -> PathBuf {
+        self.app_data_dir.clone()
     }
 
-    pub fn set_root(&mut self, path: Option<PathBuf>) -> AppResult<bool> {
-        let next = match path {
-            Some(path) => Some(canonical_directory(&path)?),
-            None => None,
-        };
-        if next == self.root {
-            if !self.scanning {
-                self.schedule_scan();
-            }
-            return Ok(self.scanning);
+    pub fn roots(&self) -> Vec<PathBuf> {
+        self.roots.clone()
+    }
+
+    /// The canonical form of `path` if it lies inside any root, else None.
+    /// Re-checked at use time, not only at scan time, so an entry that has
+    /// since moved outside the library cannot be opened through it.
+    pub fn contains(&self, path: &Path) -> Option<PathBuf> {
+        contained_in_any(&self.roots, path)
+    }
+
+    /// Add a folder to the library. Re-adding one already present just
+    /// restarts an idle scan, which is how a manual refresh is spelled.
+    pub fn add_root(&mut self, path: PathBuf) -> AppResult<bool> {
+        let root = canonical_directory(&path)?;
+        if !self.roots.contains(&root) {
+            self.roots.push(root);
+            self.persist_root();
         }
-        self.root = next;
-        self.entries.clear();
+        self.schedule_scan();
+        Ok(self.scanning)
+    }
+
+    /// Remove one folder. Only its own documents go: the whole index used to
+    /// be cleared whenever the root changed, which with several folders would
+    /// throw away work that is still perfectly good.
+    pub fn remove_root(&mut self, path: &Path) -> AppResult<bool> {
+        let target = canonical_directory(path).unwrap_or_else(|_| path.to_path_buf());
+        self.roots.retain(|root| root != &target);
+        let dropped: Vec<PathBuf> = self
+            .entries
+            .keys()
+            .filter(|entry| contained_in_any(&self.roots, entry).is_none())
+            .cloned()
+            .collect();
+        for path in dropped {
+            self.entries.remove(&path);
+            // The text index outlives the entry otherwise, and nothing would
+            // ever come back to clean it up.
+            crate::search::librarytext::remove_sidecar(&self.app_data_dir, &path);
+        }
         self.persist_root();
         self.persist_index();
         self.schedule_scan();
@@ -147,11 +219,14 @@ impl LibraryState {
         self.scan_epoch = self.scan_epoch.wrapping_add(1);
         self.pending.clear();
         self.processed = 0;
-        let files = self
-            .root
-            .as_ref()
-            .map(|root| collect_pdfs(root))
-            .unwrap_or_default();
+        let mut files: Vec<PathBuf> = self
+            .roots
+            .iter()
+            .flat_map(|root| collect_pdfs(root))
+            .collect();
+        // Nested roots would otherwise queue the same file twice.
+        files.sort();
+        files.dedup();
         self.total = files.len().min(u32::MAX as usize) as u32;
         self.pending = files.into();
         self.scanning = !self.pending.is_empty();
@@ -166,9 +241,10 @@ impl LibraryState {
                 self.processed = self.processed.saturating_add(1);
                 continue;
             };
-            let unchanged = self.entries.iter().any(|entry| {
-                entry.path == path && entry.mtime_ms == mtime_ms && entry.size == size
-            });
+            let unchanged = self
+                .entries
+                .get(&path)
+                .is_some_and(|entry| entry.mtime_ms == mtime_ms && entry.size == size);
             return Some(ScanCandidate {
                 path,
                 mtime_ms,
@@ -187,8 +263,12 @@ impl LibraryState {
             return;
         }
         if let Some(entry) = entry {
-            self.entries.retain(|existing| existing.path != entry.path);
-            self.entries.push(entry);
+            // A re-scanned file is a changed file: whatever text was extracted
+            // from the old bytes no longer describes it. The sidecar would be
+            // rejected on load anyway once the fingerprint stops matching, but
+            // deleting it now keeps the index from growing a copy per edit.
+            crate::search::librarytext::remove_sidecar(&self.app_data_dir, &entry.path);
+            self.entries.insert(entry.path.clone(), entry);
         }
         self.processed = self.processed.saturating_add(1).min(self.total);
         if self.processed % 25 == 0 {
@@ -205,15 +285,42 @@ impl LibraryState {
     }
 
     pub fn entry_for_path(&self, path: &Path) -> Option<LibraryEntry> {
-        self.entries
-            .iter()
-            .find(|entry| entry.path == path)
-            .cloned()
+        self.entries.get(path).cloned()
+    }
+
+    /// Every document currently in the library, for a search to stream over.
+    pub fn all_entries(&self) -> Vec<LibraryEntry> {
+        let mut entries: Vec<LibraryEntry> = self.entries.values().cloned().collect();
+        // A stable order keeps results from reshuffling between identical
+        // queries, which a HashMap alone would not.
+        entries.sort_by(|a, b| a.path.cmp(&b.path));
+        entries
+    }
+
+    /// The next document whose text has not been extracted yet.
+    pub fn next_text_candidate(&self) -> Option<LibraryEntry> {
+        self.all_entries().into_iter().find(|e| !e.text_indexed)
+    }
+
+    /// Record that a document's text is now on disk — or that extracting it
+    /// failed, which is also final: a file that cannot be read will not start
+    /// reading, and retrying it forever would stall every document behind it.
+    pub fn finish_text(&mut self, path: &Path) {
+        if let Some(entry) = self.entries.get_mut(path) {
+            entry.text_indexed = true;
+        }
+        self.persist_index();
+    }
+
+    pub fn has_text_work(&self) -> bool {
+        self.entries.values().any(|entry| !entry.text_indexed)
     }
 
     fn persist_root(&self) {
         let data = RootConfig {
-            root: self.root.clone(),
+            version: FORMAT_VERSION,
+            roots: self.roots.clone(),
+            root: None,
         };
         match serde_json::to_vec_pretty(&data) {
             Ok(bytes) => {
@@ -226,7 +333,11 @@ impl LibraryState {
     }
 
     fn persist_index(&self) {
-        match serde_json::to_vec_pretty(&self.entries) {
+        let data = IndexFile {
+            version: FORMAT_VERSION,
+            entries: self.all_entries(),
+        };
+        match serde_json::to_vec_pretty(&data) {
             Ok(bytes) => {
                 if let Err(error) = fs::write(self.app_data_dir.join(INDEX_FILE), bytes) {
                     log::warn!("cannot persist citation library index: {error}");
@@ -250,13 +361,45 @@ impl LocalLibraryResolver {
 impl CitationResolver for LocalLibraryResolver {
     fn resolve(&self, id: &CitationIdDto) -> Option<PathBuf> {
         let state = self.state.lock();
-        let root = state.root.as_ref()?;
-        let entry = state.entries.iter().find(|entry| match id {
+        let entry = state.entries.values().find(|entry| match id {
             CitationIdDto::Doi(value) => entry.doi.as_ref() == Some(value),
             CitationIdDto::ArXiv(value) => entry.arxiv.as_ref() == Some(value),
         })?;
-        contained_canonical_path(root, &entry.path)
+        state.contains(&entry.path)
     }
+}
+
+/// Read a persisted index, accepting both the versioned envelope and the bare
+/// array that shipped before it.
+fn read_index(bytes: &[u8]) -> Vec<LibraryEntry> {
+    if let Ok(file) = serde_json::from_slice::<IndexFile>(bytes) {
+        if file.version > FORMAT_VERSION {
+            // Written by a newer build. Refusing beats guessing at a shape we
+            // do not know; a rescan costs time, a misread costs correctness.
+            log::warn!(
+                "citation library index is version {}; this build understands {FORMAT_VERSION}",
+                file.version
+            );
+            return Vec::new();
+        }
+        if !file.entries.is_empty() || file.version > 0 {
+            return file.entries;
+        }
+    }
+    match serde_json::from_slice::<Vec<LibraryEntry>>(bytes) {
+        Ok(entries) => entries,
+        Err(error) => {
+            log::warn!("discarding corrupt citation library index: {error}");
+            Vec::new()
+        }
+    }
+}
+
+/// The canonical form of `path` if it lies inside any of `roots`.
+pub fn contained_in_any(roots: &[PathBuf], path: &Path) -> Option<PathBuf> {
+    roots
+        .iter()
+        .find_map(|root| contained_canonical_path(root, path))
 }
 
 pub fn entry_from_filename(candidate: &ScanCandidate) -> Option<LibraryEntry> {
@@ -273,6 +416,7 @@ pub fn entry_from_filename(candidate: &ScanCandidate) -> Option<LibraryEntry> {
         doi,
         arxiv,
         title: None,
+        text_indexed: false,
     })
 }
 
@@ -301,6 +445,7 @@ pub fn entry_from_first_page(candidate: &ScanCandidate, text: &str) -> LibraryEn
         doi,
         arxiv,
         title,
+        text_indexed: false,
     }
 }
 
@@ -414,12 +559,11 @@ mod tests {
         let app_data = tempfile::tempdir().expect("app data");
         let root = tempfile::tempdir().expect("library root");
         fs::write(root.path().join("2401.12345.pdf"), b"fixture").expect("library fixture");
+        // The v1 shape, written literally: this is what is actually on disk
+        // for anyone who used the library before it took several folders.
         fs::write(
             app_data.path().join(ROOT_FILE),
-            serde_json::to_vec(&RootConfig {
-                root: Some(root.path().to_path_buf()),
-            })
-            .unwrap(),
+            serde_json::json!({ "root": root.path() }).to_string(),
         )
         .unwrap();
         fs::write(app_data.path().join(INDEX_FILE), b"{broken json").unwrap();
@@ -429,5 +573,134 @@ mod tests {
         assert!(state.status().scanning);
         assert_eq!(state.status().total, 1);
         assert!(state.entries.is_empty());
+    }
+
+    #[test]
+    fn a_single_root_config_survives_the_upgrade() {
+        // Losing it would silently empty someone's library and make them go
+        // find the folder again.
+        let app_data = tempfile::tempdir().expect("app data");
+        let root = tempfile::tempdir().expect("library root");
+        fs::write(
+            app_data.path().join(ROOT_FILE),
+            serde_json::json!({ "root": root.path() }).to_string(),
+        )
+        .unwrap();
+
+        let state = LibraryState::load(app_data.path().to_path_buf());
+        assert_eq!(state.roots().len(), 1);
+        assert_eq!(state.status().roots.len(), 1);
+    }
+
+    #[test]
+    fn an_index_from_a_newer_build_is_refused_not_misread() {
+        let app_data = tempfile::tempdir().expect("app data");
+        fs::write(
+            app_data.path().join(INDEX_FILE),
+            serde_json::json!({ "version": 999, "entries": [] }).to_string(),
+        )
+        .unwrap();
+        let state = LibraryState::load(app_data.path().to_path_buf());
+        assert!(state.entries.is_empty());
+    }
+
+    #[test]
+    fn a_bare_array_index_still_loads() {
+        // What every existing install has on disk right now.
+        let app_data = tempfile::tempdir().expect("app data");
+        let root = tempfile::tempdir().expect("library root");
+        let pdf = root.path().join("paper.pdf");
+        fs::write(&pdf, b"fixture").unwrap();
+        // Stored entries are always canonical — `collect_pdfs` re-validates
+        // every hit through `contained_canonical_path`. On macOS a tempdir is
+        // /var/... which canonicalizes to /private/var/..., so a fixture that
+        // skipped this would look like a file that had moved away.
+        let pdf = pdf.canonicalize().expect("canonical");
+        let (mtime_ms, size) = file_fingerprint(&pdf).expect("fingerprint");
+        fs::write(
+            app_data.path().join(ROOT_FILE),
+            serde_json::json!({ "root": root.path() }).to_string(),
+        )
+        .unwrap();
+        fs::write(
+            app_data.path().join(INDEX_FILE),
+            serde_json::json!([{
+                "path": pdf,
+                "mtime_ms": mtime_ms,
+                "size": size,
+                "doi": null,
+                "arxiv": null,
+                "title": "A paper"
+            }])
+            .to_string(),
+        )
+        .unwrap();
+
+        let state = LibraryState::load(app_data.path().to_path_buf());
+        let entry = state.entry_for_path(&pdf).expect("entry survived");
+        assert_eq!(entry.title.as_deref(), Some("A paper"));
+        // ...and it has no text yet, so the search pass will pick it up.
+        assert!(!entry.text_indexed);
+    }
+
+    #[test]
+    fn each_root_keeps_its_own_documents() {
+        let app_data = tempfile::tempdir().expect("app data");
+        let first = tempfile::tempdir().expect("first root");
+        let second = tempfile::tempdir().expect("second root");
+        fs::write(first.path().join("a.pdf"), b"fixture").unwrap();
+        fs::write(second.path().join("b.pdf"), b"fixture").unwrap();
+
+        let mut state = LibraryState::load(app_data.path().to_path_buf());
+        state.add_root(first.path().to_path_buf()).expect("first");
+        state.add_root(second.path().to_path_buf()).expect("second");
+        assert_eq!(state.roots().len(), 2);
+        assert_eq!(state.status().total, 2);
+
+        // Adding the same folder twice is a refresh, not a duplicate.
+        state.add_root(second.path().to_path_buf()).expect("again");
+        assert_eq!(state.roots().len(), 2);
+
+        // Pretend both were scanned.
+        for (name, dir) in [("a.pdf", first.path()), ("b.pdf", second.path())] {
+            let path = dir.join(name);
+            let (mtime_ms, size) = file_fingerprint(&path).expect("fingerprint");
+            state.entries.insert(
+                path.clone(),
+                LibraryEntry {
+                    path,
+                    mtime_ms,
+                    size,
+                    doi: None,
+                    arxiv: None,
+                    title: None,
+                    text_indexed: true,
+                },
+            );
+        }
+
+        state.remove_root(first.path()).expect("remove");
+        assert_eq!(state.roots().len(), 1);
+        let remaining = state.all_entries();
+        assert_eq!(
+            remaining.len(),
+            1,
+            "only the removed root's files should go"
+        );
+        assert!(remaining[0].path.ends_with("b.pdf"));
+    }
+
+    #[test]
+    fn a_path_outside_every_root_is_not_in_the_library() {
+        let app_data = tempfile::tempdir().expect("app data");
+        let root = tempfile::tempdir().expect("root");
+        let outside = tempfile::tempdir().expect("outside");
+        fs::write(root.path().join("in.pdf"), b"fixture").unwrap();
+        fs::write(outside.path().join("out.pdf"), b"fixture").unwrap();
+
+        let mut state = LibraryState::load(app_data.path().to_path_buf());
+        state.add_root(root.path().to_path_buf()).expect("add");
+        assert!(state.contains(&root.path().join("in.pdf")).is_some());
+        assert!(state.contains(&outside.path().join("out.pdf")).is_none());
     }
 }

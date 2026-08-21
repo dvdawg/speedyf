@@ -178,7 +178,7 @@ function PreviewContent(props: { tab: TabRecord; result: HoverPreview }) {
               <button
                 type="button"
                 class="citation-library-action"
-                onClick={() => void libraryStore.chooseLibraryFolder()}
+                onClick={() => void libraryStore.addLibraryFolder()}
               >
                 Choose library folder…
               </button>

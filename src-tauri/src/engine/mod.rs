@@ -24,11 +24,12 @@ pub mod worker;
 use crate::cache::ByteLru;
 use crate::errors::{AppError, AppResult};
 use crate::library::{CitationResolver, LibraryState, LocalLibraryResolver};
+use crate::search::gramindex::GramIndex;
 use crate::search::{query_pages, SearchStore, TextLayoutCache};
 use parking_lot::Mutex;
 use queue::{GenerationMap, JobMeta, PrioQueue};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use types::*;
 
@@ -96,6 +97,10 @@ pub enum Work {
         chain: u64,
     },
     LibraryScanNext,
+    /// Extract one library document's full text to its sidecar. Runs at Idle,
+    /// one document per job, so a background library index can never outrank
+    /// a page the reader is looking at.
+    LibraryTextNext,
     MatchRects {
         doc: DocId,
         src: u32,
@@ -201,6 +206,13 @@ pub struct EngineShared {
     pub main_epoch: AtomicU64,
     pub progress: Mutex<Option<ProgressCallback>>,
     pub last_metrics: Mutex<EngineMetricsDto>,
+    /// The inverted gram index over the library, once it has been built for
+    /// the current set of documents. Absent means "search by scanning" — a
+    /// slower answer, never a wrong one.
+    pub gram_index: Mutex<Option<Arc<GramIndex>>>,
+    /// Whether a rebuild is already under way, so a burst of queries against a
+    /// stale library starts one build rather than one each.
+    pub gram_building: AtomicBool,
 }
 
 impl EngineShared {
@@ -227,10 +239,7 @@ impl EngineHandle {
             std::env::temp_dir().join(format!("speedyf-library-{}", std::process::id()))
         });
         let library = Arc::new(Mutex::new(LibraryState::load(app_data_dir)));
-        let resolver: Option<Box<dyn CitationResolver>> = library
-            .lock()
-            .root()
-            .is_some()
+        let resolver: Option<Box<dyn CitationResolver>> = (!library.lock().roots().is_empty())
             .then(|| Box::new(LocalLibraryResolver::new(Arc::clone(&library))) as Box<_>);
         let shared = Arc::new(EngineShared {
             queue: PrioQueue::new(),
@@ -248,6 +257,8 @@ impl EngineHandle {
             main_epoch: AtomicU64::new(0),
             progress: Mutex::new(None),
             last_metrics: Mutex::new(EngineMetricsDto::default()),
+            gram_index: Mutex::new(None),
+            gram_building: AtomicBool::new(false),
         });
         let worker_shared = Arc::clone(&shared);
         std::thread::Builder::new()
@@ -257,6 +268,11 @@ impl EngineHandle {
         let handle = EngineHandle(shared);
         if handle.0.library.lock().has_scan_work() {
             handle.submit(Priority::Idle, 0, Work::LibraryScanNext);
+        }
+        // Text extraction resumes from wherever it stopped: the sidecars from
+        // previous runs are still on disk, so this only picks up what is new.
+        if handle.0.library.lock().has_text_work() {
+            handle.submit(Priority::Idle, 0, Work::LibraryTextNext);
         }
         handle
     }
@@ -373,9 +389,18 @@ impl EngineHandle {
         snapshot
     }
 
-    pub fn set_library_root(&self, path: Option<String>) -> AppResult<()> {
-        let should_scan = self.0.library.lock().set_root(path.map(PathBuf::from))?;
-        let enabled = self.0.library.lock().root().is_some();
+    /// Add a folder to the library, or remove one.
+    pub fn change_library_root(&self, path: String, add: bool) -> AppResult<()> {
+        let path = PathBuf::from(path);
+        let should_scan = {
+            let mut library = self.0.library.lock();
+            if add {
+                library.add_root(path)?
+            } else {
+                library.remove_root(&path)?
+            }
+        };
+        let enabled = !self.0.library.lock().roots().is_empty();
         *self.0.citation_resolver.lock() = enabled.then(|| {
             Box::new(LocalLibraryResolver::new(Arc::clone(&self.0.library)))
                 as Box<dyn CitationResolver>
@@ -383,7 +408,116 @@ impl EngineHandle {
         if should_scan {
             self.submit(Priority::Idle, 0, Work::LibraryScanNext);
         }
+        self.submit(Priority::Idle, 0, Work::LibraryTextNext);
         Ok(())
+    }
+
+    /// Search every indexed document in the library.
+    ///
+    /// Off the engine thread entirely — it reads sidecars, never PDFium — so a
+    /// query cannot stall rendering however large the library is.
+    pub fn library_search(
+        &self,
+        query: &str,
+        case_sensitive: bool,
+        per_document_limit: usize,
+        document_limit: usize,
+    ) -> LibrarySearchDto {
+        let (app_data_dir, documents) = {
+            let library = self.0.library.lock();
+            (
+                library.app_data_dir(),
+                library
+                    .all_entries()
+                    .into_iter()
+                    .filter(|entry| entry.text_indexed)
+                    .map(|entry| crate::search::librarytext::LibraryDocument {
+                        path: entry.path,
+                        title: entry.title,
+                        mtime_ms: entry.mtime_ms,
+                        size: entry.size,
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let index = self.gram_index_for(&app_data_dir, &documents);
+        let (documents, truncated) = crate::search::librarytext::search_library(
+            &app_data_dir,
+            &documents,
+            index.as_deref(),
+            query,
+            case_sensitive,
+            per_document_limit,
+            document_limit,
+        );
+        LibrarySearchDto {
+            documents,
+            truncated,
+        }
+    }
+
+    /// The gram index for this exact set of documents, if one is ready.
+    ///
+    /// A stale or missing index is rebuilt in the background rather than
+    /// waited for: the query in hand is answered by scanning — the same answer,
+    /// just slower — and the one after it gets the index. Building blocks on
+    /// reading the library's whole folded text, which is not something a
+    /// keystroke should wait on.
+    fn gram_index_for(
+        &self,
+        app_data_dir: &std::path::Path,
+        documents: &[crate::search::librarytext::LibraryDocument],
+    ) -> Option<Arc<GramIndex>> {
+        use crate::search::librarytext;
+
+        let signature = librarytext::library_signature(documents);
+        if let Some(index) = self.0.gram_index.lock().as_ref() {
+            if index.signature() == signature {
+                return Some(Arc::clone(index));
+            }
+        }
+        // Not in memory, but a previous run may have left one on disk that
+        // still describes this library.
+        if let Some(index) = librarytext::load_gram_index(app_data_dir, signature) {
+            let index = Arc::new(index);
+            *self.0.gram_index.lock() = Some(Arc::clone(&index));
+            return Some(index);
+        }
+
+        // Genuinely stale. Not worth building yet if the background text pass
+        // is still running: every document it finishes changes the document
+        // set, so an index built now would be stale before it was written.
+        let status = self.0.library.lock().status();
+        if status.scanning || status.text_indexed < status.text_total {
+            return None;
+        }
+
+        // Start one rebuild, not one per query in a burst.
+        if self
+            .0
+            .gram_building
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            let shared = Arc::clone(&self.0);
+            let app_data_dir = app_data_dir.to_path_buf();
+            let fingerprints: Vec<_> = documents
+                .iter()
+                .map(|document| librarytext::LibraryDocument {
+                    path: document.path.clone(),
+                    title: None,
+                    mtime_ms: document.mtime_ms,
+                    size: document.size,
+                })
+                .collect();
+            std::thread::spawn(move || {
+                let index = librarytext::build_gram_index(&app_data_dir, &fingerprints);
+                librarytext::save_gram_index(&app_data_dir, &index);
+                *shared.gram_index.lock() = Some(Arc::new(index));
+                shared.gram_building.store(false, Ordering::Release);
+            });
+        }
+        None
     }
 
     pub fn library_status(&self) -> LibraryStatusDto {

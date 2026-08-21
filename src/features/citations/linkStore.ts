@@ -334,7 +334,7 @@ export function createCitationStore(doc: DocumentStore, vp: ViewportStore): Cita
         kind: 'external-unresolved',
         id: null,
         uri,
-        libraryRoot: libraryStore.state.library.root,
+        libraryRoot: libraryStore.state.library.roots[0] ?? null,
         libraryScanning: libraryStore.state.library.scanning,
       };
     }
@@ -345,7 +345,7 @@ export function createCitationStore(doc: DocumentStore, vp: ViewportStore): Cita
         kind: 'external-unresolved',
         id: citation,
         uri,
-        libraryRoot: libraryStore.state.library.root,
+        libraryRoot: libraryStore.state.library.roots[0] ?? null,
         libraryScanning: libraryStore.state.library.scanning,
       };
     } catch (error) {

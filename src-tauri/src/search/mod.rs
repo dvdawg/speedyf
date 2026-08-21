@@ -54,6 +54,15 @@ impl OffsetMap {
     fn cost(&self) -> u64 {
         (self.breaks.len() * std::mem::size_of::<(u32, i32)>()) as u64
     }
+
+    /// The breakpoints, for persisting a page to the library's text index.
+    pub(crate) fn breakpoints(&self) -> &[(u32, i32)] {
+        &self.breaks
+    }
+
+    pub(crate) fn from_breakpoints(breaks: Vec<(u32, i32)>) -> Self {
+        OffsetMap { breaks }
+    }
 }
 
 struct NormalizedText {
@@ -121,7 +130,19 @@ fn fold(value: char) -> char {
 }
 
 fn fold_text(value: &str) -> String {
-    value.chars().map(fold).collect()
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        // `fold` goes through `char::to_lowercase`, which constructs an
+        // iterator per character. That is invisible for one page and dominates
+        // when it runs over a whole library, so ASCII — nearly everything, even
+        // in a maths paper — takes the byte-wise path instead.
+        if ch.is_ascii() {
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push(fold(ch));
+        }
+    }
+    out
 }
 
 pub struct PageEntry {
@@ -133,6 +154,43 @@ pub struct PageEntry {
 }
 
 impl PageEntry {
+    /// The normalized text and its offset map, for writing to a sidecar.
+    ///
+    /// The library index stores this form rather than the raw stream so a
+    /// query does not have to re-run NFKC over the whole library on every
+    /// keystroke — only the cheap case fold, in `from_indexed`.
+    pub(crate) fn indexed_parts(&self) -> (&str, &str, &[(u32, i32)], u32) {
+        (
+            &self.normalized,
+            &self.folded,
+            self.map.breakpoints(),
+            self.char_count,
+        )
+    }
+
+    /// Rebuild a page from a sidecar. The expensive half of `new` — Unicode
+    /// normalization — was done once, when the document was indexed.
+    pub(crate) fn from_indexed(
+        normalized: String,
+        folded: String,
+        breaks: Vec<(u32, i32)>,
+        char_count: u32,
+    ) -> Self {
+        let map = OffsetMap::from_breakpoints(breaks);
+        let cost = 64 + normalized.len() as u64 + folded.len() as u64 + map.cost();
+        PageEntry {
+            normalized,
+            folded,
+            map,
+            char_count,
+            cost,
+        }
+    }
+
+    pub(crate) fn new_indexed(raw: &str, char_count: u32) -> Self {
+        PageEntry::new(raw, char_count)
+    }
+
     fn new(raw: &str, char_count: u32) -> Self {
         let NormalizedText {
             text: normalized,
@@ -179,7 +237,7 @@ fn snippet(normalized: &str, boundaries: &[usize], match_start: usize, match_len
     normalized[boundaries[start]..boundaries[end]].to_owned()
 }
 
-fn find_prepared_matches(
+pub(crate) fn find_prepared_matches(
     entry: &PageEntry,
     prepared_query: &str,
     case_sensitive: bool,
@@ -233,7 +291,7 @@ fn find_prepared_matches(
     output
 }
 
-fn prepare_query(query: &str, case_sensitive: bool) -> String {
+pub(crate) fn prepare_query(query: &str, case_sensitive: bool) -> String {
     let normalized = normalize(query).text;
     if case_sensitive {
         normalized
@@ -626,6 +684,10 @@ impl TextLayoutCache {
         }
     }
 }
+
+pub mod gramindex;
+pub mod librarytext;
+pub mod trigram;
 
 #[cfg(test)]
 mod tests {

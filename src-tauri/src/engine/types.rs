@@ -212,10 +212,16 @@ pub struct ResolvedCitationDto {
 #[derive(Serialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryStatusDto {
-    pub root: Option<String>,
+    /// Every folder in the library. Was a single optional root.
+    pub roots: Vec<String>,
     pub indexed: u32,
     pub total: u32,
     pub scanning: bool,
+    /// Documents whose full text has been extracted for search. Separate from
+    /// `indexed`, which counts metadata only — a document is findable by
+    /// citation long before it is findable by its contents.
+    pub text_indexed: u32,
+    pub text_total: u32,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -231,6 +237,30 @@ pub struct MatchDto {
 pub struct PageMatchesDto {
     pub src: u32,
     pub matches: Vec<MatchDto>,
+}
+
+/// One document that matched a library-wide search.
+///
+/// Carries the file rather than a `DocId`: nothing is open when a library
+/// search runs, and the point of the result is to decide what to open.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryHitDto {
+    pub path: String,
+    pub name: String,
+    /// first-page title heuristic from the library scan, when there is one
+    pub title: Option<String>,
+    pub total_matches: u32,
+    pub pages: Vec<PageMatchesDto>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct LibrarySearchDto {
+    pub documents: Vec<LibraryHitDto>,
+    /// true when the result set hit its cap, so the UI can say so rather than
+    /// implying the library holds nothing more
+    pub truncated: bool,
 }
 
 #[derive(Serialize, Clone, Debug)]

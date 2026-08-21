@@ -131,22 +131,13 @@ export default function StatusBar() {
         <button
           type="button"
           class="sb-control sb-button"
-          title={libraryStore.state.library.root ?? 'Choose a folder of local PDF papers'}
-          onClick={() => void libraryStore.chooseLibraryFolder()}
+          title={
+            libraryStore.state.library.roots.join('\n') || 'Choose folders of local PDF papers'
+          }
+          onClick={() => void libraryStore.addLibraryFolder()}
         >
-          Citation library…
+          Library…
         </button>
-        <Show when={libraryStore.state.library.root}>
-          <button
-            type="button"
-            class="sb-clear"
-            title="Disable citation library"
-            aria-label="Disable citation library"
-            onClick={() => void libraryStore.disableLibrary()}
-          >
-            ×
-          </button>
-        </Show>
         <label class="sb-control" title="Color theme">
           <span class="sr-only">Theme</span>
           <select

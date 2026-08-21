@@ -9,6 +9,7 @@ import type {
   DocMeta,
   CitationId,
   Figure,
+  LibrarySearchResult,
   Printer,
   PrintJob,
   PrintOption,
@@ -72,7 +73,10 @@ export interface EngineApi {
     y: number | null
   ): Promise<PreviewSpec>;
   resolveCitation(id: CitationId): Promise<ResolvedCitation | null>;
-  setLibraryRoot(path: string | null): Promise<void>;
+  /** Adds a folder to the library, or removes one. */
+  changeLibraryRoot(path: string, add: boolean): Promise<void>;
+  /** Searches every document whose text has been indexed. */
+  librarySearch(query: string, caseSensitive: boolean): Promise<LibrarySearchResult>;
   libraryStatus(): Promise<LibraryStatus>;
   startIndexing(docId: number): Promise<void>;
   searchQuery(docId: number, query: string, caseSensitive: boolean): Promise<SearchQueryResult>;
@@ -123,7 +127,8 @@ export const engine: EngineApi = {
   getPageLinks: (docId, src) => invoke('get_page_links', { docId, src }),
   getPreviewRect: (docId, src, x, y) => invoke('get_preview_rect', { docId, src, x, y }),
   resolveCitation: (id) => invoke('resolve_citation', { id }),
-  setLibraryRoot: (path) => invoke('set_library_root', { path }),
+  changeLibraryRoot: (path, add) => invoke('change_library_root', { path, add }),
+  librarySearch: (query, caseSensitive) => invoke('library_search', { query, caseSensitive }),
   libraryStatus: () => invoke('library_status'),
   startIndexing: (docId) => invoke('start_indexing', { docId }),
   searchQuery: (docId, query, caseSensitive) =>
