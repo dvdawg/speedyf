@@ -27,3 +27,13 @@ Thumbs.db
 *.local
 docs/
 .claude/
+
+# Native crash dumps (PDFium segfaults land one wherever the test binary ran).
+# Anchored so a future source directory named `core` is not swallowed.
+/core
+/core.*
+/src-tauri/core
+/src-tauri/core.*
+
+# Local repro harnesses for platform-specific native bugs
+.repro*.sh
