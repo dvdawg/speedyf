@@ -7,6 +7,7 @@
 //! The message-based boundary is deliberate: a future crash-isolated helper
 //! process pool can replace the thread without changing any caller.
 
+pub mod annots;
 pub mod citation;
 pub mod figures;
 pub mod formal;
@@ -137,6 +138,10 @@ pub enum Work {
     Figures {
         doc: DocId,
         respond: Respond<Vec<FigureDto>>,
+    },
+    Annotations {
+        doc: DocId,
+        respond: Respond<Vec<PageAnnotationsDto>>,
     },
     ImageSize {
         path: String,

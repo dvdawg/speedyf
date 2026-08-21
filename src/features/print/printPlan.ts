@@ -5,16 +5,28 @@
  * print dialog is open. */
 import type { EditPlan } from '../document/documentStore';
 
-/** The document without anything drawn on it this session.
+/** The document without any markup on it.
  *
  * Strips highlights, ink, rectangles and notes, and also the text boxes and
  * stamped images, since all of them are markup a reader added rather than the
  * document as its author wrote it. Printing a clean copy is a normal thing to
- * want, and printing one with someone's highlighter on it is not. */
-export function withoutAnnotations(plan: EditPlan): EditPlan {
+ * want, and printing one with someone's highlighter on it is not.
+ *
+ * Clearing the plan's own lists only removes markup added *this session*.
+ * Annotations that were already in the file ride along inside the imported
+ * page, so they have to be named for removal explicitly — otherwise the
+ * highlights you made last week would print through a toggle that says they
+ * will not. `ownedByPage` carries those indices, one entry per plan page. */
+export function withoutAnnotations(plan: EditPlan, ownedByPage: number[][] = []): EditPlan {
   return {
     ...plan,
-    pages: plan.pages.map((page) => ({ ...page, annots: [], texts: [], images: [] })),
+    pages: plan.pages.map((page, index) => ({
+      ...page,
+      annots: [],
+      texts: [],
+      images: [],
+      dropSrcAnnots: ownedByPage[index] ?? page.dropSrcAnnots,
+    })),
   };
 }
 

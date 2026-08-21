@@ -21,6 +21,8 @@ manual QA before a public release.
   local-library first-page previews
 - Highlights, freehand ink, rectangle annotations, text boxes, and notes
 - Annotation select, move, resize, delete, undo, and redo
+- Annotations already in a file are read back and stay editable across saves,
+  and a notes panel lists them all with Markdown export
 - Page drag-reorder, delete, duplicate, rotate, and add blank page
 - Add PNG/JPEG images and real PDF text objects
 - Best-effort AcroForm text-field editing
@@ -187,8 +189,9 @@ pnpm fixture:smoke -- /tmp/speedyf-smoke.pdf
 ```
 
 The Rust save tests generate their own PDFs in code and reopen the output with
-PDFium to verify page order, duplication, blanks, rotation, annotations, added
-text, flattened ink paths, and atomic failure behavior.
+PDFium to verify page order, duplication, blanks, rotation, every annotation
+kind's round-trip, that annotations SpeedyF does not model survive untouched,
+and atomic failure behavior.
 
 ## Benchmarks
 
@@ -236,8 +239,15 @@ SpeedyF is a focused editor, not a full PDF authoring or forensic tool:
 - Viewing, rendering, selection, and search use 32-bit source indexes. Save is
   limited to 65,535 output pages; the toolbar and status bar disclose and
   enforce that limit as soon as a larger document opens.
-- Ink is intentionally flattened to page path objects on save; it is not saved
-  as an editable PDF Ink annotation.
+- Ink, text boxes, and images are saved as real Ink/FreeText/Stamp annotations
+  rather than flattened into page content, so they remain editable after a
+  save. A FreeText annotation carries its text but no appearance stream of its
+  own, so other viewers render it using their own defaults.
+- A stroke colour is never set on an annotation that carries page objects:
+  `FPDFAnnot_SetColor` segfaults PDFium in that case. Ink colour and width live
+  on the path objects instead, which is where the reader takes them from.
+- Annotations SpeedyF cannot represent (links, form widgets, popups, XFA) are
+  never adopted or rewritten, so a save leaves them exactly as they were.
 - Only AcroForm text fields are best-effort editable. Other widgets are listed
   read-only, and advanced forms/XFA are unsupported.
 - Because save rebuilds a PDF from imported pages, preservation of bookmarks,

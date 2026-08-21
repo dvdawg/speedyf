@@ -642,6 +642,7 @@ fn benchmark_valid(
                     annots: Vec::new(),
                     texts: Vec::new(),
                     images: Vec::new(),
+                    drop_src_annots: Vec::new(),
                 })
                 .collect();
             let plan = EditPlan {

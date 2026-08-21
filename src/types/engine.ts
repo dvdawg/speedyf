@@ -1,4 +1,5 @@
 /** DTOs mirrored from the Rust engine (serde camelCase). */
+import type { PdfPoint, PdfQuad, PdfRect } from './model';
 
 export interface DocMeta {
   docId: number;
@@ -151,6 +152,27 @@ export interface FormFieldInfo {
  * anchored on — see src-tauri/src/engine/formal.rs. */
 /** One row of the formal-environment list: a section heading (depth 0) or an
  * environment under it (depth 1), already in document order. */
+/** One annotation read out of the file, ready to become an editable
+ * `Annotation`. `index` is its position in the source page's annotation list —
+ * the identity the save path uses to replace it. */
+export interface StoredAnnotation {
+  index: number;
+  kind: string;
+  rect: PdfRect;
+  color: string;
+  opacity: number;
+  strokeWidth: number | null;
+  quads: PdfQuad[] | null;
+  strokes: PdfPoint[][] | null;
+  text: string | null;
+  fontSizePt: number | null;
+}
+
+export interface PageAnnotations {
+  src: number;
+  annots: StoredAnnotation[];
+}
+
 export interface FormalEntry {
   /** true for a section/subsection heading, false for an environment. Depth
    * alone cannot tell them apart — an environment indents to however many

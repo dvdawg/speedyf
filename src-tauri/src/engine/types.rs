@@ -334,7 +334,7 @@ pub struct EngineMetricsDto {
 
 // ---------- Edit plan (mirrors the TypeScript EditPlan exactly) ----------
 
-#[derive(Deserialize, Clone, Copy, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 pub struct RectDto {
     pub x: f32,
     pub y: f32,
@@ -342,13 +342,13 @@ pub struct RectDto {
     pub h: f32,
 }
 
-#[derive(Deserialize, Clone, Copy, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 pub struct PointDto {
     pub x: f32,
     pub y: f32,
 }
 
-#[derive(Deserialize, Clone, Copy, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 pub struct QuadDto {
     pub p1: PointDto,
     pub p2: PointDto,
@@ -371,6 +371,34 @@ pub struct PlanAnnot {
     pub strokes: Option<Vec<Vec<PointDto>>>,
     #[serde(default)]
     pub text: Option<String>,
+}
+
+/// One annotation read back out of a PDF.
+///
+/// Mirrors the TypeScript `Annotation` model, plus `index` — the annotation's
+/// position in PDFium's enumeration of its source page. That index is the
+/// identity the save path uses to decide which annotations to replace and
+/// which to leave exactly as they were imported.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct AnnotationDto {
+    pub index: u32,
+    pub kind: String,
+    pub rect: RectDto,
+    pub color: String,
+    pub opacity: f32,
+    pub stroke_width: Option<f32>,
+    pub quads: Option<Vec<QuadDto>>,
+    pub strokes: Option<Vec<Vec<PointDto>>>,
+    pub text: Option<String>,
+    pub font_size_pt: Option<f32>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PageAnnotationsDto {
+    pub src: u32,
+    pub annots: Vec<AnnotationDto>,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -401,6 +429,16 @@ pub struct PlanPage {
     pub annots: Vec<PlanAnnot>,
     pub texts: Vec<PlanText>,
     pub images: Vec<PlanImage>,
+    /// Annotation indices on the *source* page to drop before writing this
+    /// page's own annotations.
+    ///
+    /// Only annotations SpeedyF owns and the user actually touched appear
+    /// here. Anything untouched is left exactly as imported, because a
+    /// highlight made in another tool carries an author, dates, a popup and an
+    /// appearance stream that this model does not hold — rewriting it through
+    /// our own shape would quietly throw all of that away.
+    #[serde(default)]
+    pub drop_src_annots: Vec<u32>,
 }
 
 #[derive(Deserialize, Clone, Debug)]

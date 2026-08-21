@@ -408,6 +408,24 @@ pub async fn get_form_fields(
         .await
 }
 
+/// Every annotation already in the file, so they can be selected, moved and
+/// deleted rather than being pixels the renderer happens to draw.
+#[tauri::command]
+pub async fn get_annotations(
+    state: tauri::State<'_, EngineState>,
+    doc_id: DocId,
+) -> AppResult<Vec<PageAnnotationsDto>> {
+    state
+        .0
+        .call_async(Priority::AdjacentPage, doc_id, move |respond| {
+            Work::Annotations {
+                doc: doc_id,
+                respond,
+            }
+        })
+        .await
+}
+
 #[tauri::command]
 pub async fn get_outline(
     state: tauri::State<'_, EngineState>,

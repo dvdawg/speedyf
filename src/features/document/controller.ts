@@ -8,6 +8,7 @@ import { engine, isEngineError } from '../../lib/transport/engine';
 import type { TabRecord } from '../../stores/tabsStore';
 import { askUnsaved, showError } from '../../stores/modalStore';
 import { recentStore } from '../../stores/recentStore';
+import type { Annotation } from '../../types/model';
 
 const SIZE_BATCH = 128;
 
@@ -22,6 +23,53 @@ export async function hydrateSizes(tab: TabRecord, pageCount: number) {
     } catch {
       return; // doc closed mid-flight
     }
+  }
+}
+
+/** Adopt the annotations already in the file, so they can be selected, moved
+ * and deleted instead of being pixels the renderer happens to draw.
+ *
+ * Best effort: a document whose annotations cannot be read still opens and
+ * still shows them, because PDFium draws them either way — they simply stay
+ * uneditable, which is exactly how every document behaved before this existed.
+ *
+ * The engine hides whatever it hands over in its own render document, so the
+ * page images have to be refetched or each annotation would appear twice: once
+ * drawn into the raster, once by the editor on top of it. */
+export async function hydrateAnnotations(tab: TabRecord, docId: number) {
+  let pages;
+  try {
+    pages = await engine.getAnnotations(docId);
+  } catch {
+    return;
+  }
+  if (tab.documentStore.state.docId !== docId || pages.length === 0) return;
+
+  tab.documentStore.hydrateAnnotations(
+    pages.map((page) => ({
+      src: page.src,
+      annots: page.annots.map((a) => ({
+        id: '', // replaced by the store, which owns id generation
+        pageId: '',
+        kind: a.kind as Annotation['kind'],
+        rect: a.rect,
+        color: a.color,
+        opacity: a.opacity,
+        srcAnnotIndex: a.index,
+        ...(a.strokeWidth !== null ? { strokeWidth: a.strokeWidth } : {}),
+        ...(a.quads !== null ? { quads: a.quads } : {}),
+        ...(a.strokes !== null ? { strokes: a.strokes } : {}),
+        ...(a.text !== null ? { text: a.text } : {}),
+        ...(a.fontSizePt !== null ? { fontSizePt: a.fontSizePt } : {}),
+      })),
+    }))
+  );
+
+  try {
+    tab.documentStore.setGeneration(await engine.bumpGeneration(docId));
+  } catch {
+    // The annotations are editable regardless; the raster just catches up on
+    // the next reason to re-render.
   }
 }
 

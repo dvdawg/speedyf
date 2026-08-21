@@ -2,6 +2,7 @@
 //! Raw FPDF_* handles never leave this thread; results cross back as owned
 //! bytes/DTOs through responder callbacks.
 
+use super::annots;
 use super::links;
 use super::pdfium_init;
 use super::preview::{self, CropInput, PREVIEW_SCALE_MILLI};
@@ -282,6 +283,7 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         Work::Outline { respond, .. } => respond(Err(err())),
         Work::FormalEnvs { respond, .. } => respond(Err(err())),
         Work::Figures { respond, .. } => respond(Err(err())),
+        Work::Annotations { respond, .. } => respond(Err(err())),
         Work::ImageSize { respond, .. } => respond(Err(err())),
         Work::Close { .. }
         | Work::SetActiveDocument { .. }
@@ -381,6 +383,7 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
             let result = do_figures(state, doc);
             respond(result)
         }
+        Work::Annotations { doc, respond } => respond(do_annotations(state, doc)),
         Work::ImageSize { path, respond } => respond(
             image::image_dimensions(&path)
                 .map(|(w, h)| [w, h])
@@ -1373,6 +1376,61 @@ fn nest_headings(flat: Vec<(u8, FormalEntryDto)>) -> Vec<OutlineNodeDto> {
         }
     }
     roots
+}
+
+/// Every annotation SpeedyF owns, read out of the file on disk — and hidden in
+/// the render document on the way out.
+///
+/// The two halves are one job on purpose. Renders include annotations
+/// (`FPDF_ANNOT`), so once the editor holds an editable copy the page image
+/// would draw it a second time underneath. Hiding exactly the annotations that
+/// were just handed over keeps those two facts from ever disagreeing.
+///
+/// The hidden flag is set only in the in-memory render document. Saving reopens
+/// the file from disk, so nothing here can reach what is written.
+///
+/// Reads through a separate document handle rather than the render one, exactly
+/// as saving does: the flags set below must not be visible to the reader.
+fn do_annotations(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<PageAnnotationsDto>> {
+    let (src_path, password) = {
+        let d = state.doc(doc)?;
+        (d.path.clone(), d.password.clone())
+    };
+    let pages = annots::read_annotations(state.pdfium, &src_path, password.as_deref())?;
+    if !pages.is_empty() {
+        let raw = state.doc(doc)?.raw;
+        for page in &pages {
+            let indices: Vec<u32> = page.annots.iter().map(|a| a.index).collect();
+            hide_annotations(state, raw, page.src, &indices);
+        }
+    }
+    Ok(pages)
+}
+
+/// PDF annotation flag bit 2: do not display.
+const ANNOT_FLAG_HIDDEN: i32 = 2;
+
+/// Hide the named annotations on one page of the render document.
+///
+/// Best effort throughout: an annotation that cannot be hidden is drawn twice,
+/// which looks wrong but loses nothing, and is far better than refusing to give
+/// the editor anything.
+fn hide_annotations(state: &mut WorkerState, raw: FPDF_DOCUMENT, src: u32, indices: &[u32]) {
+    let bindings = state.bindings;
+    let page = bindings.FPDF_LoadPage(raw, src as i32);
+    if page.is_null() {
+        return;
+    }
+    for index in indices {
+        let annot = bindings.FPDFPage_GetAnnot(page, *index as i32);
+        if annot.is_null() {
+            continue;
+        }
+        let flags = bindings.FPDFAnnot_GetFlags(annot);
+        bindings.FPDFAnnot_SetFlags(annot, flags | ANNOT_FLAG_HIDDEN);
+        bindings.FPDFPage_CloseAnnot(annot);
+    }
+    bindings.FPDF_ClosePage(page);
 }
 
 fn do_outline(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<OutlineNodeDto>> {

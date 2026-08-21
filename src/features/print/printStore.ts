@@ -96,7 +96,9 @@ async function prepare(tab: TabRecord, includeAnnotations: boolean): Promise<voi
 
   try {
     const full = tab.documentStore.buildEditPlan();
-    const plan = includeAnnotations ? full : withoutAnnotations(full);
+    const plan = includeAnnotations
+      ? full
+      : withoutAnnotations(full, tab.documentStore.ownedSrcAnnots());
     const path = await engine.buildPrintPdf(sourceDocId, plan);
     if (!state.open || tab.documentStore.state.docId !== sourceDocId) {
       await engine.discardPrintPdf(path).catch(() => undefined);
@@ -228,7 +230,9 @@ export async function exportAsPdf(range: string | null): Promise<void> {
     } else {
       // Rebuild with only the chosen pages, then hand that over instead.
       const full = tab.documentStore.buildEditPlan();
-      const base = state.includeAnnotations ? full : withoutAnnotations(full);
+      const base = state.includeAnnotations
+        ? full
+        : withoutAnnotations(full, tab.documentStore.ownedSrcAnnots());
       const narrowed = limitToRange(base, range);
       const temp = await engine.buildPrintPdf(state.sourceDocId, narrowed);
       try {

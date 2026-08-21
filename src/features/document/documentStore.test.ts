@@ -254,3 +254,103 @@ describe('buildEditPlan', () => {
     expect(plan.form).toEqual([['Email', 'a@b.c']]);
   });
 });
+
+describe('hydrateAnnotations', () => {
+  /** Two annotations as they arrive from the file, both on source page 0. */
+  const fromFile = (store: ReturnType<typeof fresh>) => {
+    store.hydrateAnnotations([
+      {
+        src: 0,
+        annots: [
+          { ...annot('', { kind: 'highlight', srcAnnotIndex: 0 }), id: '' },
+          { ...annot('', { kind: 'rect', srcAnnotIndex: 1 }), id: '' },
+        ],
+      },
+    ]);
+    const pageId = store.state.pages[0]!.id;
+    return { pageId, annots: store.state.annotations[pageId] ?? [] };
+  };
+
+  it('adopting a file’s annotations is not an unsaved change', () => {
+    // Opening a paper someone else highlighted must not offer to save it.
+    const s = fresh();
+    const { annots } = fromFile(s);
+    expect(annots).toHaveLength(2);
+    expect(s.state.dirty).toBe(false);
+    expect(s.canUndo()).toBe(false);
+    expect(s.state.historyDepth).toBe(0);
+  });
+
+  it('gives every adopted annotation its own id', () => {
+    const s = fresh();
+    const { annots } = fromFile(s);
+    expect(new Set(annots.map((a) => a.id)).size).toBe(2);
+    expect(annots.every((a) => a.id !== '')).toBe(true);
+  });
+
+  it('leaves untouched annotations for the imported page to carry', () => {
+    // They are already in the file; rewriting them would strip the author,
+    // dates and appearance stream this model has no room for.
+    const s = fresh();
+    fromFile(s);
+    const page = s.buildEditPlan().pages[0]!;
+    expect(page.annots).toHaveLength(0);
+    expect(page.dropSrcAnnots).toHaveLength(0);
+  });
+
+  it('drops and rewrites only the annotation that was edited', () => {
+    const s = fresh();
+    const { pageId, annots } = fromFile(s);
+    const target = annots[1]!;
+    s.apply({
+      type: 'patchAnnot',
+      pageId,
+      id: target.id,
+      patch: { rect: { x: 200, y: 200, w: 20, h: 20 } },
+    });
+
+    const page = s.buildEditPlan().pages[0]!;
+    expect(page.dropSrcAnnots).toEqual([1]);
+    expect(page.annots).toHaveLength(1);
+    expect(page.annots[0]!.rect.x).toBe(200);
+    // ...and editing one does count as an unsaved change.
+    expect(s.state.dirty).toBe(true);
+  });
+
+  it('drops a deleted annotation without writing it back', () => {
+    // The one case where the index is the only record left of it.
+    const s = fresh();
+    const { pageId, annots } = fromFile(s);
+    s.apply({ type: 'deleteAnnot', pageId, id: annots[0]!.id });
+
+    const page = s.buildEditPlan().pages[0]!;
+    expect(page.dropSrcAnnots).toEqual([0]);
+    expect(page.annots).toHaveLength(0);
+  });
+
+  it('treats an edit that restores the original as no edit at all', () => {
+    const s = fresh();
+    const { pageId, annots } = fromFile(s);
+    const target = annots[0]!;
+    const original = target.rect;
+    s.apply({
+      type: 'patchAnnot',
+      pageId,
+      id: target.id,
+      patch: { rect: { x: 5, y: 5, w: 5, h: 5 } },
+    });
+    s.apply({ type: 'patchAnnot', pageId, id: target.id, patch: { rect: original } });
+
+    const page = s.buildEditPlan().pages[0]!;
+    expect(page.dropSrcAnnots).toHaveLength(0);
+    expect(page.annots).toHaveLength(0);
+  });
+
+  it('reset forgets what was hydrated', () => {
+    const s = fresh();
+    fromFile(s);
+    s.reset();
+    s.initFromMeta(meta);
+    expect(s.buildEditPlan().pages[0]!.dropSrcAnnots).toHaveLength(0);
+  });
+});

@@ -18,7 +18,7 @@ import {
 } from '../../stores/tabsStore';
 import { askPassword, showError } from '../../stores/modalStore';
 import { clearImagePreviews } from '../editor/editorActions';
-import { guardUnsaved, hydrateSizes } from './controller';
+import { guardUnsaved, hydrateAnnotations, hydrateSizes } from './controller';
 import { recentStore } from '../../stores/recentStore';
 import { loadSession, saveSession } from '../../stores/sessionStore';
 import { abandonPrintFor } from '../print/printStore';
@@ -107,6 +107,7 @@ export async function openInNewTabOrFocus(
       }
       void engine.startIndexing(meta.docId);
       void hydrateSizes(record, meta.pageCount);
+      void hydrateAnnotations(record, meta.docId);
       if (activeTab()?.id === record.id) setActiveDocument(meta.docId);
       recentStore.recordOpen({ path, name: meta.name });
       scheduleSave();

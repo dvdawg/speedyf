@@ -58,6 +58,10 @@ export interface PlanPage {
   annots: PlanAnnot[];
   texts: PlanText[];
   images: PlanImage[];
+  /** Source-page annotation indices to drop before this page's own are
+   * written. Only annotations that were edited or deleted appear here — see
+   * `buildEditPlan`. */
+  dropSrcAnnots: number[];
 }
 
 export interface EditPlan {
@@ -108,6 +112,9 @@ interface HistoryEntry {
 export interface DocumentStore {
   state: DocState;
   initFromMeta: (meta: DocMeta) => void;
+  hydrateAnnotations: (byPage: { src: number; annots: Annotation[] }[]) => void;
+  /** Source annotation indices owned per plan page — see `withoutAnnotations`. */
+  ownedSrcAnnots: () => number[][];
   updateSizes: (from: number, sizes: [number, number, number, number, number][]) => void;
   apply: (op: EditOp) => void;
   undo: () => boolean;
@@ -426,14 +433,103 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
     );
   };
 
+  /** Annotations as they were when read out of the file, by annotation id.
+   *
+   * Kept so `buildEditPlan` can tell an annotation the user actually edited
+   * from one they merely looked at. An untouched annotation is left exactly as
+   * it sits in the file, because a highlight made in another tool carries an
+   * author, dates, a popup and an appearance stream this model has no place
+   * for — rewriting it through our own shape would throw all that away for
+   * nothing. */
+  let hydrated = new Map<string, string>();
+  /** Source annotation indices hydrated onto each page.
+   *
+   * Recorded separately because a deleted annotation is gone from state — and a
+   * deletion is exactly the case where the save path most needs to know the
+   * index, so the stale copy in the file can be dropped. */
+  let hydratedByPage = new Map<PageId, Set<number>>();
+
+  /** A comparable form of an annotation's editable content.
+   *
+   * Compares content rather than tracking which ops touched what: every edit
+   * path then counts automatically, including ones added later, and an edit
+   * that happens to restore the original value correctly reads as no edit. */
+  const annotFingerprint = (a: Annotation) =>
+    JSON.stringify([
+      a.kind,
+      a.rect,
+      a.color,
+      a.opacity,
+      a.strokeWidth ?? null,
+      a.quads ?? null,
+      a.strokes ?? null,
+      a.text ?? null,
+      a.fontSizePt ?? null,
+    ]);
+
+  /** Adopt the annotations already in the file.
+   *
+   * Not routed through `apply`: opening a paper someone annotated is not an
+   * unsaved change, so this leaves the undo history empty and `dirty` false.
+   * Going through `apply` would offer to save a file nobody had edited. */
+  const hydrateAnnotations = (byPage: { src: number; annots: Annotation[] }[]) => {
+    const next = new Map<string, string>();
+    const byPageIndices = new Map<PageId, Set<number>>();
+    setState(
+      produce((s) => {
+        for (const page of byPage) {
+          // A source page can appear more than once if it was duplicated this
+          // session; each copy gets its own editable annotations.
+          for (const index of sourcePageIndices.get(page.src) ?? []) {
+            const target = s.pages[index];
+            if (!target) continue;
+            const owned = page.annots.map((a) => ({ ...a, id: genId('an') }));
+            for (const a of owned) next.set(a.id, annotFingerprint(a));
+            byPageIndices.set(
+              target.id,
+              new Set(page.annots.map((a) => a.srcAnnotIndex ?? -1).filter((i) => i >= 0))
+            );
+            s.annotations[target.id] = [...(s.annotations[target.id] ?? []), ...owned];
+          }
+        }
+      })
+    );
+    hydrated = next;
+    hydratedByPage = byPageIndices;
+  };
+
+  const hydratedIndicesFor = (pageId: PageId): Set<number> =>
+    hydratedByPage.get(pageId) ?? new Set();
+
+  /** Every source annotation index SpeedyF owns, one entry per plan page and in
+   * the same order, for callers that want the document with none of them. */
+  const ownedSrcAnnots = (): number[][] =>
+    state.pages.map((page) => [...hydratedIndicesFor(page.id)]);
+
   const buildEditPlan = (): EditPlan => {
     const pages: PlanPage[] = state.pages.map((p) => {
-      const anns = state.annotations[p.id] ?? [];
+      const all = state.annotations[p.id] ?? [];
+
+      // An annotation read from the file and left alone is written by nobody:
+      // the page it lives on is imported wholesale, so it arrives intact. Only
+      // the ones that changed are dropped and written again.
+      const untouched = new Set(
+        all.filter((a) => hydrated.get(a.id) === annotFingerprint(a)).map((a) => a.id)
+      );
+      const anns = all.filter((a) => !untouched.has(a.id));
+
+      // Every source annotation that is no longer being carried untouched —
+      // whether the user edited it or deleted it outright — has to go, or the
+      // import would bring the stale copy back alongside the new one.
+      const surviving = new Set(all.filter((a) => untouched.has(a.id)).map((a) => a.srcAnnotIndex));
+      const dropSrcAnnots = [...hydratedIndicesFor(p.id)].filter((index) => !surviving.has(index));
+
       return {
         srcIndex: p.srcIndex,
         widthPt: p.widthPt,
         heightPt: p.heightPt,
         rotation: p.userRotation,
+        dropSrcAnnots,
         annots: anns
           .filter((a): a is Annotation & { kind: PlanAnnot['kind'] } =>
             ['highlight', 'ink', 'rect', 'note'].includes(a.kind)
@@ -471,6 +567,8 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
       return state;
     },
     initFromMeta,
+    hydrateAnnotations,
+    ownedSrcAnnots,
     updateSizes,
     apply,
     undo,
@@ -494,6 +592,8 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
       undoStack = [];
       redoStack = [];
       savedLen = 0;
+      hydrated = new Map();
+      hydratedByPage = new Map();
       setState(emptyState());
       rebuildPageLookups();
     },

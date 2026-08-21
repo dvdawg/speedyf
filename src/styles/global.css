@@ -1910,6 +1910,81 @@ textarea:focus-visible {
   font-size: 12px;
 }
 
+/* ---------- notes panel ---------- */
+
+.notes-panel {
+  padding: 6px;
+}
+
+.notes-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.note-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.note-row:hover {
+  background: var(--bg-inset);
+}
+
+/* The annotation's own color, so the list scans the way the page does. */
+.note-swatch {
+  flex: none;
+  width: 4px;
+  align-self: stretch;
+  min-height: 28px;
+  border-radius: 2px;
+}
+
+.note-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.note-meta {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+/* The words under a highlight. Clamped rather than truncated to one line: a
+   quote needs enough of itself to be recognizable. */
+.note-quote {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.note-text {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-style: italic;
+  line-height: 1.4;
+}
+
 /* ---------- print dialog ---------- */
 
 /* `.modal` sets a 420px width later in this file, so this has to out-specify

@@ -1,14 +1,15 @@
 /** Left panel shell: a small mode toggle (page thumbnails, table of contents,
- * formal environments, or figures) plus whichever content is currently
- * selected. */
+ * formal environments, figures, or your own notes) plus whichever content is
+ * currently selected. */
 import { Show } from 'solid-js';
 import IconButton from './IconButton';
-import { IconFigure, IconList, IconPages, IconQed } from './icons';
+import { IconFigure, IconList, IconNote, IconPages, IconQed } from './icons';
 import { ui, setUi } from '../stores/uiStore';
 import PageThumbnails from '../features/outline/PageThumbnails';
 import Outline from '../features/outline/Outline';
 import FormalEnvs from '../features/outline/FormalEnvs';
 import Figures from '../features/outline/Figures';
+import NotesPanel from '../features/annotations/NotesPanel';
 
 export default function Sidebar() {
   return (
@@ -42,6 +43,13 @@ export default function Sidebar() {
         >
           <IconFigure />
         </IconButton>
+        <IconButton
+          label="Notes and annotations"
+          active={ui.sidebarMode === 'notes'}
+          onClick={() => setUi('sidebarMode', 'notes')}
+        >
+          <IconNote />
+        </IconButton>
       </div>
       <Show when={ui.sidebarMode === 'pages'}>
         <PageThumbnails />
@@ -54,6 +62,9 @@ export default function Sidebar() {
       </Show>
       <Show when={ui.sidebarMode === 'figures'}>
         <Figures />
+      </Show>
+      <Show when={ui.sidebarMode === 'notes'}>
+        <NotesPanel />
       </Show>
     </aside>
   );

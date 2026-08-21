@@ -17,6 +17,7 @@ import type {
   FormFieldInfo,
   LibraryStatus,
   OutlineNode,
+  PageAnnotations,
   PageLinks,
   PageTextLayout,
   PreviewSpec,
@@ -89,6 +90,9 @@ export interface EngineApi {
   saveDocument(docId: number, plan: EditPlan, destPath: string): Promise<SaveResult>;
   getFormFields(docId: number): Promise<FormFieldInfo[]>;
   getOutline(docId: number): Promise<OutlineNode[]>;
+  /** Annotations already in the file, so they can be edited rather than
+   * merely looked at. */
+  getAnnotations(docId: number): Promise<PageAnnotations[]>;
   getFormalEnvs(docId: number): Promise<FormalEntry[]>;
   getFigures(docId: number): Promise<Figure[]>;
   imageSize(path: string): Promise<[number, number]>;
@@ -137,6 +141,7 @@ export const engine: EngineApi = {
   saveDocument: (docId, plan, destPath) => invoke('save_document', { docId, plan, destPath }),
   getFormFields: (docId) => invoke('get_form_fields', { docId }),
   getOutline: (docId) => invoke('get_outline', { docId }),
+  getAnnotations: (docId) => invoke('get_annotations', { docId }),
   getFormalEnvs: (docId) => invoke('get_formal_envs', { docId }),
   getFigures: (docId) => invoke('get_figures', { docId }),
   imageSize: (path) => invoke('image_size', { path }),

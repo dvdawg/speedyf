@@ -72,6 +72,13 @@ export interface Annotation {
   /** natural pixel size of the source image. */
   naturalW?: number;
   naturalH?: number;
+  /** Set only on annotations read out of the file: this annotation's position
+   * in PDFium's enumeration of its source page.
+   *
+   * It is the identity the save path uses to tell an annotation it should
+   * replace from one it should leave exactly as it found it. Annotations drawn
+   * this session have no source index, so they are always written fresh. */
+  srcAnnotIndex?: number;
 }
 
 export interface DocMeta {

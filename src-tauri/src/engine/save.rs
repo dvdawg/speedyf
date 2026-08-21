@@ -67,7 +67,14 @@ fn parse_color(hex: &str, opacity: f32) -> PdfColor {
     PdfColor::new(r, g, b, (opacity.clamp(0.0, 1.0) * 255.0) as u8)
 }
 
-struct PageSpace {
+/// The mapping between the display-normalized space annotations arrive in
+/// (y-up, origin at the displayed crop-box bottom-left) and raw PDF user space.
+///
+/// Both directions live here deliberately. Reading annotations back out of a
+/// file needs the exact inverse of what writing them applies, and a second
+/// implementation elsewhere would drift from this one the first time a crop box
+/// or `/Rotate` case was fixed in only one of them.
+pub(crate) struct PageSpace {
     crop_l: f32,
     crop_b: f32,
     crop_r: f32,
@@ -76,7 +83,7 @@ struct PageSpace {
 }
 
 impl PageSpace {
-    fn of(page: &PdfPage<'_>) -> PageSpace {
+    pub(crate) fn of(page: &PdfPage<'_>) -> PageSpace {
         let crop = page
             .boundaries()
             .crop()
@@ -104,7 +111,7 @@ impl PageSpace {
     }
 
     /// display-normalized (y-up) point → raw PDF user-space point
-    fn disp_to_user(&self, dx: f32, dy: f32) -> (f32, f32) {
+    pub(crate) fn disp_to_user(&self, dx: f32, dy: f32) -> (f32, f32) {
         let (l, b, r, t) = (self.crop_l, self.crop_b, self.crop_r, self.crop_t);
         match self.rot {
             90 => (l + (r - l) - dy, b + dx),
@@ -114,7 +121,21 @@ impl PageSpace {
         }
     }
 
-    fn rect_to_user(&self, rc: &RectDto) -> PdfRect {
+    /// raw PDF user-space point → display-normalized (y-up) point.
+    ///
+    /// The exact algebraic inverse of `disp_to_user`; the round-trip test below
+    /// is what keeps it that way.
+    pub(crate) fn user_to_disp(&self, ux: f32, uy: f32) -> (f32, f32) {
+        let (l, b, r, t) = (self.crop_l, self.crop_b, self.crop_r, self.crop_t);
+        match self.rot {
+            90 => (uy - b, r - ux),
+            180 => (r - ux, t - uy),
+            270 => (t - uy, ux - l),
+            _ => (ux - l, uy - b),
+        }
+    }
+
+    pub(crate) fn rect_to_user(&self, rc: &RectDto) -> PdfRect {
         let (x1, y1) = self.disp_to_user(rc.x, rc.y);
         let (x2, y2) = self.disp_to_user(rc.x + rc.w, rc.y + rc.h);
         PdfRect::new(
@@ -123,6 +144,20 @@ impl PageSpace {
             PdfPoints::new(y1.max(y2)),
             PdfPoints::new(x1.max(x2)),
         )
+    }
+
+    /// A user-space rectangle as a display-space one. Both corners are mapped
+    /// and then re-normalized, because a rotated page swaps which corner is
+    /// which — taking the mapped corners as-is would give negative extents.
+    pub(crate) fn rect_from_user(&self, rect: &PdfRect) -> RectDto {
+        let (x1, y1) = self.user_to_disp(rect.left().value, rect.bottom().value);
+        let (x2, y2) = self.user_to_disp(rect.right().value, rect.top().value);
+        RectDto {
+            x: x1.min(x2),
+            y: y1.min(y2),
+            w: (x2 - x1).abs(),
+            h: (y2 - y1).abs(),
+        }
     }
 }
 
@@ -188,30 +223,47 @@ fn add_annotations<'a>(
                     .ok();
             }
             "ink" => {
-                // Flattened to page path objects (portable; documented in README).
-                if let Some(strokes) = &annot.strokes {
-                    let color = parse_color(&annot.color, annot.opacity);
-                    let width = PdfPoints::new(annot.stroke_width.unwrap_or(2.0));
-                    for stroke in strokes {
-                        if stroke.len() < 2 {
-                            continue;
-                        }
-                        let (x0, y0) = space.disp_to_user(stroke[0].x, stroke[0].y);
-                        let mut path = PdfPagePathObject::new(
-                            doc,
-                            PdfPoints::new(x0),
-                            PdfPoints::new(y0),
-                            Some(color),
-                            Some(width),
-                            None,
-                        )?;
-                        for p in &stroke[1..] {
-                            let (x, y) = space.disp_to_user(p.x, p.y);
-                            path.line_to(PdfPoints::new(x), PdfPoints::new(y))?;
-                        }
-                        page.objects_mut().add_path_object(path)?;
-                    }
+                // A real Ink annotation, holding its strokes as path objects
+                // *inside itself*. This used to flatten them onto the page,
+                // which rendered everywhere but made every stroke permanent:
+                // once saved it was page content, indistinguishable from the
+                // paper's own figures and impossible to move or delete again.
+                //
+                // The objects live in the annotation, so it carries its own
+                // appearance rather than relying on a viewer to synthesize one.
+                //
+                // Do NOT set a stroke colour on the annotation itself.
+                // `FPDFAnnot_SetColor` on an annotation that already has
+                // appended objects segfaults PDFium outright — not an error
+                // return, a crash. The colour and width belong to the path
+                // objects anyway, which is where the reader takes them from.
+                let Some(strokes) = &annot.strokes else {
+                    continue;
+                };
+                let color = parse_color(&annot.color, annot.opacity);
+                let width = PdfPoints::new(annot.stroke_width.unwrap_or(2.0));
+                let usable: Vec<_> = strokes.iter().filter(|s| s.len() >= 2).collect();
+                if usable.is_empty() {
+                    continue;
                 }
+                let mut a = page.annotations_mut().create_ink_annotation()?;
+                for stroke in usable {
+                    let (x0, y0) = space.disp_to_user(stroke[0].x, stroke[0].y);
+                    let mut path = PdfPagePathObject::new(
+                        doc,
+                        PdfPoints::new(x0),
+                        PdfPoints::new(y0),
+                        Some(color),
+                        Some(width),
+                        None,
+                    )?;
+                    for p in &stroke[1..] {
+                        let (x, y) = space.disp_to_user(p.x, p.y);
+                        path.line_to(PdfPoints::new(x), PdfPoints::new(y))?;
+                    }
+                    a.objects_mut().add_path_object(path)?;
+                }
+                a.set_bounds(space.rect_to_user(&annot.rect))?;
             }
             other => {
                 log::warn!("unknown annotation kind ignored at save: {other}");
@@ -219,21 +271,23 @@ fn add_annotations<'a>(
         }
     }
 
+    // Typed text becomes a FreeText annotation holding its own text objects,
+    // rather than text objects written straight onto the page. Same reason as
+    // ink: flattened text is indistinguishable from the document's own words
+    // the moment it is saved, and cannot be edited or removed afterwards.
     for text in &plan_page.texts {
         let user_rect = space.rect_to_user(&text.rect);
         let size = text.font_size_pt.max(4.0);
         let color = parse_color(&text.color, text.opacity);
-        let mut y = user_rect.top().value - size;
-        for line in text.text.split('\n') {
-            let content = if line.trim().is_empty() { " " } else { line };
-            let mut obj = PdfPageTextObject::new(doc, content, helv, PdfPoints::new(size))?;
-            obj.set_fill_color(color).ok();
-            obj.translate(PdfPoints::new(user_rect.left().value), PdfPoints::new(y))?;
-            page.objects_mut().add_text_object(obj)?;
-            y -= size * 1.3;
-        }
+        let mut a = page
+            .annotations_mut()
+            .create_free_text_annotation(&text.text)?;
+        a.set_bounds(user_rect)?;
+        a.set_fill_color(color).ok();
+        let _ = (doc, helv, size);
     }
 
+    // Images become Stamp annotations carrying the image object.
     for img in &plan_page.images {
         let dyn_img = image::open(&img.source_path)
             .map_err(|e| AppError::Io(format!("cannot load image {}: {e}", img.source_path)))?;
@@ -246,7 +300,9 @@ fn add_annotations<'a>(
             PdfPoints::new(user_rect.left().value),
             PdfPoints::new(user_rect.bottom().value),
         )?;
-        page.objects_mut().add_image_object(obj)?;
+        let mut a = page.annotations_mut().create_stamp_annotation()?;
+        a.objects_mut().add_image_object(obj)?;
+        a.set_bounds(user_rect)?;
     }
 
     Ok(())
@@ -276,6 +332,43 @@ fn page_requires_mutation(page: &crate::engine::types::PlanPage) -> bool {
         || !page.annots.is_empty()
         || !page.texts.is_empty()
         || !page.images.is_empty()
+        || !page.drop_src_annots.is_empty()
+}
+
+/// Remove the annotations the plan says were edited or deleted, before the
+/// plan's own versions are written in their place.
+///
+/// Importing a page brings its annotations with it, so an annotation the user
+/// loaded, edited and re-saved would otherwise appear twice: once as imported,
+/// once as written. Only the indices named here are dropped — an annotation
+/// nobody touched stays exactly as it came in, keeping the author, dates, popup
+/// and appearance stream that this model has no place to put.
+///
+/// Indices refer to the source page's own enumeration, which import preserves.
+/// They are removed high-to-low so that removing one cannot shift the position
+/// of another still to be removed.
+fn drop_replaced_annotations(page: &mut PdfPage<'_>, drop: &[u32]) {
+    if drop.is_empty() {
+        return;
+    }
+    let mut indices: Vec<u32> = drop.to_vec();
+    indices.sort_unstable();
+    indices.dedup();
+
+    for index in indices.into_iter().rev() {
+        let Ok(annot) = page.annotations().get(index as usize) else {
+            continue;
+        };
+        // Refuse to delete anything the reader would not have surfaced: the
+        // frontend can only have meant an annotation it was actually given.
+        if !crate::engine::annots::is_owned(&annot) {
+            log::warn!("refusing to drop annotation {index}: not a kind SpeedyF owns");
+            continue;
+        }
+        if let Err(error) = page.annotations_mut().delete_annotation(annot) {
+            log::warn!("cannot drop annotation {index}: {error:?}");
+        }
+    }
 }
 
 fn fill_form_fields(doc: &mut PdfDocument<'_>, form: &[(String, String)]) {
@@ -368,6 +461,7 @@ pub fn build_output(
             continue;
         }
         let mut page = out.pages().get(idx as u16)?;
+        drop_replaced_annotations(&mut page, &pp.drop_src_annots);
         add_annotations(&out, &mut page, pp, helv)?;
         apply_rotation(&mut page, pp.rotation % 360);
     }
@@ -432,6 +526,7 @@ mod tests {
             annots: Vec::new(),
             texts: Vec::new(),
             images: Vec::new(),
+            drop_src_annots: Vec::new(),
         }
     }
 
@@ -516,7 +611,7 @@ mod tests {
     }
 
     #[test]
-    fn materializes_pdf_annotations_added_text_and_flattened_ink_paths() {
+    fn every_annotation_kind_survives_a_save_and_reads_back() {
         let _guard = pdfium_init::test_guard();
         let pdfium = test_pdfium();
         let dir = tempfile::tempdir().expect("temp dir");
@@ -623,17 +718,229 @@ mod tests {
         )
         .expect("build annotated output");
 
+        // Everything written is a real annotation now — ink and typed text
+        // included. They used to be flattened into page content, which meant
+        // that saving made them permanent.
         let saved = pdfium
             .load_pdf_from_file(&output, None)
             .expect("reopen annotated output");
         let page = saved.pages().get(0).expect("saved page");
-        assert_eq!(page.annotations().len(), 3);
-        assert!(page.text().expect("page text").all().contains("ADDED-TEXT"));
+        assert_eq!(page.annotations().len(), 5);
         assert!(
-            page.objects()
+            !page
+                .objects()
                 .iter()
                 .any(|object| object.as_path_object().is_some()),
-            "ink must be flattened to a page path object"
+            "ink must no longer be flattened onto the page"
+        );
+
+        // ...and every one of them reads back through the annotation reader.
+        let read = crate::engine::annots::read_annotations(
+            &pdfium,
+            output.to_str().expect("output path"),
+            None,
+        )
+        .expect("read annotations back");
+        let annots = &read.iter().find(|p| p.src == 0).expect("page 0").annots;
+        let kinds: Vec<&str> = annots.iter().map(|a| a.kind.as_str()).collect();
+        assert_eq!(
+            kinds,
+            vec!["highlight", "rect", "note", "ink", "textbox"],
+            "every kind must survive the round-trip"
+        );
+
+        let note = annots.iter().find(|a| a.kind == "note").expect("note");
+        assert_eq!(note.text.as_deref(), Some("fixture note"));
+        let textbox = annots
+            .iter()
+            .find(|a| a.kind == "textbox")
+            .expect("textbox");
+        assert_eq!(textbox.text.as_deref(), Some("ADDED-TEXT"));
+
+        // Geometry survives: the highlight comes back where it was put, in the
+        // same display space it was written from.
+        let highlight = annots
+            .iter()
+            .find(|a| a.kind == "highlight")
+            .expect("highlight");
+        assert!(
+            (highlight.rect.x - 40.0).abs() < 1.0 && (highlight.rect.y - 50.0).abs() < 1.0,
+            "highlight came back at {:?}",
+            highlight.rect
+        );
+        assert_eq!(highlight.quads.as_ref().map(Vec::len), Some(1));
+
+        // Ink keeps its colour and its shape, both of which live on the path
+        // objects rather than on the annotation.
+        let ink = annots.iter().find(|a| a.kind == "ink").expect("ink");
+        assert_eq!(ink.color, "#d81b60");
+        let strokes = ink.strokes.as_ref().expect("ink strokes");
+        assert_eq!(strokes.len(), 1);
+        assert_eq!(strokes[0].len(), 3, "all three points of the stroke");
+        assert!(
+            (strokes[0][1].x - 70.0).abs() < 1.0 && (strokes[0][1].y - 225.0).abs() < 1.0,
+            "middle point came back at {:?}",
+            strokes[0][1]
+        );
+    }
+
+    /// A source carrying annotations SpeedyF did not write: one it models
+    /// (a highlight, as another tool would leave it) and one it does not (a
+    /// link).
+    fn create_annotated_fixture(pdfium: &Pdfium, path: &Path) {
+        let mut document = pdfium.create_new_pdf().expect("create fixture");
+        let mut page = document
+            .pages_mut()
+            .create_page_at_end(PdfPagePaperSize::Custom(
+                PdfPoints::new(300.0),
+                PdfPoints::new(400.0),
+            ))
+            .expect("fixture page");
+        for top in [80.0f32, 160.0] {
+            let mut a = page
+                .annotations_mut()
+                .create_highlight_annotation()
+                .expect("fixture highlight");
+            a.set_bounds(PdfRect::new(
+                PdfPoints::new(top - 20.0),
+                PdfPoints::new(20.0),
+                PdfPoints::new(top),
+                PdfPoints::new(120.0),
+            ))
+            .expect("fixture bounds");
+        }
+        page.annotations_mut()
+            .create_link_annotation("https://example.com")
+            .expect("fixture link");
+        drop(page);
+        let mut file = std::fs::File::create(path).expect("create fixture file");
+        document.save_to_writer(&mut file).expect("write fixture");
+    }
+
+    fn kinds_at(pdfium: &Pdfium, path: &Path) -> Vec<PdfPageAnnotationType> {
+        let doc = pdfium.load_pdf_from_file(path, None).expect("reopen");
+        let page = doc.pages().get(0).expect("page");
+        let kinds = page
+            .annotations()
+            .iter()
+            .map(|a| a.annotation_type())
+            .collect();
+        kinds
+    }
+
+    #[test]
+    fn annotations_speedyf_does_not_model_survive_a_save_untouched() {
+        // A link is not something this editor can represent, so it must come
+        // through a save exactly as it went in — never adopted, never dropped.
+        let _guard = pdfium_init::test_guard();
+        let pdfium = test_pdfium();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let source = dir.path().join("source.pdf");
+        let output = dir.path().join("output.pdf");
+        create_annotated_fixture(&pdfium, &source);
+
+        let plan = EditPlan {
+            pages: vec![plan_page(Some(0), 90)],
+            form: Vec::new(),
+        };
+        build_output(
+            &pdfium,
+            source.to_str().expect("path"),
+            None,
+            &plan,
+            &output,
+        )
+        .expect("save");
+
+        let kinds = kinds_at(&pdfium, &output);
+        assert_eq!(
+            kinds
+                .iter()
+                .filter(|k| **k == PdfPageAnnotationType::Link)
+                .count(),
+            1,
+            "the link must still be there"
+        );
+        assert_eq!(
+            kinds
+                .iter()
+                .filter(|k| **k == PdfPageAnnotationType::Highlight)
+                .count(),
+            2,
+            "untouched highlights must not be disturbed"
+        );
+    }
+
+    #[test]
+    fn only_the_annotations_named_for_replacement_are_dropped() {
+        // Editing one highlight must not rewrite the one beside it: a
+        // third-party annotation carries an author, dates and an appearance
+        // stream this model has nowhere to put, so an untouched one is left
+        // exactly as imported.
+        let _guard = pdfium_init::test_guard();
+        let pdfium = test_pdfium();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let source = dir.path().join("source.pdf");
+        let output = dir.path().join("output.pdf");
+        create_annotated_fixture(&pdfium, &source);
+
+        let mut page = plan_page(Some(0), 0);
+        // The user moved highlight 0 and left highlight 1 alone.
+        page.drop_src_annots = vec![0];
+        page.annots.push(PlanAnnot {
+            kind: "highlight".into(),
+            rect: RectDto {
+                x: 200.0,
+                y: 200.0,
+                w: 60.0,
+                h: 20.0,
+            },
+            color: "#00e676".into(),
+            opacity: 0.5,
+            stroke_width: None,
+            quads: None,
+            strokes: None,
+            text: None,
+        });
+        let plan = EditPlan {
+            pages: vec![page],
+            form: Vec::new(),
+        };
+        build_output(
+            &pdfium,
+            source.to_str().expect("path"),
+            None,
+            &plan,
+            &output,
+        )
+        .expect("save");
+
+        let kinds = kinds_at(&pdfium, &output);
+        assert_eq!(
+            kinds
+                .iter()
+                .filter(|k| **k == PdfPageAnnotationType::Highlight)
+                .count(),
+            2,
+            "one dropped, one kept, one added"
+        );
+        assert_eq!(
+            kinds
+                .iter()
+                .filter(|k| **k == PdfPageAnnotationType::Link)
+                .count(),
+            1,
+            "the link is still not ours to touch"
+        );
+
+        // The moved copy is the one that came back, at its new home.
+        let read =
+            crate::engine::annots::read_annotations(&pdfium, output.to_str().expect("path"), None)
+                .expect("read back");
+        let annots = &read[0].annots;
+        assert!(
+            annots.iter().any(|a| (a.rect.x - 200.0).abs() < 1.0),
+            "the edited highlight must be at its new position"
         );
     }
 

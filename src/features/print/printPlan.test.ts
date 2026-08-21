@@ -11,6 +11,7 @@ const page = (srcIndex: number) => ({
   annots: [{ kind: 'highlight' as const, rect, color: '#ffff00', opacity: 0.4 }],
   texts: [{ rect, text: 'note', fontSizePt: 12, color: '#000000', opacity: 1 }],
   images: [],
+  dropSrcAnnots: [],
 });
 const plan = (count: number): EditPlan => ({
   pages: Array.from({ length: count }, (_, i) => page(i)),
