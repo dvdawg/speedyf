@@ -232,11 +232,16 @@ fn add_annotations<'a>(
                 // The objects live in the annotation, so it carries its own
                 // appearance rather than relying on a viewer to synthesize one.
                 //
-                // Do NOT set a stroke colour on the annotation itself.
-                // `FPDFAnnot_SetColor` on an annotation that already has
-                // appended objects segfaults PDFium outright — not an error
-                // return, a crash. The colour and width belong to the path
-                // objects anyway, which is where the reader takes them from.
+                // Do NOT set a stroke colour on the annotation itself. PDFium
+                // refuses `FPDFAnnot_SetColor` for any annotation carrying an
+                // `/AP` entry, and `pdfium-render` answers that refusal by
+                // retrying through `FPDFPageObj_SetStrokeColor` with the
+                // `FPDF_ANNOTATION` handle cast to `FPDF_PAGEOBJECT` — so
+                // PDFium writes through an annotation as though it were a page
+                // object. macOS survives the type-confused access; Linux and
+                // Windows fault. `annots.rs` avoids the reading half of the
+                // same trap. The colour and width belong to the path objects
+                // anyway, which is where the reader takes them from.
                 let Some(strokes) = &annot.strokes else {
                     continue;
                 };

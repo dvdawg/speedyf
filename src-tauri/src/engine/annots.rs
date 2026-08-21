@@ -50,10 +50,10 @@ fn opacity_of(color: &PdfColor) -> f32 {
 /// A missing colour is common, not an error: writers routinely leave it to the
 /// appearance stream. Failing the read over one would lose every other
 /// annotation on the page.
-fn color_or(found: Result<PdfColor, PdfiumError>, fallback: &str) -> (String, f32) {
+fn color_or(found: Option<PdfColor>, fallback: &str) -> (String, f32) {
     match found {
-        Ok(color) => (hex_of(&color), opacity_of(&color)),
-        Err(_) => (fallback.to_string(), 1.0),
+        Some(color) => (hex_of(&color), opacity_of(&color)),
+        None => (fallback.to_string(), 1.0),
     }
 }
 
@@ -91,23 +91,47 @@ fn quad_of_rect(rect: &RectDto) -> QuadDto {
     }
 }
 
-/// The colour and width of an ink annotation, taken from its path objects.
+/// The style of an annotation, read from the page objects it carries.
 ///
-/// Not from the annotation itself: `save.rs` deliberately never sets a stroke
-/// colour on an annotation holding appended objects, because doing so crashes
-/// PDFium. The style lives on the paths, so that is where it is read from.
-fn ink_style(objects: &PdfPageAnnotationObjects<'_>) -> (Option<String>, Option<f32>) {
+/// Never from `PdfPageAnnotationCommon::fill_color()` or `stroke_color()`.
+/// Those call `FPDFAnnot_GetColor`, which PDFium refuses outright for any
+/// annotation whose dictionary has an `/AP` entry — and `pdfium-render` answers
+/// that refusal by retrying through `FPDFPageObj_GetFillColor` with the
+/// `FPDF_ANNOTATION` handle *cast* to `FPDF_PAGEOBJECT`. PDFium then reads an
+/// annotation as though it were a page object. The type-confused load happens
+/// to hit mapped memory on macOS; on Linux and Windows it faults, which is what
+/// took CI down. The cast is still present in pdfium-render 0.9.3, so there is
+/// no version to upgrade to — the call simply must not be made.
+///
+/// PDFium generates appearance streams for most markup subtypes as it loads
+/// them, so `/AP` is the common case for anything read back out of a saved
+/// file, not a corner case. Reading style off the objects avoids the refusal
+/// path entirely: `PdfPageObjectCommon`'s accessors take a genuine
+/// `FPDF_PAGEOBJECT` and never perform the cast.
+#[derive(Default)]
+struct AnnotStyle {
+    stroke: Option<PdfColor>,
+    fill: Option<PdfColor>,
+    width: Option<f32>,
+}
+
+fn style_of(objects: &PdfPageAnnotationObjects<'_>) -> AnnotStyle {
+    let mut style = AnnotStyle::default();
     for object in objects.iter() {
-        let Some(path) = object.as_path_object() else {
-            continue;
-        };
-        let color = path.stroke_color().ok().map(|c| hex_of(&c));
-        let width = path.stroke_width().ok().map(|w| w.value);
-        if color.is_some() || width.is_some() {
-            return (color, width);
+        if style.stroke.is_none() {
+            style.stroke = object.stroke_color().ok();
+        }
+        if style.fill.is_none() {
+            style.fill = object.fill_color().ok();
+        }
+        if style.width.is_none() {
+            style.width = object.stroke_width().ok().map(|w| w.value);
+        }
+        if style.stroke.is_some() && style.fill.is_some() && style.width.is_some() {
+            break;
         }
     }
-    (None, None)
+    style
 }
 
 /// The polylines inside an ink annotation.
@@ -164,9 +188,11 @@ fn read_annotation(
         font_size_pt: None,
     };
 
+    let style = style_of(annot.objects());
+
     match annot.annotation_type() {
         PdfPageAnnotationType::Highlight => {
-            let (color, opacity) = color_or(annot.fill_color(), "#ffd54a");
+            let (color, opacity) = color_or(style.fill, "#ffd54a");
             dto.kind = "highlight".into();
             dto.color = color;
             dto.opacity = opacity;
@@ -178,14 +204,14 @@ fn read_annotation(
             });
         }
         PdfPageAnnotationType::Square => {
-            let (color, opacity) = color_or(annot.stroke_color(), "#1e88e5");
+            let (color, opacity) = color_or(style.stroke, "#1e88e5");
             dto.kind = "rect".into();
             dto.color = color;
             dto.opacity = opacity;
-            dto.stroke_width = Some(DEFAULT_STROKE_PT);
+            dto.stroke_width = Some(style.width.unwrap_or(DEFAULT_STROKE_PT));
         }
         PdfPageAnnotationType::Text => {
-            let (color, opacity) = color_or(annot.fill_color(), "#fb8c00");
+            let (color, opacity) = color_or(style.fill, "#fb8c00");
             dto.kind = "note".into();
             dto.color = color;
             dto.opacity = opacity;
@@ -197,18 +223,17 @@ fn read_annotation(
             if strokes.is_empty() {
                 return None;
             }
-            let (path_color, path_width) = ink_style(annot.objects());
-            // The annotation's own colour is the fallback, for ink drawn by a
-            // tool that does put one there.
-            let (color, opacity) = color_or(annot.stroke_color(), "#e53935");
+            // Ink carries its colour on the stroked paths inside it, which is
+            // also where `save.rs` writes it.
+            let (color, opacity) = color_or(style.stroke, "#e53935");
             dto.kind = "ink".into();
-            dto.color = path_color.unwrap_or(color);
+            dto.color = color;
             dto.opacity = opacity;
-            dto.stroke_width = Some(path_width.unwrap_or(DEFAULT_STROKE_PT));
+            dto.stroke_width = Some(style.width.unwrap_or(DEFAULT_STROKE_PT));
             dto.strokes = Some(strokes);
         }
         PdfPageAnnotationType::FreeText => {
-            let (color, opacity) = color_or(annot.fill_color(), "#d81b60");
+            let (color, opacity) = color_or(style.fill, "#d81b60");
             dto.kind = "textbox".into();
             dto.color = color;
             dto.opacity = opacity;
