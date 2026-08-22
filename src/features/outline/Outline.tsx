@@ -1,7 +1,6 @@
 /** Table-of-contents panel: the PDF's bookmark tree, click to jump to a page.
  * Alternate sidebar mode to PageThumbnails, toggled from Sidebar.tsx. */
-import { createResource, For, Show, useContext } from 'solid-js';
-import { engine } from '../../lib/transport/engine';
+import { For, Show, useContext } from 'solid-js';
 import type { OutlineNode } from '../../types/engine';
 import { TabContext } from '../../app/TabContext';
 import { jumpToAnchor } from './jumpToAnchor';
@@ -39,21 +38,23 @@ function OutlineEntry(props: {
 export default function Outline() {
   const tab = useContext(TabContext)!;
   const doc = tab.documentStore.state;
-  const [nodes] = createResource(
-    () => (doc.loaded ? doc.docId : null),
-    (docId) => engine.getOutline(docId).catch(() => [] as OutlineNode[])
-  );
+  // Fetched once per document into the tab's structure store, so the command
+  // palette can offer these sections without this panel ever being opened.
+  const structure = tab.structureStore.state;
 
   const navigate = (page: number, y: number | null) => jumpToAnchor(tab.viewport, doc, page, y);
 
   return (
     <div class="sidebar-scroll outline-panel" aria-label="Table of contents">
-      <Show when={!nodes.loading} fallback={<div class="panel-note">Loading outline…</div>}>
+      <Show
+        when={!structure.outlineLoading}
+        fallback={<div class="panel-note">Loading outline…</div>}
+      >
         <Show
-          when={(nodes() ?? []).length > 0}
+          when={structure.outline.length > 0}
           fallback={<div class="panel-note">This document has no table of contents.</div>}
         >
-          <For each={nodes()}>
+          <For each={structure.outline}>
             {(node) => <OutlineEntry node={node} depth={0} onNavigate={navigate} />}
           </For>
         </Show>

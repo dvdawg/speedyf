@@ -14,7 +14,7 @@ import { engine } from '../../lib/transport/engine';
 import { renderUrl } from '../../lib/rendering/renderSource';
 import type { Figure } from '../../types/engine';
 import { TabContext } from '../../app/TabContext';
-import { jumpToAnchor } from './jumpToAnchor';
+import { figureTopY, jumpToAnchor, layoutIndexOf } from './jumpToAnchor';
 import ScriptText from '../../components/ScriptText';
 
 export default function Figures() {
@@ -24,6 +24,16 @@ export default function Figures() {
     () => (doc.loaded ? doc.docId : null),
     (docId) => engine.getFigures(docId).catch(() => [] as Figure[])
   );
+
+  /** Where clicking the row should land: the top of the artwork, not the
+   * caption anchor the figure was found by. Falls back to the caption when the
+   * page is gone or the crop is unusable. */
+  const targetY = (figure: Figure): number | null => {
+    const index = layoutIndexOf(doc, figure.page);
+    const heightPt = index === null ? undefined : doc.pages[index]?.heightPt;
+    if (heightPt === undefined) return figure.y;
+    return figureTopY(figure.tile.y, figure.scaleMilli, heightPt) ?? figure.y;
+  };
 
   // The crop is in display space, so it is unaffected by the viewer's own
   // rotation — the thumbnail always shows the figure the way it is printed.
@@ -50,7 +60,7 @@ export default function Figures() {
               <button
                 type="button"
                 class="figure-row"
-                onClick={() => jumpToAnchor(tab.viewport, doc, figure.page, figure.y)}
+                onClick={() => jumpToAnchor(tab.viewport, doc, figure.page, targetY(figure))}
               >
                 <img
                   class="figure-thumb"

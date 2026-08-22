@@ -148,5 +148,6 @@ export async function reloadTabFromDisk(tab: TabRecord, dest: string): Promise<v
   tab.documentStore.initFromMeta(meta);
   tab.searchStore.resetForDocument(meta.docId, meta.pageCount);
   tab.citationStore.syncDocument(meta.docId);
+  tab.structureStore.syncDocument(meta.docId);
   recentStore.recordOpen({ path: dest, name: meta.name });
 }

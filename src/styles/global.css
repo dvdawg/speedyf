@@ -2670,3 +2670,162 @@ textarea:focus-visible {
     max-width: 160px;
   }
 }
+
+/* ---------- command palette ---------- */
+
+/* Top-anchored, not centered: the list changes height on every keystroke, and
+   centering would move the row under the cursor as it did. */
+.palette-backdrop {
+  align-items: flex-start;
+  padding-top: 14vh;
+}
+
+.palette {
+  width: min(600px, calc(100vw - 48px));
+  max-height: min(60vh, 520px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+/* Deliberately not styled like `.modal input`: a bordered field inside a
+   bordered surface reads as a box in a box. The palette is the input. */
+.palette-input {
+  width: 100%;
+  height: 44px;
+  flex: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  padding: 0 14px;
+  outline: none;
+}
+
+.palette-input::placeholder {
+  color: var(--text-dim);
+}
+
+.palette-list {
+  overflow-y: auto;
+  padding: 6px;
+  min-height: 0;
+}
+
+.palette-group + * {
+  margin-top: 0;
+}
+
+.palette-group:not(:first-child) {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.palette-group {
+  padding: 8px 8px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.palette-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.35;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+/* A soft tint rather than a filled accent: a solid fill would force
+   --accent-text on the title and crush the dim context and shortcut beside
+   it into something unreadable. The left bar carries the "you are here"
+   signal the tint alone is too quiet to give. */
+.palette-row {
+  border-left: 2px solid transparent;
+}
+
+.palette-row.is-active {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+}
+
+.palette-row.is-active .palette-title {
+  font-weight: 550;
+}
+
+.palette-row.is-disabled {
+  color: var(--text-dim);
+  cursor: default;
+}
+
+.palette-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-context,
+.palette-reason,
+.palette-keys {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+/* Plain dim glyphs rather than boxed <kbd>: at this row height a bordered
+   pill would push the row taller, and menu accelerators read this way
+   already. */
+.palette-keys {
+  letter-spacing: 0.04em;
+  background: var(--bg-inset);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+.palette-reason {
+  font-style: italic;
+}
+
+.palette-empty {
+  padding: 18px 10px;
+  text-align: center;
+  color: var(--text-dim);
+}
+
+.palette-foot {
+  display: flex;
+  gap: 14px;
+  flex: none;
+  padding: 7px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-inset);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.palette-foot b {
+  font-weight: 600;
+  color: var(--text);
+}

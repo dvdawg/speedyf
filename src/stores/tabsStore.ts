@@ -22,6 +22,7 @@ import { createViewportStore, type ViewportStore } from './viewportStore';
 import { createZoomController, type ZoomController } from '../features/viewer/zoomController';
 import { createCitationStore, type CitationStore } from '../features/citations/linkStore';
 import { createSearchStore, type SearchStore } from '../features/search/searchStore';
+import { createStructureStore, type StructureStore } from '../features/outline/structureStore';
 
 export interface TabRecord {
   id: string;
@@ -30,6 +31,7 @@ export interface TabRecord {
   zoom: ZoomController;
   citationStore: CitationStore;
   searchStore: SearchStore;
+  structureStore: StructureStore;
   /** true from creation until the open resolves (success or failure) */
   opening: boolean;
 }
@@ -44,6 +46,7 @@ export function createTab(): TabRecord {
   const zoom = createZoomController(documentStore, viewport);
   const citationStore = createCitationStore(documentStore, viewport);
   const searchStore = createSearchStore();
+  const structureStore = createStructureStore();
   return {
     id: `tab-${++tabSeq}`,
     documentStore,
@@ -51,6 +54,7 @@ export function createTab(): TabRecord {
     zoom,
     citationStore,
     searchStore,
+    structureStore,
     opening: false,
   };
 }

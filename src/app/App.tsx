@@ -9,6 +9,7 @@ import TabStrip from '../features/tabs/TabStrip';
 import Sidebar from '../components/Sidebar';
 import StatusBar from '../components/StatusBar';
 import Modals from '../components/Modals';
+import CommandPalette from '../features/palette/CommandPalette';
 import Viewer from '../features/viewer/Viewer';
 import ContextHeader from '../features/viewer/ContextHeader';
 import SearchPanel from '../features/search/SearchPanel';
@@ -197,6 +198,7 @@ export default function App() {
         </div>
       </Show>
       <Modals />
+      <CommandPalette />
       <PreviewPopover />
     </div>
   );

@@ -7,6 +7,26 @@
 import type { ViewportStore } from '../../stores/viewportStore';
 import type { DocState } from '../document/documentStore';
 
+/** The top edge of a figure's artwork, in the page space `jumpToAnchor` wants.
+ *
+ * A figure row carries two positions: the caption anchor it was found by, and
+ * the crop of the artwork above it. Jumping to the anchor lands you on the
+ * caption with the figure itself off the top of the screen — which is the
+ * wrong half of the thing you clicked.
+ *
+ * The crop arrives as a device-pixel tile, built by `rect_to_tile` as
+ * `(page_h - y - h) * scale` — y-down from the page top. Undoing that gives
+ * the artwork's top edge back in points, y-up.
+ */
+export function figureTopY(tileY: number, scaleMilli: number, pageHeightPt: number): number | null {
+  if (scaleMilli <= 0 || pageHeightPt <= 0) return null;
+  const top = pageHeightPt - (tileY * 1000) / scaleMilli;
+  // A crop that lands outside the page means the figure was not located;
+  // falling back to the caption beats scrolling somewhere arbitrary.
+  if (!Number.isFinite(top) || top < 0 || top > pageHeightPt) return null;
+  return top;
+}
+
 /** Position of a source page in the tab, which is not the source index itself
  * once pages have been reordered, duplicated or deleted in this session. */
 export function layoutIndexOf(doc: DocState, srcPage: number): number | null {

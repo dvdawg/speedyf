@@ -95,6 +95,7 @@ export async function openInNewTabOrFocus(
       record.documentStore.initFromMeta(meta);
       record.searchStore.resetForDocument(meta.docId, meta.pageCount);
       record.citationStore.syncDocument(meta.docId);
+      record.structureStore.syncDocument(meta.docId);
       record.viewport.setState({ currentPage: 0, scrollTop: 0 });
       // Pick up where this document was last left, when we have a position for
       // it and it still points inside the document.
