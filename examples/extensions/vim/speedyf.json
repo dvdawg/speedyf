@@ -1,0 +1,89 @@
+{
+  "id": "dev.speedyf.vim",
+  "apiVersion": 1,
+  "name": "Vim Keys",
+  "version": "1.0.0",
+  "description": "Vim-style navigation: j/k for pages, g/G for first and last, / to search, o for the outline.",
+  "author": "speedyf",
+  "entry": "worker.js",
+  "permissions": ["commands:run"],
+  "contributes": {
+    "commands": [
+      {
+        "id": "next",
+        "title": "Vim: Next Page",
+        "keywords": ["j", "down"]
+      },
+      {
+        "id": "prev",
+        "title": "Vim: Previous Page",
+        "keywords": ["k", "up"]
+      },
+      {
+        "id": "zoomIn",
+        "title": "Vim: Zoom In",
+        "keywords": ["plus"]
+      },
+      {
+        "id": "zoomOut",
+        "title": "Vim: Zoom Out",
+        "keywords": ["minus"]
+      },
+      {
+        "id": "fit",
+        "title": "Vim: Fit Width",
+        "keywords": ["="]
+      },
+      {
+        "id": "outline",
+        "title": "Vim: Table Of Contents",
+        "keywords": ["o", "toc"]
+      },
+      {
+        "id": "search",
+        "title": "Vim: Search",
+        "keywords": ["/"]
+      },
+      {
+        "id": "forbidden",
+        "title": "Vim: Try To Undo (refused on purpose)",
+        "keywords": ["demo"]
+      },
+      {
+        "id": "readDoc",
+        "title": "Vim: Try To Read The Document (refused)",
+        "keywords": ["demo", "permission"]
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "next",
+        "key": "j"
+      },
+      {
+        "command": "prev",
+        "key": "k"
+      },
+      {
+        "command": "zoomIn",
+        "key": "shift+="
+      },
+      {
+        "command": "zoomOut",
+        "key": "shift+-"
+      },
+      {
+        "command": "fit",
+        "key": "shift+w"
+      },
+      {
+        "command": "outline",
+        "key": "o"
+      },
+      {
+        "command": "search",
+        "key": "/"
+      }
+    ]
+  }
+}

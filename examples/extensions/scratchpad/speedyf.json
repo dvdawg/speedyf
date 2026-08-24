@@ -1,0 +1,73 @@
+{
+  "id": "dev.speedyf.scratchpad",
+  "apiVersion": 1,
+  "name": "Scratchpad",
+  "version": "1.0.0",
+  "description": "Collect selected passages and cited works into a running list you can copy out. Never reads the document.",
+  "author": "speedyf",
+  "entry": "worker.js",
+  "permissions": ["clipboard:write", "storage"],
+  "contributes": {
+    "panels": [
+      {
+        "id": "notes",
+        "title": "Scratchpad"
+      }
+    ],
+    "commands": [
+      {
+        "id": "notes",
+        "title": "Scratchpad: Show",
+        "keywords": ["clippings"]
+      },
+      {
+        "id": "keep",
+        "title": "Scratchpad: Keep Selection",
+        "keywords": ["save", "clip"]
+      },
+      {
+        "id": "keepCitation",
+        "title": "Scratchpad: Keep Citation",
+        "keywords": ["cite"]
+      },
+      {
+        "id": "copyAll",
+        "title": "Scratchpad: Copy Everything",
+        "keywords": ["clipboard"]
+      },
+      {
+        "id": "clear",
+        "title": "Scratchpad: Clear",
+        "keywords": ["empty"]
+      }
+    ],
+    "selectionActions": [
+      {
+        "command": "keep",
+        "title": "Keep in Scratchpad"
+      }
+    ],
+    "citationActions": [
+      {
+        "command": "keepCitation",
+        "title": "Keep in Scratchpad"
+      }
+    ],
+    "settings": [
+      {
+        "key": "wrapCitations",
+        "title": "Wrap citations in brackets",
+        "type": "checkbox",
+        "default": "true",
+        "description": "Copy citations as [arxiv:1234.5678] rather than bare."
+      },
+      {
+        "key": "separator",
+        "title": "Separator between items",
+        "type": "select",
+        "default": "blank line",
+        "options": ["blank line", "newline", "dash rule"]
+      }
+    ]
+  }
+}

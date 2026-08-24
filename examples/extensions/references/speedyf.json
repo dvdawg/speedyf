@@ -1,0 +1,14 @@
+{
+  "id": "dev.speedyf.references",
+  "apiVersion": 1,
+  "name": "References",
+  "version": "1.0.0",
+  "description": "A sidebar panel listing every work this paper cites, and which of them are already in your library.",
+  "author": "speedyf",
+  "entry": "worker.js",
+  "permissions": ["document:read", "citations:read", "commands:run"],
+  "contributes": {
+    "panels": [{ "id": "refs", "title": "References" }],
+    "commands": [{ "id": "refs", "title": "References: Refresh Panel", "keywords": ["citations"] }]
+  }
+}

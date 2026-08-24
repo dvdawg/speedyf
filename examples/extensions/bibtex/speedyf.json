@@ -1,0 +1,21 @@
+{
+  "id": "dev.speedyf.bibtex",
+  "apiVersion": 1,
+  "name": "BibTeX Export",
+  "version": "1.0.0",
+  "description": "Collect every DOI and arXiv citation in the open document and report which are already in your library.",
+  "author": "speedyf",
+  "entry": "worker.js",
+  "permissions": ["document:read", "citations:read", "library:read"],
+  "contributes": {
+    "commands": [
+      {
+        "id": "listRefs",
+        "title": "BibTeX: List References",
+        "keywords": ["citations", "doi", "arxiv"]
+      },
+      { "id": "coverage", "title": "BibTeX: Library Coverage", "keywords": ["missing", "have"] },
+      { "id": "outline", "title": "BibTeX: Summarise Document", "keywords": ["toc", "figures"] }
+    ]
+  }
+}
