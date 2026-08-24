@@ -2,6 +2,7 @@ mod cache;
 mod commands;
 pub mod engine;
 pub mod errors;
+mod extensions;
 mod external;
 mod library;
 mod printing;
@@ -255,7 +256,53 @@ pub fn run() {
             // Slow path: enqueue; the worker calls back with bytes or an error.
             submit_render(engine, q.prio, q.gen, q.key, responder, CANCEL_RETRIES);
         })
+        .register_uri_scheme_protocol("speedyf-ext", |ctx, request| {
+            // Extension assets: worker code and, later, sandboxed pane
+            // documents. Nothing served here can execute in the app document —
+            // the CSP grants this scheme `worker-src` only.
+            let Some(root) = ctx
+                .app_handle()
+                .path()
+                .app_data_dir()
+                .ok()
+                .map(|dir| dir.join(extensions::EXTENSIONS_DIR))
+            else {
+                return status_response(StatusCode::INTERNAL_SERVER_ERROR);
+            };
+            let uri = request.uri().to_string();
+            let Ok(parsed) = url::Url::parse(&uri) else {
+                return bad_request("malformed extension request");
+            };
+            // Percent-decoding happens before resolution so an encoded `..`
+            // is refused by the same component walk as a literal one.
+            let decoded = percent_encoding::percent_decode_str(parsed.path())
+                .decode_utf8()
+                .map(|p| p.into_owned());
+            let Ok(path) = decoded else {
+                return bad_request("malformed extension path");
+            };
+            let Some(file) = extensions::resolve_asset(&root, &path) else {
+                return status_response(StatusCode::FORBIDDEN);
+            };
+            match std::fs::read(&file) {
+                Ok(bytes) => Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, extensions::content_type(&file))
+                    // Extension code changes only on install or reload, both of
+                    // which restart the worker, so nothing benefits from the
+                    // webview holding a stale copy.
+                    .header(header::CACHE_CONTROL, "no-store")
+                    .body(bytes)
+                    .unwrap(),
+                Err(_) => status_response(StatusCode::NOT_FOUND),
+            }
+        })
         .invoke_handler(tauri::generate_handler![
+            commands::list_extensions,
+            commands::install_extension,
+            commands::uninstall_extension,
+            commands::set_extension_enabled,
+            commands::extension_source,
             commands::take_pending_opens,
             commands::file_metadata,
             commands::open_document,

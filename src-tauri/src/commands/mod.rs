@@ -530,3 +530,145 @@ pub async fn bump_generation(
 ) -> AppResult<u64> {
     Ok(state.0.bump_generation(doc_id))
 }
+
+// ---------- extensions ----------
+
+use crate::extensions::{self, InstalledExtension, Manifest};
+
+fn extensions_root(app: &tauri::AppHandle) -> AppResult<std::path::PathBuf> {
+    use tauri::Manager;
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Io(format!("no app data dir: {e}")))?
+        .join(extensions::EXTENSIONS_DIR))
+}
+
+/// One installed extension, with the manifest re-read from disk.
+///
+/// The registry row and the manifest are reported separately on purpose: the
+/// row records what the user granted at install, the manifest records what the
+/// files currently ask for. When they disagree the panel can say so rather than
+/// silently trusting either.
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionDto {
+    #[serde(flatten)]
+    pub installed: InstalledExtension,
+    pub manifest: Option<Manifest>,
+    /// Contributed commands, ids already namespaced for the palette. Derived
+    /// here rather than in the frontend so the id format has exactly one owner
+    /// — it is what a user's keybindings are stored against.
+    pub commands: Vec<PaletteCommandDto>,
+    /// Why this extension cannot run, if it cannot.
+    pub error: Option<String>,
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PaletteCommandDto {
+    /// `<extension id>/<command id>`
+    pub id: String,
+    /// The bare id the extension knows itself by, sent back when invoked.
+    pub local_id: String,
+    pub title: String,
+    pub keywords: Vec<String>,
+}
+
+fn palette_commands(manifest: &Manifest) -> Vec<PaletteCommandDto> {
+    manifest
+        .contributes
+        .commands
+        .iter()
+        .map(|c| PaletteCommandDto {
+            id: extensions::qualified_command_id(&manifest.id, &c.id),
+            local_id: c.id.clone(),
+            title: c.title.clone(),
+            keywords: c.keywords.clone(),
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub async fn list_extensions(app: tauri::AppHandle) -> AppResult<Vec<ExtensionDto>> {
+    let root = extensions_root(&app)?;
+    let registry = extensions::Registry::load(&root);
+    Ok(registry
+        .extensions
+        .into_iter()
+        .map(|installed| {
+            let manifest_path = root.join(&installed.id).join(extensions::MANIFEST_FILE);
+            match std::fs::read_to_string(&manifest_path) {
+                Ok(text) => match extensions::parse_manifest(&text) {
+                    Ok(manifest) => ExtensionDto {
+                        installed,
+                        commands: palette_commands(&manifest),
+                        manifest: Some(manifest),
+                        error: None,
+                    },
+                    Err(e) => ExtensionDto {
+                        installed,
+                        manifest: None,
+                        commands: Vec::new(),
+                        error: Some(e.to_string()),
+                    },
+                },
+                Err(e) => ExtensionDto {
+                    installed,
+                    manifest: None,
+                    commands: Vec::new(),
+                    error: Some(format!("manifest unreadable: {e}")),
+                },
+            }
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn install_extension(
+    app: tauri::AppHandle,
+    folder: String,
+) -> AppResult<InstalledExtension> {
+    let root = extensions_root(&app)?;
+    extensions::install_from_folder(&root, std::path::Path::new(&folder))
+}
+
+#[tauri::command]
+pub async fn uninstall_extension(app: tauri::AppHandle, id: String) -> AppResult<()> {
+    extensions::uninstall(&extensions_root(&app)?, &id)
+}
+
+#[tauri::command]
+pub async fn set_extension_enabled(
+    app: tauri::AppHandle,
+    id: String,
+    enabled: bool,
+) -> AppResult<()> {
+    let root = extensions_root(&app)?;
+    let mut registry = extensions::Registry::load(&root);
+    let Some(entry) = registry.extensions.iter_mut().find(|e| e.id == id) else {
+        return Err(AppError::Io(format!("no extension \"{id}\" installed")));
+    };
+    entry.enabled = enabled;
+    registry.save(&root)
+}
+
+/// Source text of an extension's entry file.
+///
+/// The host wraps this in a blob URL rather than pointing a Worker at a custom
+/// scheme: workers must be same-origin with the document that creates them, and
+/// a custom scheme never is. See `extensions` for the measurement behind that.
+#[tauri::command]
+pub async fn extension_source(app: tauri::AppHandle, id: String) -> AppResult<String> {
+    let root = extensions_root(&app)?;
+    let manifest_path = root.join(&id).join(extensions::MANIFEST_FILE);
+    let manifest_text = std::fs::read_to_string(&manifest_path)
+        .map_err(|e| AppError::Io(format!("{}: {e}", manifest_path.display())))?;
+    let manifest = extensions::parse_manifest(&manifest_text)
+        .map_err(|e| AppError::Malformed(e.to_string()))?;
+    // Resolved through the same component walk that guards asset serving, so a
+    // manifest cannot name an entry outside its own directory.
+    let entry = extensions::resolve_asset(&root, &format!("/{id}/{}", manifest.entry))
+        .ok_or_else(|| AppError::Malformed("entry escapes the extension".into()))?;
+    std::fs::read_to_string(&entry).map_err(|e| AppError::Io(format!("{}: {e}", entry.display())))
+}

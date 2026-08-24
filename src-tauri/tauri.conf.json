@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' pdfr: http://pdfr.localhost blob: data:; connect-src ipc: http://ipc.localhost; font-src 'self'; object-src 'none'; base-uri 'none'"
+      "csp": "default-src 'self'; script-src 'self'; worker-src 'self' blob: speedyf-ext: http://speedyf-ext.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' pdfr: http://pdfr.localhost blob: data:; connect-src ipc: http://ipc.localhost; font-src 'self'; object-src 'none'; base-uri 'none'"
     }
   },
   "bundle": {
