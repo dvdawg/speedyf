@@ -18,7 +18,11 @@ export default defineConfig({
     chunkSizeWarningLimit: 900,
   },
   test: {
+    // Node by default: almost every test here is over pure logic, and a DOM
+    // for those would only be slower. Component tests opt in per file with a
+    // `@vitest-environment happy-dom` docblock, so the DOM cost lands only on
+    // the handful of files that need one.
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
   },
 });
