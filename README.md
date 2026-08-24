@@ -27,7 +27,11 @@ manual QA before a public release.
 - Add PNG/JPEG images and real PDF text objects
 - Best-effort AcroForm text-field editing
 - Save As followed by automatic reopen of the materialized document
-- Light/dark/system themes and a lower-memory cache mode
+- Light/dark/system themes, optional hue-preserving page inversion, and a
+  lower-memory cache mode
+- Extensions (v1): third-party workers contributing commands to the palette,
+  isolated, permission-gated, and installable from a folder — see
+  `extension_api.md` and `examples/extensions/hello`
 - Live status counters for cache hits and skipped stale render work
 
 ## Quick start

@@ -1,0 +1,22 @@
+{
+  "id": "dev.speedyf.hello",
+  "apiVersion": 1,
+  "name": "Hello",
+  "version": "1.0.0",
+  "description": "Reference extension for the v1 API. Exercises the skeleton and nothing else: install, activate, invoke, report, fail, and hang.",
+  "author": "speedyf",
+  "entry": "worker.js",
+  "permissions": [],
+  "contributes": {
+    "commands": [
+      { "id": "greet", "title": "Hello: Say Hello", "keywords": ["example", "test"] },
+      { "id": "fail", "title": "Hello: Fail On Purpose", "keywords": ["example", "error"] },
+      { "id": "hang", "title": "Hello: Hang On Purpose", "keywords": ["example", "timeout"] },
+      {
+        "id": "overreach",
+        "title": "Hello: Ask For Something It Cannot Have",
+        "keywords": ["example", "permission"]
+      }
+    ]
+  }
+}
