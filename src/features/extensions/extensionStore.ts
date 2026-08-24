@@ -620,6 +620,12 @@ export async function installExtension(folder: string): Promise<void> {
   await loadExtensions();
 }
 
+/** Install from a git URL, optionally pinned with `#<branch|tag|commit>`. */
+export async function installExtensionFromGit(url: string): Promise<void> {
+  await invoke('install_extension_from_git', { url });
+  await loadExtensions();
+}
+
 export async function uninstallExtension(id: string): Promise<void> {
   stopExtension(id);
   clearStorage(id);

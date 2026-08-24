@@ -3165,3 +3165,20 @@ textarea:focus-visible {
   width: 40%;
   min-width: 120px;
 }
+
+.ext-install-url {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.ext-install-url input {
+  flex: 1;
+  min-width: 0;
+}
+
+.ext-install-hint {
+  margin: 0 0 10px;
+  color: var(--text-dim);
+  font-size: 11px;
+}

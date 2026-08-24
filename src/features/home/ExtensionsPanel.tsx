@@ -10,6 +10,7 @@ import { IconExtension } from '../../components/icons';
 import {
   bindingErrors,
   extensionState,
+  installExtensionFromGit,
   setSettingValue,
   settingValue,
   installExtension,
@@ -22,6 +23,28 @@ import {
 export default function ExtensionsPanel() {
   const [busy, setBusy] = createSignal(false);
   const [installError, setInstallError] = createSignal<string | null>(null);
+  const [url, setUrl] = createSignal('');
+
+  const install = async (run: () => Promise<void>) => {
+    setBusy(true);
+    setInstallError(null);
+    try {
+      await run();
+    } catch (err) {
+      // Manifest and clone failures both arrive here already phrased for a
+      // human — the Rust side names the field or the git error.
+      setInstallError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addFromUrl = async () => {
+    const value = url().trim();
+    if (!value) return;
+    await install(() => installExtensionFromGit(value));
+    if (!installError()) setUrl('');
+  };
 
   const addFromFolder = async () => {
     const picked = await openDialog({
@@ -30,17 +53,7 @@ export default function ExtensionsPanel() {
       title: 'Choose an extension folder',
     });
     if (typeof picked !== 'string') return;
-    setBusy(true);
-    setInstallError(null);
-    try {
-      await installExtension(picked);
-    } catch (err) {
-      // The Rust side rejects a bad manifest before copying anything, and its
-      // message names the field at fault — worth showing verbatim.
-      setInstallError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
+    await install(() => installExtension(picked));
   };
 
   return (
@@ -57,6 +70,32 @@ export default function ExtensionsPanel() {
         </button>
       </div>
       <div class="home-panel-body">
+        <div class="ext-install-url">
+          <input
+            type="text"
+            placeholder="https://github.com/someone/extension#v1.0.0"
+            aria-label="Extension repository URL"
+            value={url()}
+            disabled={busy()}
+            onInput={(e) => setUrl(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void addFromUrl();
+            }}
+          />
+          <button
+            type="button"
+            class="secondary-btn"
+            disabled={busy() || url().trim().length === 0}
+            onClick={() => void addFromUrl()}
+          >
+            {busy() ? 'Installing…' : 'Install'}
+          </button>
+        </div>
+        <p class="ext-install-hint">
+          Clones with git. Add <code>#branch</code>, <code>#tag</code> or <code>#commit</code> to
+          pin a version.
+        </p>
+
         <Show when={installError()}>
           <div class="ext-install-error" role="alert">
             {installError()}
