@@ -12,7 +12,13 @@ import { activateTab } from '../document/tabsController';
 import { jumpToAnchor } from '../outline/jumpToAnchor';
 import { flattenOutline } from '../outline/structureStore';
 import { closePalette, mostUsed, paletteOpen, recordUse, usesOf } from './paletteStore';
-import { extensionCommands, runExtensionCommand } from '../extensions/extensionStore';
+import {
+  extensionCommands,
+  runExtensionCommand,
+  runExtensionAction,
+  selectionActions,
+} from '../extensions/extensionStore';
+import { selectedText } from '../../stores/selectionStore';
 import {
   defaultSections,
   flatten,
@@ -58,6 +64,24 @@ export default function CommandPalette() {
         enabled: true,
         run: () => void runExtensionCommand(command.id),
       });
+    }
+
+    // Selection actions. Offered only when there is something to act on, and
+    // the extension receives the selected text and nothing else — which is why
+    // they need no read permission.
+    const selection = selectedText();
+    if (selection.length > 0) {
+      for (const action of selectionActions()) {
+        items.push({
+          key: `selection:${action.id}`,
+          title: action.title,
+          group: 'Extensions',
+          keywords: ['selection'],
+          context: `${selection.length} characters selected`,
+          enabled: true,
+          run: () => void runExtensionAction(action, selection),
+        });
+      }
     }
 
     for (const tab of tabsStore.state.tabs) {

@@ -8,7 +8,10 @@ import { For, Show, createSignal } from 'solid-js';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { IconExtension } from '../../components/icons';
 import {
+  bindingErrors,
   extensionState,
+  setSettingValue,
+  settingValue,
   installExtension,
   reloadExtension,
   setExtensionEnabled,
@@ -158,6 +161,71 @@ function ExtensionRow(props: { ext: ExtensionRecord }) {
             )}
           </For>
         </ul>
+      </Show>
+
+      <Show when={ext().keybindings.length > 0}>
+        <ul class="ext-commands">
+          <For each={ext().keybindings}>
+            {(binding) => (
+              <li>
+                <span class="ext-command-title">{binding.command}</span>
+                <kbd class="ext-key">{binding.key}</kbd>
+              </li>
+            )}
+          </For>
+        </ul>
+      </Show>
+
+      <Show when={bindingErrors(ext().id).length > 0}>
+        <div class="ext-error" role="status">
+          <For each={bindingErrors(ext().id)}>{(message) => <div>{message}</div>}</For>
+        </div>
+      </Show>
+
+      <Show when={ext().settings.length > 0}>
+        <div class="ext-settings">
+          <For each={ext().settings}>
+            {(setting) => {
+              const id = `ext-setting-${ext().id}-${setting.key}`;
+              const value = () => settingValue(ext(), setting.key);
+              const write = (next: string) => setSettingValue(ext().id, setting.key, next);
+              return (
+                <div class="ext-setting">
+                  <label class="ext-setting-label" for={id}>
+                    <span>{setting.title}</span>
+                    <Show when={setting.description}>
+                      <span class="ext-setting-desc">{setting.description}</span>
+                    </Show>
+                  </label>
+                  <Show when={setting.type === 'checkbox'}>
+                    <input
+                      id={id}
+                      type="checkbox"
+                      checked={value() === 'true'}
+                      onInput={(e) => write(e.currentTarget.checked ? 'true' : 'false')}
+                    />
+                  </Show>
+                  <Show when={setting.type === 'select'}>
+                    <select id={id} value={value()} onInput={(e) => write(e.currentTarget.value)}>
+                      <For each={setting.options ?? []}>
+                        {(option) => <option value={option}>{option}</option>}
+                      </For>
+                    </select>
+                  </Show>
+                  <Show when={setting.type === 'text'}>
+                    <input
+                      id={id}
+                      type="text"
+                      class="ext-setting-text"
+                      value={value()}
+                      onChange={(e) => write(e.currentTarget.value)}
+                    />
+                  </Show>
+                </div>
+              );
+            }}
+          </For>
+        </div>
       </Show>
 
       <Show when={ext().error}>

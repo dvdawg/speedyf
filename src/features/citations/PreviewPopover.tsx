@@ -1,8 +1,9 @@
-import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import { renderUrl } from '../../lib/rendering/renderSource';
+import { citationActions, runExtensionAction } from '../extensions/extensionStore';
 import { pagesInverted } from '../../stores/settings';
-import type { PreviewSpec } from '../../types/engine';
+import type { CitationId, PreviewSpec } from '../../types/engine';
 import { openInNewTabOrFocus } from '../document/tabsController';
 import { activeTab } from '../../stores/tabsStore';
 import type { TabRecord } from '../../stores/tabsStore';
@@ -120,6 +121,34 @@ function RasterCard(props: {
   );
 }
 
+/** Actions extensions offered on a citation.
+ *
+ * The extension is handed the citation and nothing else — same bargain as a
+ * selection action, and the same reason it needs no read permission. Rendered
+ * only when something contributed one, so the popover is unchanged for anyone
+ * with no extensions installed.
+ */
+function CitationActions(props: { id: CitationId }) {
+  const value = () => `${props.id.scheme === 'doi' ? 'doi' : 'arxiv'}:${props.id.value}`;
+  return (
+    <Show when={citationActions().length > 0}>
+      <div class="citation-ext-actions">
+        <For each={citationActions()}>
+          {(action) => (
+            <button
+              type="button"
+              class="citation-library-action"
+              onClick={() => void runExtensionAction(action, value())}
+            >
+              {action.title}
+            </button>
+          )}
+        </For>
+      </div>
+    </Show>
+  );
+}
+
 function PreviewContent(props: { tab: TabRecord; result: HoverPreview }) {
   return (
     <>
@@ -187,6 +216,15 @@ function PreviewContent(props: { tab: TabRecord; result: HoverPreview }) {
             </Show>
           </div>
         )}
+      </Show>
+      <Show
+        when={
+          props.result.kind === 'external' || props.result.kind === 'external-unresolved'
+            ? props.result.id
+            : null
+        }
+      >
+        {(id) => <CitationActions id={id()} />}
       </Show>
       <Show when={props.result.kind === 'error' ? props.result : null}>
         {(result) => (

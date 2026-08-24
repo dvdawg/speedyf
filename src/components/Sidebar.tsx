@@ -1,10 +1,12 @@
 /** Left panel shell: a small mode toggle (page thumbnails, table of contents,
  * formal environments, figures, or your own notes) plus whichever content is
  * currently selected. */
-import { Show } from 'solid-js';
+import { For, Show } from 'solid-js';
 import IconButton from './IconButton';
-import { IconFigure, IconList, IconNote, IconPages, IconQed } from './icons';
-import { ui, setUi } from '../stores/uiStore';
+import { IconExtension, IconFigure, IconList, IconNote, IconPages, IconQed } from './icons';
+import { ui, setUi, extensionPanelId } from '../stores/uiStore';
+import { extensionPanels } from '../features/extensions/extensionStore';
+import ExtensionPanelView from '../features/extensions/ExtensionPanel';
 import PageThumbnails from '../features/outline/PageThumbnails';
 import Outline from '../features/outline/Outline';
 import FormalEnvs from '../features/outline/FormalEnvs';
@@ -50,6 +52,19 @@ export default function Sidebar() {
         >
           <IconNote />
         </IconButton>
+        {/* Contributed panels sit after every built-in, so installing an
+            extension never moves a control the user already knows. */}
+        <For each={extensionPanels()}>
+          {(panel) => (
+            <IconButton
+              label={panel.title}
+              active={extensionPanelId(ui.sidebarMode) === panel.id}
+              onClick={() => setUi('sidebarMode', `ext:${panel.id}`)}
+            >
+              <IconExtension />
+            </IconButton>
+          )}
+        </For>
       </div>
       <Show when={ui.sidebarMode === 'pages'}>
         <PageThumbnails />
@@ -66,6 +81,13 @@ export default function Sidebar() {
       <Show when={ui.sidebarMode === 'notes'}>
         <NotesPanel />
       </Show>
+      <For each={extensionPanels()}>
+        {(panel) => (
+          <Show when={extensionPanelId(ui.sidebarMode) === panel.id}>
+            <ExtensionPanelView panel={panel} />
+          </Show>
+        )}
+      </For>
     </aside>
   );
 }

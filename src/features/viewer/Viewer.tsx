@@ -25,6 +25,7 @@ import { openFromDialog } from '../document/tabsController';
 import { IconOpen } from '../../components/icons';
 import { engine } from '../../lib/transport/engine';
 import { smartCopyForSelection } from '../../lib/text/copySelection';
+import { clearSelection, noteSelectionChanged } from '../../stores/selectionStore';
 import { TabContext } from '../../app/TabContext';
 import { tabsStore, type TabRecord } from '../../stores/tabsStore';
 import { recentStore } from '../../stores/recentStore';
@@ -146,10 +147,14 @@ function ViewerContent(props: { tab: TabRecord }) {
     const selection = document.getSelection();
     if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
       if (vp.state.selectionAnchor) vp.setState('selectionAnchor', null);
+      clearSelection();
       return;
     }
     const range = selection.getRangeAt(0);
     if (!scroller.contains(range.commonAncestorContainer)) return;
+    // Deferred: this walks every span in the scroller, and selectionchange
+    // fires throughout a drag.
+    noteSelectionChanged(() => smartCopyForSelection(selection, scroller));
     const rect = range.getBoundingClientRect();
     if (rect.height === 0 && rect.width === 0) return;
     const contentY = rect.top - scroller.getBoundingClientRect().top + scroller.scrollTop;

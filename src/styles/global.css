@@ -3027,3 +3027,141 @@ textarea:focus-visible {
 .ext-log-line.is-error {
   color: var(--danger);
 }
+
+.ext-key {
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-inset);
+  color: var(--text-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+}
+
+/* ---------- contributed panels ---------- */
+.ext-panel {
+  padding: 6px;
+}
+
+.ext-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 4px 8px;
+}
+
+.ext-panel-title {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.ext-panel-section + .ext-panel-section {
+  margin-top: 10px;
+}
+
+.ext-panel-section-title {
+  padding: 4px 4px 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ext-panel-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+
+/* Only a row that does something looks like it does. */
+.ext-panel-row.is-actionable {
+  cursor: pointer;
+}
+
+.ext-panel-row.is-actionable:hover {
+  background: var(--bg-inset);
+  border-color: var(--border);
+}
+
+.ext-panel-row.is-actionable:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.ext-panel-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ext-panel-row-title {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ext-panel-row-subtitle {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.ext-panel-badge {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--text-dim);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+/* Extension actions on a citation. Absent entirely when nothing contributed
+   one, so the popover is unchanged without extensions installed. */
+.citation-ext-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+}
+
+.ext-settings {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ext-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ext-setting-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.ext-setting-desc {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.ext-setting-text {
+  flex: none;
+  width: 40%;
+  min-width: 120px;
+}
