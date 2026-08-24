@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import { renderUrl } from '../../lib/rendering/renderSource';
+import { pagesInverted } from '../../stores/settings';
 import type { PreviewSpec } from '../../types/engine';
 import { openInNewTabOrFocus } from '../document/tabsController';
 import { activeTab } from '../../stores/tabsStore';
@@ -26,6 +27,7 @@ function urlFor(tab: TabRecord, preview: PreviewSpec): string {
     generation: preview.docId === doc.docId ? doc.generation : 0,
     kind: 'preview',
     tile: preview.tile,
+    invert: pagesInverted(),
   });
 }
 

@@ -372,6 +372,14 @@ export const COMMANDS: readonly Command[] = [
     run: () => updateSettings({ theme: 'system' }),
   },
   {
+    id: 'settings.toggleInvertPages',
+    title: 'Toggle Inverted Page Colors',
+    group: 'Settings',
+    keywords: ['dark', 'night', 'invert', 'appearance', 'contrast'],
+    enabled: () => true,
+    run: () => updateSettings({ invertPages: !settings.invertPages }),
+  },
+  {
     id: 'settings.toggleLowMemory',
     title: 'Toggle Low-Memory Mode',
     group: 'Settings',

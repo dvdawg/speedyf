@@ -9,6 +9,7 @@
 import { Show } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import { renderUrl } from '../../lib/rendering/renderSource';
+import { pagesInverted } from '../../stores/settings';
 import type { TabRecord } from '../../stores/tabsStore';
 import { tabPreviewPosition, type Anchor } from './tabPreviewLayout';
 
@@ -34,6 +35,7 @@ export default function TabPreview(props: { tab: TabRecord; anchor: Anchor }) {
       scaleMilli: THUMB_SCALE_MILLI,
       generation: state.generation,
       kind: 'thumb',
+      invert: pagesInverted(),
     });
   };
 

@@ -30,6 +30,22 @@ export default function SettingsPanel() {
         </div>
 
         <div class="home-setting">
+          <label class="home-setting-text" for="setting-invert-pages">
+            <span class="home-setting-title">Invert page colors in dark theme</span>
+            <span class="home-setting-desc">
+              Render pages as dark paper with light ink. Hues are preserved rather than flipped, and
+              photographs are left alone. Printing and export are unaffected.
+            </span>
+          </label>
+          <input
+            id="setting-invert-pages"
+            type="checkbox"
+            checked={settings.invertPages}
+            onInput={(e) => updateSettings({ invertPages: e.currentTarget.checked })}
+          />
+        </div>
+
+        <div class="home-setting">
           <label class="home-setting-text" for="setting-low-memory">
             <span class="home-setting-title">Low memory</span>
             <span class="home-setting-desc">

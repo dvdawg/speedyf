@@ -138,6 +138,21 @@ export default function StatusBar() {
         >
           Library…
         </button>
+        <label
+          class="sb-control"
+          title={
+            effectiveTheme() === 'dark'
+              ? 'Render pages as dark paper with light ink'
+              : 'Renders pages as dark paper — takes effect under the dark theme'
+          }
+        >
+          <input
+            type="checkbox"
+            checked={settings.invertPages}
+            onInput={(e) => updateSettings({ invertPages: e.currentTarget.checked })}
+          />
+          invert&nbsp;pages
+        </label>
         <label class="sb-control" title="Color theme">
           <span class="sr-only">Theme</span>
           <select

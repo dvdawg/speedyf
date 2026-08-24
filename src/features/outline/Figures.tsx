@@ -12,6 +12,7 @@
 import { createResource, For, Show, useContext } from 'solid-js';
 import { engine } from '../../lib/transport/engine';
 import { renderUrl } from '../../lib/rendering/renderSource';
+import { pagesInverted } from '../../stores/settings';
 import type { Figure } from '../../types/engine';
 import { TabContext } from '../../app/TabContext';
 import { figureTopY, jumpToAnchor, layoutIndexOf } from './jumpToAnchor';
@@ -46,6 +47,7 @@ export default function Figures() {
       generation: doc.generation,
       kind: 'preview',
       tile: figure.tile,
+      invert: pagesInverted(),
     });
 
   return (

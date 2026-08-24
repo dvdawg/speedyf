@@ -501,6 +501,7 @@ fn do_render(
         key.scale_milli as f32 / 1000.0,
         key.rot,
         key.tile,
+        key.invert,
         || shared.is_render_stale(&meta),
     )?;
     let bytes = Arc::new(out.png);
@@ -1802,6 +1803,7 @@ mod tests {
                 scale_milli: 1_000,
                 kind: RenderKind::Page,
                 tile: None,
+                invert: false,
             },
             respond: Box::new(|_| {}),
         };

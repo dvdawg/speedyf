@@ -19,6 +19,7 @@ import type { Layout } from '../../lib/coordinates/layout';
 import type { PageGeom, TileRect } from '../../lib/coordinates/coords';
 import { tileGrid } from '../../lib/coordinates/coords';
 import { RENDER_RETRIES, renderUrl, retryUrl } from '../../lib/rendering/renderSource';
+import { pagesInverted } from '../../stores/settings';
 import { engine } from '../../lib/transport/engine';
 import TextLayer from './TextLayer';
 import AnnotationLayer from '../annotations/AnnotationLayer';
@@ -72,6 +73,7 @@ export default function PageView(props: Props) {
       generation: doc.generation,
       kind,
       ...(tile ? { tile } : {}),
+      invert: pagesInverted(),
     });
   };
 

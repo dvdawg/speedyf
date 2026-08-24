@@ -431,6 +431,7 @@ fn benchmark_valid(
             rot: 0,
             scale_milli: 1_500,
             kind: RenderKind::Page,
+            invert: false,
             tile: None,
         };
         let started = Instant::now();
@@ -447,6 +448,7 @@ fn benchmark_valid(
                 rot: 0,
                 scale_milli: 1_000,
                 kind: RenderKind::Page,
+                invert: false,
                 tile: None,
             })
             .collect();
@@ -465,6 +467,7 @@ fn benchmark_valid(
                 rot: 0,
                 scale_milli: 2_500,
                 kind: RenderKind::Tile,
+                invert: false,
                 tile: Some(TileRect {
                     x: 0,
                     y: 0,
@@ -775,6 +778,7 @@ fn measure_citation_preview(
             rot: 0,
             scale_milli: preview.scale_milli,
             kind: RenderKind::Preview,
+            invert: false,
             tile: Some(preview.tile),
         },
         Priority::HoverPreview,
@@ -795,6 +799,7 @@ fn exercise_stale_jobs(engine: &EngineHandle, meta: &DocMetaDto) -> Result<u64, 
             rot: 0,
             scale_milli: 1_101 + index as u32,
             kind: RenderKind::Page,
+            invert: false,
             tile: None,
         };
         engine.submit_at_gen(
@@ -832,6 +837,7 @@ fn exercise_scroll_cache(
             rot: 0,
             scale_milli: 2_000,
             kind: RenderKind::Page,
+            invert: false,
             tile: None,
         })
         .collect();
@@ -862,6 +868,7 @@ fn exercise_in_flight_cancellation(
         rot: 0,
         scale_milli: 1_007,
         kind: RenderKind::Page,
+        invert: false,
         tile: None,
     };
     engine.submit_at_gen(
@@ -891,6 +898,7 @@ fn exercise_in_flight_cancellation(
             rot: 0,
             scale_milli: 1_008,
             kind: RenderKind::Tile,
+            invert: false,
             tile: Some(TileRect {
                 x: 0,
                 y: 0,

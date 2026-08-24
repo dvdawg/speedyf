@@ -54,6 +54,7 @@ fn parse_render_query(uri: &str) -> Option<RenderQuery> {
     let mut kind = RenderKind::Page;
     let (mut tx, mut ty, mut tw, mut th) = (0u32, 0u32, 0u32, 0u32);
     let mut prio: Option<u8> = None;
+    let mut invert = false;
     for (k, v) in parsed.query_pairs() {
         match k.as_ref() {
             "doc" => doc = v.parse().ok(),
@@ -73,6 +74,7 @@ fn parse_render_query(uri: &str) -> Option<RenderQuery> {
             "ty" => ty = v.parse().ok()?,
             "tw" => tw = v.parse().ok()?,
             "th" => th = v.parse().ok()?,
+            "inv" => invert = v == "1",
             "p" => prio = v.parse().ok(),
             _ => {}
         }
@@ -108,6 +110,7 @@ fn parse_render_query(uri: &str) -> Option<RenderQuery> {
             scale_milli: scale,
             kind,
             tile,
+            invert,
         },
         gen,
         prio: prio.map(Priority::from_u8).unwrap_or(default_prio),

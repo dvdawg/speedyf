@@ -22,10 +22,16 @@
   --danger: #c62828;
   --shadow: 0 1px 3px rgba(15, 20, 26, 0.14), 0 4px 14px rgba(15, 20, 26, 0.08);
   --focus-ring: 0 0 0 2px var(--bg-elev), 0 0 0 4px var(--accent);
+  /* Whatever the shell paints behind a rendered page: the sheet itself before
+   * its raster arrives, the letterboxing around a thumbnail, a blank page.
+   * Normally the paper the author intended; see [data-invert-pages='on']. */
+  --page-bg: #ffffff;
   /* search hits sit on the page, which is white in either theme */
   --hit: color-mix(in srgb, var(--accent) 22%, transparent);
   --hit-current: color-mix(in srgb, var(--accent) 42%, transparent);
   --hit-current-edge: color-mix(in srgb, var(--accent) 85%, transparent);
+  /* Sheen swept across a page that has not arrived yet. */
+  --page-shimmer: rgba(0, 0, 0, 0.04);
 }
 
 :root[data-theme='dark'] {
@@ -45,6 +51,21 @@
   --hit: color-mix(in srgb, var(--accent) 30%, transparent);
   --hit-current: color-mix(in srgb, var(--accent) 52%, transparent);
   --hit-current-edge: color-mix(in srgb, var(--accent) 90%, transparent);
+}
+
+/* Pages are inverted by the engine, not by a filter here: the text, search
+ * and annotation layers are DOM siblings of the raster, and a filter over the
+ * page would drag their theme-aware colours through the same flip. What the
+ * shell owes the raster is matching paper behind it — and highlights with
+ * enough presence to read against a dark sheet instead of a white one. */
+:root[data-invert-pages='on'] {
+  /* Exactly where engine::invert maps pure white; a mismatch shows as a rim
+   * of the wrong grey around every page. */
+  --page-bg: #1d1d1d;
+  --hit: color-mix(in srgb, var(--accent) 38%, transparent);
+  --hit-current: color-mix(in srgb, var(--accent) 62%, transparent);
+  --hit-current-edge: color-mix(in srgb, var(--accent) 95%, transparent);
+  --page-shimmer: rgba(255, 255, 255, 0.05);
 }
 
 * {
@@ -683,7 +704,7 @@ textarea:focus-visible {
   max-height: 300px;
   object-fit: contain;
   object-position: top center;
-  background: white;
+  background: var(--page-bg);
   border: 1px solid var(--border);
   border-radius: 3px;
 }
@@ -769,7 +790,7 @@ textarea:focus-visible {
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 0;
-  background: white;
+  background: var(--page-bg);
   cursor: pointer;
   overflow: hidden;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
@@ -790,7 +811,7 @@ textarea:focus-visible {
 .thumb-blank {
   width: 100%;
   height: 100%;
-  background: white;
+  background: var(--page-bg);
 }
 
 /* The slice of this page currently visible in the main viewer: a tinted
@@ -961,7 +982,7 @@ textarea:focus-visible {
 
 .page {
   position: absolute;
-  background: white;
+  background: var(--page-bg);
   box-shadow: var(--shadow);
   overflow: hidden;
 }
@@ -981,8 +1002,8 @@ textarea:focus-visible {
 }
 
 .page-loading {
-  background: linear-gradient(100deg, transparent 30%, rgba(0, 0, 0, 0.04) 50%, transparent 70%)
-    white;
+  background: linear-gradient(100deg, transparent 30%, var(--page-shimmer) 50%, transparent 70%)
+    var(--page-bg);
   background-size: 300% 100%;
   animation: shimmer 1.4s infinite linear;
 }
@@ -1030,7 +1051,7 @@ textarea:focus-visible {
 .page-blank {
   position: absolute;
   inset: 0;
-  background: white;
+  background: var(--page-bg);
 }
 
 .page-space {
@@ -1159,7 +1180,7 @@ textarea:focus-visible {
 .citation-preview-action.is-internal {
   position: relative;
   padding: 8px 8px 24px;
-  background: white;
+  background: var(--page-bg);
 }
 
 .citation-preview-viewport {
@@ -1170,7 +1191,7 @@ textarea:focus-visible {
   max-height: min(342px, calc(100vh - 58px));
   overflow: auto;
   overscroll-behavior: contain;
-  background: white;
+  background: var(--page-bg);
 }
 
 .citation-preview-skeleton {
@@ -1208,7 +1229,7 @@ textarea:focus-visible {
   width: 100%;
   max-height: 232px;
   object-fit: contain;
-  background: white;
+  background: var(--page-bg);
   opacity: 0;
 }
 
@@ -1345,6 +1366,15 @@ textarea:focus-visible {
   mix-blend-mode: multiply;
   border-radius: 1px;
   cursor: move;
+}
+
+/* A highlighter works by darkening the paper under it, which is what multiply
+ * does on white. Over an inverted page the same pen multiplies a yellow into a
+ * near-black background and the annotation disappears outright. Screen is
+ * multiply's dual: it tints the dark paper and leaves the now-light ink on top
+ * of it legible, so the pen keeps behaving like a pen. */
+:root[data-invert-pages='on'] .annot-highlight {
+  mix-blend-mode: screen;
 }
 
 .annot-textbox {
@@ -2026,6 +2056,8 @@ textarea:focus-visible {
   max-width: 100%;
   max-height: 52vh;
   object-fit: contain;
+  /* Not --page-bg: the print preview shows what will come out of the printer,
+   * which is never the inverted raster. */
   background: white;
   box-shadow: var(--shadow);
   transition: opacity 120ms ease;
@@ -2249,7 +2281,7 @@ textarea:focus-visible {
   object-position: top left;
   border: 1px solid var(--border);
   border-radius: 4px;
-  background: white;
+  background: var(--page-bg);
 }
 
 .figure-label {

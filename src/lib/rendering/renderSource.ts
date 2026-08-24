@@ -16,6 +16,10 @@ export interface RenderUrlSpec {
   generation: number;
   kind: RenderKind;
   tile?: TileRect;
+  /** Ask the engine for a dark-paper raster. Part of the URL because it is
+   * part of the engine's cache key — the two variants are different bytes,
+   * not the same bytes under a filter. */
+  invert?: boolean;
 }
 
 /** Tauri custom-scheme origins differ per platform. */
@@ -31,6 +35,7 @@ export function buildRenderUrl(spec: RenderUrlSpec, isWindows: boolean): string 
   if ((spec.kind === 'tile' || spec.kind === 'preview') && spec.tile) {
     url += `&tx=${spec.tile.x}&ty=${spec.tile.y}&tw=${spec.tile.w}&th=${spec.tile.h}`;
   }
+  if (spec.invert) url += '&inv=1';
   return url;
 }
 

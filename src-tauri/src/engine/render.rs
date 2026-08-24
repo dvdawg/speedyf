@@ -4,10 +4,12 @@
 //! tiles are produced by offsetting the page origin negatively inside a
 //! tile-sized bitmap, so no oversized full-page bitmap is ever allocated.
 
+use crate::engine::invert::{self, PixelRect};
 use crate::engine::types::TileRect;
 use crate::errors::{AppError, AppResult};
 use pdfium_render::prelude::{
-    PdfiumLibraryBindings, FPDF_DOCUMENT, FPDF_PAGE, FS_SIZEF, IFSDK_PAUSE,
+    PdfiumLibraryBindings, FPDF_DOCUMENT, FPDF_PAGE, FPDF_PAGEOBJECT, FS_MATRIX, FS_SIZEF,
+    IFSDK_PAUSE,
 };
 use std::ffi::c_void;
 
@@ -17,6 +19,22 @@ const FORMAT_BGRA: i32 = 4; // FPDFBitmap_BGRA
 const MAX_PIXELS: u64 = 64_000_000;
 const RENDER_TO_BE_CONTINUED: i32 = 1;
 const RENDER_DONE: i32 = 2;
+
+const FPDF_PAGEOBJ_IMAGE: i32 = 3;
+const FPDF_PAGEOBJ_FORM: i32 = 5;
+/// How deep a nest of form XObjects is followed looking for images. Figures
+/// arrive wrapped in one or two of these depending on the toolchain that
+/// placed them; the limit is here so a pathological document cannot walk
+/// forever, not because four levels is a meaningful boundary.
+const MAX_FORM_DEPTH: u8 = 4;
+/// Ceiling on objects inspected per render. Reached only by pages with tens of
+/// thousands of objects, which are vector-heavy CAD sheets — exactly the pages
+/// with no photographs to find.
+const MAX_OBJECTS_SCANNED: u32 = 20_000;
+/// Ceiling on protected regions. Past this the per-row span walk stops being
+/// free, and a page with this many distinct images is not a page whose reading
+/// experience turns on any one of them.
+const MAX_PROTECTED_RECTS: usize = 512;
 
 struct PauseContext<'a> {
     cancelled: &'a dyn Fn() -> bool,
@@ -85,8 +103,148 @@ pub struct RenderOutput {
     pub png: Vec<u8>,
 }
 
+/// A PDF affine, row-vector convention: `[x y 1] · [[a b 0] [c d 0] [e f 1]]`.
+type Matrix = [f32; 6];
+
+const IDENTITY: Matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+
+fn apply(m: &Matrix, x: f32, y: f32) -> (f32, f32) {
+    (m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5])
+}
+
+/// `outer ∘ inner`: the transform that applies `inner` first.
+fn compose(outer: &Matrix, inner: &Matrix) -> Matrix {
+    [
+        inner[0] * outer[0] + inner[1] * outer[2],
+        inner[0] * outer[1] + inner[1] * outer[3],
+        inner[2] * outer[0] + inner[3] * outer[2],
+        inner[2] * outer[1] + inner[3] * outer[3],
+        inner[4] * outer[0] + inner[5] * outer[2] + outer[4],
+        inner[4] * outer[1] + inner[5] * outer[3] + outer[5],
+    ]
+}
+
+/// Where the rendered bitmap has raster images on it.
+///
+/// The device mapping goes through `FPDF_PageToDevice` with the very arguments
+/// the render was issued with, so rotation, scale and the negative tile origin
+/// are all accounted for by PDFium itself rather than re-derived here — for a
+/// tile, the coordinates come back already in tile space.
+///
+/// Bounds are rounded *inward*. An image edge that inverts along with the page
+/// disappears into the dark background; a ring of page white left standing
+/// around a photograph would be a bright hairline instead.
+#[allow(clippy::too_many_arguments)]
+fn image_rects(
+    b: &dyn PdfiumLibraryBindings,
+    page: FPDF_PAGE,
+    start_x: i32,
+    start_y: i32,
+    size_x: i32,
+    size_y: i32,
+    rotate: i32,
+) -> Vec<PixelRect> {
+    let count = b.FPDFPage_CountObjects(page);
+    if count <= 0 {
+        return Vec::new();
+    }
+    let mut rects = Vec::new();
+    let mut scanned = 0u32;
+    // (object, transform from its own space to page space, depth)
+    let mut stack: Vec<(FPDF_PAGEOBJECT, Matrix, u8)> = (0..count)
+        .rev()
+        .map(|i| (b.FPDFPage_GetObject(page, i), IDENTITY, 0u8))
+        .collect();
+
+    while let Some((object, to_page, depth)) = stack.pop() {
+        if object.is_null() || scanned >= MAX_OBJECTS_SCANNED || rects.len() >= MAX_PROTECTED_RECTS
+        {
+            continue;
+        }
+        scanned += 1;
+        match b.FPDFPageObj_GetType(object) {
+            FPDF_PAGEOBJ_IMAGE => {
+                let (mut left, mut bottom, mut right, mut top) = (0f32, 0f32, 0f32, 0f32);
+                if b.FPDFPageObj_GetBounds(object, &mut left, &mut bottom, &mut right, &mut top)
+                    == 0
+                {
+                    continue;
+                }
+                // All four corners, because the transform can rotate or skew.
+                let corners = [
+                    apply(&to_page, left, bottom),
+                    apply(&to_page, right, bottom),
+                    apply(&to_page, right, top),
+                    apply(&to_page, left, top),
+                ];
+                let (mut x0, mut y0) = (i32::MAX, i32::MAX);
+                let (mut x1, mut y1) = (i32::MIN, i32::MIN);
+                let mut mapped = true;
+                for (px, py) in corners {
+                    let (mut dx, mut dy) = (0i32, 0i32);
+                    if b.FPDF_PageToDevice(
+                        page, start_x, start_y, size_x, size_y, rotate, px as f64, py as f64,
+                        &mut dx, &mut dy,
+                    ) == 0
+                    {
+                        mapped = false;
+                        break;
+                    }
+                    x0 = x0.min(dx);
+                    y0 = y0.min(dy);
+                    x1 = x1.max(dx);
+                    y1 = y1.max(dy);
+                }
+                // Inward: the +1/-1 pair trims the boundary pixels the corners
+                // themselves landed on, which are the antialiased ones.
+                if mapped && x1 - x0 > 2 && y1 - y0 > 2 {
+                    rects.push(PixelRect {
+                        x: (x0 + 1).max(0) as usize,
+                        y: (y0 + 1).max(0) as usize,
+                        w: (x1 - x0 - 1).max(0) as usize,
+                        h: (y1 - y0 - 1).max(0) as usize,
+                    });
+                }
+            }
+            FPDF_PAGEOBJ_FORM if depth < MAX_FORM_DEPTH => {
+                // A form's children are in the form's own space, so the walk
+                // carries the composed transform down with them.
+                let mut matrix = FS_MATRIX {
+                    a: 1.0,
+                    b: 0.0,
+                    c: 0.0,
+                    d: 1.0,
+                    e: 0.0,
+                    f: 0.0,
+                };
+                let inner = if b.FPDFPageObj_GetMatrix(object, &mut matrix) != 0 {
+                    [matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f]
+                } else {
+                    IDENTITY
+                };
+                let child_to_page = compose(&to_page, &inner);
+                let children = b.FPDFFormObj_CountObjects(object);
+                for i in (0..children.max(0)).rev() {
+                    stack.push((
+                        b.FPDFFormObj_GetObject(object, i as std::os::raw::c_ulong),
+                        child_to_page,
+                        depth + 1,
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    rects
+}
+
 /// Render a page (or a tile of it) at `scale` device pixels per point with an
 /// extra rotation on top of the page's own /Rotate, returning encoded PNG.
+///
+/// With `invert` set the raster is turned into a dark page before it is
+/// encoded — see `engine::invert` for why that happens here, on the pixels,
+/// rather than as a CSS filter over the `<img>`.
+#[allow(clippy::too_many_arguments)]
 pub fn render_page<F>(
     b: &dyn PdfiumLibraryBindings,
     page: FPDF_PAGE,
@@ -94,6 +252,7 @@ pub fn render_page<F>(
     scale: f32,
     extra_rot_deg: u16,
     tile: Option<TileRect>,
+    invert: bool,
     cancelled: F,
 ) -> AppResult<RenderOutput>
 where
@@ -191,6 +350,25 @@ where
         }
     }
     b.FPDFBitmap_Destroy(bitmap);
+
+    if invert {
+        // Classified against the pixels that were actually drawn, so a figure
+        // is judged as it appears — scaled, clipped and composited — not by
+        // whatever its source bitmap happens to contain.
+        let protect: Vec<PixelRect> = image_rects(
+            b,
+            page,
+            start_x as i32,
+            start_y as i32,
+            size_x as i32,
+            size_y as i32,
+            (extra_rot_deg / 90) as i32,
+        )
+        .into_iter()
+        .filter(|rect| invert::looks_photographic(&rgb, w, h, *rect))
+        .collect();
+        invert::invert_rgb(&mut rgb, w, h, &protect);
+    }
 
     let png = encode_png(&rgb, w as u32, h as u32)?;
     Ok(RenderOutput { png })

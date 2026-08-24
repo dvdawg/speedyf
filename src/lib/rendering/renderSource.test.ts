@@ -34,6 +34,36 @@ describe('buildRenderUrl', () => {
     );
   });
 
+  it('omits the invert flag unless it is on, so existing URLs are unchanged', () => {
+    expect(buildRenderUrl({ ...spec, invert: false }, false)).toBe(buildRenderUrl(spec, false));
+  });
+
+  it('encodes an inverted render as a distinct URL', () => {
+    expect(buildRenderUrl({ ...spec, invert: true }, false)).toBe(
+      'pdfr://localhost/render?doc=3&src=12&rot=90&scale=1500&gen=7&kind=page&inv=1'
+    );
+  });
+
+  it('keeps the invert flag ahead of a retry suffix', () => {
+    // The engine resolves the retry-free query to the cache key, so `inv` has
+    // to be part of that query rather than trailing behind the buster.
+    const url = retryUrl(buildRenderUrl({ ...spec, invert: true }, false), 1);
+    expect(url).toBe(
+      'pdfr://localhost/render?doc=3&src=12&rot=90&scale=1500&gen=7&kind=page&inv=1&retry=1'
+    );
+  });
+
+  it('encodes an inverted tile with both the region and the flag', () => {
+    const url = buildRenderUrl(
+      { ...spec, kind: 'tile', tile: { x: 0, y: 512, w: 1024, h: 512 }, invert: true },
+      false
+    );
+    expect(url).toBe(
+      'pdfr://localhost/render?doc=3&src=12&rot=90&scale=1500&gen=7&kind=tile' +
+        '&tx=0&ty=512&tw=1024&th=512&inv=1'
+    );
+  });
+
   it('encodes thumbnails on the windows base', () => {
     const url = buildRenderUrl({ ...spec, kind: 'thumb', scaleMilli: 200 }, true);
     expect(url).toBe('http://pdfr.localhost/render?doc=3&src=12&rot=90&scale=200&gen=7&kind=thumb');

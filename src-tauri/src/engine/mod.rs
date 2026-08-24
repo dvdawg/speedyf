@@ -11,6 +11,7 @@ pub mod annots;
 pub mod citation;
 pub mod figures;
 pub mod formal;
+pub mod invert;
 pub mod links;
 pub mod pdfium_init;
 pub mod preview;

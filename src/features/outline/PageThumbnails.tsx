@@ -13,6 +13,7 @@ import {
   useContext,
 } from 'solid-js';
 import { renderUrl } from '../../lib/rendering/renderSource';
+import { pagesInverted } from '../../stores/settings';
 import type { Layout } from '../../lib/coordinates/layout';
 import { visibleRange } from '../../lib/coordinates/layout';
 import {
@@ -322,6 +323,7 @@ export default function PageThumbnails() {
       scaleMilli,
       generation: doc.generation,
       kind: 'thumb',
+      invert: pagesInverted(),
     });
   };
 

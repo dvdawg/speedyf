@@ -16,7 +16,7 @@ import SearchPanel from '../features/search/SearchPanel';
 import FormPanel from '../features/editor/FormPanel';
 import { engine } from '../lib/transport/engine';
 import { ui } from '../stores/uiStore';
-import { effectiveTheme, settings } from '../stores/settings';
+import { effectiveTheme, pagesInverted, settings } from '../stores/settings';
 import { installShortcuts } from './shortcuts';
 import { clearImagePreviews } from '../features/editor/editorActions';
 import PreviewPopover from '../features/citations/PreviewPopover';
@@ -33,21 +33,13 @@ import { TabContext } from './TabContext';
 export default function App() {
   const [dropActive, setDropActive] = createSignal(false);
 
-  // theme: follow system, or forced light/dark
+  // theme: follow system, or forced light/dark. `effectiveTheme` tracks the
+  // system preference itself, so this one effect covers both.
   createEffect(() => {
     document.documentElement.dataset.theme = effectiveTheme();
-    void settings.theme; // dependency
-  });
-
-  onMount(() => {
-    const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    const onChange = () => {
-      if (settings.theme === 'system') {
-        document.documentElement.dataset.theme = effectiveTheme();
-      }
-    };
-    mq.addEventListener('change', onChange);
-    onCleanup(() => mq.removeEventListener('change', onChange));
+    // Pages come back inverted from the engine; the shell has to repaint the
+    // paper it draws behind and around them to match.
+    document.documentElement.dataset.invertPages = pagesInverted() ? 'on' : 'off';
   });
 
   // window title reflects the active tab's document + dirty state

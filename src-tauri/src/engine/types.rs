@@ -62,6 +62,10 @@ pub struct RenderKey {
     pub scale_milli: u32,
     pub kind: RenderKind,
     pub tile: Option<TileRect>,
+    /// Rendered as a dark page. Part of the key rather than a post-process so
+    /// both variants can sit in the cache at once — toggling the setting back
+    /// and forth costs nothing after the first pass.
+    pub invert: bool,
 }
 
 #[derive(Serialize, Clone, Debug)]
