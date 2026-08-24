@@ -300,6 +300,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::list_extensions,
             commands::install_extension,
+            commands::install_extension_from_git,
             commands::uninstall_extension,
             commands::set_extension_enabled,
             commands::extension_source,

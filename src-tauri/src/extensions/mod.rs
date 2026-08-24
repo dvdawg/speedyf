@@ -631,6 +631,178 @@ fn copy_tree(from: &Path, to: &Path) -> AppResult<()> {
     Ok(())
 }
 
+// ---------- installing from a git URL ----------
+
+/// Schemes a clone URL may use.
+///
+/// `file://` and bare local paths are excluded deliberately. Cloning a local
+/// path is what `install_from_folder` already does, and allowing it here would
+/// mean a URL could reach anywhere on disk. `ssh://` and `git@host:path` are
+/// excluded because they can consult the user's keys and known_hosts, turning
+/// "install this extension" into an action with their credentials.
+const ALLOWED_SCHEMES: [&str; 2] = ["https://", "http://"];
+
+/// Where a git-installed extension came from, and at what point.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GitSource {
+    pub url: String,
+    /// Branch, tag or commit. `None` clones the default branch.
+    pub reference: Option<String>,
+}
+
+/// Read `<url>` or `<url>#<ref>` into something safe to hand to git.
+///
+/// Validation is a whitelist rather than a blacklist, because the value ends up
+/// as an argument to a subprocess. Even though the arguments are passed as a
+/// vector — never through a shell, so there is no quoting to escape — a URL
+/// beginning with `-` would still be read by git as an *option* rather than a
+/// URL, which is the one injection this interface actually has.
+pub fn parse_git_source(input: &str) -> Result<GitSource, String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err("no URL given".into());
+    }
+    let (url, reference) = match trimmed.split_once('#') {
+        Some((url, reference)) => (url, Some(reference)),
+        None => (trimmed, None),
+    };
+    if !ALLOWED_SCHEMES.iter().any(|s| url.starts_with(s)) {
+        return Err(format!(
+            "only {} URLs can be installed from",
+            ALLOWED_SCHEMES.join(" and ")
+        ));
+    }
+    // Belt and braces: a scheme prefix already rules this out, but the check is
+    // cheap and the consequence of being wrong is git reading a URL as a flag.
+    if url.starts_with('-') {
+        return Err("a URL cannot start with \"-\"".into());
+    }
+    if url.contains(char::is_whitespace) || url.contains('\0') {
+        return Err("a URL cannot contain whitespace".into());
+    }
+    if url.len() > 2048 {
+        return Err("URL is too long".into());
+    }
+
+    let reference = match reference {
+        None => None,
+        Some(reference) => {
+            let reference = reference.trim();
+            if reference.is_empty() {
+                return Err("the ref after \"#\" is empty".into());
+            }
+            // Same reasoning as the URL: a ref is an argument to git, and one
+            // beginning with `-` is an option.
+            if reference.starts_with('-') {
+                return Err("a ref cannot start with \"-\"".into());
+            }
+            if !reference
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "._/-".contains(c))
+            {
+                return Err("a ref may only contain letters, digits, and . _ / -".into());
+            }
+            if reference.len() > 200 {
+                return Err("ref is too long".into());
+            }
+            Some(reference.to_string())
+        }
+    };
+    Ok(GitSource {
+        url: url.to_string(),
+        reference,
+    })
+}
+
+/// One `git clone` attempt. Arguments are passed as a vector, never through a
+/// shell, so there is nothing to quote or escape — and `--` stops git reading
+/// anything after it as an option whatever `parse_git_source` may have missed.
+fn run_clone(source: &GitSource, target: &Path, shallow: bool) -> AppResult<std::process::Output> {
+    let mut args: Vec<String> = vec!["clone".into()];
+    if shallow {
+        args.push("--depth".into());
+        args.push("1".into());
+    }
+    // A submodule is a second repository the user did not agree to fetch.
+    args.push("--recurse-submodules=no".into());
+    args.push("--quiet".into());
+    if let Some(reference) = &source.reference {
+        args.push("--branch".into());
+        args.push(reference.clone());
+    }
+    args.push("--".into());
+    args.push(source.url.clone());
+    args.push(target.display().to_string());
+
+    std::process::Command::new("git")
+        .args(&args)
+        // Never prompt: without this a private repository hangs the clone
+        // forever on a credential prompt nobody can see.
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_ASKPASS", "")
+        .env("SSH_ASKPASS", "")
+        .output()
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                AppError::Unsupported(
+                    "installing from a URL needs git, which was not found on this machine".into(),
+                )
+            } else {
+                AppError::Io(format!("could not run git: {e}"))
+            }
+        })
+}
+
+/// Clone an extension and install it.
+///
+/// The clone lands in a temporary directory that is removed either way, so a
+/// repository that turns out not to hold a valid extension leaves nothing
+/// behind — the same promise `install_from_folder` already makes.
+pub fn install_from_git(root: &Path, input: &str) -> AppResult<InstalledExtension> {
+    let source = parse_git_source(input).map_err(AppError::Malformed)?;
+    let temp = tempfile::tempdir().map_err(|e| AppError::Io(format!("temp dir: {e}")))?;
+    let target = temp.path().join("clone");
+
+    // Shallow first: extensions are source, not history, and a full clone of a
+    // repository with a long past is wasted bandwidth. Not every remote can do
+    // it though — the "dumb" HTTP transport cannot — so a shallow failure falls
+    // back to a full clone rather than reporting an error the user cannot act
+    // on. Every hosted forge supports shallow, so the fallback is rare.
+    let output = match run_clone(&source, &target, true) {
+        Ok(output) if output.status.success() => output,
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
+            if stderr.contains("shallow") {
+                run_clone(&source, &target, false)?
+            } else {
+                output
+            }
+        }
+        Err(e) => return Err(e),
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = stderr.lines().last().unwrap_or("git clone failed").trim();
+        return Err(AppError::Io(format!("could not clone: {detail}")));
+    }
+
+    // A cloned repository is not trusted any differently from a folder: the
+    // manifest is validated, and a bad one installs nothing.
+    let mut installed = install_from_folder(root, &target)?;
+
+    // Record where it came from rather than the temporary path, which will not
+    // exist a moment from now.
+    installed.source = match &source.reference {
+        Some(reference) => format!("{}#{reference}", source.url),
+        None => source.url.clone(),
+    };
+    let mut registry = Registry::load(root);
+    registry.upsert(installed.clone());
+    registry.save(root)?;
+    Ok(installed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -947,6 +1119,104 @@ mod tests {
         std::fs::create_dir_all(dir).unwrap();
         std::fs::write(dir.join(MANIFEST_FILE), manifest).unwrap();
         std::fs::write(dir.join("worker.js"), "self.onmessage=()=>{}").unwrap();
+    }
+
+    // ---------- git sources ----------
+
+    #[test]
+    fn accepts_an_https_url() {
+        assert_eq!(
+            parse_git_source("https://github.com/someone/ext.git").unwrap(),
+            GitSource {
+                url: "https://github.com/someone/ext.git".into(),
+                reference: None
+            }
+        );
+    }
+
+    #[test]
+    fn reads_a_ref_after_a_hash() {
+        let source = parse_git_source("https://github.com/someone/ext#v1.2.0").unwrap();
+        assert_eq!(source.reference.as_deref(), Some("v1.2.0"));
+        assert_eq!(source.url, "https://github.com/someone/ext");
+    }
+
+    #[test]
+    fn tolerates_surrounding_whitespace() {
+        assert_eq!(
+            parse_git_source("  https://example.com/e.git#main  ")
+                .unwrap()
+                .reference
+                .as_deref(),
+            Some("main")
+        );
+    }
+
+    /// ssh and file URLs are refused deliberately: ssh would clone with the
+    /// user's own credentials, and file:// would let a "URL" reach anywhere on
+    /// disk.
+    #[test]
+    fn refuses_schemes_that_would_use_credentials_or_local_paths() {
+        for bad in [
+            "ssh://git@github.com/someone/ext.git",
+            "git@github.com:someone/ext.git",
+            "file:///etc",
+            "/Users/someone/ext",
+            "ftp://example.com/e.git",
+        ] {
+            assert!(parse_git_source(bad).is_err(), "{bad} was allowed");
+        }
+    }
+
+    /// The one injection this interface has: git reads an argument beginning
+    /// with `-` as an option, whatever it was meant to be.
+    #[test]
+    fn refuses_anything_git_would_read_as_a_flag() {
+        assert!(parse_git_source("--upload-pack=touch /tmp/pwned").is_err());
+        assert!(parse_git_source("-c core.sshCommand=evil").is_err());
+        assert!(parse_git_source("https://example.com/e.git#--upload-pack=evil").is_err());
+    }
+
+    #[test]
+    fn refuses_whitespace_and_control_characters() {
+        assert!(parse_git_source("https://example.com/a b.git").is_err());
+        assert!(parse_git_source("https://example.com/e.git\0").is_err());
+    }
+
+    #[test]
+    fn refuses_a_ref_with_shell_or_path_tricks() {
+        for bad in [
+            "https://e.com/x#a;b",
+            "https://e.com/x#$(id)",
+            "https://e.com/x#a b",
+        ] {
+            assert!(parse_git_source(bad).is_err(), "{bad} was allowed");
+        }
+    }
+
+    #[test]
+    fn refuses_an_empty_url_or_ref() {
+        assert!(parse_git_source("").is_err());
+        assert!(parse_git_source("   ").is_err());
+        assert!(parse_git_source("https://example.com/e.git#").is_err());
+    }
+
+    #[test]
+    fn refuses_an_absurd_url() {
+        let long = format!("https://example.com/{}", "a".repeat(4000));
+        assert!(parse_git_source(&long).is_err());
+    }
+
+    /// A ref with a slash is ordinary (`release/2.0`), so it must survive.
+    #[test]
+    fn allows_ordinary_branch_names() {
+        for good in ["main", "release/2.0", "v1.0.0", "feature_x", "a-b.c"] {
+            let spec = format!("https://example.com/e.git#{good}");
+            assert_eq!(
+                parse_git_source(&spec).unwrap().reference.as_deref(),
+                Some(good)
+            );
+        }
     }
 
     #[test]

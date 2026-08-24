@@ -704,6 +704,20 @@ pub async fn install_extension(
     extensions::install_from_folder(&root, std::path::Path::new(&folder))
 }
 
+/// Install from a git URL, optionally pinned with `#<branch|tag|commit>`.
+#[tauri::command]
+pub async fn install_extension_from_git(
+    app: tauri::AppHandle,
+    url: String,
+) -> AppResult<InstalledExtension> {
+    let root = extensions_root(&app)?;
+    // Cloning is network-bound and can take seconds; off the main thread so the
+    // UI is not blocked behind someone's slow connection.
+    tauri::async_runtime::spawn_blocking(move || extensions::install_from_git(&root, &url))
+        .await
+        .map_err(|e| AppError::Internal(format!("install task failed: {e}")))?
+}
+
 #[tauri::command]
 pub async fn uninstall_extension(app: tauri::AppHandle, id: String) -> AppResult<()> {
     extensions::uninstall(&extensions_root(&app)?, &id)
