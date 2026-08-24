@@ -141,10 +141,59 @@ pub enum Permission {
     ClipboardWrite,
     #[serde(rename = "storage")]
     Storage,
+    #[serde(rename = "commands:run")]
+    CommandsRun,
+}
+
+/// An action offered on something the user picked — a text selection, a
+/// citation. It names one of the extension's own commands, which is invoked
+/// with the picked thing as its value.
+///
+/// Deliberately needs no permission. The extension is handed exactly what the
+/// user chose and nothing else, which is the whole point: a translate or
+/// summarise extension should never need `document:read`, and the narrow path
+/// only stays narrow if it is genuinely usable.
+/// One setting an extension exposes.
+///
+/// Declared rather than drawn, like everything else: the extension says what it
+/// wants to ask, and SpeedyF renders the control. That keeps a settings form
+/// looking like the rest of the app, and means an extension cannot put
+/// arbitrary UI in the Extensions panel.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SettingContribution {
+    pub key: String,
+    pub title: String,
+    #[serde(rename = "type")]
+    pub kind: SettingKind,
+    #[serde(default)]
+    pub default: Option<String>,
+    /// Choices for a `select`; ignored otherwise.
+    #[serde(default)]
+    pub options: Vec<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum SettingKind {
+    Text,
+    Checkbox,
+    Select,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ActionContribution {
+    /// One of this extension's declared command ids.
+    pub command: String,
+    pub title: String,
 }
 
 /// One command an extension contributes to the palette.
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CommandContribution {
     /// Unique within the extension. Namespaced with the extension id before it
     /// reaches the palette, so two extensions can both contribute `export`.
@@ -154,14 +203,65 @@ pub struct CommandContribution {
     pub keywords: Vec<String>,
 }
 
+/// A key an extension asks to bind to one of its own commands.
+///
+/// Bindings point at the extension's own commands, never at SpeedyF's. An
+/// extension that wants to drive the app binds a key to its own command and
+/// calls `commands.run` from there — which keeps every such call inside the
+/// permission gate rather than letting a manifest entry bypass it.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct KeybindingContribution {
+    /// One of this extension's declared command ids.
+    pub command: String,
+    /// A neutral chord spec: `j`, `mod+shift+p`, `alt+ArrowDown`.
+    pub key: String,
+}
+
+/// A sidebar tab an extension contributes.
+///
+/// Declarative only: the extension sends a description of rows and SpeedyF
+/// draws them. There is no `kind` field yet — sandboxed custom panes are v3,
+/// and adding the discriminator before there is a second variant would be
+/// guessing at its shape.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PanelContribution {
+    /// Unique within the extension; namespaced before it reaches the sidebar.
+    pub id: String,
+    pub title: String,
+}
+
+/// Deliberately strict on both counts.
+///
+/// `camelCase` because that is what the rest of the manifest uses, and an
+/// author should not have to learn which fields are snake_case.
+///
+/// `deny_unknown_fields` because the alternative is what this cost an
+/// afternoon to find: a manifest that says `selectionActions` while serde
+/// expects `selection_actions` parses *successfully*, defaults the field to
+/// empty, and produces an extension that installs cleanly and silently does
+/// nothing. A typo in a contribution point must be an install-time error, the
+/// same as a keybinding naming a command that does not exist.
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Contributions {
     #[serde(default)]
     pub commands: Vec<CommandContribution>,
+    #[serde(default)]
+    pub keybindings: Vec<KeybindingContribution>,
+    #[serde(default)]
+    pub panels: Vec<PanelContribution>,
+    #[serde(default)]
+    pub selection_actions: Vec<ActionContribution>,
+    #[serde(default)]
+    pub citation_actions: Vec<ActionContribution>,
+    #[serde(default)]
+    pub settings: Vec<SettingContribution>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Manifest {
     pub id: String,
     pub api_version: u32,
@@ -189,6 +289,10 @@ pub enum ManifestError {
     BadEntry(String),
     DuplicateCommand(String),
     BadCommandId(String),
+    UnknownBoundCommand(String),
+    BadSetting(String),
+    DuplicatePanel(String),
+    BadPanelId(String),
 }
 
 impl std::fmt::Display for ManifestError {
@@ -211,6 +315,19 @@ impl std::fmt::Display for ManifestError {
             ManifestError::BadCommandId(id) => write!(
                 f,
                 "command id \"{id}\" must be non-empty and free of \"/\", which separates it from the extension id"
+            ),
+            ManifestError::BadSetting(key) => write!(
+                f,
+                "setting \"{key}\" needs a non-empty key and title, and a select needs options"
+            ),
+            ManifestError::DuplicatePanel(id) => write!(f, "two panels share the id \"{id}\""),
+            ManifestError::BadPanelId(id) => write!(
+                f,
+                "panel id \"{id}\" must be non-empty and free of \"/\", which separates it from the extension id"
+            ),
+            ManifestError::UnknownBoundCommand(id) => write!(
+                f,
+                "keybinding points at \"{id}\", which this extension does not declare as a command"
             ),
         }
     }
@@ -258,6 +375,49 @@ pub fn parse_manifest(source: &str) -> Result<Manifest, ManifestError> {
         }
         if !seen.insert(command.id.as_str()) {
             return Err(ManifestError::DuplicateCommand(command.id.clone()));
+        }
+    }
+    // A binding naming a command that does not exist would simply never fire,
+    // which is the kind of failure an author spends an afternoon on. Caught at
+    // install instead, where the message can name the id.
+    for binding in &manifest.contributes.keybindings {
+        if !seen.contains(binding.command.as_str()) {
+            return Err(ManifestError::UnknownBoundCommand(binding.command.clone()));
+        }
+    }
+    // Same rule for actions: an action naming a command that does not exist
+    // would appear in a menu and then do nothing.
+    for action in manifest
+        .contributes
+        .selection_actions
+        .iter()
+        .chain(&manifest.contributes.citation_actions)
+    {
+        if !seen.contains(action.command.as_str()) {
+            return Err(ManifestError::UnknownBoundCommand(action.command.clone()));
+        }
+        if action.title.trim().is_empty() {
+            return Err(ManifestError::MissingField("action title"));
+        }
+    }
+    let mut settings = std::collections::HashSet::new();
+    for setting in &manifest.contributes.settings {
+        let bad = setting.key.trim().is_empty()
+            || setting.title.trim().is_empty()
+            || (setting.kind == SettingKind::Select && setting.options.is_empty())
+            || !settings.insert(setting.key.as_str());
+        if bad {
+            return Err(ManifestError::BadSetting(setting.key.clone()));
+        }
+    }
+
+    let mut panels = std::collections::HashSet::new();
+    for panel in &manifest.contributes.panels {
+        if panel.id.trim().is_empty() || panel.id.contains('/') || panel.title.trim().is_empty() {
+            return Err(ManifestError::BadPanelId(panel.id.clone()));
+        }
+        if !panels.insert(panel.id.as_str()) {
+            return Err(ManifestError::DuplicatePanel(panel.id.clone()));
         }
     }
     Ok(manifest)
@@ -649,6 +809,112 @@ mod tests {
         ))
         .unwrap_err();
         assert_eq!(slash, ManifestError::BadCommandId("a/b".into()));
+    }
+
+    #[test]
+    fn reads_keybindings() {
+        let m = parse_manifest(&manifest_json(
+            r#","contributes":{"commands":[{"id":"down","title":"Down"}],
+               "keybindings":[{"command":"down","key":"j"}]}"#,
+        ))
+        .expect("should parse");
+        assert_eq!(m.contributes.keybindings[0].key, "j");
+        assert_eq!(m.contributes.keybindings[0].command, "down");
+    }
+
+    /// A binding naming a command that does not exist would silently never
+    /// fire; better to refuse the install and say which id is wrong.
+    #[test]
+    fn rejects_a_keybinding_for_an_undeclared_command() {
+        let err = parse_manifest(&manifest_json(
+            r#","contributes":{"commands":[{"id":"down","title":"Down"}],
+               "keybindings":[{"command":"up","key":"k"}]}"#,
+        ))
+        .unwrap_err();
+        assert_eq!(err, ManifestError::UnknownBoundCommand("up".into()));
+        assert!(err.to_string().contains("up"));
+    }
+
+    #[test]
+    fn reads_panels() {
+        let m = parse_manifest(&manifest_json(
+            r#","contributes":{"panels":[{"id":"refs","title":"References"}]}"#,
+        ))
+        .expect("should parse");
+        assert_eq!(m.contributes.panels[0].id, "refs");
+        assert_eq!(m.contributes.panels[0].title, "References");
+    }
+
+    #[test]
+    fn rejects_bad_or_duplicate_panel_ids() {
+        let dup = parse_manifest(&manifest_json(
+            r#","contributes":{"panels":[{"id":"a","title":"A"},{"id":"a","title":"B"}]}"#,
+        ))
+        .unwrap_err();
+        assert_eq!(dup, ManifestError::DuplicatePanel("a".into()));
+
+        for bad in [
+            r#"{"id":"a/b","title":"A"}"#,
+            r#"{"id":"","title":"A"}"#,
+            r#"{"id":"a","title":" "}"#,
+        ] {
+            let err = parse_manifest(&manifest_json(&format!(
+                r#","contributes":{{"panels":[{bad}]}}"#
+            )))
+            .unwrap_err();
+            assert!(
+                matches!(err, ManifestError::BadPanelId(_)),
+                "{bad} was allowed"
+            );
+        }
+    }
+
+    #[test]
+    fn reads_selection_and_citation_actions() {
+        let m = parse_manifest(&manifest_json(
+            r#","contributes":{"commands":[{"id":"keep","title":"Keep"}],
+               "selectionActions":[{"command":"keep","title":"Keep Selection"}],
+               "citationActions":[{"command":"keep","title":"Keep Citation"}]}"#,
+        ))
+        .expect("should parse");
+        assert_eq!(m.contributes.selection_actions[0].title, "Keep Selection");
+        assert_eq!(m.contributes.citation_actions[0].command, "keep");
+    }
+
+    /// The bug this guards against cost an afternoon: a manifest saying
+    /// `selectionActions` while serde expected `selection_actions` parsed
+    /// *successfully*, defaulted the field to empty, and produced an extension
+    /// that installed cleanly and silently did nothing.
+    #[test]
+    fn a_misspelled_contribution_point_is_an_error_not_a_silent_empty() {
+        let err = parse_manifest(&manifest_json(
+            r#","contributes":{"commands":[{"id":"keep","title":"Keep"}],
+               "selection_actions":[{"command":"keep","title":"Keep"}]}"#,
+        ))
+        .unwrap_err();
+        assert!(matches!(err, ManifestError::Syntax(_)), "got {err:?}");
+        assert!(err.to_string().contains("selection_actions"), "{err}");
+    }
+
+    #[test]
+    fn an_unknown_manifest_field_is_refused() {
+        let err = parse_manifest(&manifest_json(r#","permisions":["storage"]"#)).unwrap_err();
+        assert!(matches!(err, ManifestError::Syntax(_)));
+    }
+
+    #[test]
+    fn rejects_an_action_for_an_undeclared_command() {
+        let err = parse_manifest(&manifest_json(
+            r#","contributes":{"selectionActions":[{"command":"nope","title":"X"}]}"#,
+        ))
+        .unwrap_err();
+        assert_eq!(err, ManifestError::UnknownBoundCommand("nope".into()));
+    }
+
+    #[test]
+    fn reads_the_commands_run_permission() {
+        let m = parse_manifest(&manifest_json(r#","permissions":["commands:run"]"#)).unwrap();
+        assert_eq!(m.permissions, vec![Permission::CommandsRun]);
     }
 
     #[test]

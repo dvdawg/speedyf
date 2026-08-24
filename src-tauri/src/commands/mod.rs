@@ -560,6 +560,13 @@ pub struct ExtensionDto {
     /// here rather than in the frontend so the id format has exactly one owner
     /// — it is what a user's keybindings are stored against.
     pub commands: Vec<PaletteCommandDto>,
+    /// Contributed panels, ids namespaced the same way commands are.
+    pub panels: Vec<PanelDto>,
+    /// Actions on a selection or a citation, ids namespaced like commands.
+    pub selection_actions: Vec<ActionDto>,
+    pub citation_actions: Vec<ActionDto>,
+    /// Settings the extension declared, for the panel to render.
+    pub settings: Vec<crate::extensions::SettingContribution>,
     /// Why this extension cannot run, if it cannot.
     pub error: Option<String>,
 }
@@ -573,6 +580,52 @@ pub struct PaletteCommandDto {
     pub local_id: String,
     pub title: String,
     pub keywords: Vec<String>,
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PanelDto {
+    /// `<extension id>/<panel id>`
+    pub id: String,
+    pub local_id: String,
+    pub title: String,
+    pub extension_id: String,
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionDto {
+    /// `<extension id>/<command id>`
+    pub id: String,
+    pub local_id: String,
+    pub title: String,
+    pub extension_id: String,
+}
+
+fn actions(manifest: &Manifest, which: &[crate::extensions::ActionContribution]) -> Vec<ActionDto> {
+    which
+        .iter()
+        .map(|a| ActionDto {
+            id: extensions::qualified_command_id(&manifest.id, &a.command),
+            local_id: a.command.clone(),
+            title: a.title.clone(),
+            extension_id: manifest.id.clone(),
+        })
+        .collect()
+}
+
+fn panels(manifest: &Manifest) -> Vec<PanelDto> {
+    manifest
+        .contributes
+        .panels
+        .iter()
+        .map(|p| PanelDto {
+            id: extensions::qualified_command_id(&manifest.id, &p.id),
+            local_id: p.id.clone(),
+            title: p.title.clone(),
+            extension_id: manifest.id.clone(),
+        })
+        .collect()
 }
 
 fn palette_commands(manifest: &Manifest) -> Vec<PaletteCommandDto> {
@@ -603,6 +656,16 @@ pub async fn list_extensions(app: tauri::AppHandle) -> AppResult<Vec<ExtensionDt
                     Ok(manifest) => ExtensionDto {
                         installed,
                         commands: palette_commands(&manifest),
+                        panels: panels(&manifest),
+                        selection_actions: actions(
+                            &manifest,
+                            &manifest.contributes.selection_actions,
+                        ),
+                        citation_actions: actions(
+                            &manifest,
+                            &manifest.contributes.citation_actions,
+                        ),
+                        settings: manifest.contributes.settings.clone(),
                         manifest: Some(manifest),
                         error: None,
                     },
@@ -610,6 +673,10 @@ pub async fn list_extensions(app: tauri::AppHandle) -> AppResult<Vec<ExtensionDt
                         installed,
                         manifest: None,
                         commands: Vec::new(),
+                        panels: Vec::new(),
+                        selection_actions: Vec::new(),
+                        citation_actions: Vec::new(),
+                        settings: Vec::new(),
                         error: Some(e.to_string()),
                     },
                 },
@@ -617,6 +684,10 @@ pub async fn list_extensions(app: tauri::AppHandle) -> AppResult<Vec<ExtensionDt
                     installed,
                     manifest: None,
                     commands: Vec::new(),
+                    panels: Vec::new(),
+                    selection_actions: Vec::new(),
+                    citation_actions: Vec::new(),
+                    settings: Vec::new(),
                     error: Some(format!("manifest unreadable: {e}")),
                 },
             }
