@@ -1,22 +1,183 @@
-/** Placeholder surface. No extension system exists yet — this panel exists so
- * the concept has a home once one does. */
+/** Installed extensions: what is here, what it may do, and what went wrong.
+ *
+ * The error surface is the point of this panel as much as the list is. An
+ * extension that fails to load, throws, or hangs has no console anyone will
+ * look at, so whatever the host learned about it is reported here.
+ */
+import { For, Show, createSignal } from 'solid-js';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { IconExtension } from '../../components/icons';
+import {
+  extensionState,
+  installExtension,
+  reloadExtension,
+  setExtensionEnabled,
+  uninstallExtension,
+  type ExtensionRecord,
+} from '../extensions/extensionStore';
 
 export default function ExtensionsPanel() {
+  const [busy, setBusy] = createSignal(false);
+  const [installError, setInstallError] = createSignal<string | null>(null);
+
+  const addFromFolder = async () => {
+    const picked = await openDialog({
+      directory: true,
+      multiple: false,
+      title: 'Choose an extension folder',
+    });
+    if (typeof picked !== 'string') return;
+    setBusy(true);
+    setInstallError(null);
+    try {
+      await installExtension(picked);
+    } catch (err) {
+      // The Rust side rejects a bad manifest before copying anything, and its
+      // message names the field at fault — worth showing verbatim.
+      setInstallError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <>
       <div class="home-panel-head">
         <h2>Extensions</h2>
+        <button
+          type="button"
+          class="secondary-btn"
+          disabled={busy()}
+          onClick={() => void addFromFolder()}
+        >
+          Load folder…
+        </button>
       </div>
       <div class="home-panel-body">
-        <div class="home-placeholder">
-          <span class="home-placeholder-icon" aria-hidden="true">
-            <IconExtension />
-          </span>
-          <p class="home-placeholder-title">No extensions installed</p>
-          <p>Extensions will let you add tools and viewers to SpeedyF.</p>
-        </div>
+        <Show when={installError()}>
+          <div class="ext-install-error" role="alert">
+            {installError()}
+          </div>
+        </Show>
+
+        <Show
+          when={extensionState.extensions.length > 0}
+          fallback={
+            <Show when={extensionState.loaded}>
+              <div class="home-placeholder">
+                <span class="home-placeholder-icon" aria-hidden="true">
+                  <IconExtension />
+                </span>
+                <p class="home-placeholder-title">No extensions installed</p>
+                <p>
+                  Extensions add commands to the command palette. Load one from a folder containing
+                  a <code>speedyf.json</code>.
+                </p>
+              </div>
+            </Show>
+          }
+        >
+          <div class="ext-list">
+            <For each={extensionState.extensions}>{(ext) => <ExtensionRow ext={ext} />}</For>
+          </div>
+        </Show>
       </div>
     </>
+  );
+}
+
+function ExtensionRow(props: { ext: ExtensionRecord }) {
+  const ext = () => props.ext;
+  const [confirming, setConfirming] = createSignal(false);
+
+  return (
+    <div class="ext-row" classList={{ 'is-disabled': !ext().enabled, 'is-broken': !!ext().error }}>
+      <div class="ext-row-head">
+        <label class="ext-toggle" title={ext().enabled ? 'Disable' : 'Enable'}>
+          <input
+            type="checkbox"
+            checked={ext().enabled}
+            onInput={(e) => void setExtensionEnabled(ext().id, e.currentTarget.checked)}
+          />
+          <span class="sr-only">Enabled</span>
+        </label>
+        <div class="ext-identity">
+          <span class="ext-name">{ext().name}</span>
+          <span class="ext-version">{ext().version}</span>
+        </div>
+        <div class="ext-actions">
+          <button type="button" class="ext-action" onClick={() => void reloadExtension(ext().id)}>
+            Reload
+          </button>
+          <Show
+            when={confirming()}
+            fallback={
+              <button type="button" class="ext-action" onClick={() => setConfirming(true)}>
+                Remove
+              </button>
+            }
+          >
+            <button
+              type="button"
+              class="ext-action is-danger"
+              onClick={() => void uninstallExtension(ext().id)}
+            >
+              Confirm
+            </button>
+            <button type="button" class="ext-action" onClick={() => setConfirming(false)}>
+              Cancel
+            </button>
+          </Show>
+        </div>
+      </div>
+
+      <Show when={ext().description}>
+        <p class="ext-description">{ext().description}</p>
+      </Show>
+
+      <div class="ext-facts">
+        <span class="ext-id" title={ext().source}>
+          {ext().id}
+        </span>
+        <Show
+          when={ext().permissions.length > 0}
+          fallback={<span class="ext-perms is-none">no permissions</span>}
+        >
+          <span class="ext-perms">{ext().permissions.join(', ')}</span>
+        </Show>
+      </div>
+
+      <Show when={ext().commands.length > 0}>
+        <ul class="ext-commands">
+          <For each={ext().commands}>
+            {(command) => (
+              <li>
+                <span class="ext-command-title">{command.title}</span>
+                <code class="ext-command-id">{command.id}</code>
+              </li>
+            )}
+          </For>
+        </ul>
+      </Show>
+
+      <Show when={ext().error}>
+        <div class="ext-error" role="status">
+          {ext().error}
+        </div>
+      </Show>
+
+      <Show when={ext().log.length > 0}>
+        <details class="ext-log">
+          <summary>{ext().log.length} log entries</summary>
+          <For each={ext().log}>
+            {(line) => (
+              <div class="ext-log-line" classList={{ 'is-error': line.level === 'error' }}>
+                {line.message}
+              </div>
+            )}
+          </For>
+        </details>
+      </Show>
+    </div>
   );
 }

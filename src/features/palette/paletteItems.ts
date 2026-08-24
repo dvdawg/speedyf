@@ -47,6 +47,9 @@ const GROUP_ORDER = [
   'Panels',
   'Search',
   'Settings',
+  // Last on purpose: what SpeedyF does itself should outrank what was added
+  // to it when scores do not already decide the order.
+  'Extensions',
 ];
 
 function groupRank(group: string): number {

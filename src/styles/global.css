@@ -2861,3 +2861,169 @@ textarea:focus-visible {
   font-weight: 600;
   color: var(--text);
 }
+
+/* ---------- home: extensions ---------- */
+.ext-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ext-row {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+}
+
+.ext-row.is-disabled {
+  opacity: 0.6;
+}
+
+.ext-row.is-broken {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+
+.ext-row-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ext-toggle {
+  display: inline-flex;
+  align-items: center;
+}
+
+.ext-identity {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.ext-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ext-version {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.ext-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.ext-action {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ext-action:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+.ext-action.is-danger {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+
+.ext-description {
+  margin: 6px 0 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ext-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.ext-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* An extension that asked for nothing is worth saying out loud, not leaving
+   as an absence the reader has to notice. */
+.ext-perms.is-none {
+  font-style: italic;
+}
+
+.ext-commands {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ext-commands li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.ext-command-id {
+  color: var(--text-dim);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ext-error,
+.ext-install-error {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ext-install-error {
+  margin: 0 0 10px;
+}
+
+.ext-log {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.ext-log summary {
+  cursor: pointer;
+}
+
+.ext-log-line {
+  padding: 2px 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-word;
+}
+
+.ext-log-line.is-error {
+  color: var(--danger);
+}

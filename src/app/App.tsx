@@ -18,6 +18,7 @@ import { engine } from '../lib/transport/engine';
 import { ui } from '../stores/uiStore';
 import { effectiveTheme, pagesInverted, settings } from '../stores/settings';
 import { installShortcuts } from './shortcuts';
+import { loadExtensions } from '../features/extensions/extensionStore';
 import { clearImagePreviews } from '../features/editor/editorActions';
 import PreviewPopover from '../features/citations/PreviewPopover';
 import HomeScreen from '../features/home/HomeScreen';
@@ -32,6 +33,8 @@ import { TabContext } from './TabContext';
 
 export default function App() {
   const [dropActive, setDropActive] = createSignal(false);
+
+  onMount(() => void loadExtensions());
 
   // theme: follow system, or forced light/dark. `effectiveTheme` tracks the
   // system preference itself, so this one effect covers both.

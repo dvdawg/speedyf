@@ -12,6 +12,7 @@ import { activateTab } from '../document/tabsController';
 import { jumpToAnchor } from '../outline/jumpToAnchor';
 import { flattenOutline } from '../outline/structureStore';
 import { closePalette, mostUsed, paletteOpen, recordUse, usesOf } from './paletteStore';
+import { extensionCommands, runExtensionCommand } from '../extensions/extensionStore';
 import {
   defaultSections,
   flatten,
@@ -44,6 +45,20 @@ export default function CommandPalette() {
       reason: describeDisabled(command, context),
       run: () => command.run(context),
     }));
+
+    // Contributed commands. They are ordinary candidates: the palette does
+    // not know an extension from a built-in, which is the point of the command
+    // registry being data rather than a switch statement.
+    for (const command of extensionCommands()) {
+      items.push({
+        key: command.id,
+        title: command.title,
+        group: 'Extensions',
+        keywords: command.keywords,
+        enabled: true,
+        run: () => void runExtensionCommand(command.id),
+      });
+    }
 
     for (const tab of tabsStore.state.tabs) {
       const name = tab.documentStore.state.name;
