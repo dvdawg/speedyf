@@ -138,7 +138,10 @@ export class ExtensionHost {
    * Resolves when the extension reports done, rejects on error or timeout.
    * Never hangs: the caller can await this from a click handler safely.
    */
-  async invoke(command: string): Promise<void> {
+  async invoke(
+    command: string,
+    extra?: { value?: string; reason?: 'command' | 'panel' }
+  ): Promise<void> {
     await this.start();
     const worker = this.worker;
     if (!worker || this.state !== 'running') {
@@ -154,7 +157,13 @@ export class ExtensionHost {
       }, this.timeout());
       this.pending.set(requestId, { resolve, reject, timer });
       try {
-        worker.postMessage({ type: 'invoke', requestId, command } satisfies HostMessage);
+        worker.postMessage({
+          type: 'invoke',
+          requestId,
+          command,
+          ...(extra?.value !== undefined ? { value: extra.value } : {}),
+          ...(extra?.reason !== undefined ? { reason: extra.reason } : {}),
+        } satisfies HostMessage);
       } catch (err) {
         this.settle(requestId, new Error(describe(err)));
       }

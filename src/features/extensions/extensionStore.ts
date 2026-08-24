@@ -1,16 +1,68 @@
 /** What is installed, what is running, and what each one is allowed to do.
  *
- * One store for the window: extensions are not per-tab or per-document, and
- * v1 has nothing document-scoped to offer them anyway.
+ * One store for the window: extensions are not per-tab. Their read APIs are
+ * scoped to whichever document is *active*, so an extension never names one and
+ * cannot reach a tab the user is not looking at.
  *
  * Workers are started lazily. An installed extension costs nothing until one of
  * its commands is actually run, which keeps a shelf of installed-but-unused
  * extensions off the startup path.
  */
+import { createSignal } from 'solid-js';
 import { createStore, produce } from 'solid-js/store';
 import { invoke } from '@tauri-apps/api/core';
 import { ExtensionHost, blobWorkerFactory } from './host';
 import type { CallMessage } from './protocol';
+import { COMMANDS, runCommand } from '../../app/commands';
+import { activeTab } from '../../stores/tabsStore';
+import { reservedChords } from '../../app/shortcuts';
+import { canRunGroup, refusalReason, resolveBindings, type ExtensionBinding } from './capabilities';
+import {
+  apiRefusalReason,
+  canCallApi,
+  readCitationArg,
+  readPageArg,
+  readQueryArg,
+  toCitations,
+  toDocumentInfo,
+  toFigures,
+  toLibraryHits,
+  toOutline,
+  toPageText,
+  toResolvedCitation,
+} from './api';
+import { engine } from '../../lib/transport/engine';
+import { parseUi, type UiDescription } from './ui';
+
+export interface ExtensionKeybinding {
+  command: string;
+  key: string;
+}
+
+export interface ExtensionSetting {
+  key: string;
+  title: string;
+  type: 'text' | 'checkbox' | 'select';
+  default?: string;
+  options?: string[];
+  description?: string;
+}
+
+export interface ExtensionAction {
+  /** `<extension id>/<command id>` */
+  id: string;
+  localId: string;
+  title: string;
+  extensionId: string;
+}
+
+export interface ExtensionPanel {
+  /** `<extension id>/<panel id>` */
+  id: string;
+  localId: string;
+  title: string;
+  extensionId: string;
+}
 
 export interface ExtensionCommand {
   /** `<extension id>/<command id>`, namespaced by the Rust side. */
@@ -37,6 +89,11 @@ export interface ExtensionRecord {
   enabled: boolean;
   manifest: ExtensionManifest | null;
   commands: ExtensionCommand[];
+  panels: ExtensionPanel[];
+  selectionActions: ExtensionAction[];
+  citationActions: ExtensionAction[];
+  settings: ExtensionSetting[];
+  keybindings: ExtensionKeybinding[];
   /** Why it cannot run: a bad manifest, or a worker that died. */
   error: string | null;
   /** Most recent diagnostics, newest last. Bounded — an extension logging in a
@@ -49,9 +106,13 @@ const MAX_LOG_LINES = 50;
 interface State {
   loaded: boolean;
   extensions: ExtensionRecord[];
+  /** Latest description each panel sent, keyed by qualified panel id. A panel
+   * with no entry has not rendered yet, which the sidebar shows as loading
+   * rather than as empty. */
+  panelUi: Record<string, UiDescription | undefined>;
 }
 
-const [state, setState] = createStore<State>({ loaded: false, extensions: [] });
+const [state, setState] = createStore<State>({ loaded: false, extensions: [], panelUi: {} });
 
 export { state as extensionState };
 
@@ -67,8 +128,12 @@ interface ExtensionDto {
   source: string;
   permissions: string[];
   enabled: boolean;
-  manifest: ExtensionManifest | null;
+  manifest: (ExtensionManifest & { contributes?: { keybindings?: ExtensionKeybinding[] } }) | null;
   commands: ExtensionCommand[];
+  panels: ExtensionPanel[];
+  selectionActions: ExtensionAction[];
+  citationActions: ExtensionAction[];
+  settings: ExtensionSetting[];
   error: string | null;
 }
 
@@ -82,6 +147,11 @@ export async function loadExtensions(): Promise<void> {
         const previous = new Map(s.extensions.map((e) => [e.id, e.log]));
         s.extensions = list.map((dto) => ({
           ...dto,
+          panels: dto.panels ?? [],
+          selectionActions: dto.selectionActions ?? [],
+          citationActions: dto.citationActions ?? [],
+          settings: dto.settings ?? [],
+          keybindings: dto.manifest?.contributes?.keybindings ?? [],
           error: dto.error ?? null,
           log: previous.get(dto.id) ?? [],
         }));
@@ -94,9 +164,93 @@ export async function loadExtensions(): Promise<void> {
   }
 }
 
+/** Actions offered on a text selection, from every usable extension. */
+export function selectionActions(): ExtensionAction[] {
+  return state.extensions.filter((e) => e.enabled && !e.error).flatMap((e) => e.selectionActions);
+}
+
+/** Actions offered on a citation. */
+export function citationActions(): ExtensionAction[] {
+  return state.extensions.filter((e) => e.enabled && !e.error).flatMap((e) => e.citationActions);
+}
+
+/** Run an action on something the user picked.
+ *
+ * The picked thing is passed as the invoke value and is the *only* thing the
+ * extension receives. That is what makes actions the narrow path: an extension
+ * acting on a selection needs no read permission at all, because the user chose
+ * both the text and the action.
+ */
+export async function runExtensionAction(action: ExtensionAction, value: string): Promise<void> {
+  const extension = state.extensions.find((e) => e.id === action.extensionId);
+  if (!extension || !extension.enabled) return;
+  try {
+    await hostFor(extension).invoke(action.localId, { value });
+  } catch (err) {
+    appendLog(
+      action.extensionId,
+      'error',
+      `${action.title}: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+}
+
+/** Every panel contributed by an enabled, error-free extension. */
+export function extensionPanels(): ExtensionPanel[] {
+  return state.extensions.filter((e) => e.enabled && !e.error).flatMap((e) => e.panels);
+}
+
+export function panelUi(panelId: string): UiDescription | undefined {
+  return state.panelUi[panelId];
+}
+
+/** Ask a panel's extension to render it.
+ *
+ * Called when the panel is opened and when the user asks for a refresh, rather
+ * than on a timer: an extension should not be woken because a document scrolled.
+ */
+export async function refreshPanel(panelId: string): Promise<void> {
+  const panel = extensionPanels().find((p) => p.id === panelId);
+  if (!panel) return;
+  const extension = state.extensions.find((e) => e.id === panel.extensionId);
+  if (!extension) return;
+  try {
+    await hostFor(extension).invoke(panel.localId, { reason: 'panel' });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    appendLog(extension.id, 'error', `${panel.title}: ${message}`);
+    setState('panelUi', panelId, { sections: [], error: message });
+  }
+}
+
 /** Every command contributed by an enabled, error-free extension. */
 export function extensionCommands(): ExtensionCommand[] {
   return state.extensions.filter((e) => e.enabled && !e.error).flatMap((e) => e.commands);
+}
+
+/** Contributed keybindings that survived conflict resolution.
+ *
+ * Recomputed from the store rather than cached, so enabling or removing an
+ * extension takes effect on the next keypress with nothing to invalidate.
+ */
+export function extensionBindings(): ExtensionBinding[] {
+  const declarations = state.extensions
+    .filter((e) => e.enabled && !e.error && e.keybindings.length > 0)
+    .map((e) => ({ extensionId: e.id, bindings: e.keybindings }));
+  if (declarations.length === 0) return [];
+  return resolveBindings(declarations, reservedChords()).bindings;
+}
+
+/** Bindings an extension declared that were refused, for the panel to explain. */
+export function bindingErrors(id: string): string[] {
+  const extension = state.extensions.find((e) => e.id === id);
+  if (!extension || extension.keybindings.length === 0) return [];
+  const declarations = state.extensions
+    .filter((e) => e.enabled && !e.error && e.keybindings.length > 0)
+    .map((e) => ({ extensionId: e.id, bindings: e.keybindings }));
+  return resolveBindings(declarations, reservedChords())
+    .errors.filter((e) => e.extensionId === id)
+    .map((e) => e.message);
 }
 
 export function findExtensionForCommand(qualifiedId: string): ExtensionRecord | undefined {
@@ -122,19 +276,263 @@ function setError(id: string, error: string | null): void {
   setState('extensions', (e) => e.id === id, 'error', error);
 }
 
-/** The permission gate.
+/** The permission gate: the whole security boundary between an extension and
+ * the open document.
  *
- * v1 exposes no APIs to extensions at all, so every call is refused. The gate
- * exists anyway, and refuses by default, because the alternative — adding
- * permissions once extensions already run unrestricted — is a breaking change
- * for every extension in the wild. Refusing from the first release means
- * nothing is ever built against access it was not granted.
+ * Refusing is the default and always has been — an API only becomes reachable
+ * by being named here. That ordering matters more than it looks: opening a
+ * capability later breaks nothing, while discovering that extensions already
+ * had one cannot be undone for anything already published against it.
  */
 async function handleCall(extension: ExtensionRecord, call: CallMessage): Promise<unknown> {
+  if (call.api === 'settings.get') {
+    // No permission: these are the extension's own declared settings, and
+    // reading what the user chose to tell it is not access to anything else.
+    const key = (call.args as { key?: unknown } | undefined)?.key;
+    if (typeof key !== 'string') throw new Error('settings.get needs a string "key"');
+    if (!extension.settings.some((s) => s.key === key)) {
+      throw new Error(`this extension does not declare a setting "${key}"`);
+    }
+    return settingValue(extension, key);
+  }
+
+  if (call.api === 'clipboard.write') {
+    if (!canCallApi(extension.permissions, call.api)) {
+      throw new Error(apiRefusalReason(extension.permissions, call.api));
+    }
+    const text = (call.args as { text?: unknown } | undefined)?.text;
+    if (typeof text !== 'string' || text.length === 0) {
+      throw new Error('clipboard.write needs a non-empty string "text"');
+    }
+    if (text.length > MAX_CLIPBOARD) {
+      throw new Error(`clipboard.write is limited to ${MAX_CLIPBOARD} characters`);
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (err) {
+      // The platform requires transient user activation for a clipboard write.
+      // Every real path here has it — an extension command is reached by a
+      // click or a keypress — but the round trip out to the worker and back
+      // spends some of that window, and a slow extension can outlast it. Named
+      // explicitly because the raw platform message ("not allowed by the user
+      // agent") sends an author looking for a permission that does not exist.
+      throw new Error(
+        'the clipboard is only writable while a user action is still in effect; ' +
+          `do the write first, before any slow work (${err instanceof Error ? err.message : String(err)})`
+      );
+    }
+    return { written: text.length };
+  }
+
+  if (call.api.startsWith('storage.')) {
+    if (!canCallApi(extension.permissions, call.api)) {
+      throw new Error(apiRefusalReason(extension.permissions, call.api));
+    }
+    return storageCall(extension.id, call.api, call.args);
+  }
+
+  if (call.api === 'ui.render') {
+    const args = call.args as { panel?: unknown; ui?: unknown } | undefined;
+    const localId = typeof args?.panel === 'string' ? args.panel : null;
+    if (!localId) throw new Error('ui.render needs a string "panel"');
+    const panel = extension.panels.find((p) => p.localId === localId);
+    if (!panel) throw new Error(`this extension does not contribute a panel "${localId}"`);
+    // Validated, never cast: this is the one place an extension puts text in
+    // front of the user, and the renderer must not receive a half-typed object.
+    setState('panelUi', panel.id, parseUi(args?.ui));
+    return { rendered: true };
+  }
+
+  if (call.api !== 'commands.run') {
+    if (!canCallApi(extension.permissions, call.api)) {
+      throw new Error(apiRefusalReason(extension.permissions, call.api));
+    }
+    return readApi(call.api, call.args);
+  }
+
+  if (call.api === 'commands.run') {
+    const id = (call.args as { id?: unknown } | undefined)?.id;
+    if (typeof id !== 'string') throw new Error('commands.run needs a string "id"');
+    const group = COMMANDS.find((c) => c.id === id)?.group;
+    if (!canRunGroup(extension.permissions, group)) {
+      throw new Error(refusalReason(extension.permissions, id, group));
+    }
+    // `runCommand` returns false when the command exists but is not currently
+    // available — no document open, nothing selected. Reported rather than
+    // thrown: it is a state the extension can reasonably retry from.
+    return { ran: runCommand(id, { tab: activeTab() }) };
+  }
+
   throw new Error(
     `"${call.api}" is not available to extensions in this version of SpeedyF` +
       (extension.permissions.length === 0 ? '' : ` (granted: ${extension.permissions.join(', ')})`)
   );
+}
+
+/** Longest string an extension may put on the clipboard. Generous for a
+ * bibliography, far short of a whole document. */
+const MAX_CLIPBOARD = 100_000;
+/** Per-key and per-extension storage limits. localStorage is a few megabytes
+ * shared with the app's own settings, so an extension gets a small, bounded
+ * slice of it rather than whatever it can take. */
+const MAX_STORAGE_VALUE = 64_000;
+const MAX_STORAGE_KEYS = 100;
+
+function storageKey(extensionId: string, key: string): string {
+  return `speedyf-ext:${extensionId}:${key}`;
+}
+
+/** Ticks whenever any setting changes.
+ *
+ * Setting values live in localStorage, which is not reactive, and the store
+ * holds the *declarations* rather than the values. Anything displaying a value
+ * reads this first so it re-runs when one is written. */
+const [settingsRevision, bumpSettingsRevision] = createSignal(0);
+
+export { settingsRevision };
+
+/** Settings share the storage namespace but a separate prefix, so an
+ * extension's own `storage.set` can never overwrite a value the user chose in
+ * the settings form. */
+function settingKey(extensionId: string, key: string): string {
+  return `speedyf-ext-setting:${extensionId}:${key}`;
+}
+
+/** What a setting is currently worth: what the user chose, or the declared
+ * default. */
+export function settingValue(extension: ExtensionRecord, key: string): string {
+  settingsRevision(); // re-read when any setting is written
+  const stored = localStorage.getItem(settingKey(extension.id, key));
+  if (stored !== null) return stored;
+  return extension.settings.find((s) => s.key === key)?.default ?? '';
+}
+
+export function setSettingValue(extensionId: string, key: string, value: string): void {
+  try {
+    localStorage.setItem(settingKey(extensionId, key), value);
+  } catch {
+    /* storage unavailable — the setting stays session-only */
+  }
+  // The worker holds no copy, so it sees the new value on its next read. A
+  // restart would be heavier and would lose whatever state it had built up.
+  bumpSettingsRevision((n) => n + 1);
+}
+
+function clearSettings(extensionId: string): void {
+  const prefix = settingKey(extensionId, '');
+  const doomed: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key?.startsWith(prefix)) doomed.push(key);
+  }
+  for (const key of doomed) localStorage.removeItem(key);
+}
+
+/** Namespaced key/value storage.
+ *
+ * The namespace is applied here, not by the extension, so one extension cannot
+ * read or overwrite another's — and uninstalling can find everything an
+ * extension left behind by prefix.
+ */
+function storageCall(extensionId: string, api: string, args: unknown): unknown {
+  const key = (args as { key?: unknown } | undefined)?.key;
+  if (typeof key !== 'string' || key.length === 0 || key.length > 200) {
+    throw new Error('storage needs a "key" of 1-200 characters');
+  }
+  const full = storageKey(extensionId, key);
+
+  if (api === 'storage.get') return localStorage.getItem(full);
+
+  if (api === 'storage.remove') {
+    localStorage.removeItem(full);
+    return { removed: true };
+  }
+
+  if (api === 'storage.set') {
+    const value = (args as { value?: unknown } | undefined)?.value;
+    if (typeof value !== 'string') throw new Error('storage.set needs a string "value"');
+    if (value.length > MAX_STORAGE_VALUE) {
+      throw new Error(`storage values are limited to ${MAX_STORAGE_VALUE} characters`);
+    }
+    const prefix = storageKey(extensionId, '');
+    if (localStorage.getItem(full) === null) {
+      let used = 0;
+      for (let i = 0; i < localStorage.length; i++) {
+        if (localStorage.key(i)?.startsWith(prefix)) used++;
+      }
+      if (used >= MAX_STORAGE_KEYS) {
+        throw new Error(`an extension may keep at most ${MAX_STORAGE_KEYS} stored keys`);
+      }
+    }
+    localStorage.setItem(full, value);
+    return { stored: value.length };
+  }
+
+  throw new Error(`"${api}" is not a storage operation`);
+}
+
+/** Remove everything an extension stored. Called on uninstall: leaving an
+ * uninstalled extension's data behind would be a surprise, and it is the one
+ * cleanup nothing else can do later once the id is gone. */
+function clearStorage(extensionId: string): void {
+  const prefix = storageKey(extensionId, '');
+  const doomed: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key?.startsWith(prefix)) doomed.push(key);
+  }
+  for (const key of doomed) localStorage.removeItem(key);
+}
+
+/** Dispatch a read API, after the gate has allowed it.
+ *
+ * Everything is scoped to the *active* document. An extension never names a
+ * document, which keeps engine ids out of the surface entirely and means an
+ * extension cannot read a tab the user is not looking at.
+ */
+async function readApi(api: string, args: unknown): Promise<unknown> {
+  if (api === 'library.search') {
+    // The only API that works with nothing open — the library is not a
+    // property of the current document.
+    return toLibraryHits(await engine.librarySearch(readQueryArg(args), false));
+  }
+
+  const tab = activeTab();
+  const doc = tab?.documentStore.state;
+  if (!tab || !doc?.loaded) throw new Error('no document is open');
+
+  switch (api) {
+    case 'document.info':
+      return toDocumentInfo(doc.name, doc.pages.length, tab.viewport.state.currentPage);
+
+    case 'document.outline':
+      return toOutline(await engine.getOutline(doc.docId));
+
+    case 'document.figures':
+      return toFigures(await engine.getFigures(doc.docId));
+
+    case 'document.pageText': {
+      const page = readPageArg(args, doc.pages.length);
+      // Extensions address pages as the reader sees them; `srcIndex` maps that
+      // to the page in the file, which reordering and deletion move around.
+      const src = doc.pages[page]?.srcIndex;
+      if (src === undefined || src === null) return '';
+      return toPageText(await engine.getTextLayout(doc.docId, src));
+    }
+
+    case 'citations.list': {
+      const page = readPageArg(args, doc.pages.length);
+      const src = doc.pages[page]?.srcIndex;
+      if (src === undefined || src === null) return [];
+      return toCitations(await engine.getPageLinks(doc.docId, src));
+    }
+
+    case 'citations.resolve':
+      return toResolvedCitation(await engine.resolveCitation(readCitationArg(args)));
+  }
+
+  // Unreachable: `canCallApi` already refused anything not in the catalogue.
+  throw new Error(`"${api}" is not an API this version of SpeedyF offers`);
 }
 
 function hostFor(extension: ExtensionRecord): ExtensionHost {
@@ -169,17 +567,36 @@ function hostFor(extension: ExtensionRecord): ExtensionHost {
  * out. Failures are recorded against the extension rather than thrown at the
  * caller, because the caller is a palette row that has already closed.
  */
-export async function runExtensionCommand(qualifiedId: string): Promise<void> {
+export async function runExtensionCommand(qualifiedId: string, value?: string): Promise<void> {
   const extension = findExtensionForCommand(qualifiedId);
   if (!extension || !extension.enabled) return;
   const command = extension.commands.find((c) => c.id === qualifiedId);
   if (!command) return;
 
   try {
-    await hostFor(extension).invoke(command.localId);
+    await hostFor(extension).invoke(command.localId, value === undefined ? undefined : { value });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     appendLog(extension.id, 'error', `${command.title}: ${message}`);
+  }
+}
+
+/** Run a row action from a rendered panel.
+ *
+ * The command is the extension's own bare id, taken from the description it
+ * sent, so it can only ever reach back into itself.
+ */
+export async function runPanelAction(
+  extensionId: string,
+  command: string,
+  value?: string
+): Promise<void> {
+  const extension = state.extensions.find((e) => e.id === extensionId);
+  if (!extension || !extension.enabled) return;
+  try {
+    await hostFor(extension).invoke(command, value === undefined ? undefined : { value });
+  } catch (err) {
+    appendLog(extensionId, 'error', err instanceof Error ? err.message : String(err));
   }
 }
 
@@ -205,6 +622,8 @@ export async function installExtension(folder: string): Promise<void> {
 
 export async function uninstallExtension(id: string): Promise<void> {
   stopExtension(id);
+  clearStorage(id);
+  clearSettings(id);
   await invoke('uninstall_extension', { id });
   await loadExtensions();
 }

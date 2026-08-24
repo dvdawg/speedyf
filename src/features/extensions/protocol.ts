@@ -32,6 +32,11 @@ export interface InvokeMessage {
   requestId: number;
   /** The bare id the extension declared, not the namespaced one. */
   command: string;
+  /** Carried back from a row action, so one command can serve many rows. */
+  value?: string;
+  /** Set when the invoke came from a panel becoming visible, so an extension
+   * can tell "the user opened my panel" from "the user ran my command". */
+  reason?: 'command' | 'panel';
 }
 
 /** The host's answer to a `call` from the extension. */

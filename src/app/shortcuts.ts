@@ -14,6 +14,8 @@ import { setActiveTool, toolState } from '../features/annotations/toolStore';
 import { modal } from '../stores/modalStore';
 import { openPalette, paletteOpen } from '../features/palette/paletteStore';
 import { runCommand, type CommandCtx } from './commands';
+import { canonicalChord, chordMatches } from '../features/extensions/capabilities';
+import { extensionBindings, runExtensionCommand } from '../features/extensions/extensionStore';
 
 const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.userAgent);
 
@@ -70,6 +72,42 @@ const BINDINGS: readonly Binding[] = [
 
 // Windows and Linux keep Ctrl+Y as a second redo.
 const REDO_Y: Binding = { key: 'y', mod: true, id: 'edit.redo', preventAlways: true };
+
+/** Every chord SpeedyF binds for itself.
+ *
+ * Handed to the extension host so a contributed binding can be refused before
+ * it ever reaches the keyboard. A binding whose `shift` is undefined matches
+ * with or without it, so both forms are reserved — an extension taking ⌘⇧O
+ * would otherwise shadow half of a built-in.
+ *
+ * The chords handled outside the table are listed explicitly. They are the
+ * easiest ones to forget, and each is load-bearing: ⌘⇧P opens the palette,
+ * ⌃Tab cycles tabs, ⌘1-9 jumps to one, and Escape unwinds whatever is open.
+ */
+export function reservedChords(): ReadonlySet<string> {
+  const reserved = new Set<string>();
+  const add = (key: string, mod: boolean, shift: boolean) =>
+    reserved.add(
+      canonicalChord({ key: key.length === 1 ? key.toLowerCase() : key, mod, shift, alt: false })
+    );
+
+  for (const binding of [...BINDINGS, REDO_Y]) {
+    const mod = binding.mod ?? false;
+    if (binding.shift === undefined) {
+      add(binding.key, mod, false);
+      add(binding.key, mod, true);
+    } else {
+      add(binding.key, mod, binding.shift);
+    }
+  }
+
+  add('p', true, true); // command palette
+  add('Tab', false, false); // ⌃Tab is matched on ctrlKey directly
+  add('Tab', false, true);
+  add('Escape', false, false);
+  for (let digit = 1; digit <= 9; digit++) add(String(digit), true, false);
+  return reserved;
+}
 
 function isTypingTarget(t: EventTarget | null): boolean {
   if (!(t instanceof HTMLElement)) return false;
@@ -143,6 +181,19 @@ export function installShortcuts(): () => void {
       const ran = runCommand(binding.id, ctx);
       if (ran || binding.preventAlways) e.preventDefault();
       return;
+    }
+
+    // Extension bindings come last, and only for keys SpeedyF did not claim —
+    // `reservedChords()` already refused anything that would shadow a built-in,
+    // so reaching here means the chord is genuinely free. They never fire while
+    // a text field has focus: an extension must not eat characters as you type.
+    if (!typing) {
+      for (const binding of extensionBindings()) {
+        if (!chordMatches(binding.chord, e, mod)) continue;
+        e.preventDefault();
+        void runExtensionCommand(`${binding.extensionId}/${binding.command}`);
+        return;
+      }
     }
 
     // ⌘1-9 jumps to a tab by position. Parameterized rather than nine
