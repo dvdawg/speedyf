@@ -247,6 +247,10 @@ export default function PageThumbnails() {
     setPanPage(i);
 
     trackDrag(
+      // A drag callback is an event handler; the rule cannot see through
+      // trackDrag to know that. Reading the layout as it is at each pointer
+      // move is exactly the intent.
+      // eslint-disable-next-line solid/reactivity
       (ev) => {
         const pos = scrollForPageFraction(
           mainLayout(),

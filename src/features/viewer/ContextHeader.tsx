@@ -111,6 +111,9 @@ export default function ContextHeader() {
       <div class="context-header">
         <div class="context-trail">
           <Show when={here().section}>
+            {/* eslint-disable-next-line solid/reactivity -- `crumb` receives an
+                accessor and calls it inside its own JSX, so `here()` is read in
+                a tracked scope. The rule only sees the closure being passed. */}
             {(section) => crumb(section, () => here().subsection === null)}
           </Show>
           <Show when={here().section && here().subsection}>

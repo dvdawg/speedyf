@@ -101,6 +101,10 @@ export const recentStore = {
 
     void engine
       .fileMetadata(path)
+      // An async completion is an event, not a tracked scope: reading the list
+      // as it is *now* is the point, since the fetch may have outlived the
+      // entry it was about.
+      // eslint-disable-next-line solid/reactivity
       .then(({ sizeBytes }) => {
         const idx = state.entries.findIndex((e) => e.path === path);
         if (idx < 0) return;

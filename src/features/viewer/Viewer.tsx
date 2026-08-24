@@ -39,6 +39,10 @@ interface WebKitGestureEvent extends UIEvent {
 }
 
 function ViewerContent(props: { tab: TabRecord }) {
+  // One Viewer is rendered per tab inside App's <For>, each under its own
+  // TabContext, so `props.tab` is fixed for the life of this instance and
+  // nothing destructured here can go stale.
+  // eslint-disable-next-line solid/reactivity
   const { documentStore, viewport: vp, zoom } = props.tab;
   let scroller!: HTMLDivElement;
   const doc = documentStore.state;
