@@ -118,9 +118,14 @@ async function scan(info) {
       });
       citation.title = resolved.title ?? resolved.fileName ?? null;
       citation.inLibrary = resolved.inLibrary;
+      // A paper prints its own identifier in its header, so it resolves to
+      // itself and turns up at the top of its own reference list. Recognised by
+      // the resolved file being the one that is open.
+      citation.isSelf = resolved.fileName === info.name;
     }
+    const references = citations.filter((citation) => !citation.isSelf);
 
-    current = { name: info.name, pageCount: info.pageCount, citations };
+    current = { name: info.name, pageCount: info.pageCount, citations: references };
     await writeCache(current);
     await render();
   } finally {
