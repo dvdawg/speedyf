@@ -462,54 +462,83 @@ fn same_line(first: &TextRun, run: &TextRun, tolerance: f32) -> bool {
     (first.y - run.y).abs() <= tolerance * first.h.max(run.h).max(1.0)
 }
 
-/// A horizontal gap wider than this share of the font size is a word space.
+/// A gap wider than this share of the run's median glyph advance is a word
+/// space.
 ///
-/// An interword space is about a third of an em in most text faces; the gaps
-/// between letters within a word are near zero, and negative where the font
-/// kerns. There is a lot of room between those two, so this sits low enough to
-/// catch tight spacing and high enough not to split letter-spaced headings.
-const WORD_GAP_EM: f32 = 0.15;
+/// Measured against the glyphs themselves rather than the font size PDFium
+/// reports, because that size is not always reported — a zero there silently
+/// disabled the whole repair on exactly the files that needed it. Median
+/// advance is always available and needs no font metadata at all: an interword
+/// space runs about half a lowercase advance, while letters within a word sit
+/// flush or kern slightly negative.
+const WORD_GAP_RATIO: f32 = 0.3;
 
 /// Put the spaces back inside one run using its characters' own geometry.
 ///
 /// `lines_from_runs` can only insert spaces *between* runs, and PDFium happily
 /// reports a whole line as a single run whose text contains no spaces at all —
-/// which is exactly what a title like "ATheoryofSaddleEscapeinDeepNonlinear"
-/// is. The gaps in those files are positions between glyphs, and this is where
-/// they are read back.
+/// which is what a title like "ATheoryofSaddleEscapeinDeepNonlinear" is. The
+/// gaps in those files are positions between glyphs, and this is where they are
+/// read back.
 ///
-/// Returns the run's text unchanged when it already contains spaces, or when
-/// the geometry needed is missing.
+/// Runs that are *partly* spaced are repaired too. An earlier version skipped
+/// anything already containing a space, which left
+/// "Majority-of-Three: OrderedProofs" exactly as broken as before.
 pub fn repair_run_text(run: &TextRun, boxes: &[[f32; 4]], sizes: &[f32]) -> String {
-    if run.text.contains(' ') || run.text.chars().count() < 2 {
+    let count = run.text.chars().count();
+    if count < 2 {
         return run.text.clone();
     }
     let start = run.start as usize;
+    let Some(slice) = boxes.get(start..start + count) else {
+        // Geometry missing or misaligned: pass the text through rather than
+        // guess at it.
+        return run.text.clone();
+    };
+
+    let Some(advance) = median_advance(slice) else {
+        return run.text.clone();
+    };
+    let threshold = WORD_GAP_RATIO * advance;
+
     let mut out = String::with_capacity(run.text.len() + 8);
     let mut previous_right: Option<f32> = None;
-
     for (offset, ch) in run.text.chars().enumerate() {
-        let index = start + offset;
-        let Some(&[x0, _, x1, _]) = boxes.get(index) else {
-            // No geometry for this character: nothing to infer from, so the
-            // text is passed through rather than guessed at.
-            return run.text.clone();
-        };
-        // A zero box means PDFium had no usable geometry for that glyph.
-        if x1 <= x0 {
-            out.push(ch);
-            continue;
-        }
-        let size = sizes.get(index).copied().unwrap_or(0.0);
+        let [x0, _, x1, _] = slice[offset];
+        let has_box = x1 > x0;
         if let Some(right) = previous_right {
-            if size > 0.0 && x0 - right > WORD_GAP_EM * size && !ch.is_whitespace() {
+            // Never doubled: a space the file already supplies, on either side,
+            // is the space — this only fills in the ones it left out.
+            let already_spaced = ch.is_whitespace() || out.ends_with(char::is_whitespace);
+            if has_box && !already_spaced && x0 - right > threshold {
                 out.push(' ');
             }
         }
         out.push(ch);
-        previous_right = Some(x1);
+        if has_box {
+            previous_right = Some(x1);
+        }
+        // A glyph with no box leaves `previous_right` where it was, so the next
+        // real glyph is still measured from something meaningful.
+        let _ = sizes;
     }
     out
+}
+
+/// Median width of the glyphs that reported one, as a stand-in for the font's
+/// advance. Median rather than mean so a single wide glyph or a stray zero box
+/// cannot move it.
+fn median_advance(boxes: &[[f32; 4]]) -> Option<f32> {
+    let mut widths: Vec<f32> = boxes
+        .iter()
+        .map(|b| b[2] - b[0])
+        .filter(|w| *w > 0.0)
+        .collect();
+    if widths.len() < 2 {
+        return None;
+    }
+    widths.sort_by(f32::total_cmp);
+    Some(widths[widths.len() / 2])
 }
 
 /// Page lines, with word spacing recovered from character geometry where the
@@ -779,6 +808,33 @@ mod tests {
         assert_eq!(repair_run_text(&run, &boxes, &sizes), "A Theory of");
     }
 
+    /// An earlier version skipped any run containing a space, which left
+    /// "Majority-of-Three: OrderedProofs" exactly as broken as before.
+    #[test]
+    fn repairs_a_run_that_is_only_partly_spaced() {
+        let (run, boxes, sizes) = glyphs("Three: OrderedProofs", 10.0, &[13], 4.0);
+        assert_eq!(
+            repair_run_text(&run, &boxes, &sizes),
+            "Three: Ordered Proofs"
+        );
+    }
+
+    /// PDFium does not always report a font size. Basing the threshold on it
+    /// meant a zero silently disabled the repair on exactly the files that
+    /// needed it.
+    #[test]
+    fn works_when_the_font_size_is_not_reported() {
+        let (run, boxes, _) = glyphs("ATheoryof", 10.0, &[0, 6], 4.0);
+        let zeros = vec![0.0; run.text.chars().count()];
+        assert_eq!(repair_run_text(&run, &boxes, &zeros), "A Theory of");
+    }
+
+    #[test]
+    fn does_not_double_a_space_the_file_already_supplies() {
+        let (run, boxes, sizes) = glyphs("A Theory", 10.0, &[0], 4.0);
+        assert_eq!(repair_run_text(&run, &boxes, &sizes), "A Theory");
+    }
+
     /// Letters within a word sit flush or kern together; nothing there should
     /// be read as a space.
     #[test]
@@ -798,6 +854,14 @@ mod tests {
     fn passes_text_through_when_geometry_is_missing() {
         let (run, _, sizes) = glyphs("ATheoryof", 10.0, &[0], 4.0);
         assert_eq!(repair_run_text(&run, &[], &sizes), "ATheoryof");
+    }
+
+    /// A run whose boxes do not line up with its characters must not be
+    /// repaired from whatever happens to sit at those indices.
+    #[test]
+    fn passes_text_through_when_boxes_are_short() {
+        let (run, boxes, sizes) = glyphs("ATheoryof", 10.0, &[0], 4.0);
+        assert_eq!(repair_run_text(&run, &boxes[..3], &sizes), "ATheoryof");
     }
 
     #[test]
