@@ -32,6 +32,8 @@ use crate::errors::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 
+pub mod builtin;
+
 /// Directory under the app data dir holding every installed extension.
 pub const EXTENSIONS_DIR: &str = "extensions";
 

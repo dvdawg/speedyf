@@ -4,14 +4,13 @@
 // against this extension's manifest before it runs. Nothing is imported and
 // nothing is bundled: the API surface is the only dependency.
 
-let me = null;
 let nextRequestId = 1;
 const pending = new Map();
 
 self.onmessage = (event) => {
   const message = event.data;
   if (message.type === 'activate') {
-    me = message;
+    // Nothing to set up: this extension holds no state between invocations.
     return;
   }
   if (message.type === 'invoke') {

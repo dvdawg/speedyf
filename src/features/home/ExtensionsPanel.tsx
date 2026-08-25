@@ -171,6 +171,11 @@ function ExtensionRow(props: { ext: ExtensionRecord }) {
         <div class="ext-identity">
           <span class="ext-name">{ext().name}</span>
           <span class="ext-version">{ext().version}</span>
+          <Show when={ext().builtin}>
+            <span class="ext-badge" title="Ships with SpeedyF and updates with it">
+              Built in
+            </span>
+          </Show>
         </div>
         <div class="ext-actions">
           <button
@@ -191,24 +196,29 @@ function ExtensionRow(props: { ext: ExtensionRecord }) {
           >
             Reload
           </button>
-          <Show
-            when={confirming()}
-            fallback={
-              <button type="button" class="ext-action" onClick={() => setConfirming(true)}>
-                Remove
-              </button>
-            }
-          >
-            <button
-              type="button"
-              class="ext-action is-danger"
-              onClick={() => void uninstallExtension(ext().id)}
+          {/* A built-in has no Remove: its files are in the app bundle, and
+              deleting them would only last until the next update. Disabling is
+              the equivalent, and it sticks. */}
+          <Show when={!ext().builtin}>
+            <Show
+              when={confirming()}
+              fallback={
+                <button type="button" class="ext-action" onClick={() => setConfirming(true)}>
+                  Remove
+                </button>
+              }
             >
-              Confirm
-            </button>
-            <button type="button" class="ext-action" onClick={() => setConfirming(false)}>
-              Cancel
-            </button>
+              <button
+                type="button"
+                class="ext-action is-danger"
+                onClick={() => void uninstallExtension(ext().id)}
+              >
+                Confirm
+              </button>
+              <button type="button" class="ext-action" onClick={() => setConfirming(false)}>
+                Cancel
+              </button>
+            </Show>
           </Show>
         </div>
       </div>
@@ -218,7 +228,7 @@ function ExtensionRow(props: { ext: ExtensionRecord }) {
       </Show>
 
       <div class="ext-facts">
-        <span class="ext-id" title={ext().source}>
+        <span class="ext-id" title={ext().builtin ? 'Ships with SpeedyF' : ext().source}>
           {ext().id}
         </span>
         <Show when={contributes()}>

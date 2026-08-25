@@ -6,7 +6,16 @@
  * control of the DOM.
  */
 import { For, Show, createEffect, createSignal } from 'solid-js';
-import { panelUi, refreshPanel, runPanelAction, type ExtensionPanel } from './extensionStore';
+import IconButton from '../../components/IconButton';
+import { IconRefresh } from '../../components/icons';
+import { activeTab } from '../../stores/tabsStore';
+import {
+  panelDocId,
+  panelUi,
+  refreshPanel,
+  runPanelAction,
+  type ExtensionPanel,
+} from './extensionStore';
 
 export default function ExtensionPanelView(props: { panel: ExtensionPanel }) {
   const [refreshing, setRefreshing] = createSignal(false);
@@ -21,24 +30,36 @@ export default function ExtensionPanelView(props: { panel: ExtensionPanel }) {
     }
   };
 
-  // Rendered on open rather than on a timer: an extension should not be woken
-  // because a document scrolled, and a panel nobody is looking at costs nothing.
+  // Rendered when what is on screen is not about the paper being read — on
+  // first open, and after that whenever the two drift apart. Not on a timer:
+  // an extension should not be woken because a document scrolled.
+  //
+  // Deliberately a comparison rather than a reaction to a tab switch. Every
+  // tab mounts its own sidebar, so changing documents does not re-run an
+  // effect in this component — it disposes it and mounts a new one, which
+  // finds the store already holding the *previous* document's rows and, on
+  // any mount-time or change-based test, concludes there is nothing to do.
+  // That is precisely how this panel spent a release showing the last paper's
+  // references. Asking "is this content about the open document?" is true
+  // regardless of which components came and went to get here.
   createEffect(() => {
-    if (panelUi(props.panel.id) === undefined) void refresh();
+    const open = activeTab()?.documentStore.state.docId ?? null;
+    const shown = panelDocId(props.panel.id);
+    if (panelUi(props.panel.id) === undefined || shown !== open) void refresh();
   });
 
   return (
     <div class="sidebar-scroll ext-panel" aria-label={props.panel.title}>
       <div class="ext-panel-head">
         <span class="ext-panel-title">{props.panel.title}</span>
-        <button
-          type="button"
-          class="ext-action"
-          disabled={refreshing()}
-          onClick={() => void refresh()}
-        >
-          {refreshing() ? '…' : 'Refresh'}
-        </button>
+        {/* The same control the viewer uses for undo, redo and page steps.
+            Spinning while it works says "busy" without the button changing
+            width, which a text label could not do. */}
+        <IconButton label="Refresh" disabled={refreshing()} onClick={() => void refresh()}>
+          <span class="ext-refresh-icon" classList={{ 'is-spinning': refreshing() }}>
+            <IconRefresh />
+          </span>
+        </IconButton>
       </div>
 
       <Show when={ui()} fallback={<div class="panel-note">Loading…</div>}>

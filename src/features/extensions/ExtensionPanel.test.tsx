@@ -11,13 +11,36 @@
  */
 import { render, fireEvent, cleanup } from '@solidjs/testing-library';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createSignal } from 'solid-js';
+
+/** The open document. */
+const [openDocId, setOpenDocId] = createSignal(1);
+
+/** What the store currently holds for this panel: the rows, and which document
+ * they describe. Panel content is global and outlives any one panel component,
+ * which is the whole reason staleness has to be detectable. */
+let ui: unknown = undefined;
+let shownDoc: number | null | undefined = undefined;
+
+const openTab = {
+  id: 'tab-1',
+  documentStore: {
+    state: {
+      get docId() {
+        return openDocId();
+      },
+    },
+  },
+};
+
+vi.mock('../../stores/tabsStore', () => ({ activeTab: () => openTab }));
 
 const refreshPanel = vi.fn(async () => {});
 const runPanelAction = vi.fn(async () => {});
-let ui: unknown = undefined;
 
 vi.mock('./extensionStore', () => ({
   panelUi: () => ui,
+  panelDocId: () => shownDoc,
   refreshPanel: (...args: unknown[]) => refreshPanel(...(args as [])),
   runPanelAction: (...args: unknown[]) => runPanelAction(...(args as [])),
 }));
@@ -33,9 +56,17 @@ const panel = {
 
 beforeEach(() => {
   ui = undefined;
+  shownDoc = undefined;
+  setOpenDocId(1);
   refreshPanel.mockClear();
   runPanelAction.mockClear();
 });
+
+/** Panel content as it would be after a successful render of document `docId`. */
+function rendered(docId: number) {
+  ui = { sections: [{ rows: [{ id: 'a', title: 'A Paper' }] }] };
+  shownDoc = docId;
+}
 
 afterEach(cleanup);
 
@@ -130,11 +161,62 @@ describe('row actions', () => {
 
 describe('refresh', () => {
   it('re-asks the extension when refresh is pressed', async () => {
-    ui = { sections: [{ rows: [{ id: 'a', title: 'A Paper' }] }] };
-    const { getByText } = render(() => <ExtensionPanelView panel={panel} />);
+    rendered(1);
+    const { getByRole } = render(() => <ExtensionPanelView panel={panel} />);
     refreshPanel.mockClear();
 
-    fireEvent.click(getByText('Refresh'));
+    // Reachable by its accessible name, not its text: it is an icon button, so
+    // the label is all a screen reader or a keyboard user has.
+    fireEvent.click(getByRole('button', { name: 'Refresh' }));
     await vi.waitFor(() => expect(refreshPanel).toHaveBeenCalledWith(panel.id));
+  });
+
+  it('renders when nothing has been drawn yet', async () => {
+    render(() => <ExtensionPanelView panel={panel} />);
+    await vi.waitFor(() => expect(refreshPanel).toHaveBeenCalledWith(panel.id));
+  });
+
+  it('re-renders when another document becomes active', async () => {
+    rendered(1);
+    render(() => <ExtensionPanelView panel={panel} />);
+    refreshPanel.mockClear();
+
+    setOpenDocId(2);
+
+    // Otherwise the panel keeps showing the previous paper's rows, which look
+    // current and are not.
+    await vi.waitFor(() => expect(refreshPanel).toHaveBeenCalledWith(panel.id));
+  });
+
+  /** The case every earlier version of this test missed.
+   *
+   * Each tab mounts its own sidebar, so switching documents disposes this
+   * component and mounts a fresh one. The new panel finds the store already
+   * populated — with the previous document's rows — and any test based on
+   * mount timing or on reacting to a change concludes there is nothing to do.
+   * The panel showed the wrong paper's references until something else forced
+   * a render. */
+  it('renders on mount when the stored rows describe another document', async () => {
+    rendered(1);
+    render(() => <ExtensionPanelView panel={panel} />);
+    refreshPanel.mockClear();
+
+    // The tab switch: this component goes away, the content does not.
+    cleanup();
+    setOpenDocId(2);
+    render(() => <ExtensionPanelView panel={panel} />);
+
+    await vi.waitFor(() => expect(refreshPanel).toHaveBeenCalledWith(panel.id));
+  });
+
+  it('does not re-render when the rows already describe the open document', async () => {
+    rendered(1);
+    render(() => <ExtensionPanelView panel={panel} />);
+    refreshPanel.mockClear();
+
+    setOpenDocId(1);
+    await Promise.resolve();
+
+    expect(refreshPanel).not.toHaveBeenCalled();
   });
 });

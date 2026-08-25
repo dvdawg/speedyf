@@ -2,18 +2,35 @@
   "id": "dev.speedyf.references",
   "apiVersion": 1,
   "name": "References",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Every work this paper cites, where it is cited, and which ones you already have.",
   "author": "speedyf",
   "entry": "worker.js",
   "icon": "icon.svg",
   "permissions": ["document:read", "citations:read", "commands:run", "storage"],
   "contributes": {
-    "panels": [{ "id": "refs", "title": "References" }],
+    "panels": [
+      {
+        "id": "refs",
+        "title": "References"
+      }
+    ],
     "commands": [
-      { "id": "refs", "title": "References: Show", "keywords": ["citations", "cited"] },
-      { "id": "rescan", "title": "References: Rescan Document", "keywords": ["refresh"] },
-      { "id": "jump", "title": "References: Go To Citation", "keywords": ["navigate"] }
+      {
+        "id": "refs",
+        "title": "References: Show",
+        "keywords": ["citations", "cited"]
+      },
+      {
+        "id": "rescan",
+        "title": "References: Rescan Document",
+        "keywords": ["refresh"]
+      },
+      {
+        "id": "jump",
+        "title": "References: Go To Citation",
+        "keywords": ["navigate"]
+      }
     ],
     "settings": [
       {

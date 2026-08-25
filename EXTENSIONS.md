@@ -3,6 +3,10 @@
 Everything an extension can do, and how. For _why_ it works this way, see
 `extension_api.md` — this file is the reference.
 
+SpeedyF ships with References already installed; its source is in
+`extensions/`, and a built-in is an ordinary extension that happens to live in
+the app bundle — see that folder's README for the three ways it differs.
+
 Working examples live in `examples/extensions/`. Load any of them from
 **Home → Extensions → Load folder…**.
 
@@ -95,16 +99,16 @@ rather than a silently ignored setting.
 }
 ```
 
-| Field         | Required | Notes                                                                                          |
-| ------------- | -------- | ---------------------------------------------------------------------------------------------- |
-| `id`          | yes      | Lowercase reverse-DNS, must contain a dot. Namespaces your commands, storage and files.        |
-| `apiVersion`  | yes      | `1`. A build that does not recognise it refuses to install.                                    |
-| `name`        | yes      | Shown in the Extensions panel.                                                                 |
-| `version`     | yes      | Your version, any string.                                                                      |
-| `entry`       | yes      | Relative path to your worker, inside the extension.                                            |
-| `icon`        | no       | Relative `.png`, `.svg`, `.jpg`. Without one, SpeedyF draws a generic mark with your initials. |
-| `permissions` | no       | See below. Anything not requested is refused at the API boundary.                              |
-| `contributes` | no       | Where you appear. See below.                                                                   |
+| Field         | Required | Notes                                                                                                                                                                                                                |
+| ------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`          | yes      | Lowercase reverse-DNS, must contain a dot. Namespaces your commands, storage and files.                                                                                                                              |
+| `apiVersion`  | yes      | `1`. A build that does not recognise it refuses to install.                                                                                                                                                          |
+| `name`        | yes      | Shown in the Extensions panel.                                                                                                                                                                                       |
+| `version`     | yes      | Your version, any string.                                                                                                                                                                                            |
+| `entry`       | yes      | Relative path to your worker, inside the extension.                                                                                                                                                                  |
+| `icon`        | no       | Relative `.png`, `.svg`, `.jpg`. Drawn as a mask in the current text colour, so design it as a **single-colour silhouette** — only the shape survives. Without one, SpeedyF draws a generic mark with your initials. |
+| `permissions` | no       | See below. Anything not requested is refused at the API boundary.                                                                                                                                                    |
+| `contributes` | no       | Where you appear. See below.                                                                                                                                                                                         |
 
 Command and panel ids must be non-empty and contain no `/` — that character
 separates them from your extension id. Every `keybindings`, `selectionActions`,

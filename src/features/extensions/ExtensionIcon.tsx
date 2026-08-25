@@ -1,16 +1,32 @@
 /** However an extension chooses to show itself.
  *
- * An extension may ship a `png` or `svg`, which is rendered in an `<img>` —
- * deliberately, because an `<img>` is the safe way to display an SVG nobody has
- * reviewed. Loaded that way it is a passive image: no scripts, no event
- * handlers, no reach into the page. Inlining the markup instead would run
- * whatever the author put in it.
+ * An extension may ship a `png`, `jpg` or `svg`, and it is never inlined: doing
+ * that would run whatever the author put in the file. It is drawn as a CSS mask
+ * instead — the image supplies the shape, `currentColor` supplies the colour,
+ * and a mask executes nothing.
  *
- * Without one, the generic extension mark carries the extension's initials in
- * its corner, so a shelf of extensions that all declined to ship an icon is
+ * That also fixes what an `<img>` could not. These icons sit in the sidebar
+ * rail beside the built-in ones, which are stroked in `currentColor` and follow
+ * the theme. An `<img>` renders the file's own colours, and `currentColor`
+ * inside one resolves to black — so a correctly written icon still landed as a
+ * black smudge next to fifteen grey ones. Masking makes an extension's icon
+ * match the rail by construction, in both themes and with the page palette
+ * inverted.
+ *
+ * The icon arrives as a `data:` URI rather than a `speedyf-ext://` URL, and
+ * that is not incidental: a CSS mask is subject to origin restrictions an
+ * `<img>` is not, and a cross-origin one paints an empty square in silence.
+ * `icon_data_uri` on the Rust side records the measurement.
+ *
+ * The cost is that icons are monochrome. That is the same trade VS Code makes
+ * for its activity bar, and for a 16px glyph in a rail of 16px glyphs it is the
+ * right one.
+ *
+ * Without an icon, the generic extension mark carries the extension's initials
+ * in its corner, so a shelf of extensions that all declined to ship one is
  * still one you can read.
  */
-import { Show, createSignal } from 'solid-js';
+import { Show } from 'solid-js';
 import { IconExtension } from '../../components/icons';
 
 /** Up to two initials for a name.
@@ -33,21 +49,26 @@ export function initialsFor(name: string): string {
   return single.slice(0, 2).toUpperCase() || '?';
 }
 
-/** Where an extension's own icon is served from. */
-export function extensionIconUrl(iconPath: string): string {
-  const isWindows = typeof navigator !== 'undefined' && /windows/i.test(navigator.userAgent ?? '');
-  const base = isWindows ? 'http://speedyf-ext.localhost' : 'speedyf-ext://localhost';
-  return `${base}${iconPath}`;
+/** Whether a value is safe to drop into a CSS `url()` unquoted-by-us.
+ *
+ * The backend builds these, so this is a guard rather than a sanitiser: it
+ * proves the string is one of ours before it reaches a stylesheet, instead of
+ * trusting that it is. Base64 has no character that can end a `url()` token,
+ * so a value matching this cannot carry a second declaration with it.
+ */
+export function isIconDataUri(value: string): boolean {
+  return /^data:image\/(svg\+xml|png|jpeg);base64,[A-Za-z0-9+/]+=*$/.test(value);
 }
 
 export default function ExtensionIcon(props: { name: string; iconPath?: string | null }) {
-  // A declared icon that fails to load falls back rather than leaving a broken
-  // image: the file may have been removed since the manifest was written.
-  const [failed, setFailed] = createSignal(false);
+  const usable = () => {
+    const value = props.iconPath;
+    return value && isIconDataUri(value) ? value : null;
+  };
 
   return (
     <Show
-      when={props.iconPath && !failed()}
+      when={usable()}
       fallback={
         <span class="ext-icon" aria-hidden="true">
           <IconExtension />
@@ -55,12 +76,15 @@ export default function ExtensionIcon(props: { name: string; iconPath?: string |
         </span>
       }
     >
-      <img
+      <span
         class="ext-icon-image"
-        src={extensionIconUrl(props.iconPath!)}
-        alt=""
-        draggable={false}
-        onError={() => setFailed(true)}
+        aria-hidden="true"
+        style={{
+          // Both spellings: the unprefixed property is the standard one, and
+          // the WebKit view this ships in still wants its own.
+          '-webkit-mask-image': `url("${usable()}")`,
+          'mask-image': `url("${usable()}")`,
+        }}
       />
     </Show>
   );

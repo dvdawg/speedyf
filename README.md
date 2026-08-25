@@ -32,7 +32,8 @@ manual QA before a public release.
 - Extensions: isolated, permission-gated third-party workers contributing
   commands, keybindings, sidebar panels, selection and citation actions, and
   batch document tasks. See `EXTENSIONS.md` to write one, `extension_api.md`
-  for the design, and `examples/extensions/` for working code
+  for the design, `extensions/` for the ones that ship with the app, and
+  `examples/extensions/` for working code
 - Live status counters for cache hits and skipped stale render work
 
 ## Quick start

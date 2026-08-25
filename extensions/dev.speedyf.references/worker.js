@@ -13,7 +13,17 @@
 //   * It caches per document, so reopening the panel is instant and a rescan
 //     is something you ask for.
 
-const CACHE_PREFIX = 'scan:';
+/** Cache namespace.
+ *
+ * The number is part of the key, and it is bumped whenever a SpeedyF release
+ * changes what a scan produces. Without it a cached scan outlives the thing it
+ * was cached from: fixing how titles are extracted changed nothing on screen,
+ * because every reference had been resolved once already and the panel kept
+ * answering from a scan made by the old code. A stale entry under an old
+ * number is never read again and costs a few kilobytes until its extension is
+ * removed. */
+const CACHE_VERSION = 2;
+const CACHE_PREFIX = `scan:v${CACHE_VERSION}:`;
 
 let nextRequestId = 1;
 const pending = new Map();
@@ -214,7 +224,7 @@ async function writeCache(scan) {
 
 async function render() {
   if (!current) return draw({ empty: 'Open a paper to see what it cites.' });
-  const { citations, name, pageCount } = current;
+  const { citations, pageCount } = current;
 
   if (citations.length === 0) {
     return draw({ empty: 'No references found.' });

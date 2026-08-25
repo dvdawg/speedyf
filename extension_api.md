@@ -412,7 +412,7 @@ failure stays contained.
   truncated rather than refused, and the row cap applies across the whole
   description so splitting into sections is not a way around it. Panels render
   when opened, never on a timer — an extension is not woken because a document
-  scrolled. Reference extension: `examples/extensions/references`.
+  scrolled. Reference extension: `extensions/references`, which now ships built in.
 - `fields` in the vocabulary, for `contributes.settings`
 - **[shipped]** `contributes.selectionActions` and
   `contributes.citationActions`. Deliberately need **no permission at all**:

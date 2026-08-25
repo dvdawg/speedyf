@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extensionIconUrl, initialsFor } from './ExtensionIcon';
+import { initialsFor, isIconDataUri } from './ExtensionIcon';
 
 describe('initialsFor', () => {
   it('takes the first letter of the first two words', () => {
@@ -36,10 +36,25 @@ describe('initialsFor', () => {
   });
 });
 
-describe('extensionIconUrl', () => {
-  it('serves from the extension scheme', () => {
-    expect(extensionIconUrl('/com.example.thing/icon.svg')).toMatch(
-      /^(speedyf-ext:\/\/localhost|http:\/\/speedyf-ext\.localhost)\/com\.example\.thing\/icon\.svg$/
-    );
+/** The value reaches a stylesheet, so it is checked rather than trusted. The
+ * backend builds it, but "the backend builds it" is an assumption that a future
+ * change can quietly break. */
+describe('isIconDataUri', () => {
+  it('accepts the image types an icon can be', () => {
+    expect(isIconDataUri('data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=')).toBe(true);
+    expect(isIconDataUri('data:image/png;base64,iVBORw0KGgo=')).toBe(true);
+    expect(isIconDataUri('data:image/jpeg;base64,/9j/4AAQ')).toBe(true);
+  });
+
+  it('refuses anything that is not one of ours', () => {
+    // The old scheme-based URL, which paints nothing as a mask.
+    expect(isIconDataUri('speedyf-ext://localhost/com.example.thing/icon.svg')).toBe(false);
+    expect(isIconDataUri('data:text/html;base64,PHNjcmlwdD4=')).toBe(false);
+    expect(isIconDataUri('https://example.com/icon.svg')).toBe(false);
+  });
+
+  it('refuses a value carrying characters that could end the url() token', () => {
+    expect(isIconDataUri('data:image/png;base64,AAAA") ; background: url("evil')).toBe(false);
+    expect(isIconDataUri("data:image/png;base64,AAAA') url('x")).toBe(false);
   });
 });

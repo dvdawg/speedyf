@@ -36,7 +36,10 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["pdfium/*"],
+    "resources": {
+      "pdfium/*": "pdfium/",
+      "../extensions/dev.speedyf.references/*": "extensions/dev.speedyf.references/"
+    },
     "fileAssociations": [
       {
         "ext": ["pdf"],

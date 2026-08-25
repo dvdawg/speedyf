@@ -108,6 +108,17 @@ export const IconRotate = () =>
       <path d="M13.5 1.5v3h-3" />
     </>
   );
+/** Two arcs rather than one, so it does not read as IconRotate at 16px — the
+ * two live side by side in a sidebar and a single arc is the same glyph. */
+export const IconRefresh = () =>
+  base(
+    <>
+      <path d="M3.7 5.5A5 5 0 0 1 12.3 5.5" />
+      <path d="M9.6 6L12.3 5.5L12.8 2.8" />
+      <path d="M12.3 10.5A5 5 0 0 1 3.7 10.5" />
+      <path d="M6.4 10L3.7 10.5L3.2 13.2" />
+    </>
+  );
 export const IconSearch = () =>
   base(
     <>

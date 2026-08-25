@@ -2949,6 +2949,18 @@ textarea:focus-visible {
   font-size: 11px;
 }
 
+/* Quiet by design. It marks provenance, not status — an extension you cannot
+   remove should read as ordinary furniture, not as something flagged. */
+.ext-badge {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: 10px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 .ext-actions {
   display: flex;
   gap: 6px;
@@ -3086,8 +3098,33 @@ textarea:focus-visible {
   font-weight: 500;
 }
 
+/* Spins only while a refresh is in flight. The wrapper exists because the icon
+   is a bare <svg> shared with every other control; rotating it here leaves that
+   one untouched. */
+.ext-refresh-icon {
+  display: flex;
+}
+
+.ext-refresh-icon.is-spinning {
+  animation: ext-refresh-spin 0.9s linear infinite;
+}
+
+@keyframes ext-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Still needs to say "working", so it dims instead of spinning. */
+  .ext-refresh-icon.is-spinning {
+    animation: none;
+    opacity: 0.5;
+  }
+}
+
 .ext-panel-section + .ext-panel-section {
-  margin-top: 10px;
+  margin-top: 16px;
 }
 
 .ext-panel-section-title {
@@ -3098,12 +3135,15 @@ textarea:focus-visible {
   letter-spacing: 0.04em;
 }
 
+/* `flex-start`, not `baseline`: a title that wraps to two lines drags a
+   baseline-aligned badge down with it, leaving the badge floating beside the
+   second line instead of the first. */
 .ext-panel-row {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
-  padding: 6px 8px;
+  padding: 7px 8px;
   border: 1px solid transparent;
   border-radius: 6px;
 }
@@ -3130,19 +3170,36 @@ textarea:focus-visible {
   min-width: 0;
 }
 
+/* Two lines, then an ellipsis.
+ *
+ * `text-overflow` alone did not do this: without `white-space: nowrap` it
+ * applies to nothing, so a long title both wrapped and clipped, and a URL came
+ * out as a truncated first line with its tail stranded underneath. A clamp
+ * bounds the row honestly, and `anywhere` gives a URL somewhere to break —
+ * it has no spaces to break at, so it would otherwise push the panel wide. */
 .ext-panel-row-title {
   font-size: 12px;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 
 .ext-panel-row-subtitle {
   color: var(--text-dim);
   font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .ext-panel-badge {
   flex: none;
+  /* Pinned to the first line of the title it belongs to. */
+  align-self: flex-start;
+  margin-top: 1px;
   padding: 1px 6px;
   border-radius: 999px;
   background: var(--accent-soft);
@@ -3291,11 +3348,25 @@ textarea:focus-visible {
   color: var(--text);
 }
 
+/* An extension's own icon, painted rather than drawn.
+ *
+ * The file is a mask and `currentColor` is the paint, so a contributed icon
+ * picks up the same colour as the stroked icons it sits between — including
+ * hover, the active state, and both themes — without the extension knowing any
+ * of them exist. It is monochrome by construction; see `ExtensionIcon` for why
+ * that is the trade rather than a limitation. */
 .ext-icon-image {
   width: 16px;
   height: 16px;
   flex: none;
-  object-fit: contain;
+  display: block;
+  background-color: currentColor;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
 }
 
 /* Sidebar resize handle.

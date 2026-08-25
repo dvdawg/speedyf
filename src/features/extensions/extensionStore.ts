@@ -94,6 +94,10 @@ export interface ExtensionRecord {
   source: string;
   permissions: string[];
   enabled: boolean;
+  /** True when it ships inside SpeedyF. A built-in can be switched off but not
+   * removed: its files live in the app bundle and come back with every
+   * update. */
+  builtin: boolean;
   manifest: ExtensionManifest | null;
   commands: ExtensionCommand[];
   panels: ExtensionPanel[];
@@ -119,9 +123,23 @@ interface State {
    * with no entry has not rendered yet, which the sidebar shows as loading
    * rather than as empty. */
   panelUi: Record<string, UiDescription | undefined>;
+  /** Which document each rendered panel describes, keyed the same way.
+   *
+   * Panel content is global while a panel component is not: every tab mounts
+   * its own sidebar, so switching documents disposes one `ExtensionPanelView`
+   * and mounts a fresh one that finds this store already populated — with the
+   * *previous* document's rows. Without a record of what the rows are about,
+   * the new panel has no way to tell content from staleness, and it showed the
+   * old paper's references indefinitely. */
+  panelDoc: Record<string, number | null | undefined>;
 }
 
-const [state, setState] = createStore<State>({ loaded: false, extensions: [], panelUi: {} });
+const [state, setState] = createStore<State>({
+  loaded: false,
+  extensions: [],
+  panelUi: {},
+  panelDoc: {},
+});
 
 export { state as extensionState };
 
@@ -137,6 +155,7 @@ interface ExtensionDto {
   source: string;
   permissions: string[];
   enabled: boolean;
+  builtin?: boolean;
   manifest: (ExtensionManifest & { contributes?: { keybindings?: ExtensionKeybinding[] } }) | null;
   commands: ExtensionCommand[];
   panels: ExtensionPanel[];
@@ -164,6 +183,7 @@ export async function loadExtensions(): Promise<void> {
           documentTasks: dto.documentTasks ?? [],
           settings: dto.settings ?? [],
           iconUrl: dto.iconUrl ?? null,
+          builtin: dto.builtin ?? false,
           keybindings: dto.manifest?.contributes?.keybindings ?? [],
           error: dto.error ?? null,
           log: previous.get(dto.id) ?? [],
@@ -222,6 +242,26 @@ export function panelUi(panelId: string): UiDescription | undefined {
   return state.panelUi[panelId];
 }
 
+/** The document a panel's current content was rendered for.
+ *
+ * `undefined` means nothing has rendered yet. Compare against the open
+ * document to know whether what is on screen is about the paper being read. */
+export function panelDocId(panelId: string): number | null | undefined {
+  return state.panelDoc[panelId];
+}
+
+/** The open document, as panel content is stamped with. */
+function currentDocId(): number | null {
+  return activeTab()?.documentStore.state.docId ?? null;
+}
+
+/** Record a panel's content together with what it describes. Every write to
+ * `panelUi` goes through here, so the two can never drift apart. */
+function setPanelUi(panelId: string, description: UiDescription): void {
+  setState('panelUi', panelId, description);
+  setState('panelDoc', panelId, currentDocId());
+}
+
 /** Ask a panel's extension to render it.
  *
  * Called when the panel is opened and when the user asks for a refresh, rather
@@ -237,7 +277,7 @@ export async function refreshPanel(panelId: string): Promise<void> {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     appendLog(extension.id, 'error', `${panel.title}: ${message}`);
-    setState('panelUi', panelId, { sections: [], error: message });
+    setPanelUi(panelId, { sections: [], error: message });
   }
 }
 
@@ -379,7 +419,7 @@ async function handleCall(extension: ExtensionRecord, call: CallMessage): Promis
     if (!panel) throw new Error(`this extension does not contribute a panel "${localId}"`);
     // Validated, never cast: this is the one place an extension puts text in
     // front of the user, and the renderer must not receive a half-typed object.
-    setState('panelUi', panel.id, parseUi(args?.ui));
+    setPanelUi(panel.id, parseUi(args?.ui));
     return { rendered: true };
   }
 
@@ -767,6 +807,7 @@ export async function installExtensionFromGit(url: string): Promise<void> {
 async function adoptInstalled(id: string): Promise<void> {
   stopExtension(id);
   setState('panelUi', reconcilePanelUi(id));
+  setState('panelDoc', reconcilePanelDoc(id));
   await loadExtensions();
 }
 
@@ -776,6 +817,17 @@ function reconcilePanelUi(id: string): Record<string, UiDescription | undefined>
   const next: Record<string, UiDescription | undefined> = {};
   for (const [panelId, ui] of Object.entries(state.panelUi)) {
     if (!panelId.startsWith(`${id}/`)) next[panelId] = ui;
+  }
+  return next;
+}
+
+/** The same, for what each panel's content describes — dropped together with
+ * the content so a panel is never left stamped with a document it no longer
+ * shows anything about. */
+function reconcilePanelDoc(id: string): Record<string, number | null | undefined> {
+  const next: Record<string, number | null | undefined> = {};
+  for (const [panelId, docId] of Object.entries(state.panelDoc)) {
+    if (!panelId.startsWith(`${id}/`)) next[panelId] = docId;
   }
   return next;
 }

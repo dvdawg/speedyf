@@ -219,6 +219,21 @@ pub fn run() {
             app.manage(EngineState(engine));
             app.manage(PendingOpens::default());
 
+            // Someone who hand-installed an extension before it began shipping
+            // would otherwise see it listed twice under one id. Best effort —
+            // never a reason the app fails to open.
+            if let Ok(data_dir) = app.path().app_data_dir() {
+                let user_root = data_dir.join(extensions::EXTENSIONS_DIR);
+                let resources = app.path().resource_dir().ok();
+                if let Some(builtin_root) = extensions::builtin::root(resources.as_deref()) {
+                    let ids = extensions::builtin::ids(&builtin_root);
+                    log::info!("{} built-in extension(s) at {}", ids.len(), builtin_root.display());
+                    for id in extensions::builtin::prune_shadowed(&user_root, &ids) {
+                        log::info!("removed hand-installed \"{id}\" — it ships with SpeedyF now");
+                    }
+                }
+            }
+
             // Print jobs a crash left behind. Best effort — never a reason
             // the app fails to open.
             printing::sweep_stale_prints();
@@ -260,15 +275,22 @@ pub fn run() {
             // Extension assets: worker code and, later, sandboxed pane
             // documents. Nothing served here can execute in the app document —
             // the CSP grants this scheme `worker-src` only.
-            let Some(root) = ctx
-                .app_handle()
-                .path()
-                .app_data_dir()
-                .ok()
-                .map(|dir| dir.join(extensions::EXTENSIONS_DIR))
-            else {
+            // Two places an extension's files can be: the user's extensions
+            // directory, and the app bundle for the ones that ship with
+            // SpeedyF. Ids cannot collide across the two — installing over a
+            // built-in is refused — so trying each in turn is unambiguous.
+            let handle = ctx.app_handle();
+            let mut roots: Vec<std::path::PathBuf> = Vec::new();
+            if let Ok(dir) = handle.path().app_data_dir() {
+                roots.push(dir.join(extensions::EXTENSIONS_DIR));
+            }
+            let resources = handle.path().resource_dir().ok();
+            if let Some(dir) = extensions::builtin::root(resources.as_deref()) {
+                roots.push(dir);
+            }
+            if roots.is_empty() {
                 return status_response(StatusCode::INTERNAL_SERVER_ERROR);
-            };
+            }
             let uri = request.uri().to_string();
             let Ok(parsed) = url::Url::parse(&uri) else {
                 return bad_request("malformed extension request");
@@ -281,9 +303,19 @@ pub fn run() {
             let Ok(path) = decoded else {
                 return bad_request("malformed extension path");
             };
-            let Some(file) = extensions::resolve_asset(&root, &path) else {
+            // A path that resolves nowhere is forbidden rather than missing:
+            // the only way to fail resolution is to have asked for something
+            // outside an extension directory.
+            let mut resolved = roots
+                .iter()
+                .filter_map(|root| extensions::resolve_asset(root, &path));
+            let Some(first) = resolved.next() else {
                 return status_response(StatusCode::FORBIDDEN);
             };
+            let file = std::iter::once(first.clone())
+                .chain(resolved)
+                .find(|candidate| candidate.is_file())
+                .unwrap_or(first);
             match std::fs::read(&file) {
                 Ok(bytes) => Response::builder()
                     .status(StatusCode::OK)

@@ -949,6 +949,39 @@ fn open_library_document(
     Ok(id)
 }
 
+/// First-page text of a document, spacing repaired, with its first plausible
+/// line as a title.
+///
+/// Extracted directly rather than through `ensure_text_layout`, because that
+/// caches runs and boxes but not the character stream they index, and the two
+/// are only meaningful together — which is the same coupling that produced
+/// run-derived titles with no spaces in them.
+fn page_text_and_title(state: &mut WorkerState, doc: DocId) -> AppResult<(String, Option<String>)> {
+    let [w_pt, h_pt] = state.display_size(doc, 0)?;
+    let page = state.page_handle(doc, 0)?;
+    let extracted = text::extract_page(state.bindings, page, w_pt, h_pt);
+    let repaired = library::text_from_page(&extracted.raw, &extracted.boxes);
+
+    let text = repaired
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(400)
+        .collect();
+    // The first line long enough to be a title rather than a running header,
+    // a page number or a journal stamp. Same threshold the previous version
+    // used, applied to lines that now have their spaces.
+    let title = repaired
+        .lines()
+        .map(str::trim)
+        .find(|line| line.chars().count() > 12)
+        .map(|line| line.chars().take(300).collect());
+    Ok((text, title))
+}
+
 fn do_resolve_citation(
     state: &mut WorkerState,
     shared: &EngineShared,
@@ -976,27 +1009,14 @@ fn do_resolve_citation(
             .round()
             .clamp(1.0, 4_096.0) as u32,
     };
-    let (text, extracted_title) = ensure_text_layout(state, shared, doc_id, 0)
-        .map(|layout| {
-            let text = layout
-                .runs
-                .iter()
-                .map(|run| run.text.trim())
-                .filter(|text| !text.is_empty())
-                .collect::<Vec<_>>()
-                .join(" ")
-                .chars()
-                .take(400)
-                .collect();
-            let title = layout
-                .runs
-                .iter()
-                .map(|run| run.text.trim())
-                .find(|line| line.chars().count() > 12)
-                .map(|line| line.chars().take(300).collect());
-            (text, title)
-        })
-        .unwrap_or_default();
+    // Read through the same repair the library indexer uses, not off the raw
+    // runs. PDFium's runs carry no spaces between words in a great many
+    // documents, so a title taken from them arrives as
+    // "ATheoryofSaddleEscapeinDeepNonlinear"; `text_from_page` puts the spaces
+    // back from character geometry. This fallback is only reached when the
+    // library has no title for the file, and it was reached often enough to be
+    // what the References panel actually displayed.
+    let (text, extracted_title) = page_text_and_title(state, doc_id).unwrap_or_default();
     let file_name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
