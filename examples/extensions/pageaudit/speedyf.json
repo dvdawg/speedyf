@@ -1,0 +1,18 @@
+{
+  "id": "dev.speedyf.pageaudit",
+  "apiVersion": 1,
+  "name": "Page Audit",
+  "version": "1.0.0",
+  "description": "Walks every page, measures its raster, and contributes a text layer for pages that have none. A stand-in for a real OCR extension.",
+  "author": "speedyf",
+  "entry": "worker.js",
+  "permissions": ["document:read", "render:read", "document:contributeText"],
+  "contributes": {
+    "panels": [{ "id": "audit", "title": "Page Audit" }],
+    "commands": [
+      { "id": "audit", "title": "Page Audit: Show", "keywords": ["pages"] },
+      { "id": "run", "title": "Page Audit: Scan Document", "keywords": ["ocr", "batch"] }
+    ],
+    "documentTasks": [{ "command": "run", "title": "Page Audit: Scan Document" }]
+  }
+}
