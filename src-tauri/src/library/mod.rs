@@ -3,7 +3,7 @@
 //! the engine worker that owns PDFium.
 
 use crate::engine::citation::{citation_from_filename, find_explicit_citations};
-use crate::engine::types::{CitationIdDto, LibraryStatusDto};
+use crate::engine::types::{CitationIdDto, LibraryStatusDto, TextRun};
 use crate::errors::{AppError, AppResult};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -402,6 +402,72 @@ pub fn contained_in_any(roots: &[PathBuf], path: &Path) -> Option<PathBuf> {
         .find_map(|root| contained_canonical_path(root, path))
 }
 
+/// Rebuild page lines from positioned text runs.
+///
+/// The metadata scan used to read PDFium's raw character stream, which for a
+/// great many PDFs — LaTeX output especially — contains no space characters at
+/// all. Word gaps in those files are *positions*, not characters, so a title
+/// came back as "PrivateandpolynomialtimealgorithmsforlearningGaussians".
+///
+/// Runs carry geometry, so the gaps can be recovered: runs sharing a baseline
+/// are one line, ordered left to right, joined by a space unless one side
+/// already supplies the whitespace. Lines run down the page, which is
+/// descending y — PDF space is y-up.
+pub fn lines_from_runs(runs: &[TextRun]) -> Vec<String> {
+    /// Two runs are on the same line when their baselines are within this
+    /// fraction of the taller one's height. Generous enough for the sub- and
+    /// superscripts that sit slightly off a baseline, tight enough not to merge
+    /// consecutive lines of body text.
+    const SAME_LINE: f32 = 0.6;
+
+    let mut ordered: Vec<&TextRun> = runs.iter().filter(|r| !r.text.is_empty()).collect();
+    // Down the page first — PDF space is y-up — then left to right.
+    ordered.sort_by(|a, b| b.y.total_cmp(&a.y).then(a.x.total_cmp(&b.x)));
+
+    // Grouped into lines *before* anything is ordered horizontally. Sorting by
+    // y alone puts a superscript ahead of the character it belongs to, since it
+    // sits a few points higher: "x²" came out as "2 x".
+    let mut grouped: Vec<Vec<&TextRun>> = Vec::new();
+    for run in ordered {
+        match grouped.last_mut() {
+            // Measured against the line's first run rather than the previous
+            // one, so a run of slightly drifting baselines cannot walk a line
+            // arbitrarily far from where it started.
+            Some(line) if same_line(line[0], run, SAME_LINE) => line.push(run),
+            _ => grouped.push(vec![run]),
+        }
+    }
+
+    grouped
+        .into_iter()
+        .filter_map(|mut line| {
+            line.sort_by(|a, b| a.x.total_cmp(&b.x));
+            let mut text = String::new();
+            for run in line {
+                if !text.is_empty()
+                    && !text.ends_with(char::is_whitespace)
+                    && !run.text.starts_with(char::is_whitespace)
+                {
+                    text.push(' ');
+                }
+                text.push_str(&run.text);
+            }
+            let text = text.trim().to_string();
+            (!text.is_empty()).then_some(text)
+        })
+        .collect()
+}
+
+fn same_line(first: &TextRun, run: &TextRun, tolerance: f32) -> bool {
+    (first.y - run.y).abs() <= tolerance * first.h.max(run.h).max(1.0)
+}
+
+/// The same text as one string, lines separated by newlines, for the callers
+/// that scan it for identifiers.
+pub fn text_from_runs(runs: &[TextRun]) -> String {
+    lines_from_runs(runs).join("\n")
+}
+
 pub fn entry_from_filename(candidate: &ScanCandidate) -> Option<LibraryEntry> {
     let name = candidate.path.file_name()?.to_string_lossy();
     let id = citation_from_filename(&name)?;
@@ -531,6 +597,91 @@ mod tests {
 
         assert!(contained_canonical_path(root.path(), &inside_file).is_some());
         assert!(contained_canonical_path(root.path(), &outside_file).is_none());
+    }
+
+    fn run(text: &str, x: f32, y: f32) -> TextRun {
+        TextRun {
+            text: text.into(),
+            start: 0,
+            x,
+            y,
+            w: text.len() as f32 * 5.0,
+            h: 10.0,
+        }
+    }
+
+    /// The bug this exists to fix: a PDF that encodes word gaps as position
+    /// rather than as space characters produced
+    /// "PrivateandpolynomialtimealgorithmsforlearningGaussians".
+    #[test]
+    fn puts_the_spaces_back_between_positioned_runs() {
+        let runs = vec![
+            run("Private", 72.0, 700.0),
+            run("and", 130.0, 700.0),
+            run("polynomial", 165.0, 700.0),
+            run("time", 240.0, 700.0),
+        ];
+        assert_eq!(lines_from_runs(&runs), vec!["Private and polynomial time"]);
+    }
+
+    #[test]
+    fn does_not_double_a_space_a_run_already_carries() {
+        let runs = vec![run("Private ", 72.0, 700.0), run("and", 130.0, 700.0)];
+        assert_eq!(lines_from_runs(&runs), vec!["Private and"]);
+        let runs = vec![run("Private", 72.0, 700.0), run(" and", 130.0, 700.0)];
+        assert_eq!(lines_from_runs(&runs), vec!["Private and"]);
+    }
+
+    #[test]
+    fn separates_lines_by_baseline() {
+        let runs = vec![
+            run("Second", 72.0, 680.0),
+            run("First", 72.0, 700.0),
+            run("line", 110.0, 700.0),
+        ];
+        assert_eq!(lines_from_runs(&runs), vec!["First line", "Second"]);
+    }
+
+    /// Runs arrive in whatever order PDFium emits them, which is not reading
+    /// order.
+    #[test]
+    fn orders_top_down_then_left_to_right() {
+        let runs = vec![
+            run("world", 130.0, 700.0),
+            run("below", 72.0, 660.0),
+            run("Hello", 72.0, 700.0),
+        ];
+        assert_eq!(lines_from_runs(&runs), vec!["Hello world", "below"]);
+    }
+
+    /// A sub- or superscript sits slightly off the baseline and belongs to the
+    /// line it was set on, not to a line of its own.
+    #[test]
+    fn keeps_a_slightly_raised_run_on_its_line() {
+        let runs = vec![run("x", 72.0, 700.0), run("2", 80.0, 703.0)];
+        assert_eq!(lines_from_runs(&runs), vec!["x 2"]);
+    }
+
+    #[test]
+    fn ignores_empty_runs_and_blank_lines() {
+        let runs = vec![
+            run("", 72.0, 700.0),
+            run("Title", 80.0, 700.0),
+            run("   ", 72.0, 660.0),
+        ];
+        assert_eq!(lines_from_runs(&runs), vec!["Title"]);
+    }
+
+    #[test]
+    fn text_from_runs_joins_lines_with_newlines() {
+        let runs = vec![run("Title", 72.0, 700.0), run("doi:10.1/x", 72.0, 660.0)];
+        assert_eq!(text_from_runs(&runs), "Title\ndoi:10.1/x");
+    }
+
+    #[test]
+    fn no_runs_is_empty_rather_than_a_blank_line() {
+        assert!(lines_from_runs(&[]).is_empty());
+        assert_eq!(text_from_runs(&[]), "");
     }
 
     #[test]

@@ -833,12 +833,19 @@ fn scan_library_candidate(
         }
     };
     let page = state.bindings.FPDF_LoadPage(raw, 0);
+    // Positioned runs, not the raw character stream. Many PDFs — LaTeX output
+    // above all — encode word gaps as position rather than as space
+    // characters, so the raw stream yields titles like
+    // "PrivateandpolynomialtimealgorithmsforlearningGaussians". Runs carry
+    // geometry, so `lines_from_runs` can put the spaces back. This costs the
+    // character boxes for one page per document, during a background scan.
     let text = if page.is_null() {
         String::new()
     } else {
-        let extracted = text::extract_search_text(state.bindings, page);
+        let [w, h] = render::page_display_size(state.bindings, raw, 0).unwrap_or([612.0, 792.0]);
+        let extracted = text::extract_page(state.bindings, page, w, h);
         state.bindings.FPDF_ClosePage(page);
-        extracted.raw
+        library::text_from_runs(&extracted.runs)
     };
     state.bindings.FPDF_CloseDocument(raw);
     library::entry_from_first_page(candidate, &text)
