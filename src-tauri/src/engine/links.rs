@@ -18,6 +18,95 @@ const MAX_LINK_STRING: usize = 1024 * 1024;
 const RUNAWAY_URI_MIN_RECTS: usize = 12;
 const RUNAWAY_URI_MIN_PAGE_SPAN: f32 = 0.45;
 
+/// One of PDFium's text-derived web links: where it sits in the page's
+/// character stream, and the URL it read there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WebLinkSpan {
+    pub start: u32,
+    pub len: u32,
+    pub uri: String,
+}
+
+/// Characters that can end a sentence but not a URL.
+const TRAILING_PUNCTUATION: &[char] = &['.', ',', ';', ':', ')', ']', '}', '"', '\'', '>'];
+
+/// Join web links that PDFium split in the middle of one URL.
+///
+/// PDFium's detector stops at characters it does not treat as part of a URL, so
+/// a single address containing, say, a parenthesis or a comma comes back as two
+/// or three separate links — each hoverable, each opening a fragment. Spans
+/// that are adjacent in the character stream with no whitespace between them
+/// were never two URLs: nothing in real prose puts two addresses flush against
+/// each other.
+///
+/// The merged link's URL is rebuilt from the page text across the whole span
+/// rather than concatenating what PDFium reported, because the pieces it
+/// reports are already normalised and may not join back cleanly.
+pub fn merge_adjacent_web_links(mut spans: Vec<WebLinkSpan>, raw: &[char]) -> Vec<WebLinkSpan> {
+    spans.sort_by_key(|span| span.start);
+    let mut out: Vec<WebLinkSpan> = Vec::with_capacity(spans.len());
+
+    for span in spans {
+        let Some(previous) = out.last_mut() else {
+            out.push(span);
+            continue;
+        };
+        let previous_end = previous.start + previous.len;
+        let joins = span.start >= previous.start
+            && span.start <= previous_end
+            && !raw
+                .get(previous_end as usize..span.start as usize)
+                .unwrap_or_default()
+                .iter()
+                .any(|ch| ch.is_whitespace());
+
+        if !joins {
+            out.push(span);
+            continue;
+        }
+        let end = previous_end.max(span.start + span.len);
+        previous.len = end - previous.start;
+        if let Some(text) = text_of(raw, previous.start, previous.len) {
+            previous.uri = text;
+        }
+    }
+    out
+}
+
+/// The page text under a span, with trailing sentence punctuation removed.
+///
+/// A closing bracket is only punctuation when nothing opened it. URLs
+/// legitimately end in one — a Wikipedia article with a disambiguator is the
+/// standard example — so stripping every trailing `)` would break exactly the
+/// addresses this merge exists to reassemble.
+fn text_of(raw: &[char], start: u32, len: u32) -> Option<String> {
+    let slice = raw.get(start as usize..(start + len) as usize)?;
+    let mut text: String = slice.iter().collect();
+    while let Some(last) = text.chars().last() {
+        if !TRAILING_PUNCTUATION.contains(&last) {
+            break;
+        }
+        if let Some(opener) = matching_opener(last) {
+            let body = &text[..text.len() - last.len_utf8()];
+            if body.matches(opener).count() > body.matches(last).count() {
+                break; // this bracket closes something
+            }
+        }
+        text.truncate(text.len() - last.len_utf8());
+    }
+    let trimmed = text.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+fn matching_opener(close: char) -> Option<char> {
+    match close {
+        ')' => Some('('),
+        ']' => Some('['),
+        '}' => Some('{'),
+        _ => None,
+    }
+}
+
 fn read_uri(
     b: &dyn PdfiumLibraryBindings,
     doc: FPDF_DOCUMENT,
@@ -369,6 +458,9 @@ pub fn extract_links(
     let web_links = (!text_page.is_null()).then(|| b.FPDFLink_LoadWebLinks(text_page));
     if let Some(web_links) = web_links.filter(|links| !links.is_null()) {
         let count = b.FPDFLink_CountWebLinks(web_links).max(0);
+        // Collected before use so links PDFium split mid-URL can be rejoined;
+        // see `merge_adjacent_web_links`.
+        let mut spans = Vec::new();
         for index in 0..count {
             let Some(uri) = read_web_url(b, web_links, index) else {
                 continue;
@@ -380,11 +472,20 @@ pub fn extract_links(
             {
                 continue;
             }
+            spans.push(WebLinkSpan {
+                start: start as u32,
+                len: len as u32,
+                uri,
+            });
+        }
+        let raw_chars: Vec<char> = page_raw.as_deref().unwrap_or_default().chars().collect();
+        for span in merge_adjacent_web_links(spans, &raw_chars) {
+            let WebLinkSpan { start, len, uri } = span;
             let target = LinkTarget::Uri {
                 citation: parse_citation_id(&uri),
                 uri,
             };
-            for rect in text::merge_match_rects(char_boxes, start as u32, len as u32) {
+            for rect in text::merge_match_rects(char_boxes, start, len) {
                 push_deduplicated(
                     &mut out,
                     LinkDto {
@@ -722,5 +823,118 @@ mod tests {
             .expect("GoTo annotation");
         assert!((goto.rect[0] - 10.0).abs() < 0.2);
         assert!((goto.rect[1] - 20.0).abs() < 0.2);
+    }
+}
+
+#[cfg(test)]
+mod weblink_tests {
+    use super::*;
+
+    fn chars(text: &str) -> Vec<char> {
+        text.chars().collect()
+    }
+
+    fn span(start: u32, len: u32, uri: &str) -> WebLinkSpan {
+        WebLinkSpan {
+            start,
+            len,
+            uri: uri.into(),
+        }
+    }
+
+    /// The bug: PDFium stops at a character it does not treat as part of a URL,
+    /// so one address comes back as two hoverable links opening fragments.
+    #[test]
+    fn joins_a_url_split_at_punctuation() {
+        let raw = chars("see https://example.com/a(b)c now");
+        let merged = merge_adjacent_web_links(
+            vec![span(4, 22, "https://example.com/a("), span(26, 3, "b)c")],
+            &raw,
+        );
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].uri, "https://example.com/a(b)c");
+        assert_eq!((merged[0].start, merged[0].len), (4, 25));
+    }
+
+    /// Two genuinely separate links have whitespace between them.
+    #[test]
+    fn leaves_separate_urls_alone() {
+        let raw = chars("https://a.example https://b.example");
+        let merged = merge_adjacent_web_links(
+            vec![
+                span(0, 17, "https://a.example"),
+                span(18, 17, "https://b.example"),
+            ],
+            &raw,
+        );
+        assert_eq!(merged.len(), 2);
+    }
+
+    #[test]
+    fn joins_three_pieces_of_one_url() {
+        let raw = chars("https://e.com/a(b)c,d");
+        let merged = merge_adjacent_web_links(
+            vec![
+                span(0, 15, "https://e.com/a"),
+                span(15, 3, "(b)"),
+                span(18, 3, "c,d"),
+            ],
+            &raw,
+        );
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].uri, "https://e.com/a(b)c,d");
+    }
+
+    /// A URL ending a sentence must not swallow the full stop.
+    /// A URL ending a sentence must not swallow the full stop — but must keep
+    /// a bracket that closes one it opened.
+    #[test]
+    fn drops_trailing_sentence_punctuation_but_keeps_balanced_brackets() {
+        let raw = chars("at https://e.com/a(b).");
+        let merged = merge_adjacent_web_links(
+            vec![span(3, 16, "https://e.com/a("), span(19, 3, "b).")],
+            &raw,
+        );
+        assert_eq!(merged[0].uri, "https://e.com/a(b)");
+    }
+
+    #[test]
+    fn drops_an_unmatched_closing_bracket() {
+        let raw = chars("(see https://e.com/a)");
+        let merged =
+            merge_adjacent_web_links(vec![span(5, 15, "https://e.com/a"), span(20, 1, ")")], &raw);
+        assert_eq!(merged[0].uri, "https://e.com/a");
+    }
+
+    #[test]
+    fn a_single_link_is_untouched() {
+        let raw = chars("https://example.com");
+        let merged = merge_adjacent_web_links(vec![span(0, 19, "https://example.com")], &raw);
+        assert_eq!(merged, vec![span(0, 19, "https://example.com")]);
+    }
+
+    #[test]
+    fn handles_spans_arriving_out_of_order() {
+        let raw = chars("https://e.com/ab");
+        let merged =
+            merge_adjacent_web_links(vec![span(14, 2, "ab"), span(0, 14, "https://e.com/")], &raw);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].uri, "https://e.com/ab");
+    }
+
+    /// Geometry that does not line up with the text must not panic or invent
+    /// a URL out of nothing.
+    #[test]
+    fn tolerates_spans_past_the_end_of_the_text() {
+        let raw = chars("short");
+        let merged = merge_adjacent_web_links(vec![span(0, 3, "abc"), span(3, 99, "def")], &raw);
+        assert_eq!(merged.len(), 1);
+        // Rebuild failed, so the first piece's URL stands rather than nothing.
+        assert_eq!(merged[0].uri, "abc");
+    }
+
+    #[test]
+    fn no_links_is_empty() {
+        assert!(merge_adjacent_web_links(Vec::new(), &chars("text")).is_empty());
     }
 }
