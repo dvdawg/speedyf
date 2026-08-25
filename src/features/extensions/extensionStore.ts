@@ -92,6 +92,7 @@ export interface ExtensionRecord {
   panels: ExtensionPanel[];
   selectionActions: ExtensionAction[];
   citationActions: ExtensionAction[];
+  documentTasks: ExtensionAction[];
   settings: ExtensionSetting[];
   keybindings: ExtensionKeybinding[];
   /** Why it cannot run: a bad manifest, or a worker that died. */
@@ -133,6 +134,7 @@ interface ExtensionDto {
   panels: ExtensionPanel[];
   selectionActions: ExtensionAction[];
   citationActions: ExtensionAction[];
+  documentTasks: ExtensionAction[];
   settings: ExtensionSetting[];
   error: string | null;
 }
@@ -150,6 +152,7 @@ export async function loadExtensions(): Promise<void> {
           panels: dto.panels ?? [],
           selectionActions: dto.selectionActions ?? [],
           citationActions: dto.citationActions ?? [],
+          documentTasks: dto.documentTasks ?? [],
           settings: dto.settings ?? [],
           keybindings: dto.manifest?.contributes?.keybindings ?? [],
           error: dto.error ?? null,
@@ -162,6 +165,11 @@ export async function loadExtensions(): Promise<void> {
     setState('loaded', true);
     console.error('could not list extensions', err);
   }
+}
+
+/** Batch jobs extensions offer over a whole document. */
+export function documentTasks(): ExtensionAction[] {
+  return state.extensions.filter((e) => e.enabled && !e.error).flatMap((e) => e.documentTasks);
 }
 
 /** Actions offered on a text selection, from every usable extension. */
@@ -285,6 +293,28 @@ function setError(id: string, error: string | null): void {
  * had one cannot be undone for anything already published against it.
  */
 async function handleCall(extension: ExtensionRecord, call: CallMessage): Promise<unknown> {
+  if (call.api === 'document.contributeText') {
+    if (!canCallApi(extension.permissions, call.api)) {
+      throw new Error(apiRefusalReason(extension.permissions, call.api));
+    }
+    const tab = activeTab();
+    const doc = tab?.documentStore.state;
+    if (!tab || !doc?.loaded) throw new Error('no document is open');
+    const args = call.args as { page?: unknown; text?: unknown } | undefined;
+    const page = readPageArg(args, doc.pages.length);
+    if (typeof args?.text !== 'string') throw new Error('expected a string "text"');
+    if (args.text.length > MAX_CONTRIBUTED_TEXT) {
+      throw new Error(`contributed text is limited to ${MAX_CONTRIBUTED_TEXT} characters a page`);
+    }
+    await invoke('extension_contribute_text', {
+      extensionId: extension.id,
+      document: doc.path,
+      page,
+      text: args.text,
+    });
+    return { stored: args.text.length };
+  }
+
   if (call.api === 'settings.get') {
     // No permission: these are the extension's own declared settings, and
     // reading what the user chose to tell it is not access to anything else.
@@ -376,6 +406,10 @@ const MAX_CLIPBOARD = 100_000;
  * shared with the app's own settings, so an extension gets a small, bounded
  * slice of it rather than whatever it can take. */
 const MAX_STORAGE_VALUE = 64_000;
+/** A page of dense text is a few thousand characters; this leaves room for
+ * layout markup an OCR engine might include without letting a runaway loop
+ * write a document-sized string per page. */
+const MAX_CONTRIBUTED_TEXT = 200_000;
 const MAX_STORAGE_KEYS = 100;
 
 function storageKey(extensionId: string, key: string): string {
@@ -491,6 +525,26 @@ function clearStorage(extensionId: string): void {
  * extension cannot read a tab the user is not looking at.
  */
 async function readApi(api: string, args: unknown): Promise<unknown> {
+  if (api === 'render.page') {
+    const tab = activeTab();
+    const doc = tab?.documentStore.state;
+    if (!tab || !doc?.loaded) throw new Error('no document is open');
+    const page = readPageArg(args, doc.pages.length);
+    const src = doc.pages[page]?.srcIndex;
+    if (src === undefined || src === null) throw new Error(`page ${page} has no source page`);
+    const scale = (args as { scaleMilli?: unknown }).scaleMilli;
+    const bytes = await invoke<ArrayBuffer>('extension_render_page', {
+      docId: doc.docId,
+      src,
+      scaleMilli: typeof scale === 'number' ? Math.round(scale) : 2000,
+    });
+    // Handed over as plain numbers. An ArrayBuffer would be cheaper, but it is
+    // a *transferable*: posting one detaches it here, and the host would be
+    // handing away memory it does not own on behalf of a caller that cannot be
+    // trusted to have finished with it.
+    return Array.from(new Uint8Array(bytes));
+  }
+
   if (api === 'library.search') {
     // The only API that works with nothing open — the library is not a
     // property of the current document.
@@ -529,6 +583,9 @@ async function readApi(api: string, args: unknown): Promise<unknown> {
 
     case 'citations.resolve':
       return toResolvedCitation(await engine.resolveCitation(readCitationArg(args)));
+
+    case 'document.contributedText':
+      return invoke('extension_contributed_text', { document: doc.path });
   }
 
   // Unreachable: `canCallApi` already refused anything not in the catalogue.
@@ -600,6 +657,25 @@ export async function runPanelAction(
   }
 }
 
+/** Text extensions have contributed for a document, if any. */
+export async function contributedTextFor(document: string): Promise<{
+  extensionId: string;
+  pages: { page: number; text: string }[];
+} | null> {
+  return invoke('extension_contributed_text', { document });
+}
+
+/** Discard everything extensions contributed for a document.
+ *
+ * The user's call, never an automatic one. A sidecar outlives the extension
+ * that wrote it on purpose — losing a scanned document's text because an
+ * extension was uninstalled months later would be a surprising thing for an
+ * uninstall to do.
+ */
+export async function forgetContributedText(document: string): Promise<void> {
+  await invoke('forget_contributed_text', { document });
+}
+
 /** Stop an extension's worker without touching what is installed. */
 export function stopExtension(id: string): void {
   hosts.get(id)?.stop();
@@ -616,14 +692,38 @@ export async function setExtensionEnabled(id: string, enabled: boolean): Promise
 }
 
 export async function installExtension(folder: string): Promise<void> {
-  await invoke('install_extension', { folder });
-  await loadExtensions();
+  const installed = await invoke<{ id: string }>('install_extension', { folder });
+  await adoptInstalled(installed.id);
 }
 
 /** Install from a git URL, optionally pinned with `#<branch|tag|commit>`. */
 export async function installExtensionFromGit(url: string): Promise<void> {
-  await invoke('install_extension_from_git', { url });
+  const installed = await invoke<{ id: string }>('install_extension_from_git', { url });
+  await adoptInstalled(installed.id);
+}
+
+/** Take up a freshly written extension.
+ *
+ * Stopping the worker is the whole point. Installing over an extension that is
+ * already running replaces its files but not the code already loaded into its
+ * worker, so without this a reinstall — the entire developer loop — appears to
+ * do nothing at all. The worker restarts lazily on the next invoke, with the
+ * new source.
+ */
+async function adoptInstalled(id: string): Promise<void> {
+  stopExtension(id);
+  setState('panelUi', reconcilePanelUi(id));
   await loadExtensions();
+}
+
+/** Drop rendered panel content belonging to `id`, so a reinstalled extension
+ * redraws rather than showing what the previous version left behind. */
+function reconcilePanelUi(id: string): Record<string, UiDescription | undefined> {
+  const next: Record<string, UiDescription | undefined> = {};
+  for (const [panelId, ui] of Object.entries(state.panelUi)) {
+    if (!panelId.startsWith(`${id}/`)) next[panelId] = ui;
+  }
+  return next;
 }
 
 export async function uninstallExtension(id: string): Promise<void> {

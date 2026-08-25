@@ -13,6 +13,7 @@ import { jumpToAnchor } from '../outline/jumpToAnchor';
 import { flattenOutline } from '../outline/structureStore';
 import { closePalette, mostUsed, paletteOpen, recordUse, usesOf } from './paletteStore';
 import {
+  documentTasks,
   extensionCommands,
   runExtensionCommand,
   runExtensionAction,
@@ -64,6 +65,21 @@ export default function CommandPalette() {
         enabled: true,
         run: () => void runExtensionCommand(command.id),
       });
+    }
+
+    // Document tasks: batch jobs over the whole document. Offered only with
+    // one open, and run in the background — nothing waits on them.
+    if (context.tab?.documentStore.state.loaded) {
+      for (const task of documentTasks()) {
+        items.push({
+          key: `task:${task.id}`,
+          title: task.title,
+          group: 'Extensions',
+          keywords: ['document', 'task'],
+          enabled: true,
+          run: () => void runExtensionCommand(task.id),
+        });
+      }
     }
 
     // Selection actions. Offered only when there is something to act on, and

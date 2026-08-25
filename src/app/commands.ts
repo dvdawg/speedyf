@@ -17,6 +17,7 @@ import { addBlankPageAfter } from '../features/editor/editorActions';
 import { setActiveTool, type Tool } from '../features/annotations/toolStore';
 import { beginPrint } from '../features/print/printStore';
 import { settings, updateSettings } from '../stores/settings';
+import { forgetContributedText } from '../features/extensions/extensionStore';
 import { setUi, ui, type SidebarMode } from '../stores/uiStore';
 import type { TabRecord } from '../stores/tabsStore';
 
@@ -370,6 +371,17 @@ export const COMMANDS: readonly Command[] = [
     enabled: () => settings.theme !== 'system',
     disabledReason: 'already active',
     run: () => updateSettings({ theme: 'system' }),
+  },
+  {
+    id: 'tools.forgetContributedText',
+    title: 'Forget Text Contributed By Extensions',
+    group: 'Tools',
+    keywords: ['ocr', 'sidecar', 'recognised', 'discard'],
+    enabled: loaded,
+    run: (ctx) => {
+      const path = state(ctx)?.path;
+      if (path) void forgetContributedText(path);
+    },
   },
   {
     id: 'settings.toggleInvertPages',
