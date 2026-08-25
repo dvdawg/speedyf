@@ -23,6 +23,11 @@ describe('the API catalogue', () => {
     }
   });
 
+  it('puts page navigation under the same permission as running commands', () => {
+    expect(canCallApi(['commands:run'], 'navigate.toPage')).toBe(true);
+    expect(canCallApi(['document:read'], 'navigate.toPage')).toBe(false);
+  });
+
   it('refuses an API the extension did not ask for', () => {
     expect(canCallApi(['library:read'], 'document.info')).toBe(false);
     expect(canCallApi([], 'document.info')).toBe(false);

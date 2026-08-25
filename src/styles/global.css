@@ -2879,7 +2879,7 @@ textarea:focus-visible {
 }
 
 .ext-row {
-  padding: 10px 12px;
+  padding: 12px 14px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-elev);
@@ -2899,9 +2899,34 @@ textarea:focus-visible {
   gap: 10px;
 }
 
-.ext-toggle {
-  display: inline-flex;
-  align-items: center;
+/* Reads as its own state rather than a bare checkbox nobody can label. */
+.ext-toggle-btn.is-on {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.ext-details {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.ext-details summary {
+  cursor: pointer;
+}
+
+.ext-details[open] summary {
+  margin-bottom: 6px;
+}
+
+.ext-contributes::before,
+.ext-perms::before {
+  content: '·';
+  margin-right: 10px;
+  opacity: 0.5;
 }
 
 .ext-identity {
@@ -3019,12 +3044,8 @@ textarea:focus-visible {
 
 .ext-log {
   margin-top: 8px;
-  font-size: 11px;
-  color: var(--text-dim);
-}
-
-.ext-log summary {
-  cursor: pointer;
+  max-height: 160px;
+  overflow-y: auto;
 }
 
 .ext-log-line {
@@ -3175,21 +3196,69 @@ textarea:focus-visible {
   min-width: 120px;
 }
 
-.ext-install-url {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 4px;
+/* Installing sits under the list: it is the occasional action, and leading the
+   page with a form buried what someone came to look at. */
+.ext-add {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
 }
 
-.ext-install-url input {
+.ext-add-title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.ext-add-row {
+  display: flex;
+  gap: 6px;
+}
+
+.ext-add-row input {
   flex: 1;
   min-width: 0;
 }
 
-.ext-install-hint {
-  margin: 0 0 10px;
+.ext-add-alt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 12px;
+  margin-top: 6px;
   color: var(--text-dim);
   font-size: 11px;
+}
+
+.ext-add-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ext-add-link:hover {
+  text-decoration: underline;
+}
+
+.ext-add-link:disabled {
+  color: var(--text-dim);
+  cursor: default;
+  text-decoration: none;
+}
+
+.ext-count {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.ext-empty {
+  margin: 6vh 0 2vh;
 }
 
 /* The generic mark, with initials tucked into its lower-right so a shelf of

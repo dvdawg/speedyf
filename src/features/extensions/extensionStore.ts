@@ -565,6 +565,12 @@ async function readApi(api: string, args: unknown): Promise<unknown> {
   if (!tab || !doc?.loaded) throw new Error('no document is open');
 
   switch (api) {
+    case 'navigate.toPage': {
+      const page = readPageArg(args, doc.pages.length);
+      tab.viewport.requestScrollToPage(page);
+      return { page };
+    }
+
     case 'document.info':
       return toDocumentInfo(doc.name, doc.pages.length, tab.viewport.state.currentPage);
 

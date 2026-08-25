@@ -184,6 +184,10 @@ export const API_PERMISSIONS: Readonly<Record<string, string>> = {
   'citations.list': 'citations:read',
   'citations.resolve': 'citations:read',
   'library.search': 'library:read',
+  // Navigation, so it sits under the same permission as running SpeedyF's own
+  // Navigate commands. `commands.run` cannot express it: a command takes no
+  // arguments, and "next page" is not what a panel row needs.
+  'navigate.toPage': 'commands:run',
   'render.page': 'render:read',
   'document.contributeText': 'document:contributeText',
   'document.contributedText': 'document:contributeText',

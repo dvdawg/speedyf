@@ -2,13 +2,35 @@
   "id": "dev.speedyf.references",
   "apiVersion": 1,
   "name": "References",
-  "version": "1.0.0",
-  "description": "A sidebar panel listing every work this paper cites, and which of them are already in your library.",
+  "version": "2.0.0",
+  "description": "Every work this paper cites, where it is cited, and which ones you already have.",
   "author": "speedyf",
   "entry": "worker.js",
-  "permissions": ["document:read", "citations:read", "commands:run"],
+  "icon": "icon.svg",
+  "permissions": ["document:read", "citations:read", "commands:run", "storage"],
   "contributes": {
     "panels": [{ "id": "refs", "title": "References" }],
-    "commands": [{ "id": "refs", "title": "References: Refresh Panel", "keywords": ["citations"] }]
+    "commands": [
+      { "id": "refs", "title": "References: Show", "keywords": ["citations", "cited"] },
+      { "id": "rescan", "title": "References: Rescan Document", "keywords": ["refresh"] },
+      { "id": "jump", "title": "References: Go To Citation", "keywords": ["navigate"] }
+    ],
+    "settings": [
+      {
+        "key": "sort",
+        "title": "Order",
+        "type": "select",
+        "default": "appearance",
+        "options": ["appearance", "most cited", "title"],
+        "description": "How to order the list."
+      },
+      {
+        "key": "group",
+        "title": "Separate what you already have",
+        "type": "checkbox",
+        "default": "true",
+        "description": "Split into works in your library and works not in it."
+      }
+    ]
   }
 }
