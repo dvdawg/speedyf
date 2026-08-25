@@ -567,6 +567,7 @@ pub struct ExtensionDto {
     pub citation_actions: Vec<ActionDto>,
     /// Settings the extension declared, for the panel to render.
     pub settings: Vec<crate::extensions::SettingContribution>,
+    pub document_tasks: Vec<ActionDto>,
     /// Why this extension cannot run, if it cannot.
     pub error: Option<String>,
 }
@@ -666,6 +667,7 @@ pub async fn list_extensions(app: tauri::AppHandle) -> AppResult<Vec<ExtensionDt
                             &manifest.contributes.citation_actions,
                         ),
                         settings: manifest.contributes.settings.clone(),
+                        document_tasks: actions(&manifest, &manifest.contributes.document_tasks),
                         manifest: Some(manifest),
                         error: None,
                     },
@@ -677,6 +679,7 @@ pub async fn list_extensions(app: tauri::AppHandle) -> AppResult<Vec<ExtensionDt
                         selection_actions: Vec::new(),
                         citation_actions: Vec::new(),
                         settings: Vec::new(),
+                        document_tasks: Vec::new(),
                         error: Some(e.to_string()),
                     },
                 },
@@ -688,6 +691,7 @@ pub async fn list_extensions(app: tauri::AppHandle) -> AppResult<Vec<ExtensionDt
                     selection_actions: Vec::new(),
                     citation_actions: Vec::new(),
                     settings: Vec::new(),
+                    document_tasks: Vec::new(),
                     error: Some(format!("manifest unreadable: {e}")),
                 },
             }
@@ -736,6 +740,77 @@ pub async fn set_extension_enabled(
     };
     entry.enabled = enabled;
     registry.save(&root)
+}
+
+/// A page raster for an extension, as PNG bytes.
+///
+/// A command rather than a `pdfr://` URL because the CSP's `connect-src` is
+/// `ipc:` alone — the webview cannot `fetch` the render scheme, and an
+/// extension needs the bytes, not an `<img>`.
+///
+/// Submitted at `Priority::Idle`, so a batch job over three hundred pages is
+/// starved behind the reader's own scrolling rather than competing with it.
+#[tauri::command]
+pub async fn extension_render_page(
+    state: tauri::State<'_, EngineState>,
+    doc_id: DocId,
+    src: u32,
+    scale_milli: u32,
+) -> AppResult<tauri::ipc::Response> {
+    // Bounded well below the protocol's own ceiling: this is for recognition,
+    // not display, and 300dpi is past the point OCR gains anything.
+    let scale = scale_milli.clamp(200, 4_000);
+    let key = RenderKey {
+        doc: doc_id,
+        src,
+        rot: 0,
+        scale_milli: scale,
+        kind: RenderKind::Page,
+        tile: None,
+        invert: false,
+    };
+    if let Some(hit) = state.0.cached_render(&key) {
+        return Ok(tauri::ipc::Response::new(hit.to_vec()));
+    }
+    let bytes = state
+        .0
+        .call_async(Priority::Idle, doc_id, move |respond| Work::Render {
+            key,
+            respond,
+        })
+        .await?;
+    Ok(tauri::ipc::Response::new(bytes.to_vec()))
+}
+
+/// Record text an extension produced for one page of a document.
+#[tauri::command]
+pub async fn extension_contribute_text(
+    app: tauri::AppHandle,
+    extension_id: String,
+    document: String,
+    page: u32,
+    text: String,
+) -> AppResult<()> {
+    let root = extensions_root(&app)?;
+    extensions::contribute_text(&root, &document, &extension_id, page, &text)
+}
+
+/// What an extension has contributed for a document, if anything.
+#[tauri::command]
+pub async fn extension_contributed_text(
+    app: tauri::AppHandle,
+    document: String,
+) -> AppResult<Option<extensions::ContributedText>> {
+    Ok(extensions::load_contributed(
+        &extensions_root(&app)?,
+        &document,
+    ))
+}
+
+/// Discard everything extensions have contributed for a document.
+#[tauri::command]
+pub async fn forget_contributed_text(app: tauri::AppHandle, document: String) -> AppResult<()> {
+    extensions::forget_contributed(&extensions_root(&app)?, &document)
 }
 
 /// Source text of an extension's entry file.

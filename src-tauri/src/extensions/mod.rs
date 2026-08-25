@@ -143,6 +143,10 @@ pub enum Permission {
     Storage,
     #[serde(rename = "commands:run")]
     CommandsRun,
+    #[serde(rename = "render:read")]
+    RenderRead,
+    #[serde(rename = "document:contributeText")]
+    DocumentContributeText,
 }
 
 /// An action offered on something the user picked — a text selection, a
@@ -258,6 +262,12 @@ pub struct Contributions {
     pub citation_actions: Vec<ActionContribution>,
     #[serde(default)]
     pub settings: Vec<SettingContribution>,
+    /// Batch work over a whole document. Unlike every other contribution these
+    /// are long-running by design: the extension is handed a document and takes
+    /// as long as it takes. Nothing in SpeedyF waits on the result, which is
+    /// what keeps third-party code off the critical path.
+    #[serde(default)]
+    pub document_tasks: Vec<ActionContribution>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -392,6 +402,7 @@ pub fn parse_manifest(source: &str) -> Result<Manifest, ManifestError> {
         .selection_actions
         .iter()
         .chain(&manifest.contributes.citation_actions)
+        .chain(&manifest.contributes.document_tasks)
     {
         if !seen.contains(action.command.as_str()) {
             return Err(ManifestError::UnknownBoundCommand(action.command.clone()));
@@ -803,6 +814,121 @@ pub fn install_from_git(root: &Path, input: &str) -> AppResult<InstalledExtensio
     Ok(installed)
 }
 
+// ---------- contributed text ----------
+
+/// Text an extension produced for a document, stored beside the library's own
+/// text sidecars.
+///
+/// Kept out of the PDF deliberately. Writing into the file would change bytes
+/// the user did not ask to change, and would be lost the moment they saved from
+/// another tool. A sidecar is also removable without touching the document.
+pub const CONTRIBUTED_DIR: &str = "contributed";
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ContributedPage {
+    pub page: u32,
+    pub text: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ContributedText {
+    pub version: u32,
+    /// Which extension produced this. Provenance is not decoration: text that
+    /// came from somewhere other than the file must be attributable, or a bad
+    /// OCR pass becomes indistinguishable from a bad PDF.
+    pub extension_id: String,
+    /// Absolute path of the document it describes.
+    pub document: String,
+    pub pages: Vec<ContributedPage>,
+}
+
+pub const CONTRIBUTED_VERSION: u32 = 1;
+
+/// Sidecar path for a document. Named by a hash of the path rather than the
+/// path itself: document paths contain separators and characters a filename
+/// cannot hold, and two documents in different folders can share a name.
+pub fn contributed_path(root: &Path, document: &str) -> PathBuf {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in document.as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    root.join(CONTRIBUTED_DIR).join(format!("{hash:016x}.json"))
+}
+
+pub fn load_contributed(root: &Path, document: &str) -> Option<ContributedText> {
+    let text = std::fs::read_to_string(contributed_path(root, document)).ok()?;
+    let parsed: ContributedText = serde_json::from_str(&text).ok()?;
+    // A sidecar written by a future version is ignored rather than misread, and
+    // one that describes a different document is a hash collision — rare, but
+    // silently serving the wrong text would be far worse than serving none.
+    if parsed.version != CONTRIBUTED_VERSION || parsed.document != document {
+        return None;
+    }
+    Some(parsed)
+}
+
+/// Record text for one page.
+///
+/// First writer wins. If another extension has already contributed to this
+/// document, the second is refused and told who holds it — silently
+/// interleaving two extensions' output would produce a document whose text came
+/// from nowhere in particular.
+pub fn contribute_text(
+    root: &Path,
+    document: &str,
+    extension_id: &str,
+    page: u32,
+    text: &str,
+) -> AppResult<()> {
+    let mut existing = load_contributed(root, document).unwrap_or(ContributedText {
+        version: CONTRIBUTED_VERSION,
+        extension_id: extension_id.to_string(),
+        document: document.to_string(),
+        pages: Vec::new(),
+    });
+    if existing.extension_id != extension_id {
+        return Err(AppError::Unsupported(format!(
+            "\"{}\" has already contributed text for this document",
+            existing.extension_id
+        )));
+    }
+    match existing.pages.iter_mut().find(|p| p.page == page) {
+        Some(slot) => slot.text = text.to_string(),
+        None => existing.pages.push(ContributedPage {
+            page,
+            text: text.to_string(),
+        }),
+    }
+    existing.pages.sort_by_key(|p| p.page);
+
+    let path = contributed_path(root, document);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| AppError::Io(format!("{}: {e}", parent.display())))?;
+    }
+    let json = serde_json::to_string(&existing)
+        .map_err(|e| AppError::Internal(format!("contributed text: {e}")))?;
+    std::fs::write(&path, json).map_err(|e| AppError::Io(format!("{}: {e}", path.display())))
+}
+
+/// Drop a document's contributed text entirely.
+///
+/// Not called on uninstall. A sidecar outlives the extension that wrote it on
+/// purpose: losing a scanned document's searchability because an extension was
+/// removed months later would be a genuinely surprising thing for an uninstall
+/// to do. This exists so the user can choose it.
+pub fn forget_contributed(root: &Path, document: &str) -> AppResult<()> {
+    let path = contributed_path(root, document);
+    if path.exists() {
+        std::fs::remove_file(&path)
+            .map_err(|e| AppError::Io(format!("{}: {e}", path.display())))?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1119,6 +1245,116 @@ mod tests {
         std::fs::create_dir_all(dir).unwrap();
         std::fs::write(dir.join(MANIFEST_FILE), manifest).unwrap();
         std::fs::write(dir.join("worker.js"), "self.onmessage=()=>{}").unwrap();
+    }
+
+    // ---------- contributed text ----------
+
+    #[test]
+    fn stores_and_reads_back_contributed_pages() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        contribute_text(root, "/papers/scan.pdf", "com.a.ocr", 2, "page three").unwrap();
+        contribute_text(root, "/papers/scan.pdf", "com.a.ocr", 0, "page one").unwrap();
+
+        let stored = load_contributed(root, "/papers/scan.pdf").unwrap();
+        assert_eq!(stored.extension_id, "com.a.ocr");
+        // Sorted, so a consumer can index by page without searching.
+        assert_eq!(
+            stored.pages.iter().map(|p| p.page).collect::<Vec<_>>(),
+            vec![0, 2]
+        );
+        assert_eq!(stored.pages[1].text, "page three");
+    }
+
+    #[test]
+    fn re_contributing_a_page_replaces_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        contribute_text(tmp.path(), "/a.pdf", "com.a.ocr", 0, "first pass").unwrap();
+        contribute_text(tmp.path(), "/a.pdf", "com.a.ocr", 0, "second pass").unwrap();
+        let stored = load_contributed(tmp.path(), "/a.pdf").unwrap();
+        assert_eq!(stored.pages.len(), 1);
+        assert_eq!(stored.pages[0].text, "second pass");
+    }
+
+    /// Interleaving two extensions' output would produce a document whose text
+    /// came from nowhere in particular.
+    #[test]
+    fn a_second_extension_is_refused_and_told_who_holds_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        contribute_text(tmp.path(), "/a.pdf", "com.a.ocr", 0, "mine").unwrap();
+        let err = contribute_text(tmp.path(), "/a.pdf", "com.b.other", 0, "also mine").unwrap_err();
+        assert!(err.to_string().contains("com.a.ocr"), "{err}");
+        assert_eq!(
+            load_contributed(tmp.path(), "/a.pdf").unwrap().pages[0].text,
+            "mine"
+        );
+    }
+
+    #[test]
+    fn documents_do_not_share_a_sidecar() {
+        let tmp = tempfile::tempdir().unwrap();
+        contribute_text(tmp.path(), "/one/paper.pdf", "com.a.ocr", 0, "one").unwrap();
+        contribute_text(tmp.path(), "/two/paper.pdf", "com.a.ocr", 0, "two").unwrap();
+        assert_eq!(
+            load_contributed(tmp.path(), "/one/paper.pdf")
+                .unwrap()
+                .pages[0]
+                .text,
+            "one"
+        );
+        assert_eq!(
+            load_contributed(tmp.path(), "/two/paper.pdf")
+                .unwrap()
+                .pages[0]
+                .text,
+            "two"
+        );
+    }
+
+    /// A hash collision must serve nothing rather than another document's text.
+    #[test]
+    fn a_sidecar_describing_another_document_is_ignored() {
+        let tmp = tempfile::tempdir().unwrap();
+        contribute_text(tmp.path(), "/a.pdf", "com.a.ocr", 0, "a").unwrap();
+        let path = contributed_path(tmp.path(), "/a.pdf");
+        let mut stored: ContributedText =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        stored.document = "/elsewhere.pdf".into();
+        std::fs::write(&path, serde_json::to_string(&stored).unwrap()).unwrap();
+
+        assert!(load_contributed(tmp.path(), "/a.pdf").is_none());
+    }
+
+    #[test]
+    fn a_future_sidecar_version_is_ignored() {
+        let tmp = tempfile::tempdir().unwrap();
+        contribute_text(tmp.path(), "/a.pdf", "com.a.ocr", 0, "a").unwrap();
+        let path = contributed_path(tmp.path(), "/a.pdf");
+        let raw = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("\"version\":1", "\"version\":9");
+        std::fs::write(&path, raw).unwrap();
+        assert!(load_contributed(tmp.path(), "/a.pdf").is_none());
+    }
+
+    #[test]
+    fn forgetting_removes_the_sidecar() {
+        let tmp = tempfile::tempdir().unwrap();
+        contribute_text(tmp.path(), "/a.pdf", "com.a.ocr", 0, "a").unwrap();
+        forget_contributed(tmp.path(), "/a.pdf").unwrap();
+        assert!(load_contributed(tmp.path(), "/a.pdf").is_none());
+        // Forgetting something that was never there is not an error.
+        assert!(forget_contributed(tmp.path(), "/never.pdf").is_ok());
+    }
+
+    #[test]
+    fn reads_document_tasks() {
+        let m = parse_manifest(&manifest_json(
+            r#","contributes":{"commands":[{"id":"ocr","title":"OCR"}],
+               "documentTasks":[{"command":"ocr","title":"Recognise Text"}]}"#,
+        ))
+        .expect("should parse");
+        assert_eq!(m.contributes.document_tasks[0].title, "Recognise Text");
     }
 
     // ---------- git sources ----------
