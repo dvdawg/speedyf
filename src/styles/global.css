@@ -3192,25 +3192,58 @@ textarea:focus-visible {
   font-size: 11px;
 }
 
-.ext-panel-initial {
+/* The generic mark, with initials tucked into its lower-right so a shelf of
+   extensions that all declined to ship an icon is still readable. */
+.ext-icon {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 16px;
   height: 16px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  text-transform: capitalize;
+  flex: none;
 }
 
-/* Sidebar resize handle. Sits over the border rather than taking layout width,
-   so widening the grab area does not move the content beside it. */
+.ext-icon-initials {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  padding: 0 1px;
+  border-radius: 3px;
+  background: var(--bg-elev);
+  color: var(--text-dim);
+  font-size: 7px;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: -0.03em;
+}
+
+.icon-btn.is-active .ext-icon-initials {
+  color: var(--text);
+}
+
+.ext-icon-image {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  object-fit: contain;
+}
+
+/* Sidebar resize handle.
+ *
+ * Sits entirely OUTSIDE the sidebar's box, overlapping the viewer's first few
+ * pixels rather than the sidebar's own right edge. That edge is where the
+ * scrolling panel puts its scrollbar, and an absolutely positioned handle over
+ * it silently swallows every attempt to drag the thumbnails — which is exactly
+ * what it did. The viewer has nothing in its leading 8px, so borrowing them
+ * costs nothing.
+ *
+ * Takes no layout width, so widening the grab area never shifts content. */
 .sidebar-resize {
   position: absolute;
   top: 0;
-  right: -3px;
-  width: 7px;
+  left: 100%;
+  width: 8px;
   height: 100%;
   cursor: col-resize;
   z-index: 3;

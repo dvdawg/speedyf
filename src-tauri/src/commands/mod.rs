@@ -568,6 +568,8 @@ pub struct ExtensionDto {
     /// Settings the extension declared, for the panel to render.
     pub settings: Vec<crate::extensions::SettingContribution>,
     pub document_tasks: Vec<ActionDto>,
+    /// `speedyf-ext://` URL for the extension's icon, when it ships one.
+    pub icon_url: Option<String>,
     /// Why this extension cannot run, if it cannot.
     pub error: Option<String>,
 }
@@ -668,6 +670,10 @@ pub async fn list_extensions(app: tauri::AppHandle) -> AppResult<Vec<ExtensionDt
                         ),
                         settings: manifest.contributes.settings.clone(),
                         document_tasks: actions(&manifest, &manifest.contributes.document_tasks),
+                        icon_url: manifest
+                            .icon
+                            .as_ref()
+                            .map(|icon| format!("/{}/{icon}", manifest.id)),
                         manifest: Some(manifest),
                         error: None,
                     },
@@ -680,6 +686,7 @@ pub async fn list_extensions(app: tauri::AppHandle) -> AppResult<Vec<ExtensionDt
                         citation_actions: Vec::new(),
                         settings: Vec::new(),
                         document_tasks: Vec::new(),
+                        icon_url: None,
                         error: Some(e.to_string()),
                     },
                 },
@@ -692,6 +699,7 @@ pub async fn list_extensions(app: tauri::AppHandle) -> AppResult<Vec<ExtensionDt
                     citation_actions: Vec::new(),
                     settings: Vec::new(),
                     document_tasks: Vec::new(),
+                    icon_url: None,
                     error: Some(format!("manifest unreadable: {e}")),
                 },
             }

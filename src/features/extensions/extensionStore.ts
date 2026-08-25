@@ -65,6 +65,11 @@ export interface ExtensionPanel {
   extensionId: string;
 }
 
+/** The icon an extension ships, if it ships one. */
+export function extensionIconPath(extensionId: string): string | null {
+  return state.extensions.find((e) => e.id === extensionId)?.iconUrl ?? null;
+}
+
 export interface ExtensionCommand {
   /** `<extension id>/<command id>`, namespaced by the Rust side. */
   id: string;
@@ -96,6 +101,7 @@ export interface ExtensionRecord {
   documentTasks: ExtensionAction[];
   settings: ExtensionSetting[];
   keybindings: ExtensionKeybinding[];
+  iconUrl: string | null;
   /** Why it cannot run: a bad manifest, or a worker that died. */
   error: string | null;
   /** Most recent diagnostics, newest last. Bounded — an extension logging in a
@@ -137,6 +143,7 @@ interface ExtensionDto {
   citationActions: ExtensionAction[];
   documentTasks: ExtensionAction[];
   settings: ExtensionSetting[];
+  iconUrl: string | null;
   error: string | null;
 }
 
@@ -155,6 +162,7 @@ export async function loadExtensions(): Promise<void> {
           citationActions: dto.citationActions ?? [],
           documentTasks: dto.documentTasks ?? [],
           settings: dto.settings ?? [],
+          iconUrl: dto.iconUrl ?? null,
           keybindings: dto.manifest?.contributes?.keybindings ?? [],
           error: dto.error ?? null,
           log: previous.get(dto.id) ?? [],

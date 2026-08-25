@@ -282,6 +282,11 @@ pub struct Manifest {
     #[serde(default)]
     pub author: Option<String>,
     pub entry: String,
+    /// Relative path to a PNG or SVG inside the extension, shown wherever the
+    /// extension appears. Optional: without one, SpeedyF draws a generic mark
+    /// carrying the extension's initials.
+    #[serde(default)]
+    pub icon: Option<String>,
     #[serde(default)]
     pub permissions: Vec<Permission>,
     #[serde(default)]
@@ -297,6 +302,7 @@ pub enum ManifestError {
     UnsupportedApiVersion { found: u32, supported: u32 },
     MissingField(&'static str),
     BadEntry(String),
+    BadIcon(String),
     DuplicateCommand(String),
     BadCommandId(String),
     UnknownBoundCommand(String),
@@ -321,6 +327,10 @@ impl std::fmt::Display for ManifestError {
             ManifestError::BadEntry(entry) => {
                 write!(f, "entry \"{entry}\" must be a plain relative path inside the extension")
             }
+            ManifestError::BadIcon(icon) => write!(
+                f,
+                "icon \"{icon}\" must be a .png, .svg or .jpg inside the extension"
+            ),
             ManifestError::DuplicateCommand(id) => write!(f, "two commands share the id \"{id}\""),
             ManifestError::BadCommandId(id) => write!(
                 f,
@@ -376,6 +386,26 @@ pub fn parse_manifest(source: &str) -> Result<Manifest, ManifestError> {
     .is_none()
     {
         return Err(ManifestError::BadEntry(manifest.entry));
+    }
+
+    if let Some(icon) = &manifest.icon {
+        // Resolved through the same component walk that guards asset serving,
+        // and restricted to image types: the icon is rendered in an <img>, and
+        // an <img> is the safe way to show an SVG nobody has reviewed — a
+        // passive image, with no script or event handlers running.
+        let allowed = matches!(
+            std::path::Path::new(icon)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(str::to_ascii_lowercase)
+                .as_deref(),
+            Some("png" | "svg" | "jpg" | "jpeg")
+        );
+        if !allowed
+            || resolve_asset(Path::new("/root"), &format!("/{}/{icon}", manifest.id)).is_none()
+        {
+            return Err(ManifestError::BadIcon(icon.clone()));
+        }
     }
 
     let mut seen = std::collections::HashSet::new();
@@ -1163,6 +1193,37 @@ mod tests {
             assert!(
                 matches!(err, ManifestError::BadPanelId(_)),
                 "{bad} was allowed"
+            );
+        }
+    }
+
+    #[test]
+    fn reads_an_icon() {
+        let m = parse_manifest(&manifest_json(r#","icon":"icon.svg""#)).expect("should parse");
+        assert_eq!(m.icon.as_deref(), Some("icon.svg"));
+    }
+
+    #[test]
+    fn an_absent_icon_is_fine() {
+        assert!(parse_manifest(&manifest_json("")).unwrap().icon.is_none());
+    }
+
+    #[test]
+    fn refuses_an_icon_that_escapes_or_is_not_an_image() {
+        for bad in [
+            "../../secrets.png",
+            "/etc/hosts.png",
+            "worker.js",
+            "icon.html",
+            "icon",
+        ] {
+            let json = manifest_json(&format!(r#","icon":"{bad}""#));
+            assert!(
+                matches!(
+                    parse_manifest(&json).unwrap_err(),
+                    ManifestError::BadIcon(_)
+                ),
+                "{bad} was allowed as an icon"
             );
         }
     }

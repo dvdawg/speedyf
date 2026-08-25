@@ -39,12 +39,27 @@ let timer: ReturnType<typeof setTimeout> | undefined;
 export function noteSelectionChanged(compute: () => string | null): void {
   clearTimeout(timer);
   timer = setTimeout(() => {
-    setSelectedTextSignal(compute() ?? '');
+    // `compute` reads the *live* Selection, which may have collapsed during the
+    // settle window — a click lands, focus moves, the drag ends somewhere
+    // empty. An empty answer means "there is nothing to read now", never
+    // "what you highlighted a moment ago is void", so the last real capture
+    // stands. Only a genuine new selection replaces it.
+    const text = compute();
+    if (text && text.length > 0) setSelectedTextSignal(text);
   }, SETTLE_MS);
 }
 
-/** Called when the selection is known to be gone — a collapse, or a document
- * closing — so the palette does not offer actions on stale text. */
+/** Forget the selection entirely.
+ *
+ * Deliberately NOT called when the selection merely collapses. Moving focus —
+ * opening the command palette, clicking a button — collapses it, and clearing
+ * on that defeats the entire purpose of this store: the text would be gone by
+ * the moment anything wanted to act on it. What is held here is "the last thing
+ * you highlighted", which stays true until you highlight something else.
+ *
+ * Called when that stops being meaningful: a different document becomes
+ * active, or the one it came from goes away.
+ */
 export function clearSelection(): void {
   clearTimeout(timer);
   setSelectedTextSignal('');

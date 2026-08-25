@@ -151,7 +151,9 @@ function ViewerContent(props: { tab: TabRecord }) {
     const selection = document.getSelection();
     if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
       if (vp.state.selectionAnchor) vp.setState('selectionAnchor', null);
-      clearSelection();
+      // The captured text deliberately survives a collapse: opening the
+      // command palette moves focus and collapses the selection, and anything
+      // acting on it runs after that point.
       return;
     }
     const range = selection.getRangeAt(0);
@@ -195,6 +197,12 @@ function ViewerContent(props: { tab: TabRecord }) {
       document.removeEventListener('selectionchange', onSelectionChange);
       document.removeEventListener('copy', onCopy);
     });
+  });
+
+  // A selection belongs to the document it was made in, so switching away from
+  // this tab is where the captured text stops being meaningful.
+  createEffect(() => {
+    if (!isActive()) clearSelection();
   });
 
   // Persist where reading stopped, debounced: this writes to localStorage, so

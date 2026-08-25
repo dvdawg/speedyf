@@ -5,7 +5,8 @@ import { For, Show } from 'solid-js';
 import IconButton from './IconButton';
 import { IconFigure, IconList, IconNote, IconPages, IconQed } from './icons';
 import { ui, setUi, extensionPanelId, resetSidebarWidth, setSidebarWidth } from '../stores/uiStore';
-import { extensionPanels } from '../features/extensions/extensionStore';
+import { extensionIconPath, extensionPanels } from '../features/extensions/extensionStore';
+import ExtensionIcon from '../features/extensions/ExtensionIcon';
 import ExtensionPanelView from '../features/extensions/ExtensionPanel';
 import PageThumbnails from '../features/outline/PageThumbnails';
 import Outline from '../features/outline/Outline';
@@ -104,12 +105,7 @@ export default function Sidebar() {
               active={extensionPanelId(ui.sidebarMode) === panel.id}
               onClick={() => setUi('sidebarMode', `ext:${panel.id}`)}
             >
-              {/* Initials rather than a shared extension glyph: three
-                  contributed panels drew three identical icons, and the only
-                  way to tell them apart was to hover each one. */}
-              <span class="ext-panel-initial" aria-hidden="true">
-                {panel.title.slice(0, 2)}
-              </span>
+              <ExtensionIcon name={panel.title} iconPath={extensionIconPath(panel.extensionId)} />
             </IconButton>
           )}
         </For>

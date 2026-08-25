@@ -7,6 +7,7 @@
 import { For, Show, createSignal } from 'solid-js';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { IconExtension } from '../../components/icons';
+import ExtensionIcon from '../extensions/ExtensionIcon';
 import {
   bindingErrors,
   extensionState,
@@ -144,6 +145,7 @@ function ExtensionRow(props: { ext: ExtensionRecord }) {
           <span class="sr-only">Enabled</span>
         </label>
         <div class="ext-identity">
+          <ExtensionIcon name={ext().name} iconPath={ext().iconUrl} />
           <span class="ext-name">{ext().name}</span>
           <span class="ext-version">{ext().version}</span>
         </div>
