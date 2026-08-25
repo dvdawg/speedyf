@@ -149,10 +149,19 @@ fn parse_arxiv_at(chars: &[char], at: usize) -> Option<(usize, String)> {
 }
 
 fn prefixed_at(chars: &[char], at: usize) -> Option<(usize, CitationIdDto)> {
-    const DOI_PREFIXES: [&str; 4] = [
+    // Scheme-less forms are here for the same reason the arXiv list has them:
+    // a URL printed in a bibliography wraps, and the scheme ends up on the
+    // previous line — the text reads "https://" then "doi.org/10.1090/...".
+    // Without them a DOI cited that way is invisible, which is exactly how
+    // 10.1090/S0002-9947-1959-0110078-1 went missing while every arXiv id on
+    // the same page was found.
+    const DOI_PREFIXES: [&str; 7] = [
+        "https://dx.doi.org/",
+        "http://dx.doi.org/",
         "https://doi.org/",
         "http://doi.org/",
-        "http://dx.doi.org/",
+        "dx.doi.org/",
+        "doi.org/",
         "doi:",
     ];
     for prefix in DOI_PREFIXES {
@@ -372,6 +381,28 @@ mod url_form_tests {
                     assert_eq!(&value, expected, "{uri}")
                 }
                 other => panic!("{uri} parsed as {other:?}, expected arXiv {expected}"),
+            }
+        }
+    }
+
+    /// The one identifier missed on a real reference page: every arXiv id was
+    /// found and this DOI was not, because the arXiv prefixes accepted a URL
+    /// whose scheme had wrapped onto the previous line and the DOI prefixes
+    /// did not.
+    #[test]
+    fn finds_a_doi_whose_scheme_wrapped_away() {
+        for text in [
+            "doi.org/10.1090/S0002-9947-1959-0110078-1",
+            "dx.doi.org/10.1090/S0002-9947-1959-0110078-1",
+            "https://dx.doi.org/10.1090/S0002-9947-1959-0110078-1",
+        ] {
+            match parse_citation_id(text) {
+                // Lowercased: DOIs are case-insensitive, so folding them is
+                // what makes two spellings of one work resolve to one entry.
+                Some(CitationIdDto::Doi(value)) => {
+                    assert_eq!(value, "10.1090/s0002-9947-1959-0110078-1", "{text}")
+                }
+                other => panic!("{text} parsed as {other:?}"),
             }
         }
     }

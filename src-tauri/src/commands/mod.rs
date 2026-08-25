@@ -840,3 +840,4 @@ pub async fn extension_source(app: tauri::AppHandle, id: String) -> AppResult<St
         .ok_or_else(|| AppError::Malformed("entry escapes the extension".into()))?;
     std::fs::read_to_string(&entry).map_err(|e| AppError::Io(format!("{}: {e}", entry.display())))
 }
+
