@@ -462,6 +462,74 @@ fn same_line(first: &TextRun, run: &TextRun, tolerance: f32) -> bool {
     (first.y - run.y).abs() <= tolerance * first.h.max(run.h).max(1.0)
 }
 
+/// A horizontal gap wider than this share of the font size is a word space.
+///
+/// An interword space is about a third of an em in most text faces; the gaps
+/// between letters within a word are near zero, and negative where the font
+/// kerns. There is a lot of room between those two, so this sits low enough to
+/// catch tight spacing and high enough not to split letter-spaced headings.
+const WORD_GAP_EM: f32 = 0.15;
+
+/// Put the spaces back inside one run using its characters' own geometry.
+///
+/// `lines_from_runs` can only insert spaces *between* runs, and PDFium happily
+/// reports a whole line as a single run whose text contains no spaces at all —
+/// which is exactly what a title like "ATheoryofSaddleEscapeinDeepNonlinear"
+/// is. The gaps in those files are positions between glyphs, and this is where
+/// they are read back.
+///
+/// Returns the run's text unchanged when it already contains spaces, or when
+/// the geometry needed is missing.
+pub fn repair_run_text(run: &TextRun, boxes: &[[f32; 4]], sizes: &[f32]) -> String {
+    if run.text.contains(' ') || run.text.chars().count() < 2 {
+        return run.text.clone();
+    }
+    let start = run.start as usize;
+    let mut out = String::with_capacity(run.text.len() + 8);
+    let mut previous_right: Option<f32> = None;
+
+    for (offset, ch) in run.text.chars().enumerate() {
+        let index = start + offset;
+        let Some(&[x0, _, x1, _]) = boxes.get(index) else {
+            // No geometry for this character: nothing to infer from, so the
+            // text is passed through rather than guessed at.
+            return run.text.clone();
+        };
+        // A zero box means PDFium had no usable geometry for that glyph.
+        if x1 <= x0 {
+            out.push(ch);
+            continue;
+        }
+        let size = sizes.get(index).copied().unwrap_or(0.0);
+        if let Some(right) = previous_right {
+            if size > 0.0 && x0 - right > WORD_GAP_EM * size && !ch.is_whitespace() {
+                out.push(' ');
+            }
+        }
+        out.push(ch);
+        previous_right = Some(x1);
+    }
+    out
+}
+
+/// Page lines, with word spacing recovered from character geometry where the
+/// file does not encode it.
+pub fn lines_from_page(runs: &[TextRun], boxes: &[[f32; 4]], sizes: &[f32]) -> Vec<String> {
+    let repaired: Vec<TextRun> = runs
+        .iter()
+        .map(|run| TextRun {
+            text: repair_run_text(run, boxes, sizes),
+            ..run.clone()
+        })
+        .collect();
+    lines_from_runs(&repaired)
+}
+
+/// The same as one string, lines separated by newlines.
+pub fn text_from_page(runs: &[TextRun], boxes: &[[f32; 4]], sizes: &[f32]) -> String {
+    lines_from_page(runs, boxes, sizes).join("\n")
+}
+
 /// The same text as one string, lines separated by newlines, for the callers
 /// that scan it for identifiers.
 pub fn text_from_runs(runs: &[TextRun]) -> String {
@@ -670,6 +738,87 @@ mod tests {
             run("   ", 72.0, 660.0),
         ];
         assert_eq!(lines_from_runs(&runs), vec!["Title"]);
+    }
+
+    /// One character box per character, laid out left to right with `gap`
+    /// points of clear space wherever `spaces` says a word ends.
+    fn glyphs(
+        text: &str,
+        size: f32,
+        gaps: &[usize],
+        gap: f32,
+    ) -> (TextRun, Vec<[f32; 4]>, Vec<f32>) {
+        let mut boxes = Vec::new();
+        let mut x = 72.0f32;
+        let advance = size * 0.5;
+        for (i, _) in text.chars().enumerate() {
+            boxes.push([x, 700.0, x + advance, 710.0]);
+            x += advance;
+            if gaps.contains(&i) {
+                x += gap;
+            }
+        }
+        let run = TextRun {
+            text: text.into(),
+            start: 0,
+            x: 72.0,
+            y: 700.0,
+            w: x - 72.0,
+            h: 10.0,
+        };
+        let sizes = vec![size; text.chars().count()];
+        (run, boxes, sizes)
+    }
+
+    /// The bug: PDFium reports a whole title as one run with no spaces in it,
+    /// because the file encodes word gaps as position rather than characters.
+    #[test]
+    fn recovers_word_spaces_from_character_geometry() {
+        // "ATheoryofSaddle" with real gaps after A, y, of, e
+        let (run, boxes, sizes) = glyphs("ATheoryofSaddle", 10.0, &[0, 6, 8], 4.0);
+        assert_eq!(repair_run_text(&run, &boxes, &sizes), "A Theory of Saddle");
+    }
+
+    #[test]
+    fn leaves_text_alone_when_it_already_has_spaces() {
+        let (run, boxes, sizes) = glyphs("A Theory of", 10.0, &[], 0.0);
+        assert_eq!(repair_run_text(&run, &boxes, &sizes), "A Theory of");
+    }
+
+    /// Letters within a word sit flush or kern together; nothing there should
+    /// be read as a space.
+    #[test]
+    fn does_not_split_a_word_with_ordinary_letter_spacing() {
+        let (run, boxes, sizes) = glyphs("Saddle", 10.0, &[], 0.0);
+        assert_eq!(repair_run_text(&run, &boxes, &sizes), "Saddle");
+    }
+
+    #[test]
+    fn ignores_a_gap_too_small_to_be_a_word_space() {
+        // 0.05em of tracking is not a space at 0.15em threshold.
+        let (run, boxes, sizes) = glyphs("Saddle", 10.0, &[0, 1, 2, 3, 4], 0.5);
+        assert_eq!(repair_run_text(&run, &boxes, &sizes), "Saddle");
+    }
+
+    #[test]
+    fn passes_text_through_when_geometry_is_missing() {
+        let (run, _, sizes) = glyphs("ATheoryof", 10.0, &[0], 4.0);
+        assert_eq!(repair_run_text(&run, &[], &sizes), "ATheoryof");
+    }
+
+    #[test]
+    fn a_single_character_run_is_untouched() {
+        let (run, boxes, sizes) = glyphs("A", 10.0, &[], 0.0);
+        assert_eq!(repair_run_text(&run, &boxes, &sizes), "A");
+    }
+
+    #[test]
+    fn repairs_runs_when_building_page_lines() {
+        let (run, boxes, sizes) = glyphs("ATheoryofSaddle", 10.0, &[0, 6, 8], 4.0);
+        assert_eq!(
+            lines_from_page(&[run], &boxes, &sizes),
+            vec!["A Theory of Saddle"]
+        );
     }
 
     #[test]
