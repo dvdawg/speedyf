@@ -3,7 +3,7 @@
 //! the engine worker that owns PDFium.
 
 use crate::engine::citation::{citation_from_filename, find_explicit_citations};
-use crate::engine::types::{CitationIdDto, LibraryStatusDto, TextRun};
+use crate::engine::types::{CitationIdDto, LibraryStatusDto};
 use crate::errors::{AppError, AppResult};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -402,132 +402,98 @@ pub fn contained_in_any(roots: &[PathBuf], path: &Path) -> Option<PathBuf> {
         .find_map(|root| contained_canonical_path(root, path))
 }
 
-/// Rebuild page lines from positioned text runs.
-///
-/// The metadata scan used to read PDFium's raw character stream, which for a
-/// great many PDFs — LaTeX output especially — contains no space characters at
-/// all. Word gaps in those files are *positions*, not characters, so a title
-/// came back as "PrivateandpolynomialtimealgorithmsforlearningGaussians".
-///
-/// Runs carry geometry, so the gaps can be recovered: runs sharing a baseline
-/// are one line, ordered left to right, joined by a space unless one side
-/// already supplies the whitespace. Lines run down the page, which is
-/// descending y — PDF space is y-up.
-pub fn lines_from_runs(runs: &[TextRun]) -> Vec<String> {
-    /// Two runs are on the same line when their baselines are within this
-    /// fraction of the taller one's height. Generous enough for the sub- and
-    /// superscripts that sit slightly off a baseline, tight enough not to merge
-    /// consecutive lines of body text.
-    const SAME_LINE: f32 = 0.6;
-
-    let mut ordered: Vec<&TextRun> = runs.iter().filter(|r| !r.text.is_empty()).collect();
-    // Down the page first — PDF space is y-up — then left to right.
-    ordered.sort_by(|a, b| b.y.total_cmp(&a.y).then(a.x.total_cmp(&b.x)));
-
-    // Grouped into lines *before* anything is ordered horizontally. Sorting by
-    // y alone puts a superscript ahead of the character it belongs to, since it
-    // sits a few points higher: "x²" came out as "2 x".
-    let mut grouped: Vec<Vec<&TextRun>> = Vec::new();
-    for run in ordered {
-        match grouped.last_mut() {
-            // Measured against the line's first run rather than the previous
-            // one, so a run of slightly drifting baselines cannot walk a line
-            // arbitrarily far from where it started.
-            Some(line) if same_line(line[0], run, SAME_LINE) => line.push(run),
-            _ => grouped.push(vec![run]),
-        }
-    }
-
-    grouped
-        .into_iter()
-        .filter_map(|mut line| {
-            line.sort_by(|a, b| a.x.total_cmp(&b.x));
-            let mut text = String::new();
-            for run in line {
-                if !text.is_empty()
-                    && !text.ends_with(char::is_whitespace)
-                    && !run.text.starts_with(char::is_whitespace)
-                {
-                    text.push(' ');
-                }
-                text.push_str(&run.text);
-            }
-            let text = text.trim().to_string();
-            (!text.is_empty()).then_some(text)
-        })
-        .collect()
-}
-
-fn same_line(first: &TextRun, run: &TextRun, tolerance: f32) -> bool {
-    (first.y - run.y).abs() <= tolerance * first.h.max(run.h).max(1.0)
-}
-
-/// A gap wider than this share of the run's median glyph advance is a word
+/// A gap wider than this share of the page's median glyph advance is a word
 /// space.
 ///
 /// Measured against the glyphs themselves rather than the font size PDFium
-/// reports, because that size is not always reported — a zero there silently
-/// disabled the whole repair on exactly the files that needed it. Median
-/// advance is always available and needs no font metadata at all: an interword
-/// space runs about half a lowercase advance, while letters within a word sit
-/// flush or kern slightly negative.
+/// reports, because that size is not always reported and a zero there silently
+/// disables the whole repair. An interword space runs about half a lowercase
+/// advance; letters within a word sit flush or kern slightly negative, so there
+/// is a wide margin between the two.
 const WORD_GAP_RATIO: f32 = 0.3;
+/// Baseline separation, as a share of glyph height, above which a character
+/// belongs to the next line.
+const LINE_BREAK_RATIO: f32 = 0.6;
 
-/// Put the spaces back inside one run using its characters' own geometry.
+/// Rebuild page lines from the character stream and its geometry.
 ///
-/// `lines_from_runs` can only insert spaces *between* runs, and PDFium happily
-/// reports a whole line as a single run whose text contains no spaces at all —
-/// which is what a title like "ATheoryofSaddleEscapeinDeepNonlinear" is. The
-/// gaps in those files are positions between glyphs, and this is where they are
-/// read back.
+/// Works from `ExtractedPage`'s `raw` and `boxes`, which carry exactly one
+/// entry per PDFium character index and so line up by construction. An earlier
+/// version indexed `boxes` by `run.start + offset` instead, which silently read
+/// the wrong glyph's geometry for every character after the run builder skipped
+/// one — and produced no spaces at all on the files that needed them.
 ///
-/// Runs that are *partly* spaced are repaired too. An earlier version skipped
-/// anything already containing a space, which left
-/// "Majority-of-Three: OrderedProofs" exactly as broken as before.
-pub fn repair_run_text(run: &TextRun, boxes: &[[f32; 4]], sizes: &[f32]) -> String {
-    let count = run.text.chars().count();
-    if count < 2 {
-        return run.text.clone();
+/// Many PDFs, LaTeX output above all, encode word gaps as position rather than
+/// as space characters; those files yield titles like
+/// "ATheoryofSaddleEscapeinDeepNonlinear" unless the gaps are read back here.
+pub fn lines_from_chars(raw: &str, boxes: &[[f32; 4]]) -> Vec<String> {
+    let chars: Vec<char> = raw.chars().collect();
+    if chars.is_empty() {
+        return Vec::new();
     }
-    let start = run.start as usize;
-    let Some(slice) = boxes.get(start..start + count) else {
-        // Geometry missing or misaligned: pass the text through rather than
-        // guess at it.
-        return run.text.clone();
-    };
 
-    let Some(advance) = median_advance(slice) else {
-        return run.text.clone();
+    // Geometry may be absent or shorter than the text. Characters past it are
+    // still emitted — losing text to recover spacing would be a bad trade.
+    let measured = chars.len().min(boxes.len());
+    let advance = (measured > 0)
+        .then(|| median_advance(&boxes[..measured]))
+        .flatten();
+    let Some(advance) = advance else {
+        return raw
+            .lines()
+            .map(|line| line.trim().to_string())
+            .filter(|line| !line.is_empty())
+            .collect();
     };
-    let threshold = WORD_GAP_RATIO * advance;
+    let gap_threshold = WORD_GAP_RATIO * advance;
 
-    let mut out = String::with_capacity(run.text.len() + 8);
-    let mut previous_right: Option<f32> = None;
-    for (offset, ch) in run.text.chars().enumerate() {
-        let [x0, _, x1, _] = slice[offset];
-        let has_box = x1 > x0;
-        if let Some(right) = previous_right {
-            // Never doubled: a space the file already supplies, on either side,
-            // is the space — this only fills in the ones it left out.
-            let already_spaced = ch.is_whitespace() || out.ends_with(char::is_whitespace);
-            if has_box && !already_spaced && x0 - right > threshold {
-                out.push(' ');
+    let mut lines: Vec<String> = Vec::new();
+    let mut line = String::new();
+    let mut previous: Option<[f32; 4]> = None;
+
+    for (index, &ch) in chars.iter().enumerate() {
+        let bx = boxes.get(index).copied().unwrap_or([0.0; 4]);
+        let has_box = bx[2] > bx[0] && bx[3] > bx[1];
+
+        if let (Some(prev), true) = (previous, has_box) {
+            let height = (prev[3] - prev[1]).max(bx[3] - bx[1]).max(1.0);
+            if (prev[1] - bx[1]).abs() > LINE_BREAK_RATIO * height {
+                push_line(&mut lines, &mut line);
+            } else if !ch.is_whitespace()
+                && !line.is_empty()
+                && !line.ends_with(char::is_whitespace)
+                && bx[0] - prev[2] > gap_threshold
+            {
+                line.push(' ');
             }
         }
-        out.push(ch);
-        if has_box {
-            previous_right = Some(x1);
+
+        if ch == '\n' || ch == '\r' {
+            // A break the file stated outright.
+            push_line(&mut lines, &mut line);
+        } else if !ch.is_control()
+            && !(ch.is_whitespace() && (line.is_empty() || line.ends_with(char::is_whitespace)))
+        {
+            line.push(ch);
         }
-        // A glyph with no box leaves `previous_right` where it was, so the next
-        // real glyph is still measured from something meaningful.
-        let _ = sizes;
+        if has_box {
+            previous = Some(bx);
+        }
     }
-    out
+    push_line(&mut lines, &mut line);
+    lines
 }
 
-/// Median width of the glyphs that reported one, as a stand-in for the font's
-/// advance. Median rather than mean so a single wide glyph or a stray zero box
-/// cannot move it.
+fn push_line(lines: &mut Vec<String>, line: &mut String) {
+    let text = line.trim();
+    if !text.is_empty() {
+        lines.push(text.to_string());
+    }
+    line.clear();
+}
+
+/// Median width of the glyphs that reported one. Median rather than mean so a
+/// single wide glyph or a stray zero box cannot move it.
 fn median_advance(boxes: &[[f32; 4]]) -> Option<f32> {
     let mut widths: Vec<f32> = boxes
         .iter()
@@ -541,22 +507,9 @@ fn median_advance(boxes: &[[f32; 4]]) -> Option<f32> {
     Some(widths[widths.len() / 2])
 }
 
-/// Page lines, with word spacing recovered from character geometry where the
-/// file does not encode it.
-pub fn lines_from_page(runs: &[TextRun], boxes: &[[f32; 4]], sizes: &[f32]) -> Vec<String> {
-    let repaired: Vec<TextRun> = runs
-        .iter()
-        .map(|run| TextRun {
-            text: repair_run_text(run, boxes, sizes),
-            ..run.clone()
-        })
-        .collect();
-    lines_from_runs(&repaired)
-}
-
-/// The same as one string, lines separated by newlines.
-pub fn text_from_page(runs: &[TextRun], boxes: &[[f32; 4]], sizes: &[f32]) -> String {
-    lines_from_page(runs, boxes, sizes).join("\n")
+/// Page text with word spacing recovered, lines separated by newlines.
+pub fn text_from_page(raw: &str, boxes: &[[f32; 4]]) -> String {
+    lines_from_chars(raw, boxes).join("\n")
 }
 
 pub fn entry_from_filename(candidate: &ScanCandidate) -> Option<LibraryEntry> {
@@ -690,90 +643,12 @@ mod tests {
         assert!(contained_canonical_path(root.path(), &outside_file).is_none());
     }
 
-    fn run(text: &str, x: f32, y: f32) -> TextRun {
-        TextRun {
-            text: text.into(),
-            start: 0,
-            x,
-            y,
-            w: text.len() as f32 * 5.0,
-            h: 10.0,
-        }
-    }
-
-    /// The bug this exists to fix: a PDF that encodes word gaps as position
-    /// rather than as space characters produced
-    /// "PrivateandpolynomialtimealgorithmsforlearningGaussians".
-    #[test]
-    fn puts_the_spaces_back_between_positioned_runs() {
-        let runs = vec![
-            run("Private", 72.0, 700.0),
-            run("and", 130.0, 700.0),
-            run("polynomial", 165.0, 700.0),
-            run("time", 240.0, 700.0),
-        ];
-        assert_eq!(lines_from_runs(&runs), vec!["Private and polynomial time"]);
-    }
-
-    #[test]
-    fn does_not_double_a_space_a_run_already_carries() {
-        let runs = vec![run("Private ", 72.0, 700.0), run("and", 130.0, 700.0)];
-        assert_eq!(lines_from_runs(&runs), vec!["Private and"]);
-        let runs = vec![run("Private", 72.0, 700.0), run(" and", 130.0, 700.0)];
-        assert_eq!(lines_from_runs(&runs), vec!["Private and"]);
-    }
-
-    #[test]
-    fn separates_lines_by_baseline() {
-        let runs = vec![
-            run("Second", 72.0, 680.0),
-            run("First", 72.0, 700.0),
-            run("line", 110.0, 700.0),
-        ];
-        assert_eq!(lines_from_runs(&runs), vec!["First line", "Second"]);
-    }
-
-    /// Runs arrive in whatever order PDFium emits them, which is not reading
-    /// order.
-    #[test]
-    fn orders_top_down_then_left_to_right() {
-        let runs = vec![
-            run("world", 130.0, 700.0),
-            run("below", 72.0, 660.0),
-            run("Hello", 72.0, 700.0),
-        ];
-        assert_eq!(lines_from_runs(&runs), vec!["Hello world", "below"]);
-    }
-
-    /// A sub- or superscript sits slightly off the baseline and belongs to the
-    /// line it was set on, not to a line of its own.
-    #[test]
-    fn keeps_a_slightly_raised_run_on_its_line() {
-        let runs = vec![run("x", 72.0, 700.0), run("2", 80.0, 703.0)];
-        assert_eq!(lines_from_runs(&runs), vec!["x 2"]);
-    }
-
-    #[test]
-    fn ignores_empty_runs_and_blank_lines() {
-        let runs = vec![
-            run("", 72.0, 700.0),
-            run("Title", 80.0, 700.0),
-            run("   ", 72.0, 660.0),
-        ];
-        assert_eq!(lines_from_runs(&runs), vec!["Title"]);
-    }
-
-    /// One character box per character, laid out left to right with `gap`
-    /// points of clear space wherever `spaces` says a word ends.
-    fn glyphs(
-        text: &str,
-        size: f32,
-        gaps: &[usize],
-        gap: f32,
-    ) -> (TextRun, Vec<[f32; 4]>, Vec<f32>) {
+    /// One box per character, laid out left to right, with `gap` points of
+    /// clear space after each index named in `gaps`.
+    fn laid_out(text: &str, gaps: &[usize], gap: f32) -> Vec<[f32; 4]> {
+        let advance = 5.0f32;
         let mut boxes = Vec::new();
         let mut x = 72.0f32;
-        let advance = size * 0.5;
         for (i, _) in text.chars().enumerate() {
             boxes.push([x, 700.0, x + advance, 710.0]);
             x += advance;
@@ -781,114 +656,100 @@ mod tests {
                 x += gap;
             }
         }
-        let run = TextRun {
-            text: text.into(),
-            start: 0,
-            x: 72.0,
-            y: 700.0,
-            w: x - 72.0,
-            h: 10.0,
-        };
-        let sizes = vec![size; text.chars().count()];
-        (run, boxes, sizes)
+        boxes
     }
 
-    /// The bug: PDFium reports a whole title as one run with no spaces in it,
-    /// because the file encodes word gaps as position rather than characters.
+    /// The bug: PDFium reports a title with no spaces in it, because the file
+    /// encodes word gaps as position rather than as characters.
     #[test]
     fn recovers_word_spaces_from_character_geometry() {
-        // "ATheoryofSaddle" with real gaps after A, y, of, e
-        let (run, boxes, sizes) = glyphs("ATheoryofSaddle", 10.0, &[0, 6, 8], 4.0);
-        assert_eq!(repair_run_text(&run, &boxes, &sizes), "A Theory of Saddle");
-    }
-
-    #[test]
-    fn leaves_text_alone_when_it_already_has_spaces() {
-        let (run, boxes, sizes) = glyphs("A Theory of", 10.0, &[], 0.0);
-        assert_eq!(repair_run_text(&run, &boxes, &sizes), "A Theory of");
+        let text = "ATheoryofSaddle";
+        let boxes = laid_out(text, &[0, 6, 8], 4.0);
+        assert_eq!(lines_from_chars(text, &boxes), vec!["A Theory of Saddle"]);
     }
 
     /// An earlier version skipped any run containing a space, which left
     /// "Majority-of-Three: OrderedProofs" exactly as broken as before.
     #[test]
-    fn repairs_a_run_that_is_only_partly_spaced() {
-        let (run, boxes, sizes) = glyphs("Three: OrderedProofs", 10.0, &[13], 4.0);
+    fn repairs_text_that_is_only_partly_spaced() {
+        let text = "Three: OrderedProofs";
+        let boxes = laid_out(text, &[13], 4.0);
         assert_eq!(
-            repair_run_text(&run, &boxes, &sizes),
-            "Three: Ordered Proofs"
+            lines_from_chars(text, &boxes),
+            vec!["Three: Ordered Proofs"]
         );
     }
 
-    /// PDFium does not always report a font size. Basing the threshold on it
-    /// meant a zero silently disabled the repair on exactly the files that
-    /// needed it.
-    #[test]
-    fn works_when_the_font_size_is_not_reported() {
-        let (run, boxes, _) = glyphs("ATheoryof", 10.0, &[0, 6], 4.0);
-        let zeros = vec![0.0; run.text.chars().count()];
-        assert_eq!(repair_run_text(&run, &boxes, &zeros), "A Theory of");
-    }
-
-    #[test]
-    fn does_not_double_a_space_the_file_already_supplies() {
-        let (run, boxes, sizes) = glyphs("A Theory", 10.0, &[0], 4.0);
-        assert_eq!(repair_run_text(&run, &boxes, &sizes), "A Theory");
-    }
-
-    /// Letters within a word sit flush or kern together; nothing there should
-    /// be read as a space.
     #[test]
     fn does_not_split_a_word_with_ordinary_letter_spacing() {
-        let (run, boxes, sizes) = glyphs("Saddle", 10.0, &[], 0.0);
-        assert_eq!(repair_run_text(&run, &boxes, &sizes), "Saddle");
+        let text = "Saddle";
+        assert_eq!(
+            lines_from_chars(text, &laid_out(text, &[], 0.0)),
+            vec!["Saddle"]
+        );
     }
 
     #[test]
     fn ignores_a_gap_too_small_to_be_a_word_space() {
-        // 0.05em of tracking is not a space at 0.15em threshold.
-        let (run, boxes, sizes) = glyphs("Saddle", 10.0, &[0, 1, 2, 3, 4], 0.5);
-        assert_eq!(repair_run_text(&run, &boxes, &sizes), "Saddle");
+        let text = "Saddle";
+        let boxes = laid_out(text, &[0, 1, 2, 3, 4], 0.5);
+        assert_eq!(lines_from_chars(text, &boxes), vec!["Saddle"]);
     }
 
     #[test]
-    fn passes_text_through_when_geometry_is_missing() {
-        let (run, _, sizes) = glyphs("ATheoryof", 10.0, &[0], 4.0);
-        assert_eq!(repair_run_text(&run, &[], &sizes), "ATheoryof");
+    fn does_not_double_a_space_the_file_already_supplies() {
+        let text = "A Theory";
+        let boxes = laid_out(text, &[0, 1], 4.0);
+        assert_eq!(lines_from_chars(text, &boxes), vec!["A Theory"]);
     }
 
-    /// A run whose boxes do not line up with its characters must not be
-    /// repaired from whatever happens to sit at those indices.
+    /// Word gaps and line breaks are different signals: a new baseline ends the
+    /// line however wide the horizontal gap happens to be.
     #[test]
-    fn passes_text_through_when_boxes_are_short() {
-        let (run, boxes, sizes) = glyphs("ATheoryof", 10.0, &[0], 4.0);
-        assert_eq!(repair_run_text(&run, &boxes[..3], &sizes), "ATheoryof");
+    fn breaks_lines_on_a_new_baseline() {
+        let text = "TitleAuthor";
+        let mut boxes = laid_out("Title", &[], 0.0);
+        for i in 0..6 {
+            let x = 72.0 + i as f32 * 5.0;
+            boxes.push([x, 680.0, x + 5.0, 690.0]);
+        }
+        assert_eq!(lines_from_chars(text, &boxes), vec!["Title", "Author"]);
+    }
+
+    /// Geometry shorter than the text must not cost the text: characters past
+    /// the boxes are emitted, just without gap detection.
+    #[test]
+    fn keeps_every_character_when_geometry_runs_out() {
+        let text = "ATheoryof";
+        let boxes = laid_out(text, &[0], 4.0);
+        let out = lines_from_chars(text, &boxes[..4]).join("");
+        assert!(out.contains("Theoryof"), "text was truncated: {out:?}");
+        assert_eq!(out.replace(' ', ""), text);
     }
 
     #[test]
-    fn a_single_character_run_is_untouched() {
-        let (run, boxes, sizes) = glyphs("A", 10.0, &[], 0.0);
-        assert_eq!(repair_run_text(&run, &boxes, &sizes), "A");
-    }
-
-    #[test]
-    fn repairs_runs_when_building_page_lines() {
-        let (run, boxes, sizes) = glyphs("ATheoryofSaddle", 10.0, &[0, 6, 8], 4.0);
+    fn falls_back_to_the_files_own_lines_without_geometry() {
         assert_eq!(
-            lines_from_page(&[run], &boxes, &sizes),
-            vec!["A Theory of Saddle"]
+            lines_from_chars("Title\ndoi:10.1/x", &[]),
+            vec!["Title", "doi:10.1/x"]
         );
     }
 
     #[test]
-    fn text_from_page_joins_lines_with_newlines() {
-        let runs = vec![run("Title", 72.0, 700.0), run("doi:10.1/x", 72.0, 660.0)];
-        assert_eq!(text_from_page(&runs, &[], &[]), "Title\ndoi:10.1/x");
+    fn no_characters_is_empty() {
+        assert!(lines_from_chars("", &[]).is_empty());
+        assert_eq!(text_from_page("", &[]), "");
     }
 
     #[test]
-    fn no_runs_is_empty_rather_than_a_blank_line() {
-        assert!(lines_from_runs(&[]).is_empty());
-        assert_eq!(text_from_page(&[], &[], &[]), "");
+    fn text_from_page_joins_lines_with_newlines() {
+        let text = "TitleAuthor";
+        let mut boxes = laid_out("Title", &[], 0.0);
+        for i in 0..6 {
+            let x = 72.0 + i as f32 * 5.0;
+            boxes.push([x, 680.0, x + 5.0, 690.0]);
+        }
+        assert_eq!(text_from_page(text, &boxes), "Title\nAuthor");
     }
 
     #[test]

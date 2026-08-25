@@ -845,7 +845,7 @@ fn scan_library_candidate(
         let [w, h] = render::page_display_size(state.bindings, raw, 0).unwrap_or([612.0, 792.0]);
         let extracted = text::extract_page(state.bindings, page, w, h);
         state.bindings.FPDF_ClosePage(page);
-        library::text_from_page(&extracted.runs, &extracted.boxes, &extracted.sizes)
+        library::text_from_page(&extracted.raw, &extracted.boxes)
     };
     state.bindings.FPDF_CloseDocument(raw);
     library::entry_from_first_page(candidate, &text)
