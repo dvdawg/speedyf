@@ -29,9 +29,10 @@ manual QA before a public release.
 - Save As followed by automatic reopen of the materialized document
 - Light/dark/system themes, optional hue-preserving page inversion, and a
   lower-memory cache mode
-- Extensions (v1): third-party workers contributing commands to the palette,
-  isolated, permission-gated, and installable from a folder — see
-  `extension_api.md` and `examples/extensions/hello`
+- Extensions: isolated, permission-gated third-party workers contributing
+  commands, keybindings, sidebar panels, selection and citation actions, and
+  batch document tasks. See `EXTENSIONS.md` to write one, `extension_api.md`
+  for the design, and `examples/extensions/` for working code
 - Live status counters for cache hits and skipped stale render work
 
 ## Quick start
