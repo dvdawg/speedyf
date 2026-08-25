@@ -204,19 +204,44 @@ pub fn find_explicit_citations(text: &str) -> Vec<CitationOccurrence> {
     out
 }
 
+/// arXiv's own DOI prefix. `10.48550/arXiv.2605.01288` and
+/// `arxiv.org/abs/2605.01288` name the same paper, and a reference list often
+/// cites some works one way and some the other. Folded to the arXiv id so both
+/// resolve to one work rather than two.
+const ARXIV_DOI_PREFIX: &str = "10.48550/arxiv.";
+
 /// Parses a citation from a URI, metadata string, or normalized bare id.
 pub fn parse_citation_id(input: &str) -> Option<CitationIdDto> {
     let trimmed = input
         .trim()
         .trim_matches(|ch| matches!(ch, '<' | '>' | '"' | '\''));
     if let Some(found) = find_explicit_citations(trimmed).into_iter().next() {
-        return Some(found.id);
+        return Some(fold_arxiv_doi(found.id));
     }
     let chars: Vec<char> = trimmed.chars().collect();
     if let Some((_, value)) = parse_doi_at(&chars, 0) {
-        return Some(CitationIdDto::Doi(value));
+        return Some(fold_arxiv_doi(CitationIdDto::Doi(value)));
     }
     parse_arxiv_at(&chars, 0).map(|(_, value)| CitationIdDto::ArXiv(value))
+}
+
+/// Rewrite an arXiv DOI as the arXiv id it stands for, leaving anything else
+/// untouched.
+fn fold_arxiv_doi(id: CitationIdDto) -> CitationIdDto {
+    let CitationIdDto::Doi(value) = &id else {
+        return id;
+    };
+    let Some(rest) = value
+        .to_ascii_lowercase()
+        .strip_prefix(ARXIV_DOI_PREFIX)
+        .map(str::to_string)
+    else {
+        return id;
+    };
+    match parse_arxiv_at(&rest.chars().collect::<Vec<_>>(), 0) {
+        Some((_, arxiv)) => CitationIdDto::ArXiv(arxiv),
+        None => id,
+    }
 }
 
 /// Fast filename recognition used before opening a library PDF.
@@ -325,5 +350,58 @@ mod tests {
             serde_json::to_string(&CitationIdDto::ArXiv("2401.12345".into())).unwrap(),
             r#"{"scheme":"arXiv","value":"2401.12345"}"#
         );
+    }
+}
+
+#[cfg(test)]
+mod url_form_tests {
+    use super::*;
+
+    /// Forms taken verbatim from a real arXiv paper's link annotations.
+    #[test]
+    fn parses_the_url_forms_papers_actually_use() {
+        let cases: &[(&str, &str)] = &[
+            ("https://arxiv.org/abs/1905.13655", "1905.13655"),
+            ("https://arxiv.org/abs/1703.00887", "1703.00887"),
+            ("http://arxiv.org/abs/2003.10409v2", "2003.10409"),
+            ("https://doi.org/10.48550/arXiv.2605.01288", "2605.01288"),
+        ];
+        for (uri, expected) in cases {
+            match parse_citation_id(uri) {
+                Some(CitationIdDto::ArXiv(value)) => {
+                    assert_eq!(&value, expected, "{uri}")
+                }
+                other => panic!("{uri} parsed as {other:?}, expected arXiv {expected}"),
+            }
+        }
+    }
+
+    #[test]
+    fn parses_doi_urls_including_the_dx_host() {
+        for (uri, expected) in [
+            (
+                "http://dx.doi.org/10.1073/pnas.1806579115",
+                "10.1073/pnas.1806579115",
+            ),
+            (
+                "https://doi.org/10.1088/1742-5468/abc61e",
+                "10.1088/1742-5468/abc61e",
+            ),
+        ] {
+            match parse_citation_id(uri) {
+                Some(CitationIdDto::Doi(value)) => assert_eq!(value, expected, "{uri}"),
+                other => panic!("{uri} parsed as {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn leaves_unrelated_urls_alone() {
+        for uri in [
+            "https://api.semanticscholar.org/CorpusID:257078637",
+            "http://creativecommons.org/licenses/by/4.0/",
+        ] {
+            assert!(parse_citation_id(uri).is_none(), "{uri}");
+        }
     }
 }

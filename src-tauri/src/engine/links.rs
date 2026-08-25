@@ -52,13 +52,23 @@ pub fn merge_adjacent_web_links(mut spans: Vec<WebLinkSpan>, raw: &[char]) -> Ve
             continue;
         };
         let previous_end = previous.start + previous.len;
-        let joins = span.start >= previous.start
+        let between = raw
+            .get(previous_end as usize..span.start as usize)
+            .unwrap_or_default();
+        let contiguous = span.start >= previous.start
             && span.start <= previous_end
-            && !raw
-                .get(previous_end as usize..span.start as usize)
-                .unwrap_or_default()
-                .iter()
-                .any(|ch| ch.is_whitespace());
+            && !between.iter().any(|ch| ch.is_whitespace());
+        // A URL printed in a bibliography wraps across lines, and PDFium reads
+        // each line as its own link — "https://arxiv.org/" then "abs/1312.6120".
+        // The break between them is whitespace, so the contiguous rule alone
+        // leaves both halves, and neither resolves to anything. Joining across
+        // a break is only allowed when the first half is visibly unfinished and
+        // the second is not a URL in its own right.
+        let wrapped = span.start >= previous_end
+            && between.iter().all(|ch| ch.is_whitespace())
+            && ends_mid_url(&previous.uri)
+            && !starts_a_url(raw, span.start, span.len);
+        let joins = contiguous || wrapped;
 
         if !joins {
             out.push(span);
@@ -73,6 +83,38 @@ pub fn merge_adjacent_web_links(mut spans: Vec<WebLinkSpan>, raw: &[char]) -> Ve
     out
 }
 
+/// Whether a URL looks cut off rather than finished.
+///
+/// A wrap lands on a separator far more often than not, because that is where
+/// typesetting prefers to break a long address — and an address ending in one
+/// is not an address anybody meant to publish.
+fn ends_mid_url(uri: &str) -> bool {
+    let Some(rest) = uri
+        .strip_prefix("https://")
+        .or_else(|| uri.strip_prefix("http://"))
+    else {
+        return false;
+    };
+    match rest.split_once('/') {
+        // Nothing after the host: "https://arxiv.org/" or "https://arxiv.org".
+        None => true,
+        Some((_, path)) => {
+            path.is_empty() || path.ends_with(['/', '.', '-', '_', ':', '=', '?', '&'])
+        }
+    }
+}
+
+/// Whether a span begins a URL of its own, which a continuation never does.
+fn starts_a_url(raw: &[char], start: u32, len: u32) -> bool {
+    let text: String = raw
+        .get(start as usize..(start + len) as usize)
+        .unwrap_or_default()
+        .iter()
+        .collect();
+    let lower = text.trim_start().to_ascii_lowercase();
+    lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("www.")
+}
+
 /// The page text under a span, with trailing sentence punctuation removed.
 ///
 /// A closing bracket is only punctuation when nothing opened it. URLs
@@ -81,7 +123,9 @@ pub fn merge_adjacent_web_links(mut spans: Vec<WebLinkSpan>, raw: &[char]) -> Ve
 /// addresses this merge exists to reassemble.
 fn text_of(raw: &[char], start: u32, len: u32) -> Option<String> {
     let slice = raw.get(start as usize..(start + len) as usize)?;
-    let mut text: String = slice.iter().collect();
+    // Whitespace inside a span only ever comes from a line wrap, and a URL
+    // never contains any, so it is removed rather than preserved.
+    let mut text: String = slice.iter().filter(|ch| !ch.is_whitespace()).collect();
     while let Some(last) = text.chars().last() {
         if !TRAILING_PUNCTUATION.contains(&last) {
             break;
@@ -328,12 +372,16 @@ fn sanitize_runaway_uri_annotations(
         .collect()
 }
 
-fn intersection_over_union(left: [f32; 4], right: [f32; 4]) -> f32 {
+fn intersection_area(left: [f32; 4], right: [f32; 4]) -> f32 {
     let x0 = left[0].max(right[0]);
     let y0 = left[1].max(right[1]);
     let x1 = (left[0] + left[2]).min(right[0] + right[2]);
     let y1 = (left[1] + left[3]).min(right[1] + right[3]);
-    let intersection = (x1 - x0).max(0.0) * (y1 - y0).max(0.0);
+    (x1 - x0).max(0.0) * (y1 - y0).max(0.0)
+}
+
+fn intersection_over_union(left: [f32; 4], right: [f32; 4]) -> f32 {
+    let intersection = intersection_area(left, right);
     if intersection <= 0.0 {
         return 0.0;
     }
@@ -345,14 +393,36 @@ fn intersection_over_union(left: [f32; 4], right: [f32; 4]) -> f32 {
     }
 }
 
+/// How much of a new link may sit inside an existing one before it is treated
+/// as part of it rather than as a link of its own.
+const CONTAINED_IN_EXISTING: f32 = 0.60;
+
 fn push_deduplicated(links: &mut Vec<LinkDto>, link: LinkDto) {
-    if links
-        .iter()
-        .any(|existing| intersection_over_union(existing.rect, link.rect) > 0.60)
-    {
+    if links.iter().any(|existing| {
+        // Same link, seen twice.
+        intersection_over_union(existing.rect, link.rect) > 0.60
+            // Or: this one sits inside a link already found. Annotation links
+            // are pushed first and carry the URL the author encoded; PDFium's
+            // text scanner then reads the *printed* URL and, where it wraps or
+            // hits punctuation, stops early — yielding "https://arxiv.org/"
+            // over the first part of an address already covered in full.
+            // Those fragments overlap the real link far too little for an
+            // intersection-over-union test to catch, because they are a small
+            // piece of it rather than a near-duplicate of it.
+            || contained_fraction(link.rect, existing.rect) > CONTAINED_IN_EXISTING
+    }) {
         return;
     }
     links.push(link);
+}
+
+/// What share of `inner` lies within `outer`.
+fn contained_fraction(inner: [f32; 4], outer: [f32; 4]) -> f32 {
+    let area = inner[2] * inner[3];
+    if area <= 0.0 {
+        return 0.0;
+    }
+    intersection_area(inner, outer) / area
 }
 
 fn normalize_destination(
@@ -931,6 +1001,147 @@ mod weblink_tests {
         assert_eq!(merged.len(), 1);
         // Rebuild failed, so the first piece's URL stands rather than nothing.
         assert_eq!(merged[0].uri, "abc");
+    }
+
+    /// The real case: a bibliography prints the URL and it wraps, so PDFium
+    /// reads each line as its own link and neither half resolves to anything.
+    #[test]
+    fn joins_a_url_wrapped_across_a_line() {
+        let raw = chars("https://arxiv.org/\nabs/1312.6120");
+        let merged = merge_adjacent_web_links(
+            vec![
+                span(0, 18, "https://arxiv.org/"),
+                span(19, 13, "abs/1312.6120"),
+            ],
+            &raw,
+        );
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].uri, "https://arxiv.org/abs/1312.6120");
+    }
+
+    #[test]
+    fn joins_a_doi_wrapped_after_the_prefix() {
+        let raw = chars("http://dx.doi.org/10.\n1073/pnas.1806579115");
+        let merged = merge_adjacent_web_links(
+            vec![
+                span(0, 21, "http://dx.doi.org/10."),
+                span(22, 20, "1073/pnas.1806579115"),
+            ],
+            &raw,
+        );
+        assert_eq!(merged[0].uri, "http://dx.doi.org/10.1073/pnas.1806579115");
+    }
+
+    /// Two complete URLs on consecutive lines are two URLs.
+    #[test]
+    fn does_not_join_two_finished_urls_across_a_break() {
+        let raw = chars("https://a.example/x\nhttps://b.example/y");
+        let merged = merge_adjacent_web_links(
+            vec![
+                span(0, 19, "https://a.example/x"),
+                span(20, 19, "https://b.example/y"),
+            ],
+            &raw,
+        );
+        assert_eq!(merged.len(), 2);
+    }
+
+    /// A finished URL followed by ordinary prose must not swallow the prose.
+    #[test]
+    fn does_not_join_when_the_first_url_is_complete() {
+        let raw = chars("https://e.com/paper\nand then some words");
+        let merged = merge_adjacent_web_links(
+            vec![span(0, 19, "https://e.com/paper"), span(20, 3, "and")],
+            &raw,
+        );
+        assert_eq!(merged.len(), 2);
+    }
+
+    /// A wrap where the next line is itself a URL is two links, however
+    /// unfinished the first looks.
+    #[test]
+    fn does_not_join_an_unfinished_url_to_another_url() {
+        let raw = chars("https://a.example/\nhttps://b.example/y");
+        let merged = merge_adjacent_web_links(
+            vec![
+                span(0, 18, "https://a.example/"),
+                span(19, 19, "https://b.example/y"),
+            ],
+            &raw,
+        );
+        assert_eq!(merged.len(), 2);
+    }
+
+    fn uri_link(rect: [f32; 4], uri: &str) -> LinkDto {
+        LinkDto {
+            rect,
+            target: LinkTarget::Uri {
+                uri: uri.into(),
+                citation: None,
+            },
+        }
+    }
+
+    /// The real failure: PDFium reads the *printed* URL in a bibliography and
+    /// stops where it wraps, producing "https://arxiv.org/" over the first part
+    /// of an address the annotation already covers in full. The fragment is a
+    /// small piece of the real link, so intersection-over-union is nowhere near
+    /// a match and it survived as a second, broken link.
+    #[test]
+    fn drops_a_fragment_sitting_inside_a_link_already_found() {
+        let mut links = vec![uri_link(
+            [72.0, 700.0, 160.0, 10.0],
+            "https://arxiv.org/abs/1312.6120",
+        )];
+        push_deduplicated(
+            &mut links,
+            uri_link([72.0, 700.0, 40.0, 10.0], "https://arxiv.org/"),
+        );
+        assert_eq!(links.len(), 1);
+        assert!(
+            matches!(&links[0].target, LinkTarget::Uri { uri, .. } if uri.ends_with("1312.6120"))
+        );
+    }
+
+    #[test]
+    fn still_drops_a_near_duplicate_of_the_same_link() {
+        let mut links = vec![uri_link([72.0, 700.0, 100.0, 10.0], "https://e.com/a")];
+        push_deduplicated(
+            &mut links,
+            uri_link([73.0, 700.0, 99.0, 10.0], "https://e.com/a"),
+        );
+        assert_eq!(links.len(), 1);
+    }
+
+    /// Two links on the same line must both survive: a reference list puts
+    /// several addresses side by side.
+    #[test]
+    fn keeps_a_separate_link_beside_an_existing_one() {
+        let mut links = vec![uri_link([72.0, 700.0, 60.0, 10.0], "https://a.example")];
+        push_deduplicated(
+            &mut links,
+            uri_link([140.0, 700.0, 60.0, 10.0], "https://b.example"),
+        );
+        assert_eq!(links.len(), 2);
+    }
+
+    /// Barely touching is not containment.
+    #[test]
+    fn keeps_a_link_that_only_grazes_another() {
+        let mut links = vec![uri_link([72.0, 700.0, 60.0, 10.0], "https://a.example")];
+        push_deduplicated(
+            &mut links,
+            uri_link([128.0, 700.0, 60.0, 10.0], "https://b.example"),
+        );
+        assert_eq!(links.len(), 2);
+    }
+
+    #[test]
+    fn a_zero_area_link_is_not_treated_as_contained() {
+        assert_eq!(
+            contained_fraction([72.0, 700.0, 0.0, 0.0], [0.0, 0.0, 500.0, 500.0]),
+            0.0
+        );
     }
 
     #[test]
