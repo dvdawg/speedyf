@@ -35,6 +35,5 @@ Three things worth copying:
 
 ## A note on empty results
 
-Citations come from link annotations in the PDF, not from the text. Papers
-older than roughly 2000 generally have none, so an empty list usually means the
-file has no links rather than that the paper cites nothing.
+References are found from links and identifiers in the document. A paper whose
+bibliography carries neither will show nothing.

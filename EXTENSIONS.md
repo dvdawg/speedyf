@@ -251,7 +251,11 @@ cannot reach a tab the user is not looking at. Pages are zero-based.
 | `settings.get`             | `{ key }`               | `string`                                    | —                         |
 | `ui.render`                | `{ panel, ui }`         | `{ rendered }`                              | —                         |
 
-`kind` is `'doi'` or `'arxiv'`. `library.search` works with no document open;
+`kind` is `'doi'` or `'arxiv'`. `document.links` reports **every** outbound
+link, including the many references cited by URL alone — a JMLR paper, a book on
+Google Books, a Semantic Scholar entry. Its `citation` is filled in only for the
+two schemes SpeedyF can resolve against your library, which is a statement about
+what can be matched rather than about what counts as a reference. `library.search` works with no document open;
 everything else rejects with "no document is open".
 
 `render.page` defaults to `scaleMilli: 2000` (roughly 2×), clamped to

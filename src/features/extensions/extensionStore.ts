@@ -28,6 +28,7 @@ import {
   toDocumentInfo,
   toFigures,
   toLibraryHits,
+  toLinks,
   toOutline,
   toPageText,
   toResolvedCitation,
@@ -587,6 +588,13 @@ async function readApi(api: string, args: unknown): Promise<unknown> {
       const src = doc.pages[page]?.srcIndex;
       if (src === undefined || src === null) return '';
       return toPageText(await engine.getTextLayout(doc.docId, src));
+    }
+
+    case 'document.links': {
+      const page = readPageArg(args, doc.pages.length);
+      const src = doc.pages[page]?.srcIndex;
+      if (src === undefined || src === null) return [];
+      return toLinks(await engine.getPageLinks(doc.docId, src));
     }
 
     case 'citations.list': {

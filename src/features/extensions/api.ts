@@ -72,6 +72,23 @@ export interface ApiResolvedCitation {
   pageCount: number | null;
 }
 
+/** An outbound link the document carries.
+ *
+ * Reported whether or not SpeedyF recognises an identifier in it, because a
+ * reference list is full of works cited by URL alone — a JMLR paper, a book on
+ * Google Books, a Semantic Scholar entry. `citation` is filled in for the two
+ * schemes SpeedyF can resolve against your library and is null otherwise, which
+ * is a statement about what can be matched, not about what counts as a
+ * reference.
+ */
+export interface ApiLink {
+  uri: string;
+  /** Lowercase host, or null when the link has none (a `mailto:`). */
+  host: string | null;
+  page: number;
+  citation: ApiCitation | null;
+}
+
 export interface ApiLibraryHit {
   name: string;
   title: string | null;
@@ -149,6 +166,41 @@ export function toCitations(links: PageLinks): ApiCitation[] {
   return out;
 }
 
+/** Outbound links on one page, deduplicated by destination.
+ *
+ * The same URL printed twice on a page is one link, in the same way the same
+ * work cited twice in a paragraph is one citation. */
+export function toLinks(links: PageLinks): ApiLink[] {
+  const seen = new Set<string>();
+  const out: ApiLink[] = [];
+  for (const link of links.links) {
+    if (link.target.kind !== 'uri') continue;
+    const uri = link.target.uri;
+    if (seen.has(uri)) continue;
+    seen.add(uri);
+    let host: string | null = null;
+    try {
+      host = new URL(uri).hostname.toLowerCase() || null;
+    } catch {
+      // A link the document carries need not be a URL SpeedyF can parse; it is
+      // still reported, just without a host to group it by.
+    }
+    out.push({
+      uri,
+      host,
+      page: links.src,
+      citation: link.target.citation
+        ? {
+            kind: toCitationKind(link.target.citation.scheme),
+            value: link.target.citation.value,
+            page: links.src,
+          }
+        : null,
+    });
+  }
+  return out;
+}
+
 /** A resolution result. `null` — the engine's "not in your library" — becomes an
  * explicit `inLibrary: false` rather than a null the caller has to interpret. */
 export function toResolvedCitation(resolved: ResolvedCitation | null): ApiResolvedCitation {
@@ -182,6 +234,7 @@ export const API_PERMISSIONS: Readonly<Record<string, string>> = {
   'document.outline': 'document:read',
   'document.figures': 'document:read',
   'citations.list': 'citations:read',
+  'document.links': 'document:read',
   'citations.resolve': 'citations:read',
   'library.search': 'library:read',
   // Navigation, so it sits under the same permission as running SpeedyF's own

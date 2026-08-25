@@ -148,6 +148,22 @@ fn parse_arxiv_at(chars: &[char], at: usize) -> Option<(usize, String)> {
     parse_modern_arxiv_at(chars, at).or_else(|| parse_legacy_arxiv_at(chars, at))
 }
 
+/// Whitespace a label may put between itself and its identifier.
+///
+/// Bibliographies write "doi: 10.1090/..." and "arXiv: 2301.12345" as often as
+/// they write them closed up, and a wrapped line puts a break there too.
+/// Bounded so a lone "doi:" cannot reach across a paragraph and claim the next
+/// number it finds.
+const MAX_PREFIX_GAP: usize = 3;
+
+fn skip_gap(chars: &[char], mut at: usize) -> usize {
+    let limit = at + MAX_PREFIX_GAP;
+    while at < limit && chars.get(at).is_some_and(|ch| ch.is_whitespace()) {
+        at += 1;
+    }
+    at
+}
+
 fn prefixed_at(chars: &[char], at: usize) -> Option<(usize, CitationIdDto)> {
     // Scheme-less forms are here for the same reason the arXiv list has them:
     // a URL printed in a bibliography wraps, and the scheme ends up on the
@@ -166,7 +182,7 @@ fn prefixed_at(chars: &[char], at: usize) -> Option<(usize, CitationIdDto)> {
     ];
     for prefix in DOI_PREFIXES {
         if starts_ascii_case_insensitive(chars, at, prefix) {
-            let value_at = at + prefix.chars().count();
+            let value_at = skip_gap(chars, at + prefix.chars().count());
             if let Some((end, value)) = parse_doi_at(chars, value_at) {
                 return Some((end, CitationIdDto::Doi(value)));
             }
@@ -184,7 +200,7 @@ fn prefixed_at(chars: &[char], at: usize) -> Option<(usize, CitationIdDto)> {
     ];
     for prefix in ARXIV_PREFIXES {
         if starts_ascii_case_insensitive(chars, at, prefix) {
-            let value_at = at + prefix.chars().count();
+            let value_at = skip_gap(chars, at + prefix.chars().count());
             if let Some((end, value)) = parse_arxiv_at(chars, value_at) {
                 return Some((end, CitationIdDto::ArXiv(value)));
             }
@@ -405,6 +421,34 @@ mod url_form_tests {
                 other => panic!("{text} parsed as {other:?}"),
             }
         }
+    }
+
+    /// Taken from a real reference list: "…1959. doi: 10.1090/S0002-…". The
+    /// space after the label meant the identifier was never read.
+    #[test]
+    fn reads_an_identifier_separated_from_its_label() {
+        for (text, expected) in [
+            (
+                "doi: 10.1090/S0002-9947-1959-0110078-1",
+                "10.1090/s0002-9947-1959-0110078-1",
+            ),
+            ("doi:  10.1162/neco_a_00142", "10.1162/neco_a_00142"),
+        ] {
+            match parse_citation_id(text) {
+                Some(CitationIdDto::Doi(value)) => assert_eq!(value, expected, "{text}"),
+                other => panic!("{text} parsed as {other:?}"),
+            }
+        }
+        match parse_citation_id("arXiv: 2301.12345") {
+            Some(CitationIdDto::ArXiv(value)) => assert_eq!(value, "2301.12345"),
+            other => panic!("spaced arXiv label parsed as {other:?}"),
+        }
+    }
+
+    /// A label must not reach across a paragraph for the next number it sees.
+    #[test]
+    fn does_not_reach_past_a_short_gap() {
+        assert!(parse_citation_id("doi:     10.1090/S0002-9947").is_none());
     }
 
     #[test]

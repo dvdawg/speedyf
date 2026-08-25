@@ -9,6 +9,7 @@ import {
   toCitations,
   toFigures,
   toLibraryHits,
+  toLinks,
   toOutline,
   toPageText,
   toResolvedCitation,
@@ -181,6 +182,69 @@ describe('toCitations', () => {
       ])
     );
     expect(result[0]!.kind).toBe('arxiv');
+  });
+});
+
+describe('toLinks', () => {
+  const uri = (
+    u: string,
+    citation: PageLinks['links'][number]['target'] extends never ? never : unknown = null
+  ) => ({
+    rect: [0, 0, 1, 1] as [number, number, number, number],
+    target: { kind: 'uri' as const, uri: u, citation: citation as never },
+  });
+
+  it('reports links that carry no identifier, which is most of a reference list', () => {
+    const result = toLinks({
+      src: 7,
+      links: [
+        uri('https://jmlr.org/papers/v20/18-598.html'),
+        uri('https://books.google.com/books?id=abc'),
+      ],
+    } as PageLinks);
+    expect(result.map((l) => l.host)).toEqual(['jmlr.org', 'books.google.com']);
+    expect(result.every((l) => l.citation === null)).toBe(true);
+    expect(result[0]!.page).toBe(7);
+  });
+
+  it('fills in the citation for the schemes SpeedyF recognises', () => {
+    const result = toLinks({
+      src: 7,
+      links: [
+        {
+          rect: [0, 0, 1, 1],
+          target: {
+            kind: 'uri',
+            uri: 'https://arxiv.org/abs/1706.03762',
+            citation: { scheme: 'arXiv', value: '1706.03762' },
+          },
+        },
+      ],
+    } as PageLinks);
+    expect(result[0]!.citation).toEqual({ kind: 'arxiv', value: '1706.03762', page: 7 });
+  });
+
+  /** The same URL printed twice on a page is one link. */
+  it('deduplicates by destination', () => {
+    const result = toLinks({
+      src: 0,
+      links: [uri('https://jmlr.org/a'), uri('https://jmlr.org/a')],
+    } as PageLinks);
+    expect(result).toHaveLength(1);
+  });
+
+  it('reports a link with no parseable host rather than dropping it', () => {
+    const result = toLinks({ src: 0, links: [uri('mailto:someone@example.com')] } as PageLinks);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.host).toBe(null);
+  });
+
+  it('ignores internal links', () => {
+    const result = toLinks({
+      src: 0,
+      links: [{ rect: [0, 0, 1, 1], target: { kind: 'internal', page: 3, x: null, y: null } }],
+    } as PageLinks);
+    expect(result).toEqual([]);
   });
 });
 
