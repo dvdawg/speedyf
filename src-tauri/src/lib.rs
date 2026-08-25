@@ -227,7 +227,11 @@ pub fn run() {
                 let resources = app.path().resource_dir().ok();
                 if let Some(builtin_root) = extensions::builtin::root(resources.as_deref()) {
                     let ids = extensions::builtin::ids(&builtin_root);
-                    log::info!("{} built-in extension(s) at {}", ids.len(), builtin_root.display());
+                    log::info!(
+                        "{} built-in extension(s) at {}",
+                        ids.len(),
+                        builtin_root.display()
+                    );
                     for id in extensions::builtin::prune_shadowed(&user_root, &ids) {
                         log::info!("removed hand-installed \"{id}\" — it ships with SpeedyF now");
                     }

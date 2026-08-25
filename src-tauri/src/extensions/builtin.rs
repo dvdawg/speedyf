@@ -62,7 +62,9 @@ pub fn candidate_roots(resource_dir: Option<&Path>) -> Vec<PathBuf> {
 /// `None` is an ordinary outcome, not a failure: a build with the resource
 /// omitted still runs, with user-installed extensions only.
 pub fn root(resource_dir: Option<&Path>) -> Option<PathBuf> {
-    candidate_roots(resource_dir).into_iter().find(|d| d.is_dir())
+    candidate_roots(resource_dir)
+        .into_iter()
+        .find(|d| d.is_dir())
 }
 
 /// Ids of the built-ins present in `root`, sorted.
@@ -257,7 +259,10 @@ mod tests {
 
         assert_eq!(
             ids(root),
-            vec!["speedyf.notes".to_string(), "speedyf.references".to_string()]
+            vec![
+                "speedyf.notes".to_string(),
+                "speedyf.references".to_string()
+            ]
         );
     }
 

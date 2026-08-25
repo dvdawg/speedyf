@@ -552,7 +552,9 @@ fn builtin_root(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
 }
 
 fn builtin_ids(app: &tauri::AppHandle) -> Vec<String> {
-    builtin_root(app).map(|r| builtin::ids(&r)).unwrap_or_default()
+    builtin_root(app)
+        .map(|r| builtin::ids(&r))
+        .unwrap_or_default()
 }
 
 fn is_builtin(app: &tauri::AppHandle, id: &str) -> bool {
@@ -859,11 +861,10 @@ pub async fn install_extension_from_git(
     // Cloning is network-bound and can take seconds; off the main thread so the
     // UI is not blocked behind someone's slow connection.
     let cloned = root.clone();
-    let entry = tauri::async_runtime::spawn_blocking(move || {
-        extensions::install_from_git(&cloned, &url)
-    })
-    .await
-    .map_err(|e| AppError::Internal(format!("install task failed: {e}")))??;
+    let entry =
+        tauri::async_runtime::spawn_blocking(move || extensions::install_from_git(&cloned, &url))
+            .await
+            .map_err(|e| AppError::Internal(format!("install task failed: {e}")))??;
     refuse_builtin_collision(&app, &root, entry)
 }
 
@@ -1030,7 +1031,12 @@ mod icon_tests {
     #[test]
     fn a_non_image_is_refused_whatever_the_manifest_calls_it() {
         let tmp = tempfile::tempdir().unwrap();
-        plant_icon(tmp.path(), "dev.speedyf.thing", "worker.js", b"self.close()");
+        plant_icon(
+            tmp.path(),
+            "dev.speedyf.thing",
+            "worker.js",
+            b"self.close()",
+        );
         assert!(icon_data_uri(tmp.path(), "dev.speedyf.thing", "worker.js").is_none());
     }
 

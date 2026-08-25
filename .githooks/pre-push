@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Runs the same gates CI runs, so a red pipeline is caught here instead of on
+# GitHub. Everything except the two builds is cheap; the Rust gates are the ones
+# that keep breaking, because nothing else runs them locally.
+#
+# Bypass with `git push --no-verify` when you need to push known-broken work.
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+echo "pre-push: running CI gates locally (skip with --no-verify)"
+
+# Mirrors .github/workflows/ci.yml. `pnpm tauri build --no-bundle` is the one CI
+# step left out: it takes ~13 min, and clippy --all-targets already typechecks
+# every Rust target it would compile.
+run() {
+  echo ""
+  echo "==> $*"
+  if ! "$@"; then
+    echo ""
+    echo "pre-push: FAILED at: $*"
+    echo "pre-push: fix it, or re-run with 'git push --no-verify' to override."
+    exit 1
+  fi
+}
+
+run pnpm lint
+run pnpm format:check
+run pnpm typecheck
+run pnpm test
+run pnpm build
+run cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+run cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
+run cargo test --manifest-path src-tauri/Cargo.toml
+
+echo ""
+echo "pre-push: all CI gates passed"
