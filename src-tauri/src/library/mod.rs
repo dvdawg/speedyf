@@ -530,12 +530,6 @@ pub fn text_from_page(runs: &[TextRun], boxes: &[[f32; 4]], sizes: &[f32]) -> St
     lines_from_page(runs, boxes, sizes).join("\n")
 }
 
-/// The same text as one string, lines separated by newlines, for the callers
-/// that scan it for identifiers.
-pub fn text_from_runs(runs: &[TextRun]) -> String {
-    lines_from_runs(runs).join("\n")
-}
-
 pub fn entry_from_filename(candidate: &ScanCandidate) -> Option<LibraryEntry> {
     let name = candidate.path.file_name()?.to_string_lossy();
     let id = citation_from_filename(&name)?;
@@ -822,15 +816,15 @@ mod tests {
     }
 
     #[test]
-    fn text_from_runs_joins_lines_with_newlines() {
+    fn text_from_page_joins_lines_with_newlines() {
         let runs = vec![run("Title", 72.0, 700.0), run("doi:10.1/x", 72.0, 660.0)];
-        assert_eq!(text_from_runs(&runs), "Title\ndoi:10.1/x");
+        assert_eq!(text_from_page(&runs, &[], &[]), "Title\ndoi:10.1/x");
     }
 
     #[test]
     fn no_runs_is_empty_rather_than_a_blank_line() {
         assert!(lines_from_runs(&[]).is_empty());
-        assert_eq!(text_from_runs(&[]), "");
+        assert_eq!(text_from_page(&[], &[], &[]), "");
     }
 
     #[test]
