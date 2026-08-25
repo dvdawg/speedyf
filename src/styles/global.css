@@ -3338,3 +3338,11 @@ body.is-resizing-sidebar {
 body.is-resizing-sidebar * {
   pointer-events: none;
 }
+
+/* Every rectangle of one link highlights together. A reference wrapping across
+   a line is several rectangles, and lighting only the piece under the cursor
+   makes one link look like two. */
+.citation-hotspot.is-linked {
+  border-bottom-color: color-mix(in srgb, var(--accent) 75%, transparent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}

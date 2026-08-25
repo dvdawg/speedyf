@@ -44,6 +44,9 @@ const TRAILING_PUNCTUATION: &[char] = &['.', ',', ';', ':', ')', ']', '}', '"', 
 /// reports are already normalised and may not join back cleanly.
 pub fn merge_adjacent_web_links(mut spans: Vec<WebLinkSpan>, raw: &[char]) -> Vec<WebLinkSpan> {
     spans.sort_by_key(|span| span.start);
+    for span in spans.iter_mut() {
+        extend_truncated_span(span, raw);
+    }
     let mut out: Vec<WebLinkSpan> = Vec::with_capacity(spans.len());
 
     for span in spans {
@@ -81,6 +84,61 @@ pub fn merge_adjacent_web_links(mut spans: Vec<WebLinkSpan>, raw: &[char]) -> Ve
         }
     }
     out
+}
+
+/// Characters that may appear in a URL path or query.
+fn is_url_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || "-._~:/?#@!$&'*+,;=%()".contains(ch)
+}
+
+/// Continue a link that stops mid-URL into the text that follows it.
+///
+/// PDFium's scanner ends a link where the printed address wraps or hits a
+/// character it does not accept, and the remainder is usually not a URL in its
+/// own right — "abs/1312.6120" has no scheme — so there is no second link to
+/// join it to. Merging spans cannot help; the tail has to be read out of the
+/// page text.
+///
+/// The extension is kept only when it yields a *better citation* than the
+/// fragment did. Reading forward through arbitrary text is a blunt instrument —
+/// the next line of a reference list is another reference — so a result that
+/// does not resolve to a DOI or arXiv id is discarded and the original stands.
+fn extend_truncated_span(span: &mut WebLinkSpan, raw: &[char]) {
+    if !ends_mid_url(&span.uri) {
+        return;
+    }
+    let mut index = (span.start + span.len) as usize;
+    // One wrap only. Anything more separated than a single line break is not a
+    // continuation of this address.
+    let mut crossed_break = false;
+    while index < raw.len() && raw[index].is_whitespace() {
+        if crossed_break {
+            return;
+        }
+        crossed_break = true;
+        index += 1;
+    }
+    let continuation = index;
+    while index < raw.len() && is_url_char(raw[index]) {
+        index += 1;
+    }
+    if index == continuation {
+        return;
+    }
+
+    let len = (index - span.start as usize) as u32;
+    let Some(text) = text_of(raw, span.start, len) else {
+        return;
+    };
+    let before = parse_citation_id(&span.uri);
+    let after = parse_citation_id(&text);
+    // Only an improvement counts: a fragment that already resolved to the same
+    // id gains nothing, and one that resolves to nothing afterwards has been
+    // extended into prose.
+    if after.is_some() && after != before {
+        span.len = len;
+        span.uri = text;
+    }
 }
 
 /// Whether a URL looks cut off rather than finished.
@@ -1142,6 +1200,49 @@ mod weblink_tests {
             contained_fraction([72.0, 700.0, 0.0, 0.0], [0.0, 0.0, 500.0, 500.0]),
             0.0
         );
+    }
+
+    /// The case from the References panel: a truncated DOI listed beside the
+    /// full one as if they were two different works. There is no second link
+    /// to merge with — the remainder is not a URL — so the tail has to be read
+    /// out of the page text.
+    #[test]
+    fn extends_a_doi_cut_off_mid_suffix() {
+        let raw = chars("https://doi.org/10.1162/neco_a_00142 and more");
+        let merged =
+            merge_adjacent_web_links(vec![span(0, 29, "https://doi.org/10.1162/neco_")], &raw);
+        assert_eq!(merged[0].uri, "https://doi.org/10.1162/neco_a_00142");
+    }
+
+    #[test]
+    fn extends_an_arxiv_link_across_a_wrap() {
+        let raw = chars("https://arxiv.org/\nabs/1312.6120 next");
+        let merged = merge_adjacent_web_links(vec![span(0, 18, "https://arxiv.org/")], &raw);
+        assert_eq!(merged[0].uri, "https://arxiv.org/abs/1312.6120");
+    }
+
+    /// Reading forward through arbitrary text is blunt: the next line of a
+    /// reference list is another reference, not a continuation.
+    #[test]
+    fn leaves_a_fragment_alone_when_the_tail_is_not_a_citation() {
+        let raw = chars("https://arxiv.org/\n[12] Smith, J. Some Title");
+        let merged = merge_adjacent_web_links(vec![span(0, 18, "https://arxiv.org/")], &raw);
+        assert_eq!(merged[0].uri, "https://arxiv.org/");
+    }
+
+    #[test]
+    fn does_not_extend_across_more_than_one_break() {
+        let raw = chars("https://arxiv.org/\n\nabs/1312.6120");
+        let merged = merge_adjacent_web_links(vec![span(0, 18, "https://arxiv.org/")], &raw);
+        assert_eq!(merged[0].uri, "https://arxiv.org/");
+    }
+
+    #[test]
+    fn leaves_a_complete_url_unextended() {
+        let raw = chars("https://arxiv.org/abs/1312.6120 and more words");
+        let merged =
+            merge_adjacent_web_links(vec![span(0, 31, "https://arxiv.org/abs/1312.6120")], &raw);
+        assert_eq!(merged[0].uri, "https://arxiv.org/abs/1312.6120");
     }
 
     #[test]
