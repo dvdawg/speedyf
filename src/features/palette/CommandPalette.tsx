@@ -12,8 +12,10 @@ import { activateTab } from '../document/tabsController';
 import { jumpToAnchor } from '../outline/jumpToAnchor';
 import { flattenOutline } from '../outline/structureStore';
 import { closePalette, mostUsed, paletteOpen, recordUse, usesOf } from './paletteStore';
+import { canonicalChord } from '../extensions/capabilities';
 import {
   documentTasks,
+  extensionBindings,
   extensionCommands,
   runExtensionCommand,
   runExtensionAction,
@@ -55,13 +57,23 @@ export default function CommandPalette() {
 
     // Contributed commands. They are ordinary candidates: the palette does
     // not know an extension from a built-in, which is the point of the command
-    // registry being data rather than a switch statement.
+    // registry being data rather than a switch statement — and that includes
+    // showing the key that runs them, which is how anyone finds out an
+    // extension bound one.
+    const boundKey = new Map(
+      extensionBindings().map((binding) => [
+        `${binding.extensionId}/${binding.command}`,
+        canonicalChord(binding.chord),
+      ])
+    );
     for (const command of extensionCommands()) {
+      const chord = boundKey.get(command.id);
       items.push({
         key: command.id,
         title: command.title,
         group: 'Extensions',
         keywords: command.keywords,
+        ...(chord ? { shortcut: formatShortcut(chord) } : {}),
         enabled: true,
         run: () => void runExtensionCommand(command.id),
       });

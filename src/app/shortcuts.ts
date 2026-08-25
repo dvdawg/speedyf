@@ -15,7 +15,7 @@ import { modal } from '../stores/modalStore';
 import { openPalette, paletteOpen } from '../features/palette/paletteStore';
 import { runCommand, type CommandCtx } from './commands';
 import { canonicalChord, chordMatches } from '../features/extensions/capabilities';
-import { extensionBindings, runExtensionCommand } from '../features/extensions/extensionStore';
+import { extensionBindings, runBoundCommand } from '../features/extensions/extensionStore';
 
 const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.userAgent);
 
@@ -191,7 +191,7 @@ export function installShortcuts(): () => void {
       for (const binding of extensionBindings()) {
         if (!chordMatches(binding.chord, e, mod)) continue;
         e.preventDefault();
-        void runExtensionCommand(`${binding.extensionId}/${binding.command}`);
+        void runBoundCommand(binding.extensionId, binding.command);
         return;
       }
     }

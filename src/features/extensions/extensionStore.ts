@@ -16,6 +16,7 @@ import type { CallMessage } from './protocol';
 import { COMMANDS, runCommand } from '../../app/commands';
 import { activeTab } from '../../stores/tabsStore';
 import { reservedChords } from '../../app/shortcuts';
+import { selectedText } from '../../stores/selectionStore';
 import { canRunGroup, refusalReason, resolveBindings, type ExtensionBinding } from './capabilities';
 import {
   apiRefusalReason,
@@ -674,6 +675,37 @@ export async function contributedTextFor(document: string): Promise<{
  */
 export async function forgetContributedText(document: string): Promise<void> {
   await invoke('forget_contributed_text', { document });
+}
+
+/** Run a command reached by its keybinding.
+ *
+ * A key press is as explicit an instruction as picking a menu item, so a
+ * command that is *also* declared as a selection action is given the current
+ * selection here, exactly as it would be from the palette. Without this a
+ * hotkey for "do something with what I highlighted" fires with nothing
+ * attached, which is the obvious thing to bind a key to and the one thing that
+ * would not work.
+ *
+ * The narrow-path property is preserved: the extension still receives only
+ * what the user picked, and still needs no read permission for it.
+ */
+export async function runBoundCommand(extensionId: string, command: string): Promise<void> {
+  const extension = state.extensions.find((e) => e.id === extensionId);
+  if (!extension || !extension.enabled) return;
+  const qualified = `${extensionId}/${command}`;
+  const isSelectionAction = extension.selectionActions.some((a) => a.id === qualified);
+  const selection = isSelectionAction ? selectedText() : '';
+  if (isSelectionAction && selection.length === 0) {
+    // Nothing highlighted. Reported against the extension rather than thrown
+    // at a keypress nobody is waiting on.
+    appendLog(extensionId, 'info', `${command}: nothing is selected`);
+    return;
+  }
+  try {
+    await hostFor(extension).invoke(command, selection ? { value: selection } : undefined);
+  } catch (err) {
+    appendLog(extensionId, 'error', err instanceof Error ? err.message : String(err));
+  }
 }
 
 /** Stop an extension's worker without touching what is installed. */

@@ -748,7 +748,10 @@ textarea:focus-visible {
 
 /* ---------- sidebar ---------- */
 .sidebar {
+  /* Width is set inline from uiStore; this is only the pre-hydration value. */
   width: 188px;
+  position: relative;
+  flex: none;
   display: flex;
   flex-direction: column;
   background: var(--bg-elev);
@@ -762,6 +765,12 @@ textarea:focus-visible {
   gap: 2px;
   padding: 6px;
   border-bottom: 1px solid var(--border);
+  /* Wraps because contributed panels share this strip. Five built-ins need
+     148px of the 176px available; each extension panel adds 30px, so three of
+     them overflow by more than a third of the width. Wrapping is a stopgap —
+     the strip is single-select navigation and was never meant to hold an
+     unbounded number of things. */
+  flex-wrap: wrap;
 }
 
 .sidebar-scroll {
@@ -3181,4 +3190,49 @@ textarea:focus-visible {
   margin: 0 0 10px;
   color: var(--text-dim);
   font-size: 11px;
+}
+
+.ext-panel-initial {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  text-transform: capitalize;
+}
+
+/* Sidebar resize handle. Sits over the border rather than taking layout width,
+   so widening the grab area does not move the content beside it. */
+.sidebar-resize {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 3;
+}
+
+.sidebar-resize:hover,
+.sidebar-resize:focus-visible {
+  background: var(--accent-soft);
+  outline: none;
+}
+
+.sidebar-resize:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+/* While dragging, nothing else should react to the pointer — otherwise a drag
+   that strays over the document selects text on the way past. */
+body.is-resizing-sidebar {
+  cursor: col-resize;
+  user-select: none;
+}
+
+body.is-resizing-sidebar * {
+  pointer-events: none;
 }

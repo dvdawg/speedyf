@@ -68,6 +68,12 @@
         "default": "blank line",
         "options": ["blank line", "newline", "dash rule"]
       }
+    ],
+    "keybindings": [
+      {
+        "command": "keep",
+        "key": "mod+k"
+      }
     ]
   }
 }
