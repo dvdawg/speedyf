@@ -1107,6 +1107,58 @@ textarea:focus-visible {
   outline: 1.5px solid var(--hit-current-edge);
 }
 
+/* Where a jump was aiming.
+
+   Brighter than a search hit and gone in a moment, because it answers a
+   different question: a search hit says "here is every match, they persist
+   while you read", and this says "here, now" and then stops saying it. Left
+   behind, one would accumulate per jump until the page was covered.
+
+   `box-shadow` rather than a border, so the mark does not change the size of
+   what it is marking, and the glow reaches past the glyphs enough to catch the
+   eye from the sidebar. */
+.reveal-mark {
+  position: absolute;
+  border-radius: 3px;
+  background: var(--hit);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  pointer-events: none;
+  animation: reveal-mark 2.4s ease-out forwards;
+}
+
+@keyframes reveal-mark {
+  0% {
+    opacity: 0;
+  }
+  8% {
+    opacity: 1;
+  }
+  55% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* A reader who has asked for less motion still needs to be shown the place;
+   they just should not be shown it by something that moves. It holds and then
+   goes, with no fade to track. */
+@media (prefers-reduced-motion: reduce) {
+  .reveal-mark {
+    animation: reveal-mark-still 2.4s steps(1, end) forwards;
+  }
+
+  @keyframes reveal-mark-still {
+    0% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+}
+
 /* ---------- citation links + hover previews ---------- */
 .citation-layer {
   position: absolute;
@@ -3146,6 +3198,39 @@ textarea:focus-visible {
   padding: 7px 8px;
   border: 1px solid transparent;
   border-radius: 6px;
+}
+
+/* A row that belongs to the one above it — the places a reference is cited,
+   under the reference.
+
+   Hung off a rule rather than boxed or bulleted: the group has to read as part
+   of the list it sits in, and a nested list drawn inside a list is two lists.
+   The rule takes the accent on hover so the whole group answers when you touch
+   any of it, which is the only affordance saying these belong together. */
+.ext-panel-row.is-nested {
+  margin-left: 9px;
+  padding-left: 11px;
+  border-left: 1px solid var(--border);
+  border-radius: 0 6px 6px 0;
+}
+
+.ext-panel-row.is-nested .ext-panel-row-title {
+  color: var(--text-dim);
+  font-size: 11px;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+/* The page number, which is the thing you are choosing between. Reversed from
+   the row above it, where the title leads and the detail is dim. */
+.ext-panel-row.is-nested .ext-panel-row-subtitle {
+  color: var(--text);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+
+.ext-panel-row.is-nested.is-actionable:hover {
+  border-left-color: var(--accent);
 }
 
 /* Only a row that does something looks like it does. */

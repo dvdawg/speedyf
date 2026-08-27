@@ -2,8 +2,8 @@
   "id": "dev.speedyf.references",
   "apiVersion": 1,
   "name": "References",
-  "version": "2.1.0",
-  "description": "Every work this paper cites, where it is cited, and which ones you already have.",
+  "version": "3.0.0",
+  "description": "Every work this paper cites: its title, its authors, the pages it is cited on, and whether you already have it.",
   "author": "speedyf",
   "entry": "worker.js",
   "icon": "icon.svg",
@@ -28,8 +28,13 @@
       },
       {
         "id": "jump",
-        "title": "References: Go To Citation",
-        "keywords": ["navigate"]
+        "title": "References: Open Reference",
+        "keywords": ["navigate", "cited", "where"]
+      },
+      {
+        "id": "goto",
+        "title": "References: Go To This Citation",
+        "keywords": ["navigate", "jump"]
       }
     ],
     "settings": [
@@ -39,7 +44,7 @@
         "type": "select",
         "default": "appearance",
         "options": ["appearance", "most cited", "title"],
-        "description": "How to order the list."
+        "description": "How to order the list. \"Appearance\" is the order you meet them in while reading."
       },
       {
         "key": "group",

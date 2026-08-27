@@ -37,6 +37,13 @@ export interface UiRow {
   subtitle?: string;
   /** Short status word shown at the end of the row. */
   badge?: string;
+  /** Whether this row belongs to the one above it — a detail of that row
+   * rather than an entry in its own right. Drawn indented and hung off a rule.
+   *
+   * Nesting a *structure* was the alternative and was not worth it: rows would
+   * have to carry children, every panel would pay for a tree it does not use,
+   * and one flag says the only thing any of them needs to say. */
+  nested?: boolean;
   action?: UiAction;
 }
 
@@ -85,6 +92,7 @@ function parseRow(value: unknown, index: number): UiRow | null {
     title,
     ...(subtitle ? { subtitle } : {}),
     ...(badge ? { badge } : {}),
+    ...(record.nested === true ? { nested: true } : {}),
     ...(action ? { action } : {}),
   };
 }

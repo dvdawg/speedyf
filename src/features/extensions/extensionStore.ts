@@ -23,17 +23,22 @@ import {
   canCallApi,
   readCitationArg,
   readPageArg,
+  readPlaceArg,
   readQueryArg,
   toCitations,
   toDocumentInfo,
   toFigures,
   toLibraryHits,
+  toJumps,
   toLinks,
+  toPageRuns,
   toOutline,
   toPageText,
   toResolvedCitation,
 } from './api';
 import { engine } from '../../lib/transport/engine';
+import { pdfRectToCssRect } from '../../lib/coordinates/coords';
+import { revealPlace } from '../../stores/revealStore';
 import { parseUi, type UiDescription } from './ui';
 
 export interface ExtensionKeybinding {
@@ -612,6 +617,34 @@ async function readApi(api: string, args: unknown): Promise<unknown> {
       return { page };
     }
 
+    case 'navigate.toPlace': {
+      const { page, boxes, y } = readPlaceArg(args, doc.pages.length);
+      // Marked before scrolling, so the mark is already there when the page
+      // arrives rather than appearing a moment after it settles.
+      revealPlace(
+        doc.docId,
+        page,
+        boxes.map((box) => [box.x, box.y - box.h, box.w, box.h] as [number, number, number, number])
+      );
+      const geom = tab.zoom.pagesGeom()[page];
+      if (!geom) {
+        // Geometry is only known for pages the viewer has measured. Landing on
+        // the page is still the right thing to do; landing nowhere is not.
+        tab.viewport.requestScrollToPage(page);
+        return { page };
+      }
+      const css = pdfRectToCssRect({ x: 0, y, w: 0, h: 0 }, geom, tab.viewport.state.zoom);
+      // Framed a third of the way down rather than at the very top, so the
+      // line that cites the work has its context above it. Never above the
+      // page's own top: for a citation in the first few lines the framing
+      // offset goes negative, which lands on the end of the previous page.
+      tab.viewport.requestScrollToPage(
+        page,
+        Math.max(0, css.y - tab.viewport.state.containerH * 0.35)
+      );
+      return { page, y };
+    }
+
     case 'document.info':
       return toDocumentInfo(doc.name, doc.pages.length, tab.viewport.state.currentPage);
 
@@ -634,14 +667,45 @@ async function readApi(api: string, args: unknown): Promise<unknown> {
       const page = readPageArg(args, doc.pages.length);
       const src = doc.pages[page]?.srcIndex;
       if (src === undefined || src === null) return [];
-      return toLinks(await engine.getPageLinks(doc.docId, src));
+      return (await engine.getPageLinks(doc.docId, src).then(toLinks)).map((link) => ({
+        ...link,
+        page,
+      }));
+    }
+
+    case 'document.jumps': {
+      const page = readPageArg(args, doc.pages.length);
+      const src = doc.pages[page]?.srcIndex;
+      if (src === undefined || src === null) return [];
+      // Destinations come back as pages in the *file*. An extension addresses
+      // pages as the reader sees them, so a jump into a page that reordering
+      // moved must be reported at its new index, and one into a page that was
+      // deleted must not be reported at all — a row that navigates nowhere is
+      // worse than a row that is missing.
+      const toReader = new Map<number, number>();
+      doc.pages.forEach((p, index) => {
+        if (p.srcIndex !== undefined && p.srcIndex !== null) toReader.set(p.srcIndex, index);
+      });
+      return toJumps(await engine.getPageLinks(doc.docId, src))
+        .map((jump) => ({ ...jump, page, toPage: toReader.get(jump.toPage) ?? -1 }))
+        .filter((jump) => jump.toPage >= 0);
+    }
+
+    case 'document.pageRuns': {
+      const page = readPageArg(args, doc.pages.length);
+      const src = doc.pages[page]?.srcIndex;
+      if (src === undefined || src === null) return [];
+      return toPageRuns(await engine.getTextLayout(doc.docId, src));
     }
 
     case 'citations.list': {
       const page = readPageArg(args, doc.pages.length);
       const src = doc.pages[page]?.srcIndex;
       if (src === undefined || src === null) return [];
-      return toCitations(await engine.getPageLinks(doc.docId, src));
+      return (await engine.getPageLinks(doc.docId, src).then(toCitations)).map((citation) => ({
+        ...citation,
+        page,
+      }));
     }
 
     case 'citations.resolve':

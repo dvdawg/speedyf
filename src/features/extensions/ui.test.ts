@@ -111,3 +111,20 @@ describe('isBlank', () => {
     expect(isBlank(parseUi({ error: 'Could not read the document' }))).toBe(false);
   });
 });
+
+describe('nested rows', () => {
+  /** A row that belongs to the one above it. Anything other than `true` is
+   * not a claim of nesting: an extension sending a truthy string or a number
+   * has misunderstood the field, and drawing it as nested would hide that. */
+  it('accepts a row that says it belongs to the one above', () => {
+    const ui = parseUi({ rows: [{ title: 'page 4', nested: true }] });
+    expect(ui?.sections[0]!.rows[0]!.nested).toBe(true);
+  });
+
+  it('treats anything but true as not nested', () => {
+    for (const value of ['true', 1, {}, null]) {
+      const ui = parseUi({ rows: [{ title: 'page 4', nested: value }] });
+      expect(ui?.sections[0]!.rows[0]!.nested).toBeUndefined();
+    }
+  });
+});

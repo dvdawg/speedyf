@@ -88,7 +88,10 @@ export default function ExtensionPanelView(props: { panel: ExtensionPanel }) {
                     {(row) => (
                       <div
                         class="ext-panel-row"
-                        classList={{ 'is-actionable': !!row.action }}
+                        classList={{
+                          'is-actionable': !!row.action,
+                          'is-nested': !!row.nested,
+                        }}
                         // A row without an action is text, not a control, so it
                         // stays out of the tab order and off the click path.
                         role={row.action ? 'button' : undefined}

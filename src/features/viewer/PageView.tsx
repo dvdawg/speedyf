@@ -24,6 +24,7 @@ import { engine } from '../../lib/transport/engine';
 import TextLayer from './TextLayer';
 import AnnotationLayer from '../annotations/AnnotationLayer';
 import CitationLayer from '../citations/CitationLayer';
+import { reveal } from '../../stores/revealStore';
 import type { Rotation } from '../../types/model';
 import { TabContext } from '../../app/TabContext';
 
@@ -195,6 +196,15 @@ export default function PageView(props: Props) {
     }
   );
 
+  /** The mark, if it is for this page of this document. Keyed on the reader's
+   * page index rather than the page in the file, because that is what a jump
+   * asked for and what reordering moves. */
+  const revealHere = createMemo(() => {
+    const mark = reveal();
+    if (!mark || mark.docId !== doc.docId || mark.page !== props.index) return null;
+    return mark;
+  });
+
   const pageMatches = createMemo(() => {
     const src = srcIndex();
     if (src === null || searchStore.state.flat.length === 0) return [];
@@ -309,6 +319,28 @@ export default function PageView(props: Props) {
             zoom={vp.state.zoom}
             page={props.index}
           />
+        </Show>
+        {/* Where a jump was aiming, marked for a moment. Inside the same
+            unrotated container as the search hits, so it uses their geometry
+            and follows the page through rotation and zoom without its own
+            arithmetic. */}
+        <Show when={revealHere()}>
+          {(mark) => (
+            <For each={mark().rects}>
+              {(r) => (
+                <div
+                  class="reveal-mark"
+                  aria-hidden="true"
+                  style={{
+                    left: `${r[0] * vp.state.zoom}px`,
+                    top: `${(props.geom.heightPt - r[1] - r[3]) * vp.state.zoom}px`,
+                    width: `${r[2] * vp.state.zoom}px`,
+                    height: `${r[3] * vp.state.zoom}px`,
+                  }}
+                />
+              )}
+            </For>
+          )}
         </Show>
         <div class="search-highlights" aria-hidden="true">
           <For each={pageMatches()}>

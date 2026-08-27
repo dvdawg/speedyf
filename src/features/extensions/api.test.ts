@@ -6,11 +6,14 @@ import {
   readCitationArg,
   readPageArg,
   readQueryArg,
+  toBox,
   toCitations,
   toFigures,
+  toJumps,
   toLibraryHits,
   toLinks,
   toOutline,
+  toPageRuns,
   toPageText,
   toResolvedCitation,
 } from './api';
@@ -224,13 +227,44 @@ describe('toLinks', () => {
     expect(result[0]!.citation).toEqual({ kind: 'arxiv', value: '1706.03762', page: 7 });
   });
 
-  /** The same URL printed twice on a page is one link. */
-  it('deduplicates by destination', () => {
+  /** The engine finds a bibliography URL twice — once as an annotation, once
+   * read out of the page text — and both are the same link. */
+  it('deduplicates a destination found twice in the same place', () => {
     const result = toLinks({
       src: 0,
       links: [uri('https://jmlr.org/a'), uri('https://jmlr.org/a')],
     } as PageLinks);
     expect(result).toHaveLength(1);
+  });
+
+  /** …but the same address printed in two entries is two links, and
+   * collapsing them moved the second one's position onto the first, which put
+   * a reference in the wrong entry. */
+  it('keeps a destination that appears twice in different places', () => {
+    const result = toLinks({
+      src: 0,
+      links: [
+        {
+          rect: [10, 700, 40, 8],
+          target: { kind: 'uri', uri: 'https://a.test/x', citation: null },
+        },
+        {
+          rect: [10, 400, 40, 8],
+          target: { kind: 'uri', uri: 'https://a.test/x', citation: null },
+        },
+      ],
+    } as PageLinks);
+    expect(result.map((link) => link.box.y)).toEqual([708, 408]);
+  });
+
+  it('reports where each link sits, with the top edge uppermost', () => {
+    const result = toLinks({
+      src: 0,
+      links: [
+        { rect: [12, 300, 40, 9], target: { kind: 'uri', uri: 'https://a.test', citation: null } },
+      ],
+    } as PageLinks);
+    expect(result[0]!.box).toEqual({ x: 12, y: 309, w: 40, h: 9 });
   });
 
   it('reports a link with no parseable host rather than dropping it', () => {
@@ -239,12 +273,84 @@ describe('toLinks', () => {
     expect(result[0]!.host).toBe(null);
   });
 
+  /** `document.links` means "somewhere this document points outside itself",
+   * and every consumer of it assumes a `uri`. Jumps have their own call. */
   it('ignores internal links', () => {
     const result = toLinks({
       src: 0,
       links: [{ rect: [0, 0, 1, 1], target: { kind: 'internal', page: 3, x: null, y: null } }],
     } as PageLinks);
     expect(result).toEqual([]);
+  });
+});
+
+describe('toBox', () => {
+  /** The engine measures from the bottom edge; reading order wants the top,
+   * so that sorting down a page is descending `y`. */
+  it('turns a bottom-edge rect into a top-edge box', () => {
+    expect(toBox([10, 200, 30, 12])).toEqual({ x: 10, y: 212, w: 30, h: 12 });
+  });
+});
+
+describe('toJumps', () => {
+  const jump = (x: number | null, y: number | null) => ({
+    rect: [5, 100, 20, 10] as [number, number, number, number],
+    target: { kind: 'internal' as const, page: 14, x, y },
+  });
+
+  it('reports where a jump starts and where it lands', () => {
+    const result = toJumps({ src: 3, links: [jump(120, 655)] } as PageLinks);
+    expect(result).toEqual([
+      { page: 3, box: { x: 5, y: 110, w: 20, h: 10 }, toPage: 14, toX: 120, toY: 655 },
+    ]);
+  });
+
+  /** A destination fixing only a page still says something worth knowing, and
+   * dropping it would look like the citation is not there at all. */
+  it('carries a destination with no position through as null', () => {
+    const result = toJumps({ src: 0, links: [jump(null, null)] } as PageLinks);
+    expect(result[0]!.toY).toBe(null);
+    expect(result[0]!.toPage).toBe(14);
+  });
+
+  it('ignores outbound links', () => {
+    const result = toJumps({
+      src: 0,
+      links: [
+        { rect: [0, 0, 1, 1], target: { kind: 'uri', uri: 'https://a.test', citation: null } },
+      ],
+    } as PageLinks);
+    expect(result).toEqual([]);
+  });
+
+  /** Two `[12]`s in one paragraph are two citations of the same work, and a
+   * caller counting citation sites wants both. */
+  it('keeps repeated jumps to the same destination', () => {
+    const result = toJumps({ src: 0, links: [jump(1, 2), jump(1, 2)] } as PageLinks);
+    expect(result).toHaveLength(2);
+  });
+});
+
+describe('toPageRuns', () => {
+  const layout = {
+    src: 0,
+    charCount: 0,
+    runs: [
+      { text: 'Fukumizu', start: 0, x: 40, y: 700, w: 50, h: 9 },
+      { text: '   ', start: 8, x: 90, y: 700, w: 3, h: 9 },
+      { text: 'Effect of', start: 11, x: 40, y: 688, w: 45, h: 9 },
+    ],
+  } as PageTextLayout;
+
+  it('reports each run with its place on the page', () => {
+    expect(toPageRuns(layout)).toEqual([
+      { text: 'Fukumizu', box: { x: 40, y: 709, w: 50, h: 9 } },
+      { text: 'Effect of', box: { x: 40, y: 697, w: 45, h: 9 } },
+    ]);
+  });
+
+  it('reads an absent layout as no runs rather than throwing', () => {
+    expect(toPageRuns(null)).toEqual([]);
   });
 });
 

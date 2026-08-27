@@ -176,7 +176,6 @@ pub fn extract_page(
     let mapper = DispMapper::new(b, page, disp_w, disp_h);
 
     let mut raw = String::with_capacity(n as usize);
-    let mut runs: Vec<TextRun> = Vec::new();
     let mut boxes = vec![[0.0; 4]; n as usize];
     let mut sizes = vec![0.0f32; n as usize];
     let mut math = vec![false; n as usize];
@@ -184,6 +183,87 @@ pub fn extract_page(
     let mut math_by_font: std::collections::HashMap<String, bool> =
         std::collections::HashMap::new();
 
+    let mut glyphs: Vec<Glyph> = Vec::with_capacity(n as usize);
+
+    for i in 0..n {
+        let u = b.FPDFText_GetUnicode(tp, i);
+        let ch = char::from_u32(u).unwrap_or(' ');
+        sizes[i as usize] = b.FPDFText_GetFontSize(tp, i) as f32;
+        let font = font_name_at(b, tp, i);
+        math[i as usize] = *math_by_font
+            .entry(font)
+            .or_insert_with_key(|name| is_math_font(name));
+        raw.push(ch);
+        if ch == '\n' || ch == '\r' {
+            glyphs.push(Glyph {
+                ch,
+                index: i as u32,
+                bbox: None,
+            });
+            continue;
+        }
+
+        let (mut l, mut r, mut bo, mut t) = (0f64, 0f64, 0f64, 0f64);
+        let ok = b.FPDFText_GetCharBox(tp, i, &mut l, &mut r, &mut bo, &mut t) != 0;
+        // A glyph with no ink has no box — a space usually, sometimes a
+        // combining mark. Reported as such rather than dropped, because
+        // whether it is worth keeping is a question about text and belongs
+        // with the rest of that question, in `build_runs`.
+        let bbox = if !ok || (r - l).abs() < f64::EPSILON && (t - bo).abs() < f64::EPSILON {
+            None
+        } else {
+            let (x, y, w, h) = mapper.map_box(l, r, bo, t);
+            boxes[i as usize] = [x, y, w, h];
+            Some([x, y, w, h])
+        };
+        glyphs.push(Glyph {
+            ch,
+            index: i as u32,
+            bbox,
+        });
+    }
+    let runs = build_runs(&glyphs);
+    b.FPDFText_ClosePage(tp);
+
+    ExtractedPage {
+        raw,
+        runs,
+        boxes,
+        sizes,
+        math,
+        char_count: n as u32,
+    }
+}
+
+/// One character as PDFium reported it.
+///
+/// `bbox` is `None` when the glyph has no geometry at all, which is what a
+/// space is in most fonts, and what a line break always is.
+pub(crate) struct Glyph {
+    pub ch: char,
+    pub index: u32,
+    /// Display-space box: `[x, y_bottom, w, h]`, y-up.
+    pub bbox: Option<[f32; 4]>,
+}
+
+/// Assemble a page's characters into positioned runs.
+///
+/// Separated from extraction so that it can be tested without a PDF. The rules
+/// here — where a run breaks, and whether a character with no box still
+/// contributes text — are easy to get wrong and impossible to see from
+/// outside, and the fixture needed to exercise them through PDFium turned out
+/// not to be constructible: PDFium gives a Type3 space a box synthesised from
+/// its width, so the very case this has to handle cannot be written into a
+/// hand-built PDF.
+///
+/// A character with no box cannot extend a run's geometry, and used to be
+/// skipped entirely. That silently deleted spaces: whether two words stayed
+/// apart then depended on whether the *next* glyph happened to sit far enough
+/// away to split the run, and often it did not — "Samuel B Hopkins" reached
+/// the reference panel as "SamuelBHopkins", and the same text reached search
+/// and the clipboard. A space belongs in the text whether or not it has a
+/// place on the page.
+pub(crate) fn build_runs(glyphs: &[Glyph]) -> Vec<TextRun> {
     struct Run {
         text: String,
         start: u32,
@@ -194,13 +274,17 @@ pub fn extract_page(
         last_right: f32,
         char_h: f32,
     }
+    let mut runs: Vec<TextRun> = Vec::new();
     let mut cur: Option<Run> = None;
 
     let flush = |cur: &mut Option<Run>, runs: &mut Vec<TextRun>| {
         if let Some(r) = cur.take() {
             if !r.text.trim().is_empty() && r.x1 > r.x0 && r.y1 > r.y0 {
                 runs.push(TextRun {
-                    text: r.text,
+                    // A run's box covers its glyphs, and a trailing space has
+                    // none; keeping it would put whitespace at the end of every
+                    // line for consumers that join runs themselves.
+                    text: r.text.trim_end().to_string(),
                     start: r.start,
                     x: r.x0,
                     y: r.y0,
@@ -211,29 +295,24 @@ pub fn extract_page(
         }
     };
 
-    for i in 0..n {
-        let u = b.FPDFText_GetUnicode(tp, i);
-        let ch = char::from_u32(u).unwrap_or(' ');
-        sizes[i as usize] = b.FPDFText_GetFontSize(tp, i) as f32;
-        let font = font_name_at(b, tp, i);
-        math[i as usize] = *math_by_font
-            .entry(font)
-            .or_insert_with_key(|name| is_math_font(name));
-        if ch == '\n' || ch == '\r' {
-            raw.push(ch);
+    for glyph in glyphs {
+        if glyph.ch == '\n' || glyph.ch == '\r' {
             flush(&mut cur, &mut runs);
             continue;
         }
-        raw.push(ch);
-
-        let (mut l, mut r, mut bo, mut t) = (0f64, 0f64, 0f64, 0f64);
-        let ok = b.FPDFText_GetCharBox(tp, i, &mut l, &mut r, &mut bo, &mut t) != 0;
-        if !ok || (r - l).abs() < f64::EPSILON && (t - bo).abs() < f64::EPSILON {
-            // zero-size char (e.g. some spaces): keep in raw, do not extend run
+        let Some([x, y, w, h]) = glyph.bbox else {
+            // Into a run already open only, so a run never begins with a
+            // space, and never carries two in a row — a PDF often encodes one
+            // gap as several zero-width characters.
+            if glyph.ch.is_whitespace() {
+                if let Some(run) = cur.as_mut() {
+                    if !run.text.ends_with(char::is_whitespace) {
+                        run.text.push(' ');
+                    }
+                }
+            }
             continue;
-        }
-        let (x, y, w, h) = mapper.map_box(l, r, bo, t);
-        boxes[i as usize] = [x, y, w, h];
+        };
 
         let split = match &cur {
             None => true,
@@ -248,7 +327,7 @@ pub fn extract_page(
             flush(&mut cur, &mut runs);
             cur = Some(Run {
                 text: String::new(),
-                start: i as u32,
+                start: glyph.index,
                 x0: x,
                 y0: y,
                 x1: x + w,
@@ -258,7 +337,7 @@ pub fn extract_page(
             });
         }
         let run = cur.as_mut().unwrap();
-        run.text.push(ch);
+        run.text.push(glyph.ch);
         run.x0 = run.x0.min(x);
         run.y0 = run.y0.min(y);
         run.x1 = run.x1.max(x + w);
@@ -267,16 +346,7 @@ pub fn extract_page(
         run.char_h = run.char_h.max(h);
     }
     flush(&mut cur, &mut runs);
-    b.FPDFText_ClosePage(tp);
-
-    ExtractedPage {
-        raw,
-        runs,
-        boxes,
-        sizes,
-        math,
-        char_count: n as u32,
-    }
+    runs
 }
 
 /// Merge cached character boxes into visual-line rectangles for a match.
@@ -339,6 +409,94 @@ mod tests {
         ] {
             assert!(!is_math_font(name), "{name}");
         }
+    }
+
+    /// A glyph 9pt tall at `x`, which is the size the fixtures below work in.
+    fn glyph(ch: char, index: u32, x: f32) -> Glyph {
+        Glyph {
+            ch,
+            index,
+            bbox: Some([x, 700.0, 9.0, 9.0]),
+        }
+    }
+
+    /// A character PDFium gave no geometry for: a space in most fonts.
+    fn inkless(ch: char, index: u32) -> Glyph {
+        Glyph {
+            ch,
+            index,
+            bbox: None,
+        }
+    }
+
+    /// The bug this was written for: two words three points apart, which is
+    /// closer than the 5.4pt that would split the run, so nothing but the
+    /// space itself can keep them apart. Without it they came out welded —
+    /// "Samuel B Hopkins" as "SamuelBHopkins" — in the panel, in search, and
+    /// on the clipboard.
+    #[test]
+    fn a_space_with_no_glyph_still_separates_the_words() {
+        let runs = build_runs(&[glyph('a', 0, 50.0), inkless(' ', 1), glyph('b', 2, 62.0)]);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].text, "a b");
+    }
+
+    /// The box covers the glyphs, and a trailing space has none — so a run
+    /// that ends on one must not carry it, or every line ends in whitespace
+    /// for whoever joins the runs back up.
+    #[test]
+    fn a_run_never_ends_in_the_space_that_closed_it() {
+        let runs = build_runs(&[glyph('a', 0, 50.0), inkless(' ', 1)]);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].text, "a");
+    }
+
+    /// One printed gap is often several zero-width characters, and a run that
+    /// repeated each of them would space its words out arbitrarily.
+    #[test]
+    fn several_spaces_in_a_row_are_one_space() {
+        let runs = build_runs(&[
+            glyph('a', 0, 50.0),
+            inkless(' ', 1),
+            inkless('\u{a0}', 2),
+            inkless(' ', 3),
+            glyph('b', 4, 62.0),
+        ]);
+        assert_eq!(runs[0].text, "a b");
+    }
+
+    #[test]
+    fn a_run_never_begins_with_a_space() {
+        let runs = build_runs(&[inkless(' ', 0), glyph('a', 1, 50.0)]);
+        assert_eq!(runs[0].text, "a");
+        assert_eq!(runs[0].start, 1);
+    }
+
+    /// A space cannot join what geometry has already put apart: the gap here
+    /// is wider than the split threshold, so these are two runs whether or not
+    /// a space sits between them.
+    #[test]
+    fn a_wide_gap_still_splits_the_run() {
+        let runs = build_runs(&[glyph('a', 0, 50.0), inkless(' ', 1), glyph('b', 2, 90.0)]);
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].text, "a");
+        assert_eq!(runs[1].text, "b");
+    }
+
+    #[test]
+    fn a_line_break_closes_the_run_rather_than_spacing_it() {
+        let runs = build_runs(&[glyph('a', 0, 50.0), inkless('\n', 1), glyph('b', 2, 62.0)]);
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].text, "a");
+    }
+
+    /// A run's box covers its glyphs and nothing else, so a space adds no
+    /// width to it however much it advances the text position.
+    #[test]
+    fn a_space_adds_no_width_to_the_box() {
+        let runs = build_runs(&[glyph('a', 0, 50.0), inkless(' ', 1), glyph('b', 2, 62.0)]);
+        assert_eq!(runs[0].x, 50.0);
+        assert_eq!(runs[0].w, 21.0);
     }
 
     #[test]
