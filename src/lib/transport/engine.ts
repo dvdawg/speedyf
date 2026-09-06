@@ -17,7 +17,9 @@ import type {
   FormFieldInfo,
   LibraryStatus,
   OutlineNode,
+  Bubble,
   PageAnnotations,
+  PageBubbles,
   PageLinks,
   PageTextLayout,
   PreviewSpec,
@@ -67,6 +69,9 @@ export interface EngineApi {
   ): Promise<{ from: number; sizes: [number, number, number, number, number][] }>;
   getTextLayout(docId: number, src: number): Promise<PageTextLayout>;
   getPageLinks(docId: number, src: number): Promise<PageLinks>;
+  /** Bubbles and checkboxes the page draws as glyphs rather than declares as
+   * form fields, for the shading tool. */
+  getPageBubbles(docId: number, src: number): Promise<Bubble[]>;
   getPreviewRect(
     docId: number,
     src: number,
@@ -129,6 +134,8 @@ export const engine: EngineApi = {
   requestPageSizes: (docId, from, count) => invoke('request_page_sizes', { docId, from, count }),
   getTextLayout: (docId, src) => invoke('get_text_layout', { docId, src }),
   getPageLinks: (docId, src) => invoke('get_page_links', { docId, src }),
+  getPageBubbles: async (docId, src) =>
+    (await invoke<PageBubbles>('get_page_bubbles', { docId, src })).bubbles,
   getPreviewRect: (docId, src, x, y) => invoke('get_preview_rect', { docId, src, x, y }),
   resolveCitation: (id) => invoke('resolve_citation', { id }),
   changeLibraryRoot: (path, add) => invoke('change_library_root', { path, add }),

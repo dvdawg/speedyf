@@ -651,6 +651,7 @@ fn benchmark_valid(
             let plan = EditPlan {
                 pages,
                 form: Vec::new(),
+                form_buttons: Vec::new(),
             };
             let save_dir = tempfile::Builder::new()
                 .prefix(".speedyf-bench-save-")

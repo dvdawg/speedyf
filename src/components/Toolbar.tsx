@@ -8,6 +8,7 @@ import {
   IconFitPage,
   IconFitWidth,
   IconForm,
+  IconBubble,
   IconHighlight,
   IconImage,
   IconInk,
@@ -304,6 +305,14 @@ export default function Toolbar() {
           onClick={() => toggleTool('note')}
         >
           <IconNote />
+        </IconButton>
+        <IconButton
+          label="Shade bubbles"
+          disabled={!loaded()}
+          active={toolState.active === 'bubble'}
+          onClick={() => toggleTool('bubble')}
+        >
+          <IconBubble />
         </IconButton>
         <Show when={showStyle()}>
           <div class="tool-options" role="group" aria-label="Tool style">

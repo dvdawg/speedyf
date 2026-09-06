@@ -285,6 +285,28 @@ pub struct SearchStatusDto {
     pub chars_indexed: u64,
 }
 
+/// One fillable-looking glyph found on a page — a drawn bubble or checkbox
+/// that carries no form field of its own. See `engine::bubbles`.
+#[derive(Serialize, Clone, Copy, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct BubbleDto {
+    /// Index of the glyph in the page's character stream. Stable for a given
+    /// page, so the frontend can key a shading to the bubble it fills.
+    pub char_index: u32,
+    /// Display-normalized page space, y-up — the same space text runs use.
+    pub rect: RectDto,
+    /// Nominal point size of the glyph's font, used to scale the shading dot
+    /// when the glyph box is a loose fit.
+    pub font_size_pt: f32,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PageBubblesDto {
+    pub src: u32,
+    pub bubbles: Vec<BubbleDto>,
+}
+
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct FormFieldDto {
@@ -293,6 +315,29 @@ pub struct FormFieldDto {
     pub value: String,
     pub page: u32,
     pub read_only: bool,
+    /// The widget's position in its page's annotation list.
+    ///
+    /// This, with `page`, is the only stable identity one *control* has.
+    /// `name` is not: every button in a radio group shares its field's name,
+    /// so a name alone cannot say which of them was clicked.
+    pub index: u32,
+    /// Display-normalized page space, y-up — the same space text runs use.
+    pub rect: RectDto,
+    /// The "on" state this widget turns its field to, for checkboxes and
+    /// radio buttons. Empty for every other kind.
+    pub export_value: String,
+    /// Whether this particular widget is currently on.
+    pub checked: bool,
+}
+
+/// One checkbox or radio button the user toggled, identified by the widget
+/// itself rather than by its field's name.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanFormButton {
+    pub page: u32,
+    pub index: u32,
+    pub checked: bool,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -449,5 +494,10 @@ pub struct PlanPage {
 #[serde(rename_all = "camelCase")]
 pub struct EditPlan {
     pub pages: Vec<PlanPage>,
+    /// Text field values, keyed by field name.
     pub form: Vec<(String, String)>,
+    /// Checkbox and radio states, keyed by the widget's page and annotation
+    /// index — see `PlanFormButton`.
+    #[serde(default)]
+    pub form_buttons: Vec<PlanFormButton>,
 }

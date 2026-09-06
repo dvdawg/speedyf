@@ -1,7 +1,7 @@
 /** Active annotation tool + per-tool style memory. */
 import { createStore, produce } from 'solid-js/store';
 
-export type Tool = 'select' | 'highlight' | 'ink' | 'rect' | 'textbox' | 'note';
+export type Tool = 'select' | 'highlight' | 'ink' | 'rect' | 'textbox' | 'note' | 'bubble';
 
 export interface ToolStyle {
   color: string;
@@ -22,6 +22,10 @@ const defaults: Record<Tool, ToolStyle> = {
   rect: { color: '#1e88e5', opacity: 1, strokeWidth: 2, fontSizePt: 14 },
   textbox: { color: '#d81b60', opacity: 1, strokeWidth: 1, fontSizePt: 14 },
   note: { color: '#fb8c00', opacity: 1, strokeWidth: 0, fontSizePt: 14 },
+  // Near-black, because a shaded bubble is answering a question rather than
+  // marking up a page: it has to read as filled-in ink on a printout and
+  // survive whatever a grader scans it through.
+  bubble: { color: '#1a1a1a', opacity: 1, strokeWidth: 0, fontSizePt: 14 },
 };
 
 const [toolState, setToolState] = createStore<ToolState>({

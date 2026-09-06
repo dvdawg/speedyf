@@ -3,6 +3,7 @@
 //! bytes/DTOs through responder callbacks.
 
 use super::annots;
+use super::bubbles;
 use super::links;
 use super::pdfium_init;
 use super::preview::{self, CropInput, PREVIEW_SCALE_MILLI};
@@ -274,6 +275,7 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         Work::Render { respond, .. } => respond(Err(err())),
         Work::TextLayout { respond, .. } => respond(Err(err())),
         Work::PageLinks { respond, .. } => respond(Err(err())),
+        Work::PageBubbles { respond, .. } => respond(Err(err())),
         Work::PreviewRect { respond, .. } => respond(Err(err())),
         Work::ResolveCitation { respond, .. } => respond(Err(err())),
         Work::MatchRects { respond, .. } => respond(Err(err())),
@@ -335,6 +337,9 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
         }
         Work::TextLayout { doc, src, respond } => respond(do_text_layout(state, shared, doc, src)),
         Work::PageLinks { doc, src, respond } => respond(do_page_links(state, shared, doc, src)),
+        Work::PageBubbles { doc, src, respond } => {
+            respond(do_page_bubbles(state, shared, doc, src))
+        }
         Work::PreviewRect {
             doc,
             src,
@@ -576,11 +581,16 @@ fn ensure_text_layout(
             shared.metrics.pages_indexed.fetch_add(1, Ordering::Relaxed);
         }
     }
+    // Bubbles come off the same character stream, so they are found here
+    // rather than on demand: by the time anyone asks, the page has already
+    // been read and re-reading it would learn nothing new.
+    let bubbles = bubbles::detect(&extracted.raw, &extracted.boxes, &extracted.sizes);
     Ok(shared.text_layouts.lock().insert(
         doc,
         src,
         extracted.runs,
         extracted.boxes,
+        bubbles,
         extracted.char_count,
     ))
 }
@@ -596,6 +606,24 @@ fn do_text_layout(
         src,
         runs: layout.runs.as_ref().clone(),
         char_count: layout.char_count,
+    })
+}
+
+/// Every drawn bubble/checkbox on one page.
+///
+/// Reads straight out of the cached text layout, because that is where
+/// detection already happened — the first request for a page pays for the
+/// extraction it would have paid for on selection or search anyway.
+fn do_page_bubbles(
+    state: &mut WorkerState,
+    shared: &EngineShared,
+    doc: DocId,
+    src: u32,
+) -> AppResult<PageBubblesDto> {
+    let layout = ensure_text_layout(state, shared, doc, src)?;
+    Ok(PageBubblesDto {
+        src,
+        bubbles: layout.bubbles.as_ref().clone(),
     })
 }
 
@@ -1738,6 +1766,11 @@ fn do_form_fields(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<FormFiel
             continue;
         }
         bindings.FORM_OnAfterLoadPage(page, form);
+        // Widget rects come out of PDFium in user space; the frontend places
+        // everything in display space, so they are mapped exactly as link
+        // rects and character boxes are.
+        let mapper = render::page_display_size(bindings, raw, pi as i32)
+            .map(|[w, h]| text::DispMapper::new(bindings, page, w, h));
         let annotation_count = bindings.FPDFPage_GetAnnotCount(page).max(0);
         for ai in 0..annotation_count {
             let annotation = bindings.FPDFPage_GetAnnot(page, ai);
@@ -1755,13 +1788,29 @@ fn do_form_fields(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<FormFiel
             let value = read_pdfium_utf16(|buffer, len| {
                 bindings.FPDFAnnot_GetFormFieldValue(form, annotation, buffer, len)
             });
+            let export_value = read_pdfium_utf16(|buffer, len| {
+                bindings.FPDFAnnot_GetFormFieldExportValue(form, annotation, buffer, len)
+            });
             let flags = bindings.FPDFAnnot_GetFormFieldFlags(form, annotation);
+            let rect = mapper
+                .as_ref()
+                .and_then(|m| widget_rect(bindings, annotation, m))
+                .unwrap_or(RectDto {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 0.0,
+                    h: 0.0,
+                });
             out.push(FormFieldDto {
                 name,
                 kind: form_field_kind(field_type).into(),
                 value,
                 page: pi,
                 read_only: flags & 1 != 0,
+                index: ai as u32,
+                rect,
+                export_value,
+                checked: bindings.FPDFAnnot_IsChecked(form, annotation) != 0,
             });
             bindings.FPDFPage_CloseAnnot(annotation);
         }
@@ -1772,6 +1821,32 @@ fn do_form_fields(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<FormFiel
     bindings.FPDFDOC_ExitFormFillEnvironment(form);
     state.doc(doc)?.form_fields = Some(out.clone());
     Ok(out)
+}
+
+/// One widget's rectangle, in display space, or `None` when PDFium reports
+/// none or reports a degenerate one — a control with no area cannot be aimed
+/// at, so offering it to the UI would only produce an invisible hit target.
+fn widget_rect(
+    b: &dyn PdfiumLibraryBindings,
+    annotation: FPDF_ANNOTATION,
+    mapper: &text::DispMapper,
+) -> Option<RectDto> {
+    let mut rect = FS_RECTF {
+        left: 0.0,
+        top: 0.0,
+        right: 0.0,
+        bottom: 0.0,
+    };
+    if b.FPDFAnnot_GetRect(annotation, &mut rect) == 0 {
+        return None;
+    }
+    let (x, y, w, h) = mapper.map_box(
+        rect.left as f64,
+        rect.right as f64,
+        rect.bottom as f64,
+        rect.top as f64,
+    );
+    (w > 0.0 && h > 0.0).then_some(RectDto { x, y, w, h })
 }
 
 fn form_field_kind(field_type: i32) -> &'static str {

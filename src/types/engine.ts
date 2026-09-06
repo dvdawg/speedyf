@@ -94,6 +94,23 @@ export interface PageLinks {
   links: PageLink[];
 }
 
+/** A fillable-looking glyph a page *draws* — a LaTeX `\bigcirc`, a printed
+ * checkbox — as opposed to an AcroForm widget, which `FormFieldInfo` covers.
+ * See src-tauri/src/engine/bubbles.rs. */
+export interface Bubble {
+  /** Index of the glyph in the page's character stream; stable per page, so
+   * a shading can be keyed to the bubble it fills. */
+  charIndex: number;
+  /** Normalized PDF page space, y-up — the same space text runs use. */
+  rect: { x: number; y: number; w: number; h: number };
+  fontSizePt: number;
+}
+
+export interface PageBubbles {
+  src: number;
+  bubbles: Bubble[];
+}
+
 export interface PreviewSpec {
   docId: number;
   src: number;
@@ -145,6 +162,16 @@ export interface FormFieldInfo {
   value: string;
   page: number;
   readOnly: boolean;
+  /** The widget's position in its page's annotation list. With `page`, the
+   * only stable identity one *control* has — `name` is shared by every button
+   * in a radio group, so it cannot say which one was clicked. */
+  index: number;
+  /** Normalized PDF page space, y-up. */
+  rect: { x: number; y: number; w: number; h: number };
+  /** The "on" state a checkbox or radio turns its field to; empty otherwise. */
+  exportValue: string;
+  /** Whether this particular widget is currently on. */
+  checked: boolean;
 }
 
 /** A theorem, lemma, definition or caption recovered from a LaTeX PDF.

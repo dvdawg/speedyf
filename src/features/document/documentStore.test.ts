@@ -180,6 +180,83 @@ describe('form values', () => {
   });
 });
 
+describe('shaded bubbles', () => {
+  const shading = (pageId: string, charIndex: number): Annotation => ({
+    id: `bub-${charIndex}`,
+    pageId,
+    kind: 'bubble',
+    rect: { x: 72.61, y: 531.1, w: 10.63, h: 10.63 },
+    color: '#1a1a1a',
+    opacity: 1,
+    bubbleCharIndex: charIndex,
+  });
+
+  // What Cmd-S actually sends. A shading that never reaches the plan is a
+  // mark the reader can see on screen and will not find in the saved file.
+  it('carries a shading into the edit plan and marks the document dirty', () => {
+    const s = fresh();
+    const pageId = s.state.pages[0]!.id;
+    s.apply({ type: 'addAnnot', annot: shading(pageId, 733) });
+    expect(s.state.dirty).toBe(true);
+
+    const plan = s.buildEditPlan();
+    expect(plan.pages[0]!.annots).toEqual([
+      {
+        kind: 'bubble',
+        rect: { x: 72.61, y: 531.1, w: 10.63, h: 10.63 },
+        color: '#1a1a1a',
+        opacity: 1,
+      },
+    ]);
+  });
+
+  it('sends every shading on a page, not just the first', () => {
+    const s = fresh();
+    const pageId = s.state.pages[0]!.id;
+    s.apply({ type: 'addAnnot', annot: shading(pageId, 733) });
+    s.apply({ type: 'addAnnot', annot: shading(pageId, 739) });
+    expect(s.buildEditPlan().pages[0]!.annots).toHaveLength(2);
+  });
+
+  it('drops a shading again when it is cleared', () => {
+    const s = fresh();
+    const pageId = s.state.pages[0]!.id;
+    s.apply({ type: 'addAnnot', annot: shading(pageId, 733) });
+    s.apply({ type: 'deleteAnnot', pageId, id: 'bub-733' });
+    expect(s.buildEditPlan().pages[0]!.annots).toEqual([]);
+  });
+});
+
+describe('form buttons', () => {
+  it('records a widget by page and index, with undo support', () => {
+    const s = fresh();
+    s.apply({ type: 'setFormButton', page: 0, index: 3, checked: true });
+    expect(s.state.formButtonEdits['0:3']).toBe(true);
+    expect(s.state.dirty).toBe(true);
+    s.undo();
+    expect(s.state.formButtonEdits['0:3']).toBeUndefined();
+  });
+
+  // Two buttons in one radio group share a field name, so a name-keyed edit
+  // would have the second overwrite the first instead of sitting beside it.
+  it('keeps two widgets on the same page apart', () => {
+    const s = fresh();
+    s.apply({ type: 'setFormButton', page: 0, index: 1, checked: true });
+    s.apply({ type: 'setFormButton', page: 0, index: 2, checked: false });
+    expect(s.state.formButtonEdits).toEqual({ '0:1': true, '0:2': false });
+  });
+
+  it('carries button edits into the edit plan', () => {
+    const s = fresh();
+    s.apply({ type: 'setFormButton', page: 1, index: 4, checked: true });
+    expect(s.buildEditPlan().formButtons).toEqual([{ page: 1, index: 4, checked: true }]);
+  });
+
+  it('sends no buttons when none were touched', () => {
+    expect(fresh().buildEditPlan().formButtons).toEqual([]);
+  });
+});
+
 describe('dirty / savepoint semantics', () => {
   it('tracks the savepoint through undo and redo', () => {
     const s = fresh();

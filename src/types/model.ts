@@ -45,7 +45,7 @@ export interface PageEntry {
   sizeKnown: boolean;
 }
 
-export type AnnotationKind = 'highlight' | 'ink' | 'rect' | 'textbox' | 'note' | 'image';
+export type AnnotationKind = 'highlight' | 'ink' | 'rect' | 'textbox' | 'note' | 'image' | 'bubble';
 
 export interface Annotation {
   id: string;
@@ -72,6 +72,9 @@ export interface Annotation {
   /** natural pixel size of the source image. */
   naturalW?: number;
   naturalH?: number;
+  /** For a shaded bubble: the character index of the glyph it fills, so the
+   * same bubble can be recognised again and un-shaded. */
+  bubbleCharIndex?: number;
   /** Set only on annotations read out of the file: this annotation's position
    * in PDFium's enumeration of its source page.
    *

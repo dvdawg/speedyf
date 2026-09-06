@@ -20,10 +20,12 @@ export type EditOp =
   | { type: 'patchAnnot'; pageId: PageId; id: string; patch: Partial<Annotation> }
   | { type: 'deleteAnnot'; pageId: PageId; id: string }
   | { type: 'setForm'; field: string; value: string }
+  | { type: 'setFormButton'; page: number; index: number; checked: boolean }
   // internal inverse-only ops:
   | { type: 'restorePage'; entry: PageEntry; index: number; annots: Annotation[] }
   | { type: 'restoreAnnot'; pageId: PageId; annot: Annotation; index: number }
-  | { type: 'restoreForm'; field: string; prev: string | undefined };
+  | { type: 'restoreForm'; field: string; prev: string | undefined }
+  | { type: 'restoreFormButton'; page: number; index: number; prev: boolean | undefined };
 
 export interface PlanAnnot {
   kind: 'highlight' | 'ink' | 'rect' | 'note';
@@ -64,9 +66,26 @@ export interface PlanPage {
   dropSrcAnnots: number[];
 }
 
+/** How a form widget is keyed in `formButtonEdits`.
+ *
+ * Page plus annotation index, because a field name does not identify a
+ * control: every button in a radio group carries the same one. */
+export function formButtonKey(page: number, index: number): string {
+  return `${page}:${index}`;
+}
+
+/** One checkbox or radio the user toggled, identified by its widget rather
+ * than by its field name — see `PlanFormButton` in the engine. */
+export interface PlanFormButton {
+  page: number;
+  index: number;
+  checked: boolean;
+}
+
 export interface EditPlan {
   pages: PlanPage[];
   form: [string, string][];
+  formButtons: PlanFormButton[];
 }
 
 export interface DocState {
@@ -77,6 +96,8 @@ export interface DocState {
   pages: PageEntry[];
   annotations: Record<PageId, Annotation[]>;
   formEdits: Record<string, string>;
+  /** Checkbox and radio states the user changed, keyed `"<page>:<index>"`. */
+  formButtonEdits: Record<string, boolean>;
   dirty: boolean;
   saving: boolean;
   /** bumped whenever engine-derived visuals must be re-fetched (reload) */
@@ -95,6 +116,7 @@ const emptyState = (): DocState => ({
   pages: [],
   annotations: {},
   formEdits: {},
+  formButtonEdits: {},
   dirty: false,
   saving: false,
   generation: 0,
@@ -229,9 +251,17 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
       }
       case 'setForm':
         return { type: 'restoreForm', field: op.field, prev: state.formEdits[op.field] };
+      case 'setFormButton':
+        return {
+          type: 'restoreFormButton',
+          page: op.page,
+          index: op.index,
+          prev: state.formButtonEdits[formButtonKey(op.page, op.index)],
+        };
       case 'restorePage':
       case 'restoreAnnot':
       case 'restoreForm':
+      case 'restoreFormButton':
         throw new Error(`inverse-only op cannot be applied directly: ${op.type}`);
     }
   };
@@ -308,6 +338,16 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
             const idx = list.findIndex((x) => x.id === op.id);
             if (idx >= 0) list.splice(idx, 1);
             if (s.selected?.annotId === op.id) s.selected = null;
+            break;
+          }
+          case 'setFormButton': {
+            s.formButtonEdits[formButtonKey(op.page, op.index)] = op.checked;
+            break;
+          }
+          case 'restoreFormButton': {
+            const key = formButtonKey(op.page, op.index);
+            if (op.prev === undefined) delete s.formButtonEdits[key];
+            else s.formButtonEdits[key] = op.prev;
             break;
           }
           case 'setForm': {
@@ -532,7 +572,7 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
         dropSrcAnnots,
         annots: anns
           .filter((a): a is Annotation & { kind: PlanAnnot['kind'] } =>
-            ['highlight', 'ink', 'rect', 'note'].includes(a.kind)
+            ['highlight', 'ink', 'rect', 'note', 'bubble'].includes(a.kind)
           )
           .map((a) => ({
             kind: a.kind,
@@ -558,7 +598,14 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
           .map((a) => ({ rect: a.rect, sourcePath: a.sourcePath! })),
       };
     });
-    return { pages, form: Object.entries(state.formEdits) };
+    return {
+      pages,
+      form: Object.entries(state.formEdits),
+      formButtons: Object.entries(state.formButtonEdits).map(([key, checked]) => {
+        const [page, index] = key.split(':');
+        return { page: Number(page), index: Number(index), checked };
+      }),
+    };
   };
 
   return {

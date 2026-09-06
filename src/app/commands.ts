@@ -246,6 +246,13 @@ export const COMMANDS: readonly Command[] = [
   tool('tools.rect', 'Rectangle Tool', 'rect', ['box', 'square', 'shape']),
   tool('tools.textbox', 'Text Box Tool', 'textbox', ['type', 'label']),
   tool('tools.note', 'Note Tool', 'note', ['comment', 'sticky']),
+  tool('tools.bubble', 'Shade Bubbles', 'bubble', [
+    'checkbox',
+    'radio',
+    'quiz',
+    'multiple choice',
+    'fill in',
+  ]),
 
   // ---- Page ----------------------------------------------------------
   rotate('page.rotateRight', 'Rotate Page Right', 90),

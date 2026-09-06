@@ -210,6 +210,15 @@ export const IconNote = () =>
       <path d="M5 5.5h6M5 7.75h4" />
     </>
   );
+/** A bubble part-shaded: an outline ring with a filled core, which is what
+ * the tool does to a drawn bubble rather than what a checkbox looks like. */
+export const IconBubble = () =>
+  base(
+    <>
+      <circle cx="8" cy="8" r="5.5" />
+      <circle cx="8" cy="8" r="2.75" fill="currentColor" stroke="none" />
+    </>
+  );
 export const IconEdit = () =>
   base(
     <>

@@ -352,6 +352,7 @@ pub fn run() {
             commands::request_page_sizes,
             commands::get_text_layout,
             commands::get_page_links,
+            commands::get_page_bubbles,
             commands::get_preview_rect,
             commands::resolve_citation,
             commands::change_library_root,

@@ -134,6 +134,24 @@ fn style_of(objects: &PdfPageAnnotationObjects<'_>) -> AnnotStyle {
     style
 }
 
+/// Whether a Stamp is one of SpeedyF's shaded bubbles rather than a placed
+/// image.
+///
+/// A bubble is written as a single filled path and nothing else; an image
+/// stamp carries an image object. Anything holding neither — or holding both —
+/// came from somewhere else and is left to the image branch, which only ever
+/// moves what it does not understand.
+fn is_shaded_bubble(objects: &PdfPageAnnotationObjects<'_>) -> bool {
+    let mut paths = 0;
+    for object in objects.iter() {
+        match object.object_type() {
+            PdfPageObjectType::Path => paths += 1,
+            _ => return false,
+        }
+    }
+    paths == 1
+}
+
 /// The polylines inside an ink annotation.
 ///
 /// Ink is written as path objects living *within* the annotation, so reading it
@@ -239,6 +257,20 @@ fn read_annotation(
             dto.opacity = opacity;
             dto.text = Some(annot.contents().unwrap_or_default());
             dto.font_size_pt = Some(DEFAULT_FONT_PT);
+        }
+        PdfPageAnnotationType::Stamp if is_shaded_bubble(annot.objects()) => {
+            // A shaded bubble is a Stamp too, so it has to be told apart from
+            // a placed image here or it would come back as one — and an image
+            // read from a file carries no source path, so the save path drops
+            // it and writes nothing in its place. Shading a quiz, saving,
+            // reopening and nudging a mark would have erased it.
+            //
+            // What separates them is what they carry: a bubble holds one
+            // filled path and nothing else, an image holds an image object.
+            let (color, opacity) = color_or(style.fill, "#1a1a1a");
+            dto.kind = "bubble".into();
+            dto.color = color;
+            dto.opacity = opacity;
         }
         PdfPageAnnotationType::Stamp => {
             // The pixels stay in the file; the editor gets a movable box. It

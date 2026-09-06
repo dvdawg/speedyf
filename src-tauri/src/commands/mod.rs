@@ -142,6 +142,25 @@ pub async fn get_page_links(
         .await
 }
 
+/// The drawn bubbles/checkboxes on one page, for the shading tool.
+#[tauri::command]
+pub async fn get_page_bubbles(
+    state: tauri::State<'_, EngineState>,
+    doc_id: DocId,
+    src: u32,
+) -> AppResult<PageBubblesDto> {
+    state
+        .0
+        .call_async(Priority::AdjacentPage, doc_id, move |respond| {
+            Work::PageBubbles {
+                doc: doc_id,
+                src,
+                respond,
+            }
+        })
+        .await
+}
+
 #[tauri::command]
 pub async fn get_preview_rect(
     state: tauri::State<'_, EngineState>,

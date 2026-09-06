@@ -9,8 +9,12 @@ import { createMemo, createResource, createSignal, For, Show, useContext } from 
 import type { Annotation, PageEntry, PdfPoint, PdfQuad, PdfRect } from '../../types/model';
 import type { PageGeom } from '../../lib/coordinates/coords';
 import { cssToPdf } from '../../lib/coordinates/coords';
-import type { TextRunDto } from '../../types/engine';
+import type { Bubble, TextRunDto } from '../../types/engine';
+import { engine } from '../../lib/transport/engine';
 import { toolState, activeStyle, setActiveTool } from './toolStore';
+import { shadeRect, shadingFor } from './bubbles';
+import { invertInk } from '../../lib/rendering/invertColor';
+import { pagesInverted } from '../../stores/settings';
 import { imagePreviewUrl, newAnnotId } from '../editor/editorActions';
 import { IconTrash } from '../../components/icons';
 import { TabContext } from '../../app/TabContext';
@@ -62,6 +66,50 @@ export default function AnnotationLayer(props: Props) {
   const cssY = (y: number, h: number) => (H() - y - h) * props.zoom;
 
   const drawingTool = () => toolState.active !== 'select';
+
+  // ---------- bubbles ----------
+
+  // Only fetched once the tool is picked up: most pages have no bubbles, and
+  // a reader who never reaches for the tool should never pay to find out.
+  const [bubbles] = createResource(
+    () => {
+      const src = props.page.srcIndex;
+      if (toolState.active !== 'bubble' || src === null) return null;
+      return { docId: documentStore.state.docId, src };
+    },
+    ({ docId, src }): Promise<Bubble[]> => engine.getPageBubbles(docId, src).catch(() => [])
+  );
+
+  const shadedAt = (b: Bubble) => shadingFor(annots(), b.charIndex, b.rect);
+
+  /** The colour to paint a shading in. A shaded bubble is standing in for ink
+   * on the page — near-black, like the ring it fills — so on an inverted page
+   * it has to go through the same flip the raster did, or it disappears into
+   * the dark paper. Every other annotation keeps its authored colour: those
+   * are the reader's marks sitting on top of the page, not part of it. */
+  const shadeColor = (color: string) => (pagesInverted() ? invertInk(color) : color);
+
+  /** Shade an empty bubble, or clear one already shaded. */
+  const toggleBubble = (b: Bubble) => {
+    const existing = shadedAt(b);
+    if (existing) {
+      documentStore.apply({ type: 'deleteAnnot', pageId: props.page.id, id: existing.id });
+      return;
+    }
+    const style = activeStyle();
+    documentStore.apply({
+      type: 'addAnnot',
+      annot: {
+        id: newAnnotId(),
+        pageId: props.page.id,
+        kind: 'bubble',
+        rect: shadeRect(b.rect),
+        color: style.color,
+        opacity: style.opacity,
+        bubbleCharIndex: b.charIndex,
+      },
+    });
+  };
 
   // ---------- creation ----------
 
@@ -168,6 +216,9 @@ export default function AnnotationLayer(props: Props) {
 
   const onLayerPointerDown = (e: PointerEvent) => {
     if (!drawingTool() || e.button !== 0) return;
+    // The bubble tool has no drag gesture of its own: it clicks targets that
+    // are already on the page, and each target handles its own pointer.
+    if (toolState.active === 'bubble') return;
     e.preventDefault();
     e.stopPropagation();
     const p = toPdf(e);
@@ -338,6 +389,22 @@ export default function AnnotationLayer(props: Props) {
                     )}
                   </For>
                 </Show>
+                <Show when={a().kind === 'bubble'}>
+                  <ellipse
+                    class="annot-shape annot-bubble"
+                    classList={{
+                      'is-selected': selectedId() === a().id,
+                      'is-inert': toolState.active !== 'select',
+                    }}
+                    cx={a().rect.x + a().rect.w / 2}
+                    cy={H() - a().rect.y - a().rect.h / 2}
+                    rx={a().rect.w / 2}
+                    ry={a().rect.h / 2}
+                    fill={shadeColor(a().color)}
+                    fill-opacity={a().opacity}
+                    onPointerDown={(e) => startMove(e, raw)}
+                  />
+                </Show>
                 <Show when={a().kind === 'rect'}>
                   <rect
                     class="annot-shape"
@@ -381,6 +448,29 @@ export default function AnnotationLayer(props: Props) {
             stroke-width={1}
             stroke-dasharray="4 3"
           />
+        </Show>
+
+        {/* Bubble targets. Drawn last so they sit above the shadings they
+            toggle, and only while the tool is held — the rest of the time a
+            page must look exactly like the paper it came from. */}
+        <Show when={toolState.active === 'bubble'}>
+          <For each={bubbles() ?? []}>
+            {(b) => (
+              <ellipse
+                class="bubble-target"
+                classList={{ 'is-shaded': !!shadedAt(b) }}
+                cx={b.rect.x + b.rect.w / 2}
+                cy={H() - b.rect.y - b.rect.h / 2}
+                rx={b.rect.w / 2}
+                ry={b.rect.h / 2}
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (e.button === 0) toggleBubble(b);
+                }}
+              />
+            )}
+          </For>
         </Show>
       </svg>
 

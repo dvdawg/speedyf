@@ -24,6 +24,7 @@ import { engine } from '../../lib/transport/engine';
 import TextLayer from './TextLayer';
 import AnnotationLayer from '../annotations/AnnotationLayer';
 import CitationLayer from '../citations/CitationLayer';
+import FormLayer from '../forms/FormLayer';
 import { reveal } from '../../stores/revealStore';
 import type { Rotation } from '../../types/model';
 import { TabContext } from '../../app/TabContext';
@@ -362,6 +363,14 @@ export default function PageView(props: Props) {
             )}
           </For>
         </div>
+        <Show when={srcIndex() !== null}>
+          <FormLayer
+            docId={doc.docId}
+            src={srcIndex()!}
+            pageHeightPt={props.geom.heightPt}
+            zoom={vp.state.zoom}
+          />
+        </Show>
         <Show when={srcIndex() !== null}>
           <CitationLayer
             docId={doc.docId}

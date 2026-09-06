@@ -1418,6 +1418,47 @@ textarea:focus-visible {
   cursor: move;
 }
 
+/* A shaded bubble is solid, so it is grabbed by its fill rather than by a
+ * stroke it does not have. Stated here rather than as an SVG attribute
+ * because `pointer-events` on the element is only a presentation attribute,
+ * and the `.annot-shape` rule above would win over it. */
+.annot-svg .annot-shape.annot-bubble {
+  pointer-events: fill;
+  cursor: move;
+}
+
+.annot-svg .annot-shape.annot-bubble.is-inert {
+  pointer-events: none;
+}
+
+/* Bubble targets: only present while the tool is held. Empty ones show a
+ * faint accent disc so they read as clickable without hiding the printed
+ * ring; a shaded one keeps a target too, since clicking it again clears it. */
+.annot-svg .bubble-target {
+  pointer-events: fill;
+  cursor: pointer;
+  fill: var(--accent);
+  fill-opacity: 0.14;
+  stroke: var(--accent);
+  stroke-opacity: 0.55;
+  stroke-width: 0.75;
+}
+
+.annot-svg .bubble-target:hover {
+  fill-opacity: 0.3;
+  stroke-opacity: 0.9;
+}
+
+.annot-svg .bubble-target.is-shaded {
+  fill-opacity: 0;
+  stroke-opacity: 0.25;
+}
+
+.annot-svg .bubble-target.is-shaded:hover {
+  fill-opacity: 0.12;
+  stroke-opacity: 0.7;
+}
+
 .annot-shape.is-selected {
   filter: drop-shadow(0 0 2px var(--accent));
 }
@@ -3501,4 +3542,76 @@ body.is-resizing-sidebar * {
 .citation-hotspot.is-linked {
   border-bottom-color: color-mix(in srgb, var(--accent) 75%, transparent);
   background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+/* ---------- interactive form widgets ---------- */
+
+/* Widgets sit above the page raster but below annotations: a checkbox is part
+ * of the document, and anything the reader draws goes on top of it. */
+.form-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* Unchecked, a widget is invisible until pointed at — the PDF already draws
+ * its own box, and painting a second one over it would only make the page
+ * look wrong. Checked, it draws the mark itself, because the appearance
+ * stream in the file still says "off" until the document is saved. */
+.form-widget {
+  position: absolute;
+  padding: 0;
+  margin: 0;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  pointer-events: auto;
+  cursor: pointer;
+  color: var(--accent);
+}
+
+.form-widget.is-radio {
+  border-radius: 50%;
+}
+
+.form-widget:hover,
+.form-widget:focus-visible {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  outline: none;
+}
+
+/* The mark: a cross for a checkbox, a filled disc for a radio, both drawn
+ * from the element's own box so they track zoom without extra arithmetic. */
+.form-widget.is-checked::before,
+.form-widget.is-checked::after {
+  content: '';
+  position: absolute;
+  background: currentColor;
+}
+
+.form-widget.is-checked:not(.is-radio)::before,
+.form-widget.is-checked:not(.is-radio)::after {
+  left: 12%;
+  right: 12%;
+  top: 50%;
+  height: 12%;
+  border-radius: 1px;
+}
+
+.form-widget.is-checked:not(.is-radio)::before {
+  transform: translateY(-50%) rotate(45deg);
+}
+
+.form-widget.is-checked:not(.is-radio)::after {
+  transform: translateY(-50%) rotate(-45deg);
+}
+
+.form-widget.is-checked.is-radio::before {
+  inset: 25%;
+  border-radius: 50%;
+}
+
+.form-widget.is-checked.is-radio::after {
+  content: none;
 }

@@ -20,6 +20,7 @@ import { effectiveTheme, pagesInverted, settings } from '../stores/settings';
 import { installShortcuts } from './shortcuts';
 import { loadExtensions } from '../features/extensions/extensionStore';
 import { clearImagePreviews } from '../features/editor/editorActions';
+import { clearFormFields } from '../features/forms/formStore';
 import PreviewPopover from '../features/citations/PreviewPopover';
 import HomeScreen from '../features/home/HomeScreen';
 import { libraryStore } from '../features/citations/libraryStore';
@@ -138,6 +139,7 @@ export default function App() {
       unlistenDrop?.();
       unlistenClose?.();
       clearImagePreviews();
+      clearFormFields();
     });
   });
 

@@ -1,11 +1,16 @@
 /** AcroForm text-field editor. Values are stored as model edits (undoable)
- * and applied by the engine at save time. Non-text fields are listed but
- * read-only in this version. */
+ * and applied by the engine at save time.
+ *
+ * Checkboxes and radio buttons are not edited here — they are clicked on the
+ * page itself, where the question they answer is written. This panel shows
+ * their state so a long form can be checked over at a glance. */
 import { createResource, For, Show, useContext } from 'solid-js';
-import { engine } from '../../lib/transport/engine';
 import IconButton from '../../components/IconButton';
 import { IconClose } from '../../components/icons';
 import { TabContext } from '../../app/TabContext';
+import type { FormFieldInfo } from '../../types/engine';
+import { formButtonKey } from '../document/documentStore';
+import { formFields } from '../forms/formStore';
 
 export default function FormPanel() {
   const tab = useContext(TabContext)!;
@@ -13,10 +18,18 @@ export default function FormPanel() {
   const doc = documentStore.state;
   const [fields] = createResource(
     () => (doc.loaded ? doc.docId : null),
-    (docId) => engine.getFormFields(docId).catch(() => [])
+    (docId) => formFields(docId)
   );
 
   const valueOf = (name: string, original: string) => doc.formEdits[name] ?? original;
+
+  /** A button's state, as the page currently shows it: the reader's click if
+   * they made one, otherwise what the file says. */
+  const buttonState = (f: FormFieldInfo) => {
+    const checked = doc.formButtonEdits[formButtonKey(f.page, f.index)] ?? f.checked;
+    const label = checked ? 'checked' : 'unchecked';
+    return f.exportValue && checked ? `${label} (${f.exportValue})` : label;
+  };
 
   return (
     <div class="form-panel" aria-label="Form fields">
@@ -40,7 +53,13 @@ export default function FormPanel() {
                   </span>
                   <Show
                     when={f.kind === 'text' && !f.readOnly}
-                    fallback={<span class="form-ro">{f.value || '—'} (read-only here)</span>}
+                    fallback={
+                      <span class="form-ro">
+                        {f.kind === 'checkbox' || f.kind === 'radio'
+                          ? buttonState(f)
+                          : f.value || '—'}
+                      </span>
+                    }
                   >
                     <input
                       type="text"
@@ -58,7 +77,10 @@ export default function FormPanel() {
               )}
             </For>
           </div>
-          <div class="panel-note">Values are written into the PDF when you save.</div>
+          <div class="panel-note">
+            Values are written into the PDF when you save. Tick checkboxes and radio buttons on the
+            page itself.
+          </div>
         </Show>
       </Show>
     </div>

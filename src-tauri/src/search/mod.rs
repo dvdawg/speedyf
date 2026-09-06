@@ -10,7 +10,7 @@
 //!   highlighting therefore keep working after the search budget is full, and
 //!   revisiting nearby pages does not re-run PDFium extraction.
 
-use crate::engine::types::{DocId, MatchDto, PageMatchesDto, SearchQueryDto, TextRun};
+use crate::engine::types::{BubbleDto, DocId, MatchDto, PageMatchesDto, SearchQueryDto, TextRun};
 use std::collections::HashMap;
 use std::sync::Arc;
 use unicode_normalization::UnicodeNormalization;
@@ -564,6 +564,11 @@ impl SearchStore {
 pub struct TextLayoutData {
     pub runs: Arc<Vec<TextRun>>,
     pub boxes: Arc<Vec<[f32; 4]>>,
+    /// Fillable-looking glyphs on the page (see `engine::bubbles`). Cached
+    /// here rather than on their own because they are derived from exactly
+    /// the character stream this entry already paid to extract — finding them
+    /// separately would mean reading the page twice to learn the same thing.
+    pub bubbles: Arc<Vec<BubbleDto>>,
     pub char_count: u32,
 }
 
@@ -619,12 +624,15 @@ impl TextLayoutCache {
         src: u32,
         runs: Vec<TextRun>,
         boxes: Vec<[f32; 4]>,
+        bubbles: Vec<BubbleDto>,
         char_count: u32,
     ) -> TextLayoutData {
         let runs = Arc::new(runs);
         let boxes = Arc::new(boxes);
+        let bubbles = Arc::new(bubbles);
         let cost = 64
             + (boxes.len() * std::mem::size_of::<[f32; 4]>()) as u64
+            + (bubbles.len() * std::mem::size_of::<BubbleDto>()) as u64
             + runs
                 .iter()
                 .map(|run| std::mem::size_of::<TextRun>() as u64 + run.text.len() as u64)
@@ -632,6 +640,7 @@ impl TextLayoutCache {
         let data = TextLayoutData {
             runs,
             boxes,
+            bubbles,
             char_count,
         };
         if cost > self.budget {
@@ -895,11 +904,11 @@ mod tests {
     #[test]
     fn foreground_text_layout_cache_is_lru_and_independent_of_search_coverage() {
         let mut cache = TextLayoutCache::new(500);
-        cache.insert(1, 10, vec![], vec![[0.0, 0.0, 10.0, 10.0]; 10], 10);
-        cache.insert(1, 11, vec![], vec![[0.0, 0.0, 10.0, 10.0]; 10], 10);
+        cache.insert(1, 10, vec![], vec![[0.0, 0.0, 10.0, 10.0]; 10], vec![], 10);
+        cache.insert(1, 11, vec![], vec![[0.0, 0.0, 10.0, 10.0]; 10], vec![], 10);
         assert!(cache.get(1, 10).is_some());
 
-        cache.insert(1, 12, vec![], vec![[0.0, 0.0, 10.0, 10.0]; 10], 10);
+        cache.insert(1, 12, vec![], vec![[0.0, 0.0, 10.0, 10.0]; 10], vec![], 10);
 
         assert!(cache.get(1, 10).is_some(), "recent layout survives");
         assert!(cache.get(1, 11).is_none(), "least-recent layout is evicted");

@@ -8,9 +8,11 @@
 //! process pool can replace the thread without changing any caller.
 
 pub mod annots;
+pub mod bubbles;
 pub mod citation;
 pub mod figures;
 pub mod formal;
+pub mod forms;
 pub mod invert;
 pub mod links;
 pub mod pdfium_init;
@@ -72,6 +74,11 @@ pub enum Work {
         doc: DocId,
         src: u32,
         respond: Respond<PageLinksDto>,
+    },
+    PageBubbles {
+        doc: DocId,
+        src: u32,
+        respond: Respond<PageBubblesDto>,
     },
     PreviewRect {
         doc: DocId,

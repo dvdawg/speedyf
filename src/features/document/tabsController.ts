@@ -18,6 +18,7 @@ import {
 } from '../../stores/tabsStore';
 import { askPassword, showError } from '../../stores/modalStore';
 import { clearImagePreviews } from '../editor/editorActions';
+import { clearFormFields } from '../forms/formStore';
 import { guardUnsaved, hydrateAnnotations, hydrateSizes } from './controller';
 import { recentStore } from '../../stores/recentStore';
 import { loadSession, saveSession } from '../../stores/sessionStore';
@@ -91,6 +92,9 @@ export async function openInNewTabOrFocus(
     try {
       const meta = await engine.open(path, password);
       clearImagePreviews();
+      // The fields belong to whatever file this document id last named; a
+      // reopened or replaced document must not inherit the old ones.
+      clearFormFields(meta.docId);
       setTabOpening(record.id, false);
       record.documentStore.initFromMeta(meta);
       record.searchStore.resetForDocument(meta.docId, meta.pageCount);

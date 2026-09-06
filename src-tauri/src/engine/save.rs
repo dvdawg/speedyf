@@ -12,6 +12,7 @@
 //! origin at the displayed crop-box bottom-left); `disp_to_user` maps them
 //! back into raw PDF user space honoring crop box + /Rotate.
 
+use crate::engine::forms;
 use crate::engine::types::{EditPlan, RectDto};
 use crate::errors::{AppError, AppResult};
 use pdfium_render::prelude::*;
@@ -270,6 +271,50 @@ fn add_annotations<'a>(
                 }
                 a.set_bounds(space.rect_to_user(&annot.rect))?;
             }
+            // A shaded bubble: a Stamp carrying one filled circle object.
+            //
+            // Stamp rather than Square, because the control being filled is
+            // round and a square annotation can only ever draw a box. Stamp
+            // rather than the PDF's own /Circle subtype, because PDFium
+            // exposes no constructor for one — and because a Stamp carries
+            // its appearance in its own objects, which is what keeps the mark
+            // looking identical in every viewer instead of depending on one
+            // to synthesize it.
+            //
+            // The colour lives on the path object, never on the annotation.
+            // `FPDFAnnot_SetColor` faults on an annotation that has an /AP,
+            // exactly as the ink branch above documents at length.
+            "bubble" => {
+                let user_rect = space.rect_to_user(&annot.rect);
+                let cx = (user_rect.left().value + user_rect.right().value) / 2.0;
+                let cy = (user_rect.bottom().value + user_rect.top().value) / 2.0;
+                let w = user_rect.right().value - user_rect.left().value;
+                let h = user_rect.top().value - user_rect.bottom().value;
+                let radius = w.min(h) / 2.0;
+                if radius <= 0.0 {
+                    continue;
+                }
+                let color = parse_color(&annot.color, annot.opacity);
+                let path = PdfPagePathObject::new_circle_at(
+                    doc,
+                    PdfPoints::new(cx),
+                    PdfPoints::new(cy),
+                    PdfPoints::new(radius),
+                    None,
+                    None,
+                    Some(color),
+                )?;
+                let mut a = page.annotations_mut().create_stamp_annotation()?;
+                // Bounds BEFORE the object, not after. PDFium builds the
+                // appearance stream when an object is appended, and sizes its
+                // /BBox from the annotation's rect *at that moment* — so
+                // appending first bakes in a zero-sized box that clips the
+                // whole mark away. The annotation still holds a correct path
+                // and a correct /Rect, which is why this reads as working
+                // right up until someone looks at the page.
+                a.set_bounds(user_rect)?;
+                a.objects_mut().add_path_object(path)?;
+            }
             other => {
                 log::warn!("unknown annotation kind ignored at save: {other}");
             }
@@ -306,8 +351,12 @@ fn add_annotations<'a>(
             PdfPoints::new(user_rect.bottom().value),
         )?;
         let mut a = page.annotations_mut().create_stamp_annotation()?;
-        a.objects_mut().add_image_object(obj)?;
+        // Bounds first — see the note on the "bubble" branch. Appending to a
+        // still-empty annotation gives its appearance stream a zero /BBox,
+        // which clips the image away completely while leaving a correct-looking
+        // /Rect behind.
         a.set_bounds(user_rect)?;
+        a.objects_mut().add_image_object(obj)?;
     }
 
     Ok(())
@@ -406,7 +455,45 @@ fn fill_form_fields(doc: &mut PdfDocument<'_>, form: &[(String, String)]) {
     }
 }
 
+/// Whether `plan` hands back the source's pages exactly as it found them:
+/// same count, same order, nothing inserted, nothing dropped.
+///
+/// Per-page edits — rotation, annotations, form values — do not count as
+/// restructuring; only the shape of the page list does.
+fn preserves_source_pages(plan: &EditPlan, src_page_count: u16) -> bool {
+    plan.pages.len() == src_page_count as usize
+        && plan
+            .pages
+            .iter()
+            .enumerate()
+            .all(|(index, page)| page.src_index == Some(index as u32))
+}
+
 /// Build the output document from `plan` and write it to `out_path`.
+///
+/// Two ways to produce the output, and which one is used comes down to
+/// whether the document is a form.
+///
+/// The default is to assemble a fresh document and import the pages the plan
+/// asks for, which is what makes reordering, deletion and inserted blanks
+/// possible at all. It also loses anything that lives on the *document*
+/// rather than on a page — and an AcroForm is exactly that. `FPDF_ImportPages`
+/// copies each widget annotation faithfully and leaves the `/AcroForm`
+/// dictionary that gives them meaning behind, so a filled-in form came out the
+/// other side as a page of inert boxes: the fields unreachable, the radio
+/// groups' parents orphaned, and `fill_form_fields` below silently doing
+/// nothing because the output no longer had a form to fill.
+///
+/// So when the document has a form and the plan is not restructuring pages —
+/// open a form, tick boxes, save, which is what filling one in *is* — the
+/// source document is edited in place and saved instead. Every later step
+/// works the same either way; they only care about pages.
+///
+/// Restructuring a form's pages still goes through the import path and still
+/// loses the form. That is a real limitation rather than an oversight: pdfium
+/// exposes no way to carry a catalog entry across documents, and dropping
+/// pages out of a form raises questions about the fields on them that this
+/// has no answer for.
 pub fn build_output(
     pdfium: &Pdfium,
     src_path: &str,
@@ -417,48 +504,64 @@ pub fn build_output(
     let src = pdfium
         .load_pdf_from_file(src_path, password)
         .map_err(|e| AppError::Malformed(format!("cannot reopen source: {e:?}")))?;
-    let mut out = pdfium.create_new_pdf()?;
-    let helv = out.fonts_mut().helvetica();
-
-    // 1) assemble pages: coalesce consecutive source pages into single
-    //    FPDF_ImportPages calls (1-based index list), create blanks inline.
-    let mut dest: u16 = 0;
-    let mut i = 0;
-    while i < plan.pages.len() {
-        if plan.pages[i].src_index.is_some() {
-            let mut list = String::new();
-            let mut j = i;
-            while j < plan.pages.len() {
-                if let Some(s) = plan.pages[j].src_index {
-                    if !list.is_empty() {
-                        list.push(',');
-                    }
-                    list.push_str(&(s + 1).to_string());
-                    j += 1;
-                } else {
-                    break;
-                }
-            }
-            out.pages_mut()
-                .copy_pages_from_document(&src, &list, dest)
-                .map_err(|e| AppError::Internal(format!("page import failed: {e:?}")))?;
-            dest += (j - i) as u16;
-            i = j;
-        } else {
-            let pp = &plan.pages[i];
-            out.pages_mut()
-                .create_page_at_index(
-                    PdfPagePaperSize::Custom(
-                        PdfPoints::new(pp.width_pt),
-                        PdfPoints::new(pp.height_pt),
-                    ),
-                    dest,
-                )
-                .map_err(|e| AppError::Internal(format!("blank page failed: {e:?}")))?;
-            dest += 1;
-            i += 1;
-        }
+    let has_form = src.form().is_some();
+    let edit_in_place = has_form && preserves_source_pages(plan, src.pages().len());
+    if has_form && !edit_in_place {
+        log::warn!(
+            "{src_path} has an AcroForm, but the save reorders, adds or removes \
+             pages; the form cannot be carried across and will be dropped"
+        );
     }
+
+    let mut out = if edit_in_place {
+        src
+    } else {
+        let mut fresh = pdfium.create_new_pdf()?;
+
+        // 1) assemble pages: coalesce consecutive source pages into single
+        //    FPDF_ImportPages calls (1-based index list), create blanks inline.
+        let mut dest: u16 = 0;
+        let mut i = 0;
+        while i < plan.pages.len() {
+            if plan.pages[i].src_index.is_some() {
+                let mut list = String::new();
+                let mut j = i;
+                while j < plan.pages.len() {
+                    if let Some(s) = plan.pages[j].src_index {
+                        if !list.is_empty() {
+                            list.push(',');
+                        }
+                        list.push_str(&(s + 1).to_string());
+                        j += 1;
+                    } else {
+                        break;
+                    }
+                }
+                fresh
+                    .pages_mut()
+                    .copy_pages_from_document(&src, &list, dest)
+                    .map_err(|e| AppError::Internal(format!("page import failed: {e:?}")))?;
+                dest += (j - i) as u16;
+                i = j;
+            } else {
+                let pp = &plan.pages[i];
+                fresh
+                    .pages_mut()
+                    .create_page_at_index(
+                        PdfPagePaperSize::Custom(
+                            PdfPoints::new(pp.width_pt),
+                            PdfPoints::new(pp.height_pt),
+                        ),
+                        dest,
+                    )
+                    .map_err(|e| AppError::Internal(format!("blank page failed: {e:?}")))?;
+                dest += 1;
+                i += 1;
+            }
+        }
+        fresh
+    };
+    let helv = out.fonts_mut().helvetica();
 
     // 2) per-page: annotations/texts/images in ORIGINAL display space, then rotation delta.
     for (idx, pp) in plan.pages.iter().enumerate() {
@@ -481,6 +584,12 @@ pub fn build_output(
     use std::io::Write;
     file.flush()?;
     file.sync_all()?;
+    drop(file);
+
+    // 5) checkbox and radio states, applied to the written file through
+    //    PDFium's own form-fill environment — see `engine::forms` for why
+    //    they cannot be set on the document above.
+    forms::apply_buttons(pdfium.bindings(), out_path, &plan.form_buttons)?;
     Ok(())
 }
 
@@ -585,6 +694,7 @@ mod tests {
                 plan_page(None, 270),
             ],
             form: Vec::new(),
+            form_buttons: Vec::new(),
         };
         build_output(
             &pdfium,
@@ -713,6 +823,7 @@ mod tests {
         let plan = EditPlan {
             pages: vec![page],
             form: Vec::new(),
+            form_buttons: Vec::new(),
         };
         build_output(
             &pdfium,
@@ -789,6 +900,169 @@ mod tests {
         );
     }
 
+    /// Count pixels dark enough to be ink inside a display-space rect.
+    ///
+    /// The page is rendered at one pixel per point, so a display rect (y-up,
+    /// origin bottom-left) maps to pixels by flipping y against page height.
+    fn ink_pixels_in(page: &PdfPage<'_>, rect: RectDto, page_h: f32) -> usize {
+        let w = page.width().value.round() as u16;
+        let h = page.height().value.round() as u16;
+        let bitmap = page.render(w as i32, h as i32, None).expect("render page");
+        let rgba = bitmap.as_rgba_bytes();
+        let x0 = rect.x.floor().max(0.0) as usize;
+        let x1 = ((rect.x + rect.w).ceil() as usize).min(w as usize);
+        let y0 = ((page_h - rect.y - rect.h).floor().max(0.0)) as usize;
+        let y1 = (((page_h - rect.y).ceil()) as usize).min(h as usize);
+        let mut dark = 0;
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let i = (y * w as usize + x) * 4;
+                if let Some(px) = rgba.get(i..i + 3) {
+                    if px[0] < 128 && px[1] < 128 && px[2] < 128 {
+                        dark += 1;
+                    }
+                }
+            }
+        }
+        dark
+    }
+
+    /// Everything a Stamp annotation draws lives in an appearance stream with
+    /// its own /BBox, and a zero one clips the whole mark away while leaving
+    /// the annotation, its path objects and its /Rect all reading as correct.
+    /// So counting annotations proves nothing here, and neither does checking
+    /// bounds — both were right the entire time a shaded bubble and an
+    /// inserted image were writing stamps that no viewer would draw. The only
+    /// assertion that catches it is whether pixels actually land on the page.
+    #[test]
+    fn stamp_appearance_streams_actually_put_ink_on_the_page() {
+        let _guard = pdfium_init::test_guard();
+        let pdfium = test_pdfium();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let source = dir.path().join("source.pdf");
+        let output = dir.path().join("output.pdf");
+        create_source_fixture(&pdfium, &source);
+
+        // The fixture's first page, so imported geometry matches the plan.
+        let (page_w, page_h) = (300.0f32, 420.0f32);
+        let shaded = RectDto {
+            x: 40.0,
+            y: 60.0,
+            w: 14.0,
+            h: 14.0,
+        };
+        let mut page = plan_page(Some(0), 0);
+        page.width_pt = page_w;
+        page.height_pt = page_h;
+        page.annots.push(PlanAnnot {
+            kind: "bubble".into(),
+            rect: shaded,
+            color: "#000000".into(),
+            opacity: 1.0,
+            stroke_width: None,
+            quads: None,
+            strokes: None,
+            text: None,
+        });
+        build_output(
+            &pdfium,
+            source.to_str().expect("source path"),
+            None,
+            &EditPlan {
+                pages: vec![page],
+                form: Vec::new(),
+                form_buttons: Vec::new(),
+            },
+            &output,
+        )
+        .expect("build output");
+
+        let doc = pdfium.load_pdf_from_file(&output, None).expect("reopen");
+        let page = doc.pages().get(0).expect("page");
+        let inked = ink_pixels_in(&page, shaded, page_h);
+        // A filled circle inscribed in a 14pt box covers ~pi/4 of it; well
+        // over half of that is a floor no anti-aliasing can drop below.
+        assert!(
+            inked > 60,
+            "the shaded bubble drew {inked} dark pixels — the appearance \
+             stream is being clipped away"
+        );
+
+        // A patch of the same page the plan never touched must stay blank,
+        // so the count above cannot be the fixture's own content.
+        let untouched = RectDto {
+            x: 200.0,
+            y: 60.0,
+            w: 14.0,
+            h: 14.0,
+        };
+        assert_eq!(
+            ink_pixels_in(&page, untouched, page_h),
+            0,
+            "control patch should be blank"
+        );
+    }
+
+    /// A shaded bubble is written as a Stamp, and so is a placed image — so
+    /// reading one back has to tell them apart. It did not: every Stamp came
+    /// back as an `image`, and an image read from a file carries no source
+    /// path, so the save path drops it and writes nothing in its place.
+    /// Shading a quiz, saving, reopening and nudging one mark would have
+    /// erased it.
+    #[test]
+    fn a_shaded_bubble_reopens_as_a_bubble_not_an_image() {
+        let _guard = pdfium_init::test_guard();
+        let pdfium = test_pdfium();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let source = dir.path().join("source.pdf");
+        let output = dir.path().join("output.pdf");
+        create_source_fixture(&pdfium, &source);
+
+        let mut page = plan_page(Some(0), 0);
+        page.width_pt = 300.0;
+        page.height_pt = 420.0;
+        page.annots.push(PlanAnnot {
+            kind: "bubble".into(),
+            rect: RectDto {
+                x: 40.0,
+                y: 60.0,
+                w: 14.0,
+                h: 14.0,
+            },
+            color: "#1a1a1a".into(),
+            opacity: 1.0,
+            stroke_width: None,
+            quads: None,
+            strokes: None,
+            text: None,
+        });
+        build_output(
+            &pdfium,
+            source.to_str().expect("source path"),
+            None,
+            &EditPlan {
+                pages: vec![page],
+                form: Vec::new(),
+                form_buttons: Vec::new(),
+            },
+            &output,
+        )
+        .expect("build output");
+
+        let pages = crate::engine::annots::read_annotations(
+            &pdfium,
+            output.to_str().expect("output path"),
+            None,
+        )
+        .expect("read annotations");
+        let kinds: Vec<&str> = pages
+            .iter()
+            .flat_map(|p| p.annots.iter())
+            .map(|a| a.kind.as_str())
+            .collect();
+        assert_eq!(kinds, vec!["bubble"], "the shading came back as {kinds:?}");
+    }
+
     /// A source carrying annotations SpeedyF did not write: one it models
     /// (a highlight, as another tool would leave it) and one it does not (a
     /// link).
@@ -847,6 +1121,7 @@ mod tests {
         let plan = EditPlan {
             pages: vec![plan_page(Some(0), 90)],
             form: Vec::new(),
+            form_buttons: Vec::new(),
         };
         build_output(
             &pdfium,
@@ -910,6 +1185,7 @@ mod tests {
         let plan = EditPlan {
             pages: vec![page],
             form: Vec::new(),
+            form_buttons: Vec::new(),
         };
         build_output(
             &pdfium,
