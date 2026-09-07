@@ -12,14 +12,23 @@
  * than one case.
  */
 import { saveDocument } from '../features/document/controller';
-import { closeTab, cycleTab, goHome, openFromDialog } from '../features/document/tabsController';
+import {
+  closeOtherTabs,
+  closeTab,
+  closeTabsToTheRight,
+  cycleTab,
+  goHome,
+  moveTabToNewWindow,
+  openFromDialog,
+  openNewWindow,
+} from '../features/document/tabsController';
 import { addBlankPageAfter } from '../features/editor/editorActions';
 import { setActiveTool, type Tool } from '../features/annotations/toolStore';
 import { beginPrint } from '../features/print/printStore';
 import { settings, updateSettings } from '../stores/settings';
 import { forgetContributedText } from '../features/extensions/extensionStore';
 import { setUi, ui, type SidebarMode } from '../stores/uiStore';
-import type { TabRecord } from '../stores/tabsStore';
+import { tabsStore, type TabRecord } from '../stores/tabsStore';
 
 export type CommandGroup =
   'File' | 'Edit' | 'Tools' | 'Page' | 'View' | 'Panels' | 'Settings' | 'Search' | 'Navigate';
@@ -193,6 +202,54 @@ export const COMMANDS: readonly Command[] = [
     enabled: (ctx) => ctx.tab !== null,
     run: (ctx) => {
       if (ctx.tab) void closeTab(ctx.tab.id);
+    },
+  },
+  {
+    id: 'file.newWindow',
+    title: 'New Window',
+    group: 'File',
+    shortcut: 'mod+n',
+    keywords: ['window', 'second', 'side by side'],
+    enabled: () => true,
+    run: () => void openNewWindow(),
+  },
+  {
+    id: 'file.moveTabToNewWindow',
+    title: 'Move Tab to New Window',
+    group: 'File',
+    keywords: ['window', 'detach', 'tear off', 'split', 'move'],
+    // Moving the only tab of a window into a window of its own would just
+    // rebuild the window it left.
+    enabled: (ctx) => loaded(ctx) && tabsStore.state.tabs.length > 1,
+    disabledReason: 'this window has only one tab',
+    run: (ctx) => {
+      if (ctx.tab) void moveTabToNewWindow(ctx.tab.id);
+    },
+  },
+  {
+    id: 'file.closeOtherTabs',
+    title: 'Close Other Tabs',
+    group: 'File',
+    keywords: ['tidy', 'clean up', 'rest'],
+    enabled: (ctx) => ctx.tab !== null && tabsStore.state.tabs.length > 1,
+    disabledReason: 'there are no other tabs',
+    run: (ctx) => {
+      if (ctx.tab) void closeOtherTabs(ctx.tab.id);
+    },
+  },
+  {
+    id: 'file.closeTabsToTheRight',
+    title: 'Close Tabs to the Right',
+    group: 'File',
+    keywords: ['tidy', 'clean up', 'after'],
+    enabled: (ctx) => {
+      if (!ctx.tab) return false;
+      const index = tabsStore.state.tabs.findIndex((t) => t.id === ctx.tab!.id);
+      return index >= 0 && index < tabsStore.state.tabs.length - 1;
+    },
+    disabledReason: 'this is the last tab',
+    run: (ctx) => {
+      if (ctx.tab) void closeTabsToTheRight(ctx.tab.id);
     },
   },
   {

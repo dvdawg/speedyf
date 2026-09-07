@@ -2,8 +2,6 @@ import { createEffect, onCleanup, onMount, Show } from 'solid-js';
 import { createSignal, For } from 'solid-js';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 import Toolbar from '../components/Toolbar';
 import TabStrip from '../features/tabs/TabStrip';
 import Sidebar from '../components/Sidebar';
@@ -26,10 +24,12 @@ import HomeScreen from '../features/home/HomeScreen';
 import { libraryStore } from '../features/citations/libraryStore';
 import { activeTab, tabsStore } from '../stores/tabsStore';
 import {
+  claimActiveDocument,
   closeAllWithGuard,
   openInNewTabOrFocus,
   restoreSession,
 } from '../features/document/tabsController';
+import { trackWindowFocus } from '../stores/windowStore';
 import { TabContext } from './TabContext';
 
 export default function App() {
@@ -72,19 +72,28 @@ export default function App() {
         else unlistenProgress = unlisten;
       });
 
-    // Files the OS asked us to open (double-click, "Open With", Dock drop):
-    // drain anything that arrived before we were ready to listen (cold
-    // launch-to-open), then keep listening for the rest of this session.
-    void invoke<string[]>('take_pending_opens').then((paths) => {
-      for (const p of paths) void openInNewTabOrFocus(p);
-    });
+    // Which document the engine should treat as foreground is app-global and
+    // only the front window may set it, so this window re-states its own each
+    // time it comes forward. See windowStore.ts.
+    const cleanupFocus = trackWindowFocus(claimActiveDocument);
+
+    // Files the OS asked us to open (double-click, "Open With", Dock drop).
+    // Anything that arrived before this window was listening — a cold
+    // launch-to-open, or a tab another window handed over as it created this
+    // one — is drained by restoreSession below.
     let unlistenOpen: (() => void) | undefined;
-    void listen<string[]>('file-open-requested', (event) => {
-      for (const p of event.payload) void openInNewTabOrFocus(p);
-    }).then((unlisten) => {
-      if (disposed) unlisten();
-      else unlistenOpen = unlisten;
-    });
+    // Scoped to this window, not the plain `listen` from the event module:
+    // that one subscribes with target Any, which receives events emitted to
+    // *every* window. A document handed to one window would then be opened by
+    // all of them — including the window that had just handed it over.
+    void getCurrentWindow()
+      .listen<string[]>('file-open-requested', (event) => {
+        for (const p of event.payload) void openInNewTabOrFocus(p);
+      })
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else unlistenOpen = unlisten;
+      });
 
     // native file drag-drop always opens a new tab (or focuses an existing one)
     let unlistenDrop: (() => void) | undefined;
@@ -134,6 +143,7 @@ export default function App() {
     onCleanup(() => {
       disposed = true;
       cleanupShortcuts();
+      cleanupFocus();
       unlistenProgress?.();
       unlistenOpen?.();
       unlistenDrop?.();

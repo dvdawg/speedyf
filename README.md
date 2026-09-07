@@ -13,6 +13,10 @@ manual QA before a public release.
 ## What works
 
 - Native open/save dialogs and PDF drag-and-drop
+- Multiple windows, each with its own tabs and its own restored session;
+  a tab's right-click menu closes its neighbours or hands it to another
+  window, and a document already open somewhere raises that window rather
+  than opening a second copy
 - Continuous virtualized scrolling with progressive page rendering
 - Fit page, fit width, anchored zoom, whole-view rotation, and large-page tiles
 - Virtualized thumbnails and direct page navigation
@@ -100,6 +104,7 @@ their content. Select an annotation and press Delete/Backspace to remove it.
 | Action                     | macOS               | Windows/Linux             |
 | -------------------------- | ------------------- | ------------------------- |
 | Open                       | `⌘O`                | `Ctrl+O`                  |
+| New window                 | `⌘N`                | `Ctrl+N`                  |
 | Save / Save As             | `⌘S` / `⇧⌘S`        | `Ctrl+S` / `Ctrl+Shift+S` |
 | Search                     | `⌘F`                | `Ctrl+F`                  |
 | Undo / redo                | `⌘Z` / `⇧⌘Z`        | `Ctrl+Z` / `Ctrl+Y`       |

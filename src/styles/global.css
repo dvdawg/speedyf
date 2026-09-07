@@ -684,6 +684,62 @@ textarea:focus-visible {
   padding: 0;
 }
 
+/* ---------- tab context menu ---------- */
+
+/* Sits above the hover preview: right-clicking a pill can only happen with
+   the pointer on it, which is exactly when a preview card may be up. */
+.tab-menu {
+  position: fixed;
+  z-index: 70;
+  /* Keep in step with MENU_WIDTH in tabMenuLayout.ts, which places the menu
+     before it has been laid out. */
+  width: 232px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  box-shadow: var(--shadow);
+}
+
+.tab-menu-item {
+  height: 28px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.tab-menu-item:hover:not(:disabled),
+.tab-menu-item:focus-visible {
+  background: var(--accent-soft);
+  outline: none;
+}
+
+.tab-menu-item:disabled {
+  color: var(--text-dim);
+  cursor: default;
+}
+
+.tab-menu-separator {
+  height: 1px;
+  flex: none;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
 /* ---------- tab hover preview ---------- */
 
 .tab-preview {

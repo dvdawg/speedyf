@@ -8,13 +8,17 @@
  * in view. Hovering one shows its first page (TabPreview), which is the only
  * thing that reliably says what a paper is.
  *
- * Drag-to-reorder mirrors Sidebar.tsx's page-thumbnail DnD pattern. */
+ * Drag-to-reorder mirrors Sidebar.tsx's page-thumbnail DnD pattern. Anything
+ * that moves a tab further than along this strip — into a window of its own,
+ * or into another window — is on the right-click menu (TabMenu), because a
+ * drag cannot cross a webview boundary. */
 import { createEffect, createSignal, For, onCleanup, Show } from 'solid-js';
 import IconButton from '../../components/IconButton';
 import { IconClose, IconHome } from '../../components/icons';
 import { tabsStore } from '../../stores/tabsStore';
 import { activateTab, closeTab, goHome, reorderTab } from '../document/tabsController';
 import TabPreview from './TabPreview';
+import TabMenu, { type TabMenuTarget } from './TabMenu';
 import type { Anchor } from './tabPreviewLayout';
 
 /** Long enough that sweeping across the strip does not flash cards, short
@@ -25,6 +29,7 @@ export default function TabStrip() {
   const [dragIndex, setDragIndex] = createSignal<number | null>(null);
   const [dropIndex, setDropIndex] = createSignal<number | null>(null);
   const [hovered, setHovered] = createSignal<{ id: string; anchor: Anchor } | null>(null);
+  const [menu, setMenu] = createSignal<TabMenuTarget | null>(null);
   let hoverTimer: ReturnType<typeof setTimeout> | undefined;
   let strip!: HTMLDivElement;
 
@@ -32,7 +37,14 @@ export default function TabStrip() {
     clearTimeout(hoverTimer);
     setHovered(null);
   };
+
   onCleanup(() => clearTimeout(hoverTimer));
+
+  const openMenu = (e: MouseEvent, id: string) => {
+    e.preventDefault();
+    clearHover();
+    setMenu({ tabId: id, x: e.clientX, y: e.clientY });
+  };
 
   const hoverTab = (id: string, element: HTMLElement) => {
     clearTimeout(hoverTimer);
@@ -71,7 +83,15 @@ export default function TabStrip() {
       <IconButton label="Home" onClick={goHome}>
         <IconHome />
       </IconButton>
-      <div class="tab-strip-tabs" ref={strip} onWheel={onWheel} onScroll={clearHover}>
+      <div
+        class="tab-strip-tabs"
+        ref={strip}
+        onWheel={onWheel}
+        onScroll={() => {
+          clearHover();
+          setMenu(null);
+        }}
+      >
         <For each={tabsStore.state.tabs}>
           {(tab, i) => {
             const doc = () => tab.documentStore.state;
@@ -86,6 +106,7 @@ export default function TabStrip() {
                 data-tab-id={tab.id}
                 draggable={true}
                 onClick={() => activateTab(tab.id)}
+                onContextMenu={(e) => openMenu(e, tab.id)}
                 onPointerEnter={(e) => hoverTab(tab.id, e.currentTarget)}
                 onPointerLeave={clearHover}
                 onDragStart={(e) => {
@@ -136,6 +157,13 @@ export default function TabStrip() {
           }}
         </For>
       </div>
+      <Show when={menu()}>
+        {(target) => (
+          <Show when={tabsStore.state.tabs.some((t) => t.id === target().tabId)}>
+            <TabMenu target={target()} onClose={() => setMenu(null)} />
+          </Show>
+        )}
+      </Show>
       <Show when={hovered()}>
         {(state) => (
           <Show when={tabsStore.state.tabs.find((t) => t.id === state().id)}>

@@ -37,6 +37,7 @@ interface Binding {
 
 const BINDINGS: readonly Binding[] = [
   { key: 'o', mod: true, id: 'file.open', whileTyping: true, preventAlways: true },
+  { key: 'n', mod: true, id: 'file.newWindow', whileTyping: true, preventAlways: true },
   { key: 'p', mod: true, shift: false, id: 'file.print', whileTyping: true, preventAlways: true },
   { key: 's', mod: true, shift: false, id: 'file.save', whileTyping: true, preventAlways: true },
   { key: 's', mod: true, shift: true, id: 'file.saveAs', whileTyping: true, preventAlways: true },
