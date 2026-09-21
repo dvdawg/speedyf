@@ -388,7 +388,7 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
             let result = do_figures(state, doc);
             respond(result)
         }
-        Work::Annotations { doc, respond } => respond(do_annotations(state, doc)),
+        Work::Annotations { doc, respond } => respond(do_annotations(state, shared, doc)),
         Work::ImageSize { path, respond } => respond(
             image::image_dimensions(&path)
                 .map(|(w, h)| [w, h])
@@ -1447,7 +1447,11 @@ fn nest_headings(flat: Vec<(u8, FormalEntryDto)>) -> Vec<OutlineNodeDto> {
 ///
 /// Reads through a separate document handle rather than the render one, exactly
 /// as saving does: the flags set below must not be visible to the reader.
-fn do_annotations(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<PageAnnotationsDto>> {
+fn do_annotations(
+    state: &mut WorkerState,
+    shared: &EngineShared,
+    doc: DocId,
+) -> AppResult<Vec<PageAnnotationsDto>> {
     let (src_path, password) = {
         let d = state.doc(doc)?;
         (d.path.clone(), d.password.clone())
@@ -1459,6 +1463,22 @@ fn do_annotations(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<PageAnno
             let indices: Vec<u32> = page.annots.iter().map(|a| a.index).collect();
             hide_annotations(state, raw, page.src, &indices);
         }
+        // Visibility changed the page pixels. Generation bumps only mark
+        // rasters as eviction candidates; RenderKey deliberately excludes the
+        // generation, so otherwise a new URL can still return an old bitmap
+        // with the saved text painted beneath the editor's copy.
+        shared
+            .page_cache
+            .lock()
+            .remove_matching(|key| key.doc == doc);
+        shared
+            .thumb_cache
+            .lock()
+            .remove_matching(|key| key.doc == doc);
+        shared
+            .preview_cache
+            .lock()
+            .remove_matching(|key| key.doc == doc);
     }
     Ok(pages)
 }
@@ -1894,6 +1914,129 @@ fn decode_pdfium_utf16(units: &[u16]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn adopting_saved_text_removes_it_from_cached_rasters() {
+        use crate::cache::ByteLru;
+        use crate::engine::queue::{GenerationMap, PrioQueue};
+        use crate::engine::Metrics;
+        use crate::library::LibraryState;
+        use crate::search::{SearchStore, TextLayoutCache};
+        use parking_lot::Mutex;
+        use std::sync::atomic::{AtomicBool, AtomicU64};
+
+        let _guard = pdfium_init::test_guard();
+        let pdfium = Pdfium::new(pdfium_init::init_bindings(&[]).unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("saved-text.pdf");
+        let mut document = pdfium.create_new_pdf().unwrap();
+        let font = document.fonts_mut().helvetica();
+        let mut page = document
+            .pages_mut()
+            .create_page_at_end(PdfPagePaperSize::Custom(
+                PdfPoints::new(200.0),
+                PdfPoints::new(100.0),
+            ))
+            .unwrap();
+        let mut annot = page.annotations_mut().create_stamp_annotation().unwrap();
+        annot
+            .set_bounds(PdfRect::new_from_values(10.0, 10.0, 90.0, 190.0))
+            .unwrap();
+        annot.set_creator(annots::TEXT_STAMP_CREATOR).unwrap();
+        annot.set_contents("Saved text").unwrap();
+        let mut text =
+            PdfPageTextObject::new(&document, "Saved text", font, PdfPoints::new(20.0)).unwrap();
+        text.translate(PdfPoints::new(20.0), PdfPoints::new(40.0))
+            .unwrap();
+        annot.objects_mut().add_text_object(text).unwrap();
+        drop(page);
+        document.save_to_file(&source).unwrap();
+        drop(document);
+
+        let shared = EngineShared {
+            queue: PrioQueue::new(),
+            gens: GenerationMap::default(),
+            cancels: GenerationMap::default(),
+            page_cache: Mutex::new(ByteLru::new(1_000_000)),
+            thumb_cache: Mutex::new(ByteLru::new(1_000_000)),
+            preview_cache: Mutex::new(ByteLru::new(1_000_000)),
+            search: Mutex::new(SearchStore::new(1_000_000)),
+            text_layouts: Mutex::new(TextLayoutCache::new(1_000_000)),
+            link_cache: Mutex::new(links::LinkCache::new(1_000_000)),
+            library: Arc::new(Mutex::new(LibraryState::load(dir.path().to_path_buf()))),
+            citation_resolver: Mutex::new(None),
+            metrics: Metrics::default(),
+            main_epoch: AtomicU64::new(0),
+            progress: Mutex::new(None),
+            last_metrics: Mutex::new(EngineMetricsDto::default()),
+            gram_index: Mutex::new(None),
+            gram_building: AtomicBool::new(false),
+        };
+        let mut state = WorkerState {
+            bindings: pdfium.bindings(),
+            pdfium: &pdfium,
+            docs: HashMap::new(),
+            next_id: 1,
+            active_main: None,
+            library_docs: Vec::new(),
+            library_session_docs: Vec::new(),
+            index_pending: Vec::new(),
+            index_active: None,
+            index_chain_seq: 0,
+        };
+        let doc = do_open(&mut state, source.to_str().unwrap().into(), None)
+            .unwrap()
+            .doc_id;
+        let meta = JobMeta {
+            doc,
+            gen: 0,
+            epoch: 0,
+        };
+        let keys: Vec<_> = [RenderKind::Page, RenderKind::Thumb, RenderKind::Preview]
+            .into_iter()
+            .map(|kind| RenderKey {
+                doc,
+                src: 0,
+                rot: 0,
+                scale_milli: 1000,
+                kind,
+                tile: None,
+                invert: false,
+            })
+            .collect();
+        let has_ink = |png: &[u8]| {
+            image::load_from_memory(png)
+                .unwrap()
+                .to_rgb8()
+                .pixels()
+                .any(|p| p.0.iter().any(|c| *c < 128))
+        };
+        for key in &keys {
+            assert!(has_ink(&do_render(&mut state, &shared, meta, key).unwrap()));
+        }
+        handle_work(
+            &mut state,
+            &shared,
+            meta,
+            Work::Annotations {
+                doc,
+                respond: Box::new(|result| {
+                    assert_eq!(result.unwrap()[0].annots[0].kind, "textbox");
+                }),
+            },
+        );
+        let after: Vec<_> = keys
+            .iter()
+            .map(|key| do_render(&mut state, &shared, meta, key).unwrap())
+            .collect();
+        state.close_one(doc, &shared, true);
+        for png in after {
+            assert!(
+                !has_ink(&png),
+                "a cached appearance would draw a second copy under the editable text"
+            );
+        }
+    }
 
     #[test]
     fn generation_cancellation_only_applies_to_render_work() {

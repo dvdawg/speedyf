@@ -24,8 +24,8 @@ manual QA before a public release.
 - Annotations already in a file are read back and stay editable across saves,
   and a notes panel lists them all with Markdown export
 - Page drag-reorder, delete, duplicate, rotate, and add blank page
-- Add PNG/JPEG images and real PDF text objects
-- Best-effort AcroForm text-field editing
+- Add PNG/JPEG images and text with saved appearances for other PDF viewers
+- AcroForm text-field editing with saved values and appearances
 - Save As followed by automatic reopen of the materialized document
 - Light/dark/system themes, optional hue-preserving page inversion, and a
   lower-memory cache mode
@@ -94,8 +94,15 @@ insertion. Page rotation in the sidebar changes saved page rotation; **Rotate
 view** in the main toolbar is temporary display state.
 
 Annotation tools use PDF page coordinates, so marks stay aligned through zoom,
-scroll, and 90°/180°/270° rotations. Double-click text boxes or notes to edit
-their content. Select an annotation and press Delete/Backspace to remove it.
+scroll, and 90°/180°/270° rotations. Click away from a text box to hide its outline
+and formatting toolbar. In pointer mode, click a text box to select it for moving
+or resizing. Double-click text boxes or notes to edit their content. Select an annotation and press Delete/Backspace to remove it.
+
+Text boxes start at a compact 12-point size and grow as you type. The text
+toolbar is visible while creating or editing a text box: choose
+Helvetica, Times New Roman, or Courier, set the size and color, or toggle bold,
+italic, and underline. Formatting applies to the whole box and is preserved
+in saved PDFs. Drag a corner to set a custom width; text then wraps to that width.
 
 | Action                     | macOS               | Windows/Linux             |
 | -------------------------- | ------------------- | ------------------------- |
@@ -245,17 +252,18 @@ SpeedyF is a focused editor, not a full PDF authoring or forensic tool:
 - Viewing, rendering, selection, and search use 32-bit source indexes. Save is
   limited to 65,535 output pages; the toolbar and status bar disclose and
   enforce that limit as soon as a larger document opens.
-- Ink, text boxes, and images are saved as real Ink/FreeText/Stamp annotations
-  rather than flattened into page content, so they remain editable after a
-  save. A FreeText annotation carries its text but no appearance stream of its
-  own, so other viewers render it using their own defaults.
+- Ink, text boxes, and images are saved as Ink/Stamp annotations with their
+  own appearance streams, so they display in other viewers and remain editable
+  in SpeedyF after saving. Added text uses text stamps because PDFium cannot
+  attach text objects to a FreeText annotation. Existing FreeText annotations
+  are still read as editable text boxes.
 - A stroke colour is never set on an annotation that carries page objects:
   `FPDFAnnot_SetColor` segfaults PDFium in that case. Ink colour and width live
   on the path objects instead, which is where the reader takes them from.
 - Annotations SpeedyF cannot represent (links, form widgets, popups, XFA) are
   never adopted or rewritten, so a save leaves them exactly as they were.
-- Only AcroForm text fields are best-effort editable. Other widgets are listed
-  read-only, and advanced forms/XFA are unsupported.
+- AcroForm text edits update the field value and appearance together; checkboxes
+  and radio buttons can be filled on the page. Advanced forms/XFA are unsupported.
 - Because save rebuilds a PDF from imported pages, preservation of bookmarks,
   attachments, document JavaScript, metadata, advanced forms, and unusual
   document-level structures is not guaranteed.

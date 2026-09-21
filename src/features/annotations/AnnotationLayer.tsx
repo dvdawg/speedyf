@@ -5,7 +5,17 @@
  * and is mapped through lib/coordinates. Annotations stay pure vectors during
  * interaction — the page raster is never re-rendered for annotation edits.
  */
-import { createMemo, createResource, createSignal, For, Show, useContext } from 'solid-js';
+import {
+  createEffect,
+  createMemo,
+  createResource,
+  createSignal,
+  For,
+  onCleanup,
+  Show,
+  untrack,
+  useContext,
+} from 'solid-js';
 import type { Annotation, PageEntry, PdfPoint, PdfQuad, PdfRect } from '../../types/model';
 import type { PageGeom } from '../../lib/coordinates/coords';
 import { cssToPdf } from '../../lib/coordinates/coords';
@@ -18,6 +28,8 @@ import { pagesInverted } from '../../stores/settings';
 import { imagePreviewUrl, newAnnotId } from '../editor/editorActions';
 import { IconTrash } from '../../components/icons';
 import { TabContext } from '../../app/TabContext';
+import { activeTab } from '../../stores/tabsStore';
+import { fitTextBox, textFontCss, textStyleOf } from './textStyle';
 
 interface Props {
   page: PageEntry;
@@ -36,7 +48,8 @@ interface DragState {
 }
 
 export default function AnnotationLayer(props: Props) {
-  const { documentStore } = useContext(TabContext)!;
+  const tab = useContext(TabContext)!;
+  const { documentStore, viewport } = tab;
   const H = () => props.page.heightPt;
   const annots = () => documentStore.state.annotations[props.page.id] ?? [];
   const selectedId = () =>
@@ -47,6 +60,64 @@ export default function AnnotationLayer(props: Props) {
   const [drag, setDrag] = createSignal<DragState | null>(null);
   const [draft, setDraft] = createSignal<{ rect: PdfRect; points?: PdfPoint[] } | null>(null);
   const [editingId, setEditingId] = createSignal<string | null>(null);
+  let typingGroup = Symbol('text edit');
+
+  const finishEditing = (deselect = false) => {
+    const a = annots().find((a) => a.id === editingId());
+    setEditingId(null);
+    if (deselect && selectedId() === a?.id) documentStore.setSelected(null);
+    if (a?.kind === 'textbox' && !(a.text ?? '').trim()) {
+      documentStore.apply({ type: 'deleteAnnot', pageId: props.page.id, id: a.id });
+    }
+  };
+
+  createEffect(() => {
+    const id = editingId();
+    if (!id) return;
+    if (selectedId() !== id || toolState.active !== 'select') untrack(finishEditing);
+  });
+
+  createEffect(() => {
+    const id = editingId();
+    if (!id || annots().find((a) => a.id === id)?.kind !== 'textbox') return;
+    viewport.setState('editingText', { pageId: props.page.id, annotId: id });
+    onCleanup(() => {
+      if (
+        viewport.state.editingText?.pageId === props.page.id &&
+        viewport.state.editingText.annotId === id
+      )
+        viewport.setState('editingText', null);
+    });
+  });
+
+  createEffect(() => {
+    const id = selectedId();
+    if (!id || annots().find((a) => a.id === id)?.kind !== 'textbox') return;
+    if (toolState.active !== 'select' || (activeTab() && activeTab()!.id !== tab.id)) {
+      untrack(() => {
+        finishEditing();
+        documentStore.setSelected(null);
+      });
+      return;
+    }
+    // A native color picker can blur the textarea with no relatedTarget.
+    // Dismiss only on interaction outside this box and its editing controls.
+    const leaveTextBox = (e: Event) => {
+      const target = e.target;
+      if (!(target instanceof Element)) return;
+      if (editingId() === id && target.closest('.text-tool-options')) return;
+      const owner = target.closest<HTMLElement>('[data-annot-id]');
+      if (owner?.dataset.annotId === id && layerEl.contains(owner)) return;
+      finishEditing();
+      if (selectedId() === id) documentStore.setSelected(null);
+    };
+    document.addEventListener('pointerdown', leaveTextBox, true);
+    document.addEventListener('focusin', leaveTextBox);
+    onCleanup(() => {
+      document.removeEventListener('pointerdown', leaveTextBox, true);
+      document.removeEventListener('focusin', leaveTextBox);
+    });
+  });
 
   let layerEl!: HTMLDivElement;
 
@@ -174,24 +245,31 @@ export default function AnnotationLayer(props: Props) {
   const createAtPoint = (p: PdfPoint) => {
     const style = activeStyle();
     if (toolState.active === 'textbox') {
-      const hPt = style.fontSizePt * 1.8;
       const id = newAnnotId();
+      const annot: Annotation = {
+        id,
+        pageId: props.page.id,
+        kind: 'textbox',
+        rect: {
+          x: Math.max(0, Math.min(p.x, props.page.widthPt - style.fontSizePt * 8)),
+          y: p.y,
+          w: 0,
+          h: 0,
+        },
+        color: style.color,
+        opacity: style.opacity,
+        text: '',
+        autoSize: true,
+        ...textStyleOf(style),
+      };
+      annot.rect = fitTextBox(annot, props.page);
       documentStore.apply({
         type: 'addAnnot',
-        annot: {
-          id,
-          pageId: props.page.id,
-          kind: 'textbox',
-          rect: { x: p.x, y: p.y - hPt, w: 200, h: hPt * 1.6 },
-          color: style.color,
-          opacity: style.opacity,
-          text: '',
-          fontSizePt: style.fontSizePt,
-        },
+        annot,
       });
+      setActiveTool('select');
       documentStore.setSelected({ pageId: props.page.id, annotId: id });
       setEditingId(id);
-      setActiveTool('select');
     } else if (toolState.active === 'note') {
       const id = newAnnotId();
       documentStore.apply({
@@ -206,9 +284,9 @@ export default function AnnotationLayer(props: Props) {
           text: '',
         },
       });
+      setActiveTool('select');
       documentStore.setSelected({ pageId: props.page.id, annotId: id });
       setEditingId(id);
-      setActiveTool('select');
     }
   };
 
@@ -300,7 +378,12 @@ export default function AnnotationLayer(props: Props) {
       const a = annots().find((x) => x.id === d.annotId);
       if (!a) return;
       const rect = resizeRect(a.rect, d.handle, p);
-      documentStore.apply({ type: 'patchAnnot', pageId: props.page.id, id: a.id, patch: { rect } });
+      documentStore.apply({
+        type: 'patchAnnot',
+        pageId: props.page.id,
+        id: a.id,
+        patch: { rect, ...(a.kind === 'textbox' ? { autoSize: false } : {}) },
+      });
     }
   };
 
@@ -504,6 +587,7 @@ export default function AnnotationLayer(props: Props) {
               <Show when={a().kind === 'textbox'}>
                 <div
                   class="annot-textbox"
+                  data-annot-id={a().id}
                   classList={{ 'is-selected': isSel() }}
                   style={{
                     left: `${cssX(a().rect.x)}px`,
@@ -512,13 +596,21 @@ export default function AnnotationLayer(props: Props) {
                     height: `${a().rect.h * props.zoom}px`,
                     color: a().color,
                     opacity: a().opacity,
-                    'font-size': `${(a().fontSizePt ?? 14) * props.zoom}px`,
+                    'font-size': `${textStyleOf(a()).fontSizePt * props.zoom}px`,
+                    'font-family': textFontCss[textStyleOf(a()).fontFamily],
+                    'font-weight': a().bold ? '700' : '400',
+                    'font-style': a().italic ? 'italic' : 'normal',
+                    'text-decoration': a().underline ? 'underline' : 'none',
                     'pointer-events': toolState.active === 'select' ? 'auto' : 'none',
                   }}
                   onPointerDown={(e) => {
                     if (editingId() !== a().id) startMove(e, raw);
                   }}
-                  onDblClick={() => setEditingId(a().id)}
+                  onDblClick={() => {
+                    if (toolState.active !== 'select') return;
+                    documentStore.setSelected({ pageId: props.page.id, annotId: a().id });
+                    setEditingId(a().id);
+                  }}
                 >
                   <Show
                     when={editingId() === a().id}
@@ -529,10 +621,28 @@ export default function AnnotationLayer(props: Props) {
                       value={a().text ?? ''}
                       ref={(el) => queueMicrotask(() => el.isConnected && el.focus())}
                       onPointerDown={(e) => e.stopPropagation()}
-                      onBlur={(e) => commitText(raw, e.currentTarget.value)}
+                      onFocus={() => {
+                        typingGroup = Symbol('text edit');
+                      }}
+                      onInput={(e) => {
+                        const text = e.currentTarget.value;
+                        documentStore.apply(
+                          {
+                            type: 'patchAnnot',
+                            pageId: props.page.id,
+                            id: raw.id,
+                            patch: { text, rect: fitTextBox({ ...raw, text }, props.page) },
+                          },
+                          typingGroup
+                        );
+                      }}
                       onKeyDown={(e) => {
-                        e.stopPropagation();
-                        if (e.key === 'Escape') e.currentTarget.blur();
+                        // File shortcuts remain available while typing; the
+                        // app's typing guard already protects normal editing.
+                        if (e.key === 'Escape') {
+                          e.stopPropagation();
+                          finishEditing(true);
+                        }
                       }}
                       aria-label="Text box content"
                     />
@@ -581,6 +691,7 @@ export default function AnnotationLayer(props: Props) {
               <button
                 type="button"
                 class="annot-keyboard-target"
+                data-annot-id={a().id}
                 style={{
                   left: `${cssX(a().rect.x)}px`,
                   top: `${cssY(a().rect.y, a().rect.h)}px`,
@@ -639,6 +750,7 @@ export default function AnnotationLayer(props: Props) {
                   {(h) => (
                     <div
                       class={`annot-handle handle-${h}`}
+                      data-annot-id={a().id}
                       style={handleStyle(a().rect, h, props.zoom, H())}
                       onPointerDown={(e) => startResize(e, raw, h)}
                     />
@@ -649,6 +761,7 @@ export default function AnnotationLayer(props: Props) {
                 <button
                   type="button"
                   class="annot-delete"
+                  data-annot-id={a().id}
                   style={{
                     left: `${cssX(a().rect.x) + a().rect.w * props.zoom + 6}px`,
                     top: `${cssY(a().rect.y, a().rect.h) - 6}px`,

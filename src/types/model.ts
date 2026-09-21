@@ -47,7 +47,16 @@ export interface PageEntry {
 
 export type AnnotationKind = 'highlight' | 'ink' | 'rect' | 'textbox' | 'note' | 'image' | 'bubble';
 
-export interface Annotation {
+export type TextFontFamily = 'Helvetica' | 'Times-Roman' | 'Courier';
+
+export interface TextFormat {
+  fontFamily: TextFontFamily;
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+}
+
+export interface Annotation extends Partial<TextFormat> {
   id: string;
   pageId: PageId;
   kind: AnnotationKind;
@@ -67,6 +76,8 @@ export interface Annotation {
   text?: string;
   /** textbox font size in points. */
   fontSizePt?: number;
+  /** New text boxes fit their contents until explicitly resized. */
+  autoSize?: boolean;
   /** image source path (absolute, chosen via native dialog). */
   sourcePath?: string;
   /** natural pixel size of the source image. */

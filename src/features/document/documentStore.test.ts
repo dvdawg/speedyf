@@ -32,6 +32,65 @@ const annot = (pageId: string, over: Partial<Annotation> = {}): Annotation => ({
   ...over,
 });
 
+it('does not coalesce typing across a savepoint or after undo', () => {
+  const store = fresh();
+  const pageId = store.state.pages[0]!.id;
+  const a = annot(pageId, { kind: 'textbox', text: '' });
+  store.apply({ type: 'addAnnot', annot: a });
+  const group = Symbol('typing');
+  const type = (text: string) =>
+    store.apply({ type: 'patchAnnot', pageId, id: a.id, patch: { text } }, group);
+  type('a');
+  type('ab');
+  store.markSaved();
+  type('abc');
+  store.undo();
+  expect(store.state.annotations[pageId]![0]!.text).toBe('ab');
+  expect(store.state.dirty).toBe(false);
+  type('ab!');
+  expect(store.state.dirty).toBe(true);
+  store.undo();
+  expect(store.state.annotations[pageId]![0]!.text).toBe('ab');
+  store.undo();
+  expect(store.state.annotations[pageId]![0]!.text).toBe('');
+});
+
+it('replaces a saved text appearance after a formatting-only edit', () => {
+  const store = fresh();
+  store.hydrateAnnotations([
+    {
+      src: 0,
+      annots: [
+        annot('', {
+          kind: 'textbox',
+          text: 'Existing text',
+          fontFamily: 'Helvetica',
+          bold: false,
+          italic: false,
+          underline: false,
+          srcAnnotIndex: 4,
+        }),
+      ],
+    },
+  ]);
+  const pageId = store.state.pages[0]!.id;
+  const a = store.state.annotations[pageId]![0]!;
+  expect(a.pageId).toBe(pageId);
+  expect(store.buildEditPlan().pages[0]!.texts).toHaveLength(0);
+  store.apply({
+    type: 'patchAnnot',
+    pageId,
+    id: a.id,
+    patch: { fontFamily: 'Times-Roman', bold: true, italic: true, underline: true },
+  });
+  expect(store.buildEditPlan().pages[0]).toMatchObject({
+    dropSrcAnnots: [4],
+    texts: [{ fontFamily: 'Times-Roman', bold: true, italic: true, underline: true }],
+  });
+  store.undo();
+  expect(store.buildEditPlan().pages[0]!.texts).toHaveLength(0);
+});
+
 describe('initFromMeta', () => {
   it('creates stable page entries with source indexes and base rotations', () => {
     const s = fresh();

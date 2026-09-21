@@ -441,6 +441,26 @@ pub struct AnnotationDto {
     pub strokes: Option<Vec<Vec<PointDto>>>,
     pub text: Option<String>,
     pub font_size_pt: Option<f32>,
+    #[serde(flatten)]
+    pub text_style: TextStyle,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TextFontFamily {
+    #[default]
+    Helvetica,
+    #[serde(rename = "Times-Roman")]
+    TimesRoman,
+    Courier,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TextStyle {
+    pub font_family: TextFontFamily,
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -458,6 +478,8 @@ pub struct PlanText {
     pub font_size_pt: f32,
     pub color: String,
     pub opacity: f32,
+    #[serde(flatten)]
+    pub style: TextStyle,
 }
 
 #[derive(Deserialize, Clone, Debug)]

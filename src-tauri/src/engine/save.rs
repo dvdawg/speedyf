@@ -4,8 +4,7 @@
 //! so wrapper ergonomics beat raw FFI here):
 //!   new doc → import kept/reordered/duplicated pages (FPDF_ImportPages under
 //!   the hood) → blank pages → true PDF annotations (Highlight/Square/Text
-//!   note) → ink flattened to page path objects → added text as real page
-//!   text objects → images as page image objects → AcroForm text values →
+//!   note/ink/stamp) with explicit text/image appearances → AcroForm edits →
 //!   write to a temp sibling → reopen-verify → atomic rename.
 //!
 //! Annotation coordinates arrive in display-normalized page space (y-up,
@@ -13,10 +12,13 @@
 //! back into raw PDF user space honoring crop box + /Rotate.
 
 use crate::engine::forms;
-use crate::engine::types::{EditPlan, RectDto};
+use crate::engine::types::{EditPlan, RectDto, TextFontFamily};
 use crate::errors::{AppError, AppResult};
 use pdfium_render::prelude::*;
+use std::collections::HashMap;
 use std::path::Path;
+
+type TextFonts = HashMap<(TextFontFamily, bool, bool), PdfFontToken>;
 
 /// Write a replacement to a temporary sibling, verify it, perform any
 /// last-moment handle cleanup, then atomically persist it over `dest`.
@@ -166,7 +168,7 @@ fn add_annotations<'a>(
     doc: &PdfDocument<'a>,
     page: &mut PdfPage<'a>,
     plan_page: &crate::engine::types::PlanPage,
-    helv: PdfFontToken,
+    fonts: &TextFonts,
 ) -> AppResult<()> {
     let space = PageSpace::of(page);
 
@@ -321,20 +323,54 @@ fn add_annotations<'a>(
         }
     }
 
-    // Typed text becomes a FreeText annotation holding its own text objects,
-    // rather than text objects written straight onto the page. Same reason as
-    // ink: flattened text is indistinguishable from the document's own words
-    // the moment it is saved, and cannot be edited or removed afterwards.
+    // PDFium only supports appending appearance objects to Ink and Stamp,
+    // not FreeText. A bare FreeText with /Contents has no portable appearance
+    // (and /IC is not its text color). Text stamps carry their own font and
+    // drawing commands while remaining editable through our annotation reader.
     for text in &plan_page.texts {
+        let font = fonts[&(text.style.font_family, text.style.bold, text.style.italic)];
         let user_rect = space.rect_to_user(&text.rect);
         let size = text.font_size_pt.max(4.0);
         let color = parse_color(&text.color, text.opacity);
-        let mut a = page
-            .annotations_mut()
-            .create_free_text_annotation(&text.text)?;
+        let mut a = page.annotations_mut().create_stamp_annotation()?;
         a.set_bounds(user_rect)?;
-        a.set_fill_color(color).ok();
-        let _ = (doc, helv, size);
+        a.set_contents(&text.text)?;
+        a.set_creator(crate::engine::annots::TEXT_STAMP_CREATOR)?;
+        a.set_is_printed(true)?;
+        let mut y = text.rect.y + text.rect.h - size;
+        for line in wrapped_text_lines(doc, font, size, &text.text, text.rect.w)? {
+            if y + size < text.rect.y {
+                break;
+            }
+            if !line.trim().is_empty() {
+                let mut object =
+                    PdfPageTextObject::new(doc, line.trim_end(), font, PdfPoints::new(size))?;
+                object.set_fill_color(color)?;
+                let line_width = object.width()?.value;
+                // Map the baseline and both axes, not just the rectangle:
+                // text added to an already-rotated page must stay upright.
+                let (x0, y0) = space.disp_to_user(text.rect.x, y);
+                let (xx, xy) = space.disp_to_user(text.rect.x + 1.0, y);
+                let (yx, yy) = space.disp_to_user(text.rect.x, y + 1.0);
+                object.transform(xx - x0, xy - y0, yx - x0, yy - y0, x0, y0)?;
+                a.objects_mut().add_text_object(object)?;
+                if text.style.underline {
+                    let (x1, y1) = space.disp_to_user(text.rect.x, y - size * 0.13);
+                    let (x2, y2) = space.disp_to_user(text.rect.x + line_width, y - size * 0.13);
+                    let line = PdfPagePathObject::new_line(
+                        doc,
+                        PdfPoints::new(x1),
+                        PdfPoints::new(y1),
+                        PdfPoints::new(x2),
+                        PdfPoints::new(y2),
+                        color,
+                        PdfPoints::new((size / 14.0).max(0.5)),
+                    )?;
+                    a.objects_mut().add_path_object(line)?;
+                }
+            }
+            y -= size * 1.3;
+        }
     }
 
     // Images become Stamp annotations carrying the image object.
@@ -360,6 +396,41 @@ fn add_annotations<'a>(
     }
 
     Ok(())
+}
+
+/// Preserve explicit line breaks and wrap at whitespace, like the text overlay.
+/// Measure using the same PDF font used to draw the saved text.
+fn wrapped_text_lines(
+    doc: &PdfDocument<'_>,
+    font: PdfFontToken,
+    size: f32,
+    text: &str,
+    width: f32,
+) -> AppResult<Vec<String>> {
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    let mut lines = Vec::new();
+    let mut measure = PdfPageTextObject::new(doc, "", font, PdfPoints::new(size))?;
+    for paragraph in normalized.split('\n') {
+        let mut line = String::new();
+        for word in paragraph.split_inclusive(char::is_whitespace) {
+            let candidate = format!("{line}{word}");
+            measure.set_text(candidate.trim_end())?;
+            if !line.is_empty() && measure.width()?.value > width {
+                lines.push(std::mem::take(&mut line));
+            }
+            // A compact box must also wrap an unbroken word, as the overlay
+            // does, rather than silently clipping its ending in the PDF.
+            for c in word.chars() {
+                measure.set_text(format!("{line}{c}"))?;
+                if !line.is_empty() && !c.is_whitespace() && measure.width()?.value > width {
+                    lines.push(std::mem::take(&mut line));
+                }
+                line.push(c);
+            }
+        }
+        lines.push(line);
+    }
+    Ok(lines)
 }
 
 fn apply_rotation(page: &mut PdfPage<'_>, extra_deg: u16) {
@@ -425,36 +496,6 @@ fn drop_replaced_annotations(page: &mut PdfPage<'_>, drop: &[u32]) {
     }
 }
 
-fn fill_form_fields(doc: &mut PdfDocument<'_>, form: &[(String, String)]) {
-    if form.is_empty() || doc.form().is_none() {
-        return;
-    }
-    let page_count = doc.pages().len();
-    for pi in 0..page_count {
-        let Ok(page) = doc.pages().get(pi) else {
-            continue;
-        };
-        let annotation_count = page.annotations().len();
-        for ai in 0..annotation_count {
-            let Ok(mut annotation) = page.annotations().get(ai) else {
-                continue;
-            };
-            let Some(field) = annotation.as_form_field_mut() else {
-                continue;
-            };
-            let name = field.name().unwrap_or_default();
-            let Some((_, value)) = form.iter().find(|(n, _)| *n == name) else {
-                continue;
-            };
-            if let Some(text_field) = field.as_text_field_mut() {
-                if let Err(e) = text_field.set_value(value) {
-                    log::warn!("form fill failed for '{name}': {e:?}");
-                }
-            }
-        }
-    }
-}
-
 /// Whether `plan` hands back the source's pages exactly as it found them:
 /// same count, same order, nothing inserted, nothing dropped.
 ///
@@ -481,7 +522,7 @@ fn preserves_source_pages(plan: &EditPlan, src_page_count: u16) -> bool {
 /// copies each widget annotation faithfully and leaves the `/AcroForm`
 /// dictionary that gives them meaning behind, so a filled-in form came out the
 /// other side as a page of inert boxes: the fields unreachable, the radio
-/// groups' parents orphaned, and `fill_form_fields` below silently doing
+/// groups' parents orphaned, and filling text fields silently doing
 /// nothing because the output no longer had a form to fill.
 ///
 /// So when the document has a form and the plan is not restructuring pages —
@@ -561,7 +602,29 @@ pub fn build_output(
         }
         fresh
     };
-    let helv = out.fonts_mut().helvetica();
+    // Load only font variants used by this edit plan, before borrowing pages.
+    let mut fonts = TextFonts::new();
+    for text in plan.pages.iter().flat_map(|p| &p.texts) {
+        fonts
+            .entry((text.style.font_family, text.style.bold, text.style.italic))
+            .or_insert_with(|| {
+                let f = out.fonts_mut();
+                match (text.style.font_family, text.style.bold, text.style.italic) {
+                    (TextFontFamily::Helvetica, false, false) => f.helvetica(),
+                    (TextFontFamily::Helvetica, true, false) => f.helvetica_bold(),
+                    (TextFontFamily::Helvetica, false, true) => f.helvetica_oblique(),
+                    (TextFontFamily::Helvetica, true, true) => f.helvetica_bold_oblique(),
+                    (TextFontFamily::TimesRoman, false, false) => f.times_roman(),
+                    (TextFontFamily::TimesRoman, true, false) => f.times_bold(),
+                    (TextFontFamily::TimesRoman, false, true) => f.times_italic(),
+                    (TextFontFamily::TimesRoman, true, true) => f.times_bold_italic(),
+                    (TextFontFamily::Courier, false, false) => f.courier(),
+                    (TextFontFamily::Courier, true, false) => f.courier_bold(),
+                    (TextFontFamily::Courier, false, true) => f.courier_oblique(),
+                    (TextFontFamily::Courier, true, true) => f.courier_bold_oblique(),
+                }
+            });
+    }
 
     // 2) per-page: annotations/texts/images in ORIGINAL display space, then rotation delta.
     for (idx, pp) in plan.pages.iter().enumerate() {
@@ -570,14 +633,11 @@ pub fn build_output(
         }
         let mut page = out.pages().get(idx as u16)?;
         drop_replaced_annotations(&mut page, &pp.drop_src_annots);
-        add_annotations(&out, &mut page, pp, helv)?;
+        add_annotations(&out, &mut page, pp, &fonts)?;
         apply_rotation(&mut page, pp.rotation % 360);
     }
 
-    // 3) AcroForm text values (best effort — unsupported fields are logged).
-    fill_form_fields(&mut out, &plan.form);
-
-    // 4) write
+    // 3) write
     let mut file = std::fs::File::create(out_path)?;
     out.save_to_writer(&mut file)
         .map_err(|e| AppError::Io(format!("write failed: {e:?}")))?;
@@ -586,10 +646,9 @@ pub fn build_output(
     file.sync_all()?;
     drop(file);
 
-    // 5) checkbox and radio states, applied to the written file through
-    //    PDFium's own form-fill environment — see `engine::forms` for why
-    //    they cannot be set on the document above.
-    forms::apply_buttons(pdfium.bindings(), out_path, &plan.form_buttons)?;
+    // 4) Commit form values AND their appearances through PDFium's form-fill
+    //    environment; setting /V alone leaves stale or missing text on disk.
+    forms::apply_edits(pdfium.bindings(), out_path, &plan.form, &plan.form_buttons)?;
     Ok(())
 }
 
@@ -670,6 +729,7 @@ mod tests {
             },
             text: "changed".into(),
             font_size_pt: 10.0,
+            style: Default::default(),
             color: "#000000".into(),
             opacity: 1.0,
         });
@@ -817,6 +877,7 @@ mod tests {
             },
             text: "ADDED-TEXT".into(),
             font_size_pt: 16.0,
+            style: Default::default(),
             color: "#111111".into(),
             opacity: 1.0,
         });
@@ -925,6 +986,241 @@ mod tests {
             }
         }
         dark
+    }
+
+    #[test]
+    fn text_formatting_uses_the_selected_pdf_font_and_underlines() {
+        let _guard = pdfium_init::test_guard();
+        let pdfium = test_pdfium();
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.pdf");
+        let output = dir.path().join("formatted.pdf");
+        create_source_fixture(&pdfium, &source);
+        let mut cases = Vec::new();
+        let mut pages = Vec::new();
+        for (family, names) in [
+            (
+                "Helvetica",
+                [
+                    "Helvetica",
+                    "Helvetica-Bold",
+                    "Helvetica-Oblique",
+                    "Helvetica-BoldOblique",
+                ],
+            ),
+            (
+                "Times-Roman",
+                [
+                    "Times-Roman",
+                    "Times-Bold",
+                    "Times-Italic",
+                    "Times-BoldItalic",
+                ],
+            ),
+            (
+                "Courier",
+                [
+                    "Courier",
+                    "Courier-Bold",
+                    "Courier-Oblique",
+                    "Courier-BoldOblique",
+                ],
+            ),
+        ] {
+            for (variant, name) in names.iter().enumerate() {
+                let bold = variant % 2 == 1;
+                let italic = variant >= 2;
+                let underline = variant != 0;
+                cases.push((family, *name, bold, italic, underline));
+                let mut page = plan_page(None, 0);
+                page.texts.push(
+                    serde_json::from_value(serde_json::json!({
+                        "rect": {"x": 30, "y": 200, "w": 220, "h": 50},
+                        "text": "Styled text", "fontSizePt": 20, "color": "#2255aa", "opacity": 1,
+                        "fontFamily": family, "bold": bold, "italic": italic, "underline": underline
+                    }))
+                    .unwrap(),
+                );
+                pages.push(page);
+            }
+        }
+        let plan = EditPlan {
+            pages,
+            form: vec![],
+            form_buttons: vec![],
+        };
+        build_output(&pdfium, source.to_str().unwrap(), None, &plan, &output).unwrap();
+        let doc = pdfium.load_pdf_from_file(&output, None).unwrap();
+        let read = crate::engine::annots::read_annotations(&pdfium, output.to_str().unwrap(), None)
+            .unwrap();
+        for (index, (family, name, bold, italic, underline)) in cases.iter().enumerate() {
+            let page = doc.pages().get(index as u16).unwrap();
+            let annot = page.annotations().get(0).unwrap();
+            let object = annot.objects().get(0).unwrap();
+            assert_eq!(object.as_text_object().unwrap().font().name(), *name);
+            assert_eq!(
+                annot.objects().iter().any(|o| o.as_path_object().is_some()),
+                *underline
+            );
+            let saved = serde_json::to_value(&read[index].annots[0]).unwrap();
+            assert_eq!(saved["fontFamily"], *family);
+            assert_eq!(saved["bold"], *bold);
+            assert_eq!(saved["italic"], *italic);
+            assert_eq!(saved["underline"], *underline);
+            assert_eq!(saved["color"], "#2255aa");
+        }
+    }
+
+    #[test]
+    fn added_text_has_a_visible_saved_appearance() {
+        let _guard = pdfium_init::test_guard();
+        let pdfium = test_pdfium();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let source = dir.path().join("source.pdf");
+        let output = dir.path().join("output.pdf");
+        create_source_fixture(&pdfium, &source);
+        let rect = RectDto {
+            x: 36.0,
+            y: 200.0,
+            w: 200.0,
+            h: 80.0,
+        };
+        let mut page = plan_page(None, 0);
+        page.width_pt = 300.0;
+        page.height_pt = 420.0;
+        page.texts.push(PlanText {
+            rect,
+            text: "Added text\nSecond line".into(),
+            font_size_pt: 20.0,
+            style: Default::default(),
+            color: "#111111".into(),
+            opacity: 1.0,
+        });
+        build_output(
+            &pdfium,
+            source.to_str().unwrap(),
+            None,
+            &EditPlan {
+                pages: vec![page],
+                form: Vec::new(),
+                form_buttons: Vec::new(),
+            },
+            &output,
+        )
+        .expect("save added text");
+
+        let doc = pdfium.load_pdf_from_file(&output, None).expect("reopen");
+        let page = doc.pages().get(0).expect("page");
+        let annot = page.annotations().get(0).expect("text annotation");
+        assert!(annot.is_printed(), "added text must also print");
+        assert_eq!(
+            annot.objects().iter().filter(|o| o.as_text_object().is_some()).count(),
+            2,
+            "both lines must already have text objects before rendering can synthesize an appearance"
+        );
+        assert!(
+            ink_pixels_in(&page, rect, 420.0) > 100,
+            "saved text must draw on the page"
+        );
+        let read = crate::engine::annots::read_annotations(&pdfium, output.to_str().unwrap(), None)
+            .expect("read added text");
+        let text = &read[0].annots[0];
+        assert_eq!(text.kind, "textbox");
+        assert_eq!(text.text.as_deref(), Some("Added text\nSecond line"));
+        assert_eq!(text.font_size_pt, Some(20.0));
+        assert_eq!(text.color, "#111111");
+    }
+
+    #[test]
+    fn added_text_stays_upright_on_cropped_rotated_pages() {
+        let _guard = pdfium_init::test_guard();
+        let pdfium = test_pdfium();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let source = dir.path().join("source.pdf");
+        let output = dir.path().join("output.pdf");
+        let mut document = pdfium.create_new_pdf().expect("new document");
+        for rotation in [0, 90, 180, 270] {
+            let mut page = document
+                .pages_mut()
+                .create_page_at_end(PdfPagePaperSize::Custom(
+                    PdfPoints::new(340.0),
+                    PdfPoints::new(480.0),
+                ))
+                .unwrap();
+            page.boundaries_mut()
+                .set_crop(PdfRect::new(
+                    PdfPoints::new(30.0),
+                    PdfPoints::new(20.0),
+                    PdfPoints::new(450.0),
+                    PdfPoints::new(320.0),
+                ))
+                .unwrap();
+            apply_rotation(&mut page, rotation);
+        }
+        document.save_to_file(&source).unwrap();
+        drop(document);
+        let rect = RectDto {
+            x: 36.0,
+            y: 80.0,
+            w: 160.0,
+            h: 80.0,
+        };
+        let plan = EditPlan {
+            pages: (0..4)
+                .map(|index| {
+                    let mut page = plan_page(Some(index), 0);
+                    page.texts.push(PlanText {
+                        rect,
+                        text: "First line\nSecond line".into(),
+                        font_size_pt: 20.0,
+                        style: crate::engine::types::TextStyle {
+                            font_family: TextFontFamily::TimesRoman,
+                            bold: true,
+                            italic: true,
+                            underline: true,
+                        },
+                        color: "#111111".into(),
+                        opacity: 0.8,
+                    });
+                    page
+                })
+                .collect(),
+            form: Vec::new(),
+            form_buttons: Vec::new(),
+        };
+        build_output(&pdfium, source.to_str().unwrap(), None, &plan, &output).unwrap();
+        let doc = pdfium.load_pdf_from_file(&output, None).unwrap();
+        for index in 0..4 {
+            let page = doc.pages().get(index).unwrap();
+            let height = page.height().value;
+            // Each line must draw in its own horizontal band in display space.
+            for y in [rect.y + rect.h - 20.0, rect.y + rect.h - 46.0] {
+                assert!(
+                    ink_pixels_in(
+                        &page,
+                        RectDto {
+                            x: rect.x,
+                            y,
+                            w: rect.w,
+                            h: 20.0
+                        },
+                        height
+                    ) > 80,
+                    "text missing or sideways on page {index}"
+                );
+            }
+        }
+        let read = crate::engine::annots::read_annotations(&pdfium, output.to_str().unwrap(), None)
+            .unwrap();
+        for page in read {
+            let text = &page.annots[0];
+            assert!((text.rect.x - rect.x).abs() < 0.01);
+            assert!((text.rect.y - rect.y).abs() < 0.01);
+            assert_eq!(text.font_size_pt, Some(20.0));
+            assert!((text.opacity - 0.8).abs() < 0.01);
+            assert_eq!(text.text_style.font_family, TextFontFamily::TimesRoman);
+            assert!(text.text_style.bold && text.text_style.italic && text.text_style.underline);
+        }
     }
 
     /// Everything a Stamp annotation draws lives in an appearance stream with

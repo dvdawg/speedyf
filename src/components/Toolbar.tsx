@@ -40,6 +40,7 @@ import {
 } from '../features/annotations/toolStore';
 import { addImageFromDialog } from '../features/editor/editorActions';
 import { beginPrint } from '../features/print/printStore';
+import TextTools from '../features/annotations/TextTools';
 
 export default function Toolbar() {
   const maxSavePages = 65_535;
@@ -64,8 +65,7 @@ export default function Toolbar() {
   };
 
   const showStroke = () => toolState.active === 'ink' || toolState.active === 'rect';
-  const showFont = () => toolState.active === 'textbox';
-  const showStyle = () => toolState.active !== 'select';
+  const showStyle = () => toolState.active !== 'select' && toolState.active !== 'textbox';
 
   return (
     <div class="toolbar" role="toolbar" aria-label="Main toolbar">
@@ -352,23 +352,6 @@ export default function Toolbar() {
                 />
               </label>
             </Show>
-            <Show when={showFont()}>
-              <label class="tb-field" title="Font size (pt)">
-                <span class="sr-only">Font size in points</span>
-                <input
-                  class="tb-input font-input"
-                  type="number"
-                  min="6"
-                  max="72"
-                  value={activeStyle().fontSizePt}
-                  onInput={(e) => {
-                    const v = parseFloat(e.currentTarget.value);
-                    if (Number.isFinite(v)) updateActiveStyle({ fontSizePt: v });
-                  }}
-                  aria-label="Font size in points"
-                />
-              </label>
-            </Show>
           </div>
         </Show>
       </div>
@@ -418,6 +401,7 @@ export default function Toolbar() {
           <IconSearch />
         </IconButton>
       </div>
+      <TextTools />
     </div>
   );
 }

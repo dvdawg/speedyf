@@ -61,6 +61,10 @@ export async function hydrateAnnotations(tab: TabRecord, docId: number) {
         ...(a.strokes !== null ? { strokes: a.strokes } : {}),
         ...(a.text !== null ? { text: a.text } : {}),
         ...(a.fontSizePt !== null ? { fontSizePt: a.fontSizePt } : {}),
+        fontFamily: a.fontFamily,
+        bold: a.bold,
+        italic: a.italic,
+        underline: a.underline,
       })),
     }))
   );
@@ -150,4 +154,6 @@ export async function reloadTabFromDisk(tab: TabRecord, dest: string): Promise<v
   tab.citationStore.syncDocument(meta.docId);
   tab.structureStore.syncDocument(meta.docId);
   recentStore.recordOpen({ path: dest, name: meta.name });
+  void hydrateSizes(tab, meta.pageCount);
+  await hydrateAnnotations(tab, meta.docId);
 }

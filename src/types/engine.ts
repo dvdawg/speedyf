@@ -1,5 +1,5 @@
 /** DTOs mirrored from the Rust engine (serde camelCase). */
-import type { PdfPoint, PdfQuad, PdfRect } from './model';
+import type { PdfPoint, PdfQuad, PdfRect, TextFormat } from './model';
 
 export interface DocMeta {
   docId: number;
@@ -182,7 +182,7 @@ export interface FormFieldInfo {
 /** One annotation read out of the file, ready to become an editable
  * `Annotation`. `index` is its position in the source page's annotation list —
  * the identity the save path uses to replace it. */
-export interface StoredAnnotation {
+export interface StoredAnnotation extends TextFormat {
   index: number;
   kind: string;
   rect: PdfRect;
