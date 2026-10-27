@@ -679,14 +679,76 @@ textarea:focus-visible {
 }
 
 .tab-pill.is-active {
-  background: var(--bg);
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+
+.tab-pill.is-active .tab-pill-close,
+.tab-pill.is-active .tab-pill-dirty {
+  color: inherit;
+}
+
+.tab-pill.is-active .tab-pill-close:hover {
+  background: color-mix(in srgb, var(--accent-text) 18%, transparent);
+}
+
+.tab-pill {
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Override the PDF text layer's explicit selection rule while a tab owns
+   the pointer. WebKit needs the prefixed rule as well. */
+html.is-dragging-tab,
+html.is-dragging-tab * {
+  -webkit-user-select: none !important;
+  user-select: none !important;
+  cursor: grabbing !important;
+}
+
+.tab-pill.is-dragging {
+  opacity: 0.3;
+  cursor: grabbing;
+}
+
+.tab-drag-preview {
+  position: fixed;
+  z-index: 1001;
+  pointer-events: none;
+}
+
+.tab-drag-preview .tab-pill {
+  flex: none;
+  max-width: none;
+  border-radius: 6px;
+  box-shadow:
+    0 4px 8px rgba(0, 0, 0, 0.18),
+    0 12px 24px rgba(0, 0, 0, 0.16);
+}
+
+.tab-detach-hint {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: max-content;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--bg-elev);
   color: var(--text);
-  border-color: var(--border);
-  border-bottom-color: transparent;
-  /* An accent line along the top edge, opposite the side that joins the page.
-     Drawn as an inset shadow rather than a thicker border so the pill does not
-     change height when it becomes active and nudge every other tab sideways. */
-  box-shadow: inset 0 2px 0 var(--accent);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+}
+
+.window-transfer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+  color: var(--text);
 }
 
 .tab-pill.is-drop-target {

@@ -67,13 +67,20 @@ describe('command registry', () => {
   });
 
   it('disables document commands when nothing is open', () => {
-    for (const id of ['file.save', 'file.print', 'edit.undo', 'page.rotateRight', 'view.fitPage']) {
+    for (const id of [
+      'file.save',
+      'file.print',
+      'file.detachTab',
+      'edit.undo',
+      'page.rotateRight',
+      'view.fitPage',
+    ]) {
       expect(commandById(id)!.enabled(empty), id).toBe(false);
     }
   });
 
   it('keeps the always-available commands reachable with no document', () => {
-    for (const id of ['file.open', 'file.goHome', 'search.library']) {
+    for (const id of ['file.open', 'file.newWindow', 'file.goHome', 'search.library']) {
       expect(commandById(id)!.enabled(empty), id).toBe(true);
     }
   });

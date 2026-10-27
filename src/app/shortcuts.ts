@@ -8,6 +8,7 @@
  * `whileTyping` fire — the file-level combos (open/save/print/close-tab/find)
  * and tab cycling.
  */
+import { windowTransferPending } from '../features/windows/windowController';
 import { jumpToTab } from '../features/document/tabsController';
 import { activeTab } from '../stores/tabsStore';
 import { setActiveTool, toolState } from '../features/annotations/toolStore';
@@ -36,6 +37,14 @@ interface Binding {
 }
 
 const BINDINGS: readonly Binding[] = [
+  {
+    key: 'n',
+    mod: true,
+    shift: false,
+    id: 'file.newWindow',
+    whileTyping: true,
+    preventAlways: true,
+  },
   { key: 'o', mod: true, id: 'file.open', whileTyping: true, preventAlways: true },
   { key: 'p', mod: true, shift: false, id: 'file.print', whileTyping: true, preventAlways: true },
   { key: 's', mod: true, shift: false, id: 'file.save', whileTyping: true, preventAlways: true },
@@ -150,6 +159,10 @@ function handleEscape(): void {
 
 export function installShortcuts(): () => void {
   const handler = (e: KeyboardEvent) => {
+    if (windowTransferPending()) {
+      e.preventDefault();
+      return;
+    }
     if (modal.kind !== null) return; // modals own the keyboard
     // The palette owns the keyboard too, or its arrow keys would also scroll
     // the document underneath it. It handles its own Escape.

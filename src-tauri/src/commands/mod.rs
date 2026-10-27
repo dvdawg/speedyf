@@ -6,20 +6,8 @@ use crate::engine::types::*;
 use crate::engine::{EngineHandle, Work};
 use crate::errors::{AppError, AppResult};
 use std::path::PathBuf;
-use std::sync::Mutex;
 
 pub struct EngineState(pub EngineHandle);
-
-/// File paths the OS asked us to open (double-click, "Open With", Dock drop)
-/// before the frontend was ready to receive the live `file-open-requested`
-/// event — drained once on startup so a cold launch-to-open never loses them.
-#[derive(Default)]
-pub struct PendingOpens(pub Mutex<Vec<String>>);
-
-#[tauri::command]
-pub fn take_pending_opens(state: tauri::State<'_, PendingOpens>) -> Vec<String> {
-    std::mem::take(&mut *state.0.lock().unwrap())
-}
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,6 +36,8 @@ pub async fn file_metadata(path: String) -> AppResult<FileMetaDto> {
 
 #[tauri::command]
 pub async fn open_document(
+    window: tauri::WebviewWindow,
+    windows: tauri::State<'_, crate::windows::Windows>,
     state: tauri::State<'_, EngineState>,
     path: String,
     password: Option<String>,
@@ -55,18 +45,26 @@ pub async fn open_document(
     if !std::path::Path::new(&path).is_file() {
         return Err(AppError::Io(format!("not a readable file: {path}")));
     }
-    state
+    let meta = state
         .0
         .call_async(Priority::VisiblePage, 0, move |respond| Work::Open {
             path,
             password,
             respond,
         })
-        .await
+        .await?;
+    windows.opened(window.label(), meta.doc_id);
+    Ok(meta)
 }
 
 #[tauri::command]
-pub async fn close_document(state: tauri::State<'_, EngineState>, doc_id: DocId) -> AppResult<()> {
+pub async fn close_document(
+    window: tauri::WebviewWindow,
+    windows: tauri::State<'_, crate::windows::Windows>,
+    state: tauri::State<'_, EngineState>,
+    doc_id: DocId,
+) -> AppResult<()> {
+    windows.closed(window.label(), doc_id);
     // bump first so every queued job for this doc is skipped, not executed
     state.0.bump_generation(doc_id);
     state
@@ -77,9 +75,13 @@ pub async fn close_document(state: tauri::State<'_, EngineState>, doc_id: DocId)
 
 #[tauri::command]
 pub async fn set_active_document(
+    window: tauri::WebviewWindow,
     state: tauri::State<'_, EngineState>,
     doc_id: Option<DocId>,
 ) -> AppResult<()> {
+    if !window.is_focused().unwrap_or(false) {
+        return Ok(());
+    }
     state.0.submit(
         Priority::VisiblePage,
         doc_id.unwrap_or(0),

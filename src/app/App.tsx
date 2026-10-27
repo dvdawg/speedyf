@@ -3,7 +3,6 @@ import { createSignal, For } from 'solid-js';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 import Toolbar from '../components/Toolbar';
 import TabStrip from '../features/tabs/TabStrip';
 import Sidebar from '../components/Sidebar';
@@ -28,8 +27,11 @@ import { activeTab, tabsStore } from '../stores/tabsStore';
 import {
   closeAllWithGuard,
   openInNewTabOrFocus,
-  restoreSession,
+  initializeWindow,
+  prepareWindowClose,
 } from '../features/document/tabsController';
+import { windowTransferPending } from '../features/windows/windowController';
+import { showError } from '../stores/modalStore';
 import { TabContext } from './TabContext';
 
 export default function App() {
@@ -75,16 +77,33 @@ export default function App() {
     // Files the OS asked us to open (double-click, "Open With", Dock drop):
     // drain anything that arrived before we were ready to listen (cold
     // launch-to-open), then keep listening for the rest of this session.
-    void invoke<string[]>('take_pending_opens').then((paths) => {
-      for (const p of paths) void openInNewTabOrFocus(p);
-    });
     let unlistenOpen: (() => void) | undefined;
-    void listen<string[]>('file-open-requested', (event) => {
-      for (const p of event.payload) void openInNewTabOrFocus(p);
-    }).then((unlisten) => {
-      if (disposed) unlisten();
-      else unlistenOpen = unlisten;
-    });
+    // Register first, then drain; native routing delivers to exactly one window.
+    void getCurrentWindow()
+      .listen<string[]>('file-open-requested', (event) => {
+        for (const p of event.payload) void openInNewTabOrFocus(p);
+      })
+      .then(async (unlisten) => {
+        if (disposed) {
+          unlisten();
+          return;
+        }
+        unlistenOpen = unlisten;
+        await initializeWindow();
+        const paths = await invoke<string[]>('take_pending_opens');
+        for (const p of paths) await openInNewTabOrFocus(p);
+      })
+      .catch((error) => showError(`Could not initialize this window: ${String(error)}`));
+
+    let unlistenFocus: (() => void) | undefined;
+    void getCurrentWindow()
+      .onFocusChanged(({ payload: focused }) => {
+        if (focused) void engine.setActiveDocument(activeTab()?.documentStore.state.docId ?? null);
+      })
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else unlistenFocus = unlisten;
+      });
 
     // native file drag-drop always opens a new tab (or focuses an existing one)
     let unlistenDrop: (() => void) | undefined;
@@ -110,15 +129,16 @@ export default function App() {
     const win = getCurrentWindow();
     void win
       .onCloseRequested(async (e) => {
-        if (closing) return;
-        const anyDirty = tabsStore.state.tabs.some((t) => t.documentStore.state.dirty);
-        if (anyDirty) {
-          e.preventDefault();
-          const ok = await closeAllWithGuard();
-          if (ok) {
-            closing = true;
+        e.preventDefault();
+        if (closing || windowTransferPending()) return;
+        closing = true;
+        try {
+          if (await closeAllWithGuard()) {
+            await prepareWindowClose();
             await win.destroy();
           }
+        } finally {
+          closing = false;
         }
       })
       .then((unlisten) => {
@@ -129,7 +149,6 @@ export default function App() {
     // apply persisted low-memory budget at startup
     if (settings.lowMemory) void engine.setLowMemory(true);
     void libraryStore.initializeLibrary();
-    void restoreSession();
 
     onCleanup(() => {
       disposed = true;
@@ -138,65 +157,77 @@ export default function App() {
       unlistenOpen?.();
       unlistenDrop?.();
       unlistenClose?.();
+      unlistenFocus?.();
       clearImagePreviews();
       clearFormFields();
     });
   });
 
   return (
-    <div class="app-shell" classList={{ 'drop-active': dropActive() }}>
-      <TabStrip />
-      <Toolbar />
-      <div class="content-area">
-        <Show when={tabsStore.state.tabs.length > 0}>
-          <div class="tab-workspaces">
-            <For each={tabsStore.state.tabs}>
-              {(tab) => {
-                // Sidebar state (open/mode) is window-level, so without this
-                // every open document would mount its own thumbnail list and
-                // race the others for the one engine thread — for panels
-                // nobody can see. The Viewer stays mounted either way and
-                // sheds its own page rasters internally.
-                const active = () => tab.id === tabsStore.state.activeId;
-                const visible = () => active() && tab.documentStore.state.loaded;
-                return (
-                  <TabContext.Provider value={tab}>
-                    <div class="tab-workspace" classList={{ 'is-active': active() }}>
-                      <div class="app-body">
-                        <Show when={ui.sidebarOpen && visible()}>
-                          <Sidebar />
-                        </Show>
-                        <main class="app-main">
-                          <ContextHeader />
-                          <Viewer />
-                        </main>
-                        <Show when={tab.viewport.state.searchOpen && visible()}>
-                          <SearchPanel />
-                        </Show>
-                        <Show when={tab.viewport.state.formPanelOpen && visible()}>
-                          <FormPanel />
-                        </Show>
+    <>
+      <div
+        class="app-shell"
+        inert={windowTransferPending()}
+        classList={{ 'drop-active': dropActive() }}
+      >
+        <TabStrip />
+        <Toolbar />
+        <div class="content-area">
+          <Show when={tabsStore.state.tabs.length > 0}>
+            <div class="tab-workspaces">
+              <For each={tabsStore.state.tabs}>
+                {(tab) => {
+                  // Sidebar state (open/mode) is window-level, so without this
+                  // every open document would mount its own thumbnail list and
+                  // race the others for the one engine thread — for panels
+                  // nobody can see. The Viewer stays mounted either way and
+                  // sheds its own page rasters internally.
+                  const active = () => tab.id === tabsStore.state.activeId;
+                  const visible = () => active() && tab.documentStore.state.loaded;
+                  return (
+                    <TabContext.Provider value={tab}>
+                      <div class="tab-workspace" classList={{ 'is-active': active() }}>
+                        <div class="app-body">
+                          <Show when={ui.sidebarOpen && visible()}>
+                            <Sidebar />
+                          </Show>
+                          <main class="app-main">
+                            <ContextHeader />
+                            <Viewer />
+                          </main>
+                          <Show when={tab.viewport.state.searchOpen && visible()}>
+                            <SearchPanel />
+                          </Show>
+                          <Show when={tab.viewport.state.formPanelOpen && visible()}>
+                            <FormPanel />
+                          </Show>
+                        </div>
                       </div>
-                    </div>
-                  </TabContext.Provider>
-                );
-              }}
-            </For>
+                    </TabContext.Provider>
+                  );
+                }}
+              </For>
+            </div>
+          </Show>
+          <Show when={tabsStore.state.activeId === null}>
+            <HomeScreen />
+          </Show>
+        </div>
+        <StatusBar />
+        <Show when={dropActive()}>
+          <div class="drop-overlay" aria-hidden="true">
+            <div class="drop-card">Drop PDF to open</div>
           </div>
         </Show>
-        <Show when={tabsStore.state.activeId === null}>
-          <HomeScreen />
-        </Show>
+        <Modals />
+        <CommandPalette />
+        <PreviewPopover />
       </div>
-      <StatusBar />
-      <Show when={dropActive()}>
-        <div class="drop-overlay" aria-hidden="true">
-          <div class="drop-card">Drop PDF to open</div>
+      <Show when={windowTransferPending()}>
+        <div class="window-transfer-overlay" role="status">
+          Moving tab to a new window…
         </div>
       </Show>
-      <Modals />
-      <CommandPalette />
-      <PreviewPopover />
-    </div>
+    </>
   );
 }

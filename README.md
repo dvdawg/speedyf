@@ -104,8 +104,15 @@ Helvetica, Times New Roman, or Courier, set the size and color, or toggle bold,
 italic, and underline. Formatting applies to the whole box and is preserved
 in saved PDFs. Drag a corner to set a custom width; text then wraps to that width.
 
+Drag a document tab out of the tab strip and release it to move it into a new
+window. Edits, undo/redo, zoom, and reading position move with the tab. Drag
+within the strip to reorder; press Escape to cancel a drag. You can also use
+**File → New Window**, the tab-bar window buttons, or the command palette's
+**New Window** and **Move Tab to New Window** commands.
+
 | Action                     | macOS               | Windows/Linux             |
 | -------------------------- | ------------------- | ------------------------- |
+| New window                 | `⌘N`                | `Ctrl+N`                  |
 | Open                       | `⌘O`                | `Ctrl+O`                  |
 | Save / Save As             | `⌘S` / `⇧⌘S`        | `Ctrl+S` / `Ctrl+Shift+S` |
 | Search                     | `⌘F`                | `Ctrl+F`                  |

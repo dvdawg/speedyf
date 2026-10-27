@@ -2,6 +2,11 @@
  * Distinct from controller.ts, which acts on one already-existing tab's
  * content (open/save/guard) — this module is the only place that creates or
  * removes TabRecords. */
+import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow, getAllWindows } from '@tauri-apps/api/window';
+import { type DocumentSnapshot } from './documentStore';
+import { type ViewportState, VIEW_PADDING } from '../../stores/viewportStore';
+import { windowTransferPending, setWindowTransferPending } from '../windows/windowController';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { engine, isEngineError } from '../../lib/transport/engine';
 import {
@@ -21,7 +26,7 @@ import { clearImagePreviews } from '../editor/editorActions';
 import { clearFormFields } from '../forms/formStore';
 import { guardUnsaved, hydrateAnnotations, hydrateSizes } from './controller';
 import { recentStore } from '../../stores/recentStore';
-import { loadSession, saveSession } from '../../stores/sessionStore';
+import { loadSession, saveSession, removeWindowSession } from '../../stores/sessionStore';
 import { abandonPrintFor } from '../print/printStore';
 
 const MAX_TABS = 30;
@@ -36,13 +41,16 @@ let saveTimer: ReturnType<typeof setTimeout> | undefined;
  * and which is active. Never stores docId/zoom/scroll (see sessionStore.ts). */
 function scheduleSave(): void {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    const tabs = tabsStore.state.tabs
-      .filter((t) => t.documentStore.state.path)
-      .map((t) => ({ path: t.documentStore.state.path! }));
-    const activePath = activeTab()?.documentStore.state.path ?? null;
-    saveSession({ version: 1, tabs, activePath });
-  }, 250);
+  saveTimer = setTimeout(saveCurrentSession, 250);
+}
+
+export function saveCurrentSession(): void {
+  clearTimeout(saveTimer);
+  const tabs = tabsStore.state.tabs
+    .filter((t) => t.documentStore.state.path)
+    .map((t) => ({ path: t.documentStore.state.path! }));
+  const activePath = activeTab()?.documentStore.state.path ?? null;
+  saveSession({ version: 1, tabs, activePath }, windowLabel());
 }
 
 export async function openFromDialog(): Promise<void> {
@@ -111,8 +119,10 @@ export async function openInNewTabOrFocus(
         record.viewport.requestScrollToPage(0);
       }
       void engine.startIndexing(meta.docId);
-      void hydrateSizes(record, meta.pageCount);
-      void hydrateAnnotations(record, meta.docId);
+      record.ready = Promise.all([
+        hydrateSizes(record, meta.pageCount),
+        hydrateAnnotations(record, meta.docId),
+      ]).then(() => undefined);
       if (activeTab()?.id === record.id) setActiveDocument(meta.docId);
       recentStore.recordOpen({ path, name: meta.name });
       scheduleSave();
@@ -158,7 +168,7 @@ export function activateTab(id: string): void {
 
 export async function closeTab(id: string): Promise<void> {
   const tab = tabsStore.state.tabs.find((t) => t.id === id);
-  if (!tab) return;
+  if (!tab || tab.opening || windowTransferPending()) return;
   if (tab.documentStore.state.dirty) {
     const ok = await guardUnsaved(tab);
     if (!ok) return;
@@ -247,3 +257,129 @@ export async function restoreSession(): Promise<void> {
 }
 
 export type { TabRecord };
+
+function windowLabel(): string {
+  try {
+    return getCurrentWindow().label;
+  } catch {
+    return 'main';
+  }
+}
+
+export interface TabSnapshot {
+  document: DocumentSnapshot;
+  viewport: Pick<
+    ViewportState,
+    | 'zoom'
+    | 'fitMode'
+    | 'viewRotation'
+    | 'currentPage'
+    | 'editMode'
+    | 'searchOpen'
+    | 'formPanelOpen'
+  >;
+  fraction: number;
+  search: { query: string; caseSensitive: boolean };
+}
+
+/** The source is frozen until the target acknowledges adoption. The native
+ * engine handle moves with the tab, so encrypted files need no second password. */
+export async function detachTab(id: string, position?: [number, number]): Promise<void> {
+  const tab = tabsStore.state.tabs.find((t) => t.id === id);
+  if (
+    !tab ||
+    tab.opening ||
+    !tab.documentStore.state.loaded ||
+    tab.documentStore.state.saving ||
+    windowTransferPending()
+  )
+    return;
+  setWindowTransferPending(true);
+  try {
+    await tab.ready;
+    const vp = tab.viewport.state;
+    const layout = tab.zoom.layoutFor(vp.zoom);
+    const fraction = Math.min(
+      1,
+      Math.max(
+        0,
+        (vp.scrollTop - (layout.tops[vp.currentPage] ?? 0) + VIEW_PADDING) /
+          (layout.heights[vp.currentPage] || 1)
+      )
+    );
+    const snapshot: TabSnapshot = {
+      document: tab.documentStore.snapshot(),
+      viewport: {
+        zoom: vp.zoom,
+        fitMode: vp.fitMode,
+        viewRotation: vp.viewRotation,
+        currentPage: vp.currentPage,
+        editMode: vp.editMode,
+        searchOpen: vp.searchOpen,
+        formPanelOpen: vp.formPanelOpen,
+      },
+      fraction,
+      search: {
+        query: tab.searchStore.state.query,
+        caseSensitive: tab.searchStore.state.caseSensitive,
+      },
+    };
+    await invoke('detach_tab', {
+      docId: snapshot.document.state.docId,
+      snapshot,
+      position: position ?? null,
+    });
+    abandonPrintFor(snapshot.document.state.docId);
+    tab.citationStore.dispose();
+    removeTab(id);
+    if (tabsStore.state.activeId === id) {
+      const next = tabsStore.state.tabs[0];
+      if (next) activateTab(next.id);
+      else goHome();
+    }
+    saveCurrentSession();
+  } catch (error) {
+    showError(`Could not move the tab: ${String(error)}`);
+  } finally {
+    setWindowTransferPending(false);
+  }
+}
+
+export async function initializeWindow(): Promise<void> {
+  const snapshot = await invoke<TabSnapshot | null>('window_tab_snapshot');
+  if (snapshot) {
+    const tab = createTab();
+    tab.documentStore.restore(snapshot.document);
+    tab.viewport.setState(snapshot.viewport);
+    tab.viewport.requestRestorePosition(snapshot.viewport.currentPage, snapshot.fraction);
+    const docId = snapshot.document.state.docId;
+    tab.searchStore.resetForDocument(docId, snapshot.document.state.searchIndex.total);
+    tab.searchStore.setCaseSensitive(snapshot.search.caseSensitive);
+    tab.searchStore.setQuery(snapshot.search.query);
+    tab.citationStore.syncDocument(docId);
+    tab.structureStore.syncDocument(docId);
+    // Nothing is visible or editable until native ownership is committed.
+    try {
+      await invoke('accept_window_tab');
+    } catch (error) {
+      tab.citationStore.dispose();
+      throw error;
+    }
+    addTab(tab);
+    activateTab(tab.id);
+    void engine.startIndexing(docId);
+    saveCurrentSession();
+  } else if (
+    windowLabel() === 'main' &&
+    !new URLSearchParams(window.location.search).has('window')
+  ) {
+    await restoreSession();
+  }
+}
+
+/** Flush before destroying a window. Only the last window keeps a launch
+ * session; closing one of several must not resurrect its tabs next launch. */
+export async function prepareWindowClose(): Promise<void> {
+  saveCurrentSession();
+  if ((await getAllWindows()).length > 1) removeWindowSession(windowLabel());
+}

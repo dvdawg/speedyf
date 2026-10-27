@@ -37,6 +37,7 @@ it('restores editable text and its formatting immediately after saving', async (
       ],
     },
   ]);
+  vi.spyOn(engine, 'close').mockResolvedValue();
   vi.spyOn(engine, 'bumpGeneration').mockResolvedValue(1);
   vi.spyOn(recentStore, 'recordOpen').mockImplementation(() => {});
   const documentStore = createDocumentStore();

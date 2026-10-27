@@ -136,6 +136,8 @@ interface HistoryEntry {
 
 export interface DocumentStore {
   state: DocState;
+  snapshot: () => DocumentSnapshot;
+  restore: (snapshot: DocumentSnapshot) => void;
   initFromMeta: (meta: DocMeta) => void;
   hydrateAnnotations: (byPage: { src: number; annots: Annotation[] }[]) => void;
   /** Source annotation indices owned per plan page — see `withoutAnnotations`. */
@@ -154,6 +156,18 @@ export interface DocumentStore {
   reset: () => void;
   pageIndexById: (id: PageId) => number;
   buildEditPlan: () => EditPlan;
+}
+
+/** In-memory handoff between windows, including the savepoint and source
+ * annotation ownership. Never persisted across application launches. */
+export interface DocumentSnapshot {
+  state: DocState;
+  undo: Omit<HistoryEntry, 'group'>[];
+  redo: Omit<HistoryEntry, 'group'>[];
+  savedLen: number | null;
+  idSeq: number;
+  hydrated: [string, string][];
+  hydratedByPage: [PageId, number[]][];
 }
 
 export function createDocumentStore(opts?: { historyLimit?: number }): DocumentStore {
@@ -650,6 +664,31 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
       return state;
     },
     initFromMeta,
+    snapshot: () =>
+      JSON.parse(
+        JSON.stringify({
+          state,
+          undo: undoStack.map(({ op, inverse }) => ({ op, inverse })),
+          redo: redoStack.map(({ op, inverse }) => ({ op, inverse })),
+          savedLen,
+          idSeq,
+          hydrated: [...hydrated],
+          hydratedByPage: [...hydratedByPage].map(([id, indices]) => [id, [...indices]]),
+        })
+      ) as DocumentSnapshot,
+    restore: (snapshot) => {
+      undoStack = snapshot.undo;
+      redoStack = snapshot.redo;
+      savedLen = snapshot.savedLen;
+      idSeq = snapshot.idSeq;
+      hydrated = new Map(snapshot.hydrated);
+      hydratedByPage = new Map(
+        snapshot.hydratedByPage.map(([id, indices]) => [id, new Set(indices)])
+      );
+      setState(snapshot.state);
+      rebuildPageLookups();
+      syncHistoryMeta();
+    },
     hydrateAnnotations,
     ownedSrcAnnots,
     updateSizes,

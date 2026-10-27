@@ -7,8 +7,9 @@ mod external;
 mod library;
 mod printing;
 mod search;
+mod windows;
 
-use commands::{EngineState, PendingOpens};
+use commands::EngineState;
 use engine::types::{DocId, Priority, RenderKey, RenderKind, TileRect};
 use engine::{EngineHandle, Work};
 use errors::AppError;
@@ -193,6 +194,7 @@ pub fn run() {
 
     builder
         .plugin(tauri_plugin_dialog::init())
+        .on_window_event(windows::on_window_event)
         .setup(|app| {
             let mut hints = Vec::new();
             if let Ok(resources) = app.path().resource_dir() {
@@ -217,7 +219,8 @@ pub fn run() {
             }));
 
             app.manage(EngineState(engine));
-            app.manage(PendingOpens::default());
+            app.manage(windows::Windows::default());
+            windows::install_menu(app.handle())?;
 
             // Someone who hand-installed an extension before it began shipping
             // would otherwise see it listed twice under one id. Best effort —
@@ -344,7 +347,11 @@ pub fn run() {
             commands::extension_contribute_text,
             commands::extension_contributed_text,
             commands::forget_contributed_text,
-            commands::take_pending_opens,
+            windows::take_pending_opens,
+            windows::new_window,
+            windows::detach_tab,
+            windows::window_tab_snapshot,
+            windows::accept_window_tab,
             commands::file_metadata,
             commands::open_document,
             commands::close_document,
@@ -419,7 +426,7 @@ fn handle_run_event(app_handle: &tauri::AppHandle, event: tauri::RunEvent) {
 fn raise_main_window(app_handle: &tauri::AppHandle) {
     #[cfg(target_os = "macos")]
     let _ = app_handle.show();
-    if let Some(window) = app_handle.get_webview_window("main") {
+    if let Some(window) = windows::target_window(app_handle) {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
@@ -432,10 +439,7 @@ fn handle_run_event(_app_handle: &tauri::AppHandle, _event: tauri::RunEvent) {}
 /// Hand opened paths to the frontend, and stash them for a frontend that is
 /// not listening yet — a cold launch reaches here before the webview exists.
 fn deliver_opens(app_handle: &tauri::AppHandle, paths: Vec<String>) {
-    if let Some(state) = app_handle.try_state::<PendingOpens>() {
-        state.0.lock().unwrap().extend(paths.clone());
-    }
-    let _ = app_handle.emit("file-open-requested", &paths);
+    windows::deliver_opens(app_handle, paths);
 }
 
 /// Files named on the command line, which is how every platform except macOS

@@ -11,8 +11,15 @@
  * with the keymap; the same command is reached by two different chords in more
  * than one case.
  */
+import { newWindow } from '../features/windows/windowController';
 import { saveDocument } from '../features/document/controller';
-import { closeTab, cycleTab, goHome, openFromDialog } from '../features/document/tabsController';
+import {
+  closeTab,
+  cycleTab,
+  goHome,
+  openFromDialog,
+  detachTab,
+} from '../features/document/tabsController';
 import { addBlankPageAfter } from '../features/editor/editorActions';
 import { setActiveTool, type Tool } from '../features/annotations/toolStore';
 import { beginPrint } from '../features/print/printStore';
@@ -146,6 +153,25 @@ function rotate(id: string, title: string, delta: 90 | 270): Command {
 }
 
 export const COMMANDS: readonly Command[] = [
+  {
+    id: 'file.newWindow',
+    title: 'New Window',
+    group: 'File',
+    shortcut: 'mod+n',
+    keywords: ['window', 'new'],
+    enabled: () => true,
+    run: () => void newWindow(),
+  },
+  {
+    id: 'file.detachTab',
+    title: 'Move Tab to New Window',
+    group: 'File',
+    keywords: ['detach', 'tear off', 'window'],
+    enabled: (ctx) => loaded(ctx) && !ctx.tab?.opening && !state(ctx)?.saving,
+    run: (ctx) => {
+      if (ctx.tab) void detachTab(ctx.tab.id);
+    },
+  },
   // ---- File ----------------------------------------------------------
   {
     id: 'file.open',
