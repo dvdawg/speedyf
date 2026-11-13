@@ -1,0 +1,53 @@
+{
+  "id": "dev.speedyf.notation",
+  "apiVersion": 1,
+  "name": "Notation",
+  "version": "1.0.0",
+  "description": "Every symbol and acronym the paper defines, each with the phrase that defines it and a jump to where it is defined.",
+  "author": "speedyf",
+  "entry": "worker.js",
+  "icon": "icon.svg",
+  "permissions": ["document:read", "commands:run", "storage"],
+  "contributes": {
+    "panels": [
+      {
+        "id": "notation",
+        "title": "Notation"
+      }
+    ],
+    "commands": [
+      {
+        "id": "notation",
+        "title": "Notation: Show",
+        "keywords": ["symbols", "acronyms", "glossary", "definitions"]
+      },
+      {
+        "id": "rescan",
+        "title": "Notation: Rescan Document",
+        "keywords": ["refresh", "symbols", "acronyms"]
+      },
+      {
+        "id": "goto",
+        "title": "Notation: Go To Definition",
+        "keywords": ["navigate", "jump", "defined"]
+      }
+    ],
+    "settings": [
+      {
+        "key": "pages",
+        "title": "Scan pages",
+        "type": "select",
+        "default": "first 200",
+        "options": ["first 50", "first 200", "all"],
+        "description": "How much of the document to read. Long documents read faster with fewer pages."
+      },
+      {
+        "key": "acronyms",
+        "title": "Show acronyms",
+        "type": "checkbox",
+        "default": "true",
+        "description": "List acronyms like \"NESS (nonequilibrium steady state)\" alongside symbols."
+      }
+    ]
+  }
+}
