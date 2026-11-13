@@ -8,6 +8,7 @@ import {
   IconEdit,
   IconFitPage,
   IconFitWidth,
+  IconForward,
   IconForm,
   IconBubble,
   IconHighlight,
@@ -32,6 +33,13 @@ import {
 import { saveDocument } from '../features/document/controller';
 import { openFromDialog } from '../features/document/tabsController';
 import { activeTab } from '../stores/tabsStore';
+import {
+  canGoBack,
+  canGoForward,
+  goBack,
+  goForward,
+  jumpToPage,
+} from '../features/viewer/navHistory';
 import { setUi, ui } from '../stores/uiStore';
 import {
   activeStyle,
@@ -55,8 +63,10 @@ export default function Toolbar() {
   const commitPageInput = (raw: string) => {
     setPageInput(null);
     const n = parseInt(raw, 10);
-    if (Number.isFinite(n) && n >= 1 && n <= pageCount())
-      activeTab()?.viewport.requestScrollToPage(n - 1);
+    if (Number.isFinite(n) && n >= 1 && n <= pageCount()) {
+      const tab = activeTab();
+      if (tab) jumpToPage(tab, n - 1);
+    }
   };
 
   const commitZoomInput = (raw: string) => {
@@ -138,11 +148,18 @@ export default function Toolbar() {
 
       <div class="tb-group">
         <IconButton
-          label="Back to previous view"
-          disabled={!loaded() || (activeTab()?.citationStore.state.navigationDepth ?? 0) === 0}
-          onClick={() => activeTab()?.citationStore.goBackFromInternalTarget()}
+          label={`Back (${formatShortcut('mod+[')})`}
+          disabled={!loaded() || !canGoBack()}
+          onClick={() => goBack()}
         >
           <IconBack />
+        </IconButton>
+        <IconButton
+          label={`Forward (${formatShortcut('mod+]')})`}
+          disabled={!loaded() || !canGoForward()}
+          onClick={() => goForward()}
+        >
+          <IconForward />
         </IconButton>
         <IconButton
           label="Previous page (Page Up)"

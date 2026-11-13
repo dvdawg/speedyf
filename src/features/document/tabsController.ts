@@ -38,6 +38,7 @@ import {
 } from '../../stores/sessionStore';
 import { MAIN_LABEL, windowApi, windowLabel } from '../../lib/transport/windows';
 import { abandonPrintFor } from '../print/printStore';
+import { captureView, forgetTab, noteTabSwitch, setNavTabActivator } from '../viewer/navHistory';
 
 const MAX_TABS = 30;
 
@@ -105,9 +106,14 @@ export async function openInNewTabOrFocus(
   path: string,
   opts?: { skipGuard?: boolean; fromSessionRestore?: boolean }
 ): Promise<boolean> {
+  // Opening (or focusing) another document from a reading tab is a jump like
+  // any other: Back in the tab it lands in returns here, to this exact view.
+  const source = activeTab();
+  const from = source && !opts?.fromSessionRestore ? captureView(source) : null;
   const existing = findTabByPath(path);
   if (existing) {
     activateTab(existing.id);
+    noteTabSwitch(from, existing.id);
     return true;
   }
   // Nobody opens a second copy of a document another window already has: that
@@ -167,6 +173,7 @@ export async function openInNewTabOrFocus(
       ]).then(() => undefined);
       if (activeTab()?.id === record.id) setActiveDocument(meta.docId);
       recentStore.recordOpen({ path, name: meta.name });
+      noteTabSwitch(from, record.id);
       scheduleSave();
       return true;
     } catch (e) {
@@ -207,6 +214,8 @@ export function activateTab(id: string): void {
   setActiveDocument(tab?.documentStore.state.docId ?? null);
   scheduleSave();
 }
+// Back/Forward across tabs brings a tab forward the same way a click does.
+setNavTabActivator(activateTab);
 
 /** Closes a tab, prompting first if it has unsaved changes. Returns whether
  * it actually closed, so a caller closing several in a row can stop when the
@@ -226,6 +235,7 @@ export async function closeTab(id: string): Promise<boolean> {
   }
   tab.citationStore.dispose();
   removeTab(id);
+  forgetTab(id);
 
   if (tabsStore.state.activeId === id) {
     const remaining = tabsStore.state.tabs;

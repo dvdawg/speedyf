@@ -17,7 +17,8 @@ import { createEffect, createMemo, createSignal, For, onMount, Show } from 'soli
 import { libraryStore } from '../../features/citations/libraryStore';
 import { projectsStore } from '../projects/projectsStore';
 import { openInNewTabOrFocus } from '../document/tabsController';
-import { tabsStore } from '../../stores/tabsStore';
+import { activeTab, tabsStore } from '../../stores/tabsStore';
+import { jumpToPage } from '../viewer/navHistory';
 import { IconClose, IconPlus, IconSearch } from '../../components/icons';
 import MathText from '../../components/MathText';
 import { splitSnippet } from './snippet';
@@ -74,12 +75,16 @@ export default function LibraryPanel() {
    * pages have been reordered this session. */
   const openHit = async (hit: LibraryHit, src: number) => {
     const query = libraryStore.state.query;
+    const before = activeTab();
     if (!(await openInNewTabOrFocus(hit.path))) return;
     const tab = tabsStore.state.tabs.find((t) => t.documentStore.state.path === hit.path);
     if (!tab) return;
     tab.searchStore.setQuery(query);
     const index = tab.documentStore.state.pages.findIndex((page) => page.srcIndex === src);
-    tab.viewport.requestScrollToPage(index >= 0 ? index : 0);
+    // A jump within the document already being read is recorded for Back;
+    // one that opened or focused another tab already was, by the open.
+    if (before?.id === tab.id) jumpToPage(tab, index >= 0 ? index : 0);
+    else tab.viewport.requestScrollToPage(index >= 0 ? index : 0);
   };
 
   return (

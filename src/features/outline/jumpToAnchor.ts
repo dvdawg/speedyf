@@ -6,6 +6,7 @@
  * hunting for it; using the y puts the target where you are already looking. */
 import type { ViewportStore } from '../../stores/viewportStore';
 import type { DocState } from '../document/documentStore';
+import { recordJumpForViewport } from '../viewer/navHistory';
 
 /** The top edge of a figure's artwork, in the page space `jumpToAnchor` wants.
  *
@@ -39,7 +40,9 @@ export function layoutIndexOf(doc: DocState, srcPage: number): number | null {
  * subtracts its own padding, which is what leaves the target a comfortable
  * distance below the top rather than flush against it.
  *
- * `srcPage` is a source page index — what every PDF destination refers to. */
+ * `srcPage` is a source page index — what every PDF destination refers to.
+ * Every caller is a deliberate jump, so the view it leaves is recorded for
+ * Back (see viewer/navHistory.ts). */
 export function jumpToAnchor(
   vp: ViewportStore,
   doc: DocState,
@@ -50,10 +53,13 @@ export function jumpToAnchor(
   if (page === null) return; // the page was deleted in this session
   const geom = doc.pages[page];
   if (y === null || !geom) {
+    recordJumpForViewport(vp, { page });
     vp.requestScrollToPage(page);
     return;
   }
   const rotation = (geom.baseRotation + geom.userRotation + vp.state.viewRotation) % 360;
   const heightPt = rotation % 180 === 0 ? geom.heightPt : geom.widthPt;
-  vp.requestScrollToPage(page, Math.max(0, (heightPt - y) * vp.state.zoom));
+  const offsetCss = Math.max(0, (heightPt - y) * vp.state.zoom);
+  recordJumpForViewport(vp, { page, offsetCss });
+  vp.requestScrollToPage(page, offsetCss);
 }

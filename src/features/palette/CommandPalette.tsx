@@ -20,6 +20,7 @@ import { activeTab, tabsStore } from '../../stores/tabsStore';
 import { activateTab } from '../document/tabsController';
 import { wantsNewWindow } from '../windows/windowController';
 import { jumpToAnchor } from '../outline/jumpToAnchor';
+import { jumpToPage } from '../viewer/navHistory';
 import { flattenOutline } from '../outline/structureStore';
 import { closePalette, mostUsed, paletteOpen, recordUse, usesOf } from './paletteStore';
 import { canonicalChord } from '../extensions/capabilities';
@@ -202,7 +203,7 @@ export default function CommandPalette() {
             title: `Go to page ${page}`,
             group: 'Jump',
             enabled: true,
-            run: () => tab.viewport.requestScrollToPage(page - 1),
+            run: () => jumpToPage(tab, page - 1),
           },
         ],
       },

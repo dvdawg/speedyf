@@ -14,12 +14,23 @@ import {
   IconClose,
 } from '../../components/icons';
 import { TabContext } from '../../app/TabContext';
+import { jumpToPage } from '../viewer/navHistory';
 import ScriptText from '../../components/ScriptText';
 
 export default function SearchPanel() {
   const tab = useContext(TabContext)!;
   const { documentStore, viewport: vp, zoom, searchStore } = tab;
-  const requestScrollToPage = vp.requestScrollToPage;
+  /** The query whose first jump has been recorded for Back. Stepping
+   * through matches with Enter must not leave a Back step per match: only the
+   * first jump of a search, and later ones that move more than a page. */
+  let recordedQuery: string | null = null;
+  const requestScrollToPage = (page: number, offsetCss?: number) => {
+    const first = recordedQuery !== s.query;
+    recordedQuery = s.query;
+    const layout = zoom.layoutFor(vp.state.zoom);
+    const pageHeight = layout.heights[vp.state.currentPage] ?? vp.state.containerH;
+    jumpToPage(tab, page, offsetCss, first ? undefined : { minDistance: pageHeight });
+  };
   const s = searchStore.state;
   let inputEl!: HTMLInputElement;
 

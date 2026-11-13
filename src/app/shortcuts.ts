@@ -78,6 +78,10 @@ const BINDINGS: readonly Binding[] = [
   { key: 'z', mod: true, shift: true, id: 'edit.redo', preventAlways: true },
   { key: ']', mod: true, shift: true, id: 'nav.nextTab', preventAlways: true },
   { key: '[', mod: true, shift: true, id: 'nav.previousTab', preventAlways: true },
+  // Back/Forward through reading positions, on the browser's own chords. The
+  // shifted forms above stay with tab cycling.
+  { key: '[', mod: true, shift: false, id: 'nav.back', preventAlways: true },
+  { key: ']', mod: true, shift: false, id: 'nav.forward', preventAlways: true },
   { key: '=', mod: true, id: 'view.zoomIn', preventAlways: true },
   { key: '+', mod: true, id: 'view.zoomIn', preventAlways: true },
   { key: '-', mod: true, id: 'view.zoomOut', preventAlways: true },
@@ -111,6 +115,13 @@ const BINDINGS: readonly Binding[] = [
 // Windows and Linux keep Ctrl+Y as a second redo.
 const REDO_Y: Binding = { key: 'y', mod: true, id: 'edit.redo', preventAlways: true };
 
+// ...and Alt+Left/Right as a second Back/Forward, as their browsers do. Not on
+// macOS, where Option+Arrow is word movement and Cmd+[ is the convention.
+const NAV_ALT: readonly Binding[] = [
+  { key: 'ArrowLeft', alt: true, id: 'nav.back' },
+  { key: 'ArrowRight', alt: true, id: 'nav.forward' },
+];
+
 /** Every chord SpeedyF binds for itself.
  *
  * Handed to the extension host so a contributed binding can be refused before
@@ -129,7 +140,7 @@ export function reservedChords(): ReadonlySet<string> {
       canonicalChord({ key: key.length === 1 ? key.toLowerCase() : key, mod, shift, alt })
     );
 
-  for (const binding of [...BINDINGS, REDO_Y]) {
+  for (const binding of [...BINDINGS, REDO_Y, ...NAV_ALT]) {
     const mod = binding.mod ?? false;
     const alt = binding.alt ?? false;
     if (binding.shift === undefined) {
@@ -163,7 +174,7 @@ function matches(binding: Binding, event: KeyboardEvent, mod: boolean): boolean 
     if (!event.altKey) return false;
     const physical =
       /^[a-z]$/.test(binding.key) && event.code === `Key${binding.key.toUpperCase()}`;
-    if (!physical && event.key.toLowerCase() !== binding.key) return false;
+    if (!physical && event.key.toLowerCase() !== binding.key.toLowerCase()) return false;
   } else {
     const key = binding.key.length === 1 ? event.key.toLowerCase() : event.key;
     if (key !== binding.key) return false;
@@ -224,7 +235,7 @@ export function installShortcuts(): () => void {
       return;
     }
 
-    const bindings = isMac ? BINDINGS : [...BINDINGS, REDO_Y];
+    const bindings = isMac ? BINDINGS : [...BINDINGS, REDO_Y, ...NAV_ALT];
     for (const binding of bindings) {
       if (!matches(binding, e, mod)) continue;
       if (typing && !binding.whileTyping) return;

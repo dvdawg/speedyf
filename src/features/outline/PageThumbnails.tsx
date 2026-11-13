@@ -34,6 +34,7 @@ import {
 import { addBlankPageAfter } from '../editor/editorActions';
 import type { Rotation } from '../../types/model';
 import { TabContext } from '../../app/TabContext';
+import { jumpToPage } from '../viewer/navHistory';
 
 const THUMB_W = 148;
 const SLOT_PAD = 30; // label + spacing
@@ -42,7 +43,6 @@ const GAP = 10;
 export default function PageThumbnails() {
   const tab = useContext(TabContext)!;
   const { documentStore, viewport: vp, zoom } = tab;
-  const requestScrollToPage = vp.requestScrollToPage;
   const doc = documentStore.state;
   let scroller!: HTMLDivElement;
   const [scrollTop, setScrollTop] = createSignal(0);
@@ -412,7 +412,7 @@ export default function PageThumbnails() {
                       type="button"
                       class="thumb-btn"
                       style={{ height: `${g()!.thumbH}px` }}
-                      onClick={() => requestScrollToPage(i)}
+                      onClick={() => jumpToPage(tab, i)}
                       aria-label={`Go to page ${i + 1}`}
                       aria-current={vp.state.currentPage === i ? 'page' : undefined}
                     >

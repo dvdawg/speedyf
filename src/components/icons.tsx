@@ -64,6 +64,13 @@ export const IconBack = () =>
       <path d="M6.5 4.5L3 8l3.5 3.5" />
     </>
   );
+export const IconForward = () =>
+  base(
+    <>
+      <path d="M13 8H2.5" />
+      <path d="M9.5 4.5L13 8l-3.5 3.5" />
+    </>
+  );
 export const IconPrev = () =>
   base(
     <path

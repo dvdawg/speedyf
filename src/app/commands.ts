@@ -39,6 +39,7 @@ import { PROJECT_COMMANDS } from '../features/projects/projectCommands';
 import { setUi, ui, type SidebarMode } from '../stores/uiStore';
 import { tabsStore, type TabRecord } from '../stores/tabsStore';
 import type { Paper } from '../types/engine';
+import { canGoBack, canGoForward, goBack, goForward } from '../features/viewer/navHistory';
 
 /** Listed rather than only typed so a test can check every group is used —
  * an empty heading is a palette section nobody can reach. */
@@ -679,6 +680,30 @@ export const COMMANDS: readonly Command[] = [
     shortcut: 'ctrl+shift+tab',
     enabled: () => true,
     run: () => cycleTab(-1),
+  },
+  // Back/Forward through reading positions left by followed links, outline
+  // and search jumps, and documents opened from a citation:
+  // features/viewer/navHistory.ts. Alt+Left/Right also reach these on
+  // Windows and Linux (shortcuts.ts).
+  {
+    id: 'nav.back',
+    title: 'Go Back',
+    group: 'Navigate',
+    shortcut: 'mod+[',
+    keywords: ['back', 'previous view', 'return', 'history', 'link'],
+    enabled: (ctx) => canGoBack(ctx.tab),
+    disabledReason: 'there is nowhere to go back to',
+    run: (ctx) => void goBack(ctx.tab),
+  },
+  {
+    id: 'nav.forward',
+    title: 'Go Forward',
+    group: 'Navigate',
+    shortcut: 'mod+]',
+    keywords: ['forward', 'next view', 'history', 'link'],
+    enabled: (ctx) => canGoForward(ctx.tab),
+    disabledReason: 'there is nowhere to go forward to',
+    run: (ctx) => void goForward(ctx.tab),
   },
 ];
 

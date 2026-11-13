@@ -17,6 +17,7 @@ import type { DocumentStore } from '../document/documentStore';
 import type { ViewportStore } from '../../stores/viewportStore';
 import { libraryStore } from './libraryStore';
 import { citationKey, citationLabel } from './citationLabel';
+import { recordJumpForViewport } from '../viewer/navHistory';
 
 export type HoverPhase = 'idle' | 'dwelling' | 'loading' | 'shown' | 'leaving';
 
@@ -237,42 +238,6 @@ export class HoverMachine<Request extends { key: string }, Result> {
   }
 }
 
-export interface ReadingPosition {
-  docId: number;
-  scrollTop: number;
-  scrollLeft: number;
-}
-
-/** Bounded LIFO view history for internal PDF jumps. Kept independent of
- * edit undo/redo because returning to a reading position must never mutate
- * the document. */
-export class ReferenceNavigationHistory {
-  private readonly entries: ReadingPosition[] = [];
-
-  constructor(private readonly limit = 100) {}
-
-  get depth(): number {
-    return this.entries.length;
-  }
-
-  push(position: ReadingPosition): void {
-    this.entries.push(position);
-    if (this.entries.length > this.limit) this.entries.splice(0, this.entries.length - this.limit);
-  }
-
-  pop(docId: number): ReadingPosition | undefined {
-    while (this.entries.length > 0) {
-      const position = this.entries.pop()!;
-      if (position.docId === docId) return position;
-    }
-    return undefined;
-  }
-
-  clear(): void {
-    this.entries.length = 0;
-  }
-}
-
 function targetKey(docId: number, target: HoverableTarget): string {
   if (target.kind === 'internal') {
     return `internal:${docId}:${target.page}:${target.x ?? ''}:${target.y ?? ''}`;
@@ -295,7 +260,7 @@ function toAnchorRect(element: HTMLElement): AnchorRect {
 }
 
 export interface CitationStore {
-  state: { hover: HoverSnapshot<HoverRequest, HoverPreview>; navigationDepth: number };
+  state: { hover: HoverSnapshot<HoverRequest, HoverPreview> };
   syncDocument(docId: number): void;
   linksForPage(docId: number, src: number): Promise<PageLinks>;
   enter(
@@ -308,18 +273,17 @@ export interface CitationStore {
   leave(): void;
   enterPopover(): void;
   close(): void;
+  /** Follow an internal link, recording the current view for Back
+   * (see viewer/navHistory.ts). */
   navigateInternalTarget(target: Extract<LinkTarget, { kind: 'internal' }>): void;
-  goBackFromInternalTarget(): void;
   dispose(): void;
 }
 
 export function createCitationStore(doc: DocumentStore, vp: ViewportStore): CitationStore {
   const [state, setState] = createStore<{
     hover: HoverSnapshot<HoverRequest, HoverPreview>;
-    navigationDepth: number;
   }>({
     hover: { phase: 'idle', request: null, result: null, error: null },
-    navigationDepth: 0,
   });
 
   async function loadPreview(request: HoverRequest): Promise<HoverPreview> {
@@ -367,11 +331,6 @@ export function createCitationStore(doc: DocumentStore, vp: ViewportStore): Cita
   const pageLinks = new Map<string, Promise<PageLinks>>();
   const PAGE_LINK_CACHE_ENTRIES = 256;
   let activeDocId = -1;
-  const navigationHistory = new ReferenceNavigationHistory();
-
-  function syncNavigationDepth(): void {
-    setState('navigationDepth', navigationHistory.depth);
-  }
 
   return {
     // getter, not a data property — see the note in tabsStore.ts
@@ -384,8 +343,6 @@ export function createCitationStore(doc: DocumentStore, vp: ViewportStore): Cita
       activeDocId = docId;
       pageLinks.clear();
       machine.reset();
-      navigationHistory.clear();
-      syncNavigationDepth();
     },
 
     async linksForPage(docId: number, src: number): Promise<PageLinks> {
@@ -443,24 +400,13 @@ export function createCitationStore(doc: DocumentStore, vp: ViewportStore): Cita
     navigateInternalTarget(target: Extract<LinkTarget, { kind: 'internal' }>): void {
       const pageIndex = doc.state.pages.findIndex((page) => page.srcIndex === target.page);
       if (pageIndex < 0) return;
-      navigationHistory.push({
-        docId: doc.state.docId,
-        scrollTop: vp.state.scrollTop,
-        scrollLeft: vp.state.scrollLeft,
-      });
-      syncNavigationDepth();
       const page = doc.state.pages[pageIndex];
       const offset =
         target.y === null || !page
           ? undefined
           : Math.max(0, (page.heightPt - target.y) * vp.state.zoom - vp.state.containerH * 0.2);
+      recordJumpForViewport(vp, { page: pageIndex, offsetCss: offset });
       vp.requestScrollToPage(pageIndex, offset);
-    },
-
-    goBackFromInternalTarget(): void {
-      const position = navigationHistory.pop(doc.state.docId);
-      syncNavigationDepth();
-      if (position) vp.requestScrollToPosition(position.scrollTop, position.scrollLeft);
     },
 
     dispose(): void {

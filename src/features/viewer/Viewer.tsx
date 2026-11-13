@@ -33,6 +33,7 @@ import {
 import { TabContext } from '../../app/TabContext';
 import { tabsStore, type TabRecord } from '../../stores/tabsStore';
 import { recentStore } from '../../stores/recentStore';
+import { navigateForMouseButton } from './navHistory';
 
 /** WebKit's non-standard pinch event. Not in lib.dom, and deliberately typed
  * as only the fields used here — `scale` is cumulative since gesturestart. */
@@ -407,6 +408,7 @@ function ViewerContent(props: { tab: TabRecord }) {
         0,
         top - VIEW_PADDING + (req.fraction ?? 0) * height + (req.offsetCss ?? 0)
       );
+      if (req.left !== undefined) scroller.scrollLeft = req.left;
     };
 
     // A restored reading position has to outlast the initial fit: the
@@ -429,6 +431,15 @@ function ViewerContent(props: { tab: TabRecord }) {
       class="viewer"
       ref={scroller}
       onScroll={onScroll}
+      // The mouse's own Back/Forward buttons step the reading history. Both
+      // halves are swallowed so the webview never treats them as navigating
+      // the app's page itself.
+      onMouseDown={(e) => {
+        if (e.button === 3 || e.button === 4) e.preventDefault();
+      }}
+      onMouseUp={(e) => {
+        if (navigateForMouseButton(e.button, props.tab)) e.preventDefault();
+      }}
       role="document"
       aria-label="Document pages"
       tabIndex={-1}

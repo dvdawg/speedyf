@@ -33,4 +33,24 @@ describe('scroll requests', () => {
     });
     expect(viewport.takeScrollRequest()).toBeNull();
   });
+
+  it("keeps a restore request's fraction, settle flag and horizontal scroll", () => {
+    const viewport = createViewportStore();
+    viewport.requestRestorePosition(4, 0.25);
+    expect(viewport.takeScrollRequest()).toEqual({
+      kind: 'page',
+      page: 4,
+      fraction: 0.25,
+      settle: true,
+      seq: 1,
+    });
+    viewport.requestRestoreView(2, 0.5, 30);
+    expect(viewport.takeScrollRequest()).toEqual({
+      kind: 'page',
+      page: 2,
+      fraction: 0.5,
+      left: 30,
+      seq: 2,
+    });
+  });
 });

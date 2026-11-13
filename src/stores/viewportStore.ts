@@ -40,6 +40,8 @@ export type ScrollRequest =
       fraction?: number;
       /** wait for the initial fit before applying (see Viewer) */
       settle?: boolean;
+      /** horizontal scroll to restore alongside (Back/Forward) */
+      left?: number;
       seq: number;
     }
   | { kind: 'position'; top: number; left: number; seq: number };
@@ -60,6 +62,9 @@ export interface ViewportStore {
   /** Restores a remembered reading position once the initial fit has settled. */
   requestRestorePosition(page: number, fraction: number): void;
   requestScrollToPosition(top: number, left: number): void;
+  /** Returns to an exact view: `fraction` down `page`, and `left` across.
+   * Resolved against the layout when applied, so it holds after a zoom. */
+  requestRestoreView(page: number, fraction: number, left: number): void;
   /** Returns and clears the pending request. Scroll requests are one-shot commands. */
   takeScrollRequest(): ScrollRequest | null;
   rotateView(): void;
@@ -115,6 +120,16 @@ export function createViewportStore(): ViewportStore {
       });
     },
 
+    requestRestoreView(page: number, fraction: number, left: number) {
+      setState('scrollRequest', {
+        kind: 'page',
+        page,
+        fraction,
+        left: Math.max(0, left),
+        seq: ++scrollSeq,
+      });
+    },
+
     requestScrollToPosition(top: number, left: number) {
       setState('scrollRequest', {
         kind: 'position',
@@ -137,6 +152,9 @@ export function createViewportStore(): ViewportStore {
               page: request.page,
               seq: request.seq,
               ...(request.offsetCss !== undefined ? { offsetCss: request.offsetCss } : {}),
+              ...(request.fraction !== undefined ? { fraction: request.fraction } : {}),
+              ...(request.settle !== undefined ? { settle: request.settle } : {}),
+              ...(request.left !== undefined ? { left: request.left } : {}),
             }
           : { kind: 'position', top: request.top, left: request.left, seq: request.seq };
       setState('scrollRequest', null);
