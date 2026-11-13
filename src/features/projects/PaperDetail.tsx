@@ -18,6 +18,7 @@ import {
   onCleanup,
   Show,
   untrack,
+  type JSX,
 } from 'solid-js';
 import { engine } from '../../lib/transport/engine';
 import { renderUrl } from '../../lib/rendering/renderSource';
@@ -52,6 +53,7 @@ import {
   yearText,
 } from './paperFields';
 import { projectsStore } from './projectsStore';
+import { AuthorLines, hasPersonLinks } from './PersonScope';
 import ProjectSuggestionLine from './ProjectSuggestion';
 import RelatedItems from './RelatedItems';
 import { takeTitleLookupRequest, titleLookupRequested } from './screenIntents';
@@ -143,6 +145,9 @@ function EditableField(props: {
   mono?: boolean;
   /** Typeset `$...$` math in the shown value; the editor keeps the source. */
   math?: boolean;
+  /** Shown in place of the value when it holds links of its own (the
+   * authors); a quiet Edit button then opens the editor. */
+  linked?: JSX.Element | undefined;
   onSave: (text: string) => Promise<string | null>;
 }) {
   const id = createUniqueId();
@@ -214,19 +219,38 @@ function EditableField(props: {
                 </button>
               }
             >
-              <button
-                type="button"
-                class="paper-field-value"
-                classList={{ 'is-empty': !props.display, 'is-mono': props.mono === true }}
-                aria-labelledby={id}
-                onClick={begin}
+              <Show
+                when={props.linked && props.display ? props.linked : null}
+                fallback={
+                  <button
+                    type="button"
+                    class="paper-field-value"
+                    classList={{ 'is-empty': !props.display, 'is-mono': props.mono === true }}
+                    aria-labelledby={id}
+                    onClick={begin}
+                  >
+                    <Show when={props.display} fallback="Add">
+                      <Show when={props.math} fallback={props.display}>
+                        <MathText text={props.display} />
+                      </Show>
+                    </Show>
+                  </button>
+                }
               >
-                <Show when={props.display} fallback="Add">
-                  <Show when={props.math} fallback={props.display}>
-                    <MathText text={props.display} />
-                  </Show>
-                </Show>
-              </button>
+                {(linked) => (
+                  <span class="paper-field-value is-linked">
+                    {linked()}
+                    <button
+                      type="button"
+                      class="paper-mini-btn paper-field-edit"
+                      aria-label={`Edit ${props.label}`}
+                      onClick={begin}
+                    >
+                      Edit
+                    </button>
+                  </span>
+                )}
+              </Show>
             </Show>
           }
         >
@@ -408,6 +432,11 @@ function Verdict(props: { paper: Paper }) {
   );
 }
 
+/** An identifier's provenance is shown only when citing papers supplied it:
+ * the file's own or a lookup's needs no tag, and always had none. */
+const idSource = (source: MetaSource | null | undefined) =>
+  source === 'citations' ? source : undefined;
+
 function Fields(props: { paper: Paper }) {
   const store = projectsStore;
   const save = async (patch: MetaPatch): Promise<string | null> => {
@@ -434,6 +463,7 @@ function Fields(props: { paper: Paper }) {
         text={formatAuthors(authors())}
         source={props.paper.meta.authors?.source}
         vouched={props.paper.vouched?.['authors']}
+        linked={hasPersonLinks(props.paper) ? <AuthorLines paper={props.paper} /> : undefined}
         multiline
         onSave={(v) => {
           const list = parseAuthors(v);
@@ -505,6 +535,8 @@ function Fields(props: { paper: Paper }) {
         label="DOI"
         display={props.paper.doi ?? ''}
         text={props.paper.doi ?? ''}
+        source={idSource(props.paper.doiSource)}
+        vouched={props.paper.vouched?.['doi']}
         mono
         onSave={(v) => save(textPatch('doi', v.trim() || null))}
       />
@@ -512,6 +544,8 @@ function Fields(props: { paper: Paper }) {
         label="arXiv"
         display={props.paper.arxiv ?? ''}
         text={props.paper.arxiv ?? ''}
+        source={idSource(props.paper.arxivSource)}
+        vouched={props.paper.vouched?.['arxiv']}
         mono
         onSave={(v) => save(textPatch('arxiv', v.trim() || null))}
       />

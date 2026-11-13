@@ -25,6 +25,7 @@ import {
 import { engine, isEngineError } from '../../lib/transport/engine';
 import { TabContext } from '../../app/TabContext';
 import { projectsStore } from './projectsStore';
+import { AuthorsInline } from './PersonScope';
 import { forgetPapers, rememberPaper } from './activePaper';
 import { chooseInbox } from './fileDrop';
 import { settings, updateSettings } from '../../stores/settings';
@@ -417,7 +418,7 @@ export default function PaperPanel() {
                 </div>
                 <Show when={authorsLine(current().meta.authors?.value ?? [])}>
                   <div class="paper-panel-authors">
-                    {authorsLine(current().meta.authors?.value ?? [])}
+                    <AuthorsInline paper={current()} onOpen={showInProjects} />
                   </div>
                 </Show>
                 <Show when={yearVenue(current())}>

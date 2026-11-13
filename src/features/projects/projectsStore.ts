@@ -34,6 +34,7 @@ import type {
   Paper,
   PaperFilter,
   PaperRow,
+  PersonItems,
   Project,
 } from '../../types/engine';
 
@@ -122,6 +123,9 @@ interface State {
   /** The graph narrowed to one item's neighbourhood; null is the scope's
    * whole graph. Cleared by a scope change. */
   focus: GraphFocus | null;
+  /** "Items by John Smith": a person's items listed in place of the
+   * scope's until left, like the focus. Cleared by a scope change. */
+  person: PersonItems | null;
   /** Ghost nodes for works cited by at least `min` items of the view.
    * Kept across sessions with the rest of the graph's View choices. */
   missing: { on: boolean; min: number };
@@ -164,6 +168,7 @@ const [state, setState] = createStore<State>({
   view: 'list',
   duplicates: {},
   focus: null,
+  person: null,
   ...(() => {
     const prefs = loadPrefs();
     return {
@@ -186,6 +191,7 @@ let rowsSeq = 0;
 let detailSeq = 0;
 let missingSeq = 0;
 let coCitedSeq = 0;
+let personSeq = 0;
 
 function persistPrefs(): void {
   savePrefs({
@@ -262,7 +268,34 @@ export const projectsStore = {
       projectsStore.loadMissing(),
       projectsStore.loadCoCited(),
       state.selectedId ? projectsStore.loadDetail(state.selectedId) : Promise.resolve(),
+      state.person ? projectsStore.loadPerson(state.person.id) : Promise.resolve(),
     ]);
+  },
+
+  /** List a person's items in place of the scope's. */
+  async showPerson(id: string): Promise<void> {
+    const seq = ++personSeq;
+    const person = await guarded(() => engine.libraryPerson(id));
+    if (seq !== personSeq || !person) return;
+    setState('person', person);
+  },
+
+  /** Re-read the person shown, quietly: one that is gone (its items
+   * merged or edited apart) just leaves the list. */
+  async loadPerson(id: string): Promise<void> {
+    const seq = ++personSeq;
+    try {
+      const person = await engine.libraryPerson(id);
+      if (seq === personSeq && state.person?.id === id) setState('person', person);
+    } catch {
+      if (seq === personSeq) setState('person', null);
+    }
+  },
+
+  /** Back to the scope's list. */
+  leavePerson(): void {
+    personSeq += 1;
+    if (state.person) setState('person', null);
   },
 
   async loadProjects(): Promise<void> {
@@ -474,7 +507,8 @@ export const projectsStore = {
     // leave a project's `id` behind on the `all` scope that follows it.
     setState('scope', reconcile(scope));
     // A focus and a picked missing work belong to the graph they were in.
-    setState({ focus: null, ghostKey: null, missingList: false });
+    personSeq += 1;
+    setState({ focus: null, ghostKey: null, missingList: false, person: null });
     void projectsStore.loadRows();
     void projectsStore.loadMissing();
     void projectsStore.loadCoCited();

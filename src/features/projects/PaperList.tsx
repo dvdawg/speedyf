@@ -45,6 +45,7 @@ import { openPaper } from './openPaper';
 import { metaLine } from './paperFields';
 import { beginPointerDrag } from './pointerDrag';
 import { projectsStore } from './projectsStore';
+import { PersonBar } from './PersonScope';
 import { registerMergeRequest } from './screenIntents';
 import type { ProjectsView } from './projectsStore';
 import MathText from '../../components/MathText';
@@ -87,7 +88,9 @@ type Item =
 export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void }) {
   const store = projectsStore;
   const hasQuery = () => store.state.query.trim().length > 0;
-  const grouped = () => store.state.scope.kind === 'all';
+  /** A person's items while one is shown, else the scope's. */
+  const sourceRows = () => store.state.person?.rows ?? store.state.rows;
+  const grouped = () => store.state.scope.kind === 'all' && !store.state.person;
   const project = () => {
     const scope = store.state.scope;
     return scope.kind === 'project'
@@ -97,6 +100,8 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
   /** A project and All items have a graph; Not filed and Other PDFs are
    * selections with no citations to show between them, so they list. */
   const graphable = () => {
+    // A person's items are a list.
+    if (store.state.person) return false;
     const kind = store.state.scope.kind;
     // A focus is one item's neighbourhood, which any item has.
     return kind === 'project' || kind === 'all' || store.state.focus !== null;
@@ -111,7 +116,7 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
   };
 
   const rowItems = createMemo<Item[]>(() => {
-    const rows = store.state.rows;
+    const rows = sourceRows();
     if (!grouped()) return rows.map((row) => ({ kind: 'row', key: row.id, row }));
     const groups = [
       ...store.state.projects.map((p) => ({
@@ -171,7 +176,8 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
       // The fields, not the object: the store may update a scope in place.
       () => {
         const scope = store.state.scope;
-        return scope.kind === 'project' ? scope.id : scope.kind;
+        const at = scope.kind === 'project' ? scope.id : scope.kind;
+        return `${at}/${store.state.person?.id ?? ''}`;
       },
       () => {
         setFocusIndex(0);
@@ -223,7 +229,7 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
       }
     };
     for (const item of items()) if (item.kind === 'row') take(item.row);
-    for (const row of store.state.rows) take(row);
+    for (const row of sourceRows()) take(row);
     return out;
   };
   const [citeCopied, setCiteCopied] = createSignal(false);
@@ -264,7 +270,9 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
    * row already in the project is not written again. */
   const dropInto = (ids: string[], projectId: string) => {
     const already = new Set(
-      store.state.rows.filter((row) => row.projectIds.includes(projectId)).map((row) => row.id)
+      sourceRows()
+        .filter((row) => row.projectIds.includes(projectId))
+        .map((row) => row.id)
     );
     for (const id of ids) {
       if (!already.has(id)) void store.setMembership(id, projectId, true);
@@ -337,6 +345,12 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
       case 'Enter':
         e.preventDefault();
         activate(item);
+        break;
+      case 'Escape':
+        if (store.state.person && !e.defaultPrevented) {
+          e.preventDefault();
+          store.leavePerson();
+        }
         break;
       case ' ':
         e.preventDefault();
@@ -560,6 +574,7 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
         <MissingList />
       </Show>
       <Show when={view() === 'list'}>
+        <PersonBar />
         <div
           ref={list}
           class="projects-col-scroll paper-list"
@@ -568,7 +583,7 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
           onKeyDown={onKeyDown}
         >
           <Show
-            when={store.state.rows.length > 0 && rowItems().length > 0}
+            when={sourceRows().length > 0 && rowItems().length > 0}
             fallback={
               <div class="paper-empty">
                 <p class="library-hint">{emptyText()}</p>

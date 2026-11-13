@@ -47,6 +47,7 @@ import type {
   PaperFilter,
   PaperList,
   Paperness,
+  PersonItems,
   Project,
   ProjectSuggestion,
   RelatedItem,
@@ -173,6 +174,8 @@ export interface EngineApi {
   libraryPapers(filter: PaperFilter): Promise<PaperList>;
   libraryCounts(): Promise<LibraryCounts>;
   libraryPaper(id: string): Promise<Paper>;
+  /** A person and their items, for "Items by ...". */
+  libraryPerson(id: string): Promise<PersonItems>;
   /** The paper whose file is at this path, or null when the path is not in
    * the library. */
   libraryPaperForPath(path: string): Promise<Paper | null>;
@@ -314,6 +317,7 @@ export const engine: EngineApi = {
   libraryPapers: (filter) => invoke('library_papers', { filter }),
   libraryCounts: () => invoke('library_counts'),
   libraryPaper: (id) => invoke('library_paper', { id }),
+  libraryPerson: (id) => invoke('library_person', { id }),
   libraryPaperForPath: (path) => invoke('library_paper_for_path', { path }),
   libraryUpdatePaper: (id, patch) => invoke('library_update_paper', { id, patch }),
   libraryProjects: () => invoke('library_projects'),
