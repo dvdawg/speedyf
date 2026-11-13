@@ -9,6 +9,7 @@ use std::path::PathBuf;
 
 pub mod citations;
 pub mod health;
+pub mod hovers;
 pub mod library;
 
 pub struct EngineState(pub EngineHandle);
@@ -714,6 +715,9 @@ pub struct ExtensionDto {
     /// The bare command id SpeedyF invokes to read a library document's
     /// reference list, when the extension is a reference provider.
     pub reference_provider: Option<String>,
+    /// The bare command id SpeedyF invokes for the terms the open document
+    /// defines, when the extension is a term provider.
+    pub term_provider: Option<String>,
     /// `speedyf-ext://` URL for the extension's icon, when it ships one.
     pub icon_url: Option<String>,
     /// Why this extension cannot run, if it cannot.
@@ -788,11 +792,16 @@ fn palette_commands(manifest: &Manifest) -> Vec<PaletteCommandDto> {
         .reference_provider
         .as_ref()
         .map(|provider| provider.command.as_str());
+    let terms = manifest
+        .contributes
+        .term_provider
+        .as_ref()
+        .map(|provider| provider.command.as_str());
     manifest
         .contributes
         .commands
         .iter()
-        .filter(|c| Some(c.id.as_str()) != provider)
+        .filter(|c| Some(c.id.as_str()) != provider && Some(c.id.as_str()) != terms)
         .map(|c| PaletteCommandDto {
             id: extensions::qualified_command_id(&manifest.id, &c.id),
             local_id: c.id.clone(),
@@ -859,6 +868,7 @@ fn describe(root: &std::path::Path, installed: InstalledExtension, builtin: bool
         equation_actions: Vec::new(),
         network: Vec::new(),
         reference_provider: None,
+        term_provider: None,
         icon_url: None,
         error: None,
         builtin,
@@ -894,6 +904,11 @@ fn describe(root: &std::path::Path, installed: InstalledExtension, builtin: bool
         reference_provider: manifest
             .contributes
             .reference_provider
+            .as_ref()
+            .map(|provider| provider.command.clone()),
+        term_provider: manifest
+            .contributes
+            .term_provider
             .as_ref()
             .map(|provider| provider.command.clone()),
         icon_url: manifest
