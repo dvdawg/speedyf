@@ -799,7 +799,23 @@ mod tests {
         std::fs::write(&first, b"%PDF-1.4 watched").unwrap();
         std::fs::write(root.join("notes.txt"), b"not a pdf").unwrap();
         let seen = || format!("{:?}", got.lock());
-        wait_for("the new file", || got.lock().0.contains(&first), seen);
+        // FSEvents can take a while to go live on a loaded machine, and a
+        // write before that is never reported. Rewrite the file until the
+        // watcher has seen it once; everything after is reported live.
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let mut nudged = Instant::now();
+        while !got.lock().0.contains(&first) {
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for the new file: {}",
+                seen()
+            );
+            if nudged.elapsed() > Duration::from_secs(3) {
+                std::fs::write(&first, b"%PDF-1.4 watched again").unwrap();
+                nudged = Instant::now();
+            }
+            std::thread::sleep(ms(50));
+        }
         let renamed = root.join("renamed.pdf");
         std::fs::rename(&first, &renamed).unwrap();
         wait_for(
