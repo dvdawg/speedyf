@@ -812,6 +812,11 @@ fn strip_line_number(text: &str) -> String {
             }
         }
     }
+    // No section is numbered in the hundreds: "312 References" is a line
+    // number and a heading.
+    if is_number && first.len() >= 3 && rest.starts_with(char::is_uppercase) {
+        return rest.to_owned();
+    }
     text.to_owned()
 }
 
@@ -1801,6 +1806,34 @@ fn drop_off_style(cands: &mut [Cand]) {
         if off.len() * 3 <= members.len() {
             for i in off {
                 cands[i].depth = None;
+            }
+            continue;
+        }
+        // Two styles in earnest: the run changed lists part way (sections,
+        // then a venue checklist numbered on from them). The document's
+        // sections are the ones it starts with.
+        let first = cands[members[0]].style;
+        let like_first = |s: &StyleKey| (s.size - first.size).abs() <= 1 && s.bold == first.bold;
+        let others = members
+            .iter()
+            .filter(|&&i| !like_first(&cands[i].style))
+            .count();
+        // Only a list that follows them all; styles that alternate are one
+        // document's inconsistency, not two lists.
+        let last_first = members
+            .iter()
+            .copied()
+            .filter(|&i| like_first(&cands[i].style))
+            .max()
+            .unwrap_or(0);
+        let tail = members
+            .iter()
+            .all(|&i| like_first(&cands[i].style) || i > last_first);
+        if tail && others >= 2 && members.len() - others >= 2 {
+            for &i in members {
+                if !like_first(&cands[i].style) {
+                    cands[i].depth = None;
+                }
             }
         }
     }
@@ -2956,5 +2989,30 @@ pub(crate) mod tests {
         let kept = in_page_order(vec![h(31), h(18), h(24), h(31), h(36)]);
         let pages: Vec<u32> = kept.iter().map(|h| h.page).collect();
         assert_eq!(pages, vec![18, 24, 31, 36]);
+    }
+
+    #[test]
+    fn line_numbers_in_the_hundreds_are_not_section_numbers() {
+        assert_eq!(strip_line_number("312 References"), "References");
+        assert_eq!(strip_line_number("15 1 Introduction"), "1 Introduction");
+        assert_eq!(strip_line_number("2 Methods"), "2 Methods");
+    }
+
+    #[test]
+    fn a_checklist_numbered_on_from_the_sections_is_dropped() {
+        // Sections 1-3 in 12pt bold, then a 10pt bold checklist whose
+        // items run on as 4, 5, 6...
+        let mut pages = article();
+        let mut b = PageBuilder::new(3).body(5);
+        for (i, item) in ["Claims", "Limitations", "Theory", "Experiments"]
+            .iter()
+            .enumerate()
+        {
+            b = b.heading(&format!("{}. {item}", i + 4), 10.0, true).body(3);
+        }
+        pages.push(b.build());
+        let out = generate(&doc(pages));
+        assert!(out.iter().all(|h| !h.title.contains("Claims")), "{out:?}");
+        assert!(out.iter().any(|h| h.title == "3 Results"));
     }
 }
