@@ -280,7 +280,9 @@ fn offer_identifier(
             *held_source = Some(source);
             true
         }
-        None if lone => {
+        // One the citing papers supplied is theirs to retract
+        // (`consensus`), not a scan's that found nothing.
+        None if lone && *held_source != Some(MetaSource::Citations) => {
             *held = None;
             *held_source = None;
             true
@@ -1120,6 +1122,26 @@ impl PaperStore {
         citekey::generate(meta, |key| taken.contains(key))
     }
 
+    /// The metadata a brand-new record's key is made from: its own, with
+    /// the first author's family as the person it names (`persons`) is
+    /// printed by most items, when exactly one person goes by that name.
+    /// Only for keys made new: a person found later never changes a key.
+    fn meta_for_new_key(&self, meta: &PaperMeta) -> PaperMeta {
+        let mut meta = meta.clone();
+        if let Some(first) = meta
+            .authors
+            .as_mut()
+            .and_then(|field| field.value.first_mut())
+        {
+            if let Some(person) = self.persons().person_named(first) {
+                if !person.family.is_empty() && person.family != first.family {
+                    first.family = person.family.clone();
+                }
+            }
+        }
+        meta
+    }
+
     /// Match a scanned file to its paper, or make one, and fold what the
     /// scan found into it. Returns whether anything changed, so a scan can
     /// batch its saves and change events.
@@ -1253,7 +1275,7 @@ impl PaperStore {
             (None, None) => {
                 let mut paper = PaperRecord::new();
                 paper.offer_entry(entry, doi.clone(), arxiv.clone());
-                paper.cite_key = self.free_key(&paper.meta, None);
+                paper.cite_key = self.free_key(&self.meta_for_new_key(&paper.meta), None);
                 self.papers.push(paper);
                 changed = true;
                 self.papers.len() - 1
@@ -1495,6 +1517,15 @@ impl PaperStore {
             vouched: paper.vouched_counts(),
             year_floor: paper.shown_year_floor(),
             year_hint: paper.year_hint(),
+            doi_source: paper.ids.doi.as_ref().and(paper.ids.doi_source),
+            arxiv_source: paper.ids.arxiv.as_ref().and(paper.ids.arxiv_source),
+            author_persons: (0..paper.authors().len())
+                .map(|at| {
+                    self.persons()
+                        .person_at(&paper.id, at)
+                        .map(|person| person.id.clone())
+                })
+                .collect(),
         }
     }
 
@@ -2136,14 +2167,14 @@ impl PaperStore {
         if let Some(kind) = candidate.kind {
             changed |= offer(&mut paper.meta.kind, kind, source);
         }
-        if paper.ids.doi.is_none() {
+        if paper.ids.doi.is_none() || paper.ids.doi_source == Some(MetaSource::Citations) {
             if let Some(doi) = candidate.doi.as_deref().and_then(normalize_doi) {
                 paper.ids.doi = Some(doi);
                 paper.ids.doi_source = Some(source);
                 changed = true;
             }
         }
-        if paper.ids.arxiv.is_none() {
+        if paper.ids.arxiv.is_none() || paper.ids.arxiv_source == Some(MetaSource::Citations) {
             if let Some(arxiv) = candidate.arxiv.as_deref().and_then(normalize_arxiv) {
                 paper.ids.arxiv = Some(arxiv);
                 paper.ids.arxiv_source = Some(source);

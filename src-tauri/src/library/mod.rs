@@ -32,6 +32,7 @@ pub mod missing;
 pub mod ocrtext;
 pub mod paperness;
 pub mod papers;
+pub mod persons;
 pub mod projects;
 pub mod ratelimit;
 pub mod references;

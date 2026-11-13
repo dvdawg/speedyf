@@ -11,6 +11,7 @@
 use super::backup::{self, BackupState, LibraryBackupDto};
 use super::bibtex::BibtexOptions;
 use super::papers::PaperRecord;
+use super::persons::PersonsSection;
 use super::projects::ProjectRecord;
 use super::types::LibraryDataInfoDto;
 use crate::errors::{AppError, AppResult};
@@ -43,6 +44,9 @@ struct LibraryFile {
     /// options: the defaults, which write what was written then.
     #[serde(default)]
     bibtex_options: BibtexOptions,
+    /// Authors as persons (`persons`), with a version of its own.
+    #[serde(default)]
+    persons: PersonsSection,
 }
 
 /// The same shape, borrowed, so a save never clones every record.
@@ -53,6 +57,7 @@ struct LibraryFileRef<'a> {
     papers: &'a [PaperRecord],
     projects: &'a [ProjectRecord],
     bibtex_options: &'a BibtexOptions,
+    persons: &'a PersonsSection,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -74,6 +79,8 @@ pub struct PaperStore {
     pub(super) papers: Vec<PaperRecord>,
     pub(super) projects: Vec<ProjectRecord>,
     pub(super) bibtex_options: BibtexOptions,
+    /// Authors clustered into persons; refreshed before every save.
+    pub(super) persons: PersonsSection,
     /// The last backup a save wrote (`backup`).
     backup: BackupState,
     /// Why nothing may be written, when the file on disk is one this build
@@ -105,6 +112,7 @@ impl PaperStore {
             papers: Vec::new(),
             projects: Vec::new(),
             bibtex_options: BibtexOptions::default(),
+            persons: PersonsSection::default(),
             backup: BackupState::default(),
             write_block: None,
             dirty: false,
@@ -133,6 +141,7 @@ impl PaperStore {
                 store.papers = file.papers;
                 store.projects = file.projects;
                 store.bibtex_options = file.bibtex_options;
+                store.persons = file.persons.loaded();
                 // Duplicates from before automatic merging, or from another
                 // machine's edits, are merged once here; then every item's
                 // main file is chosen again and the items gone for a week
@@ -183,6 +192,7 @@ impl PaperStore {
                 store.write_block = Some(format!("library.json cannot be read: {error}"));
             }
         }
+        store.refresh_persons();
         store
     }
 
@@ -239,6 +249,7 @@ impl PaperStore {
                 })
                 .collect();
         }
+        self.refresh_persons();
         let path = self.file_path();
         let bytes = self.serialized()?;
         write_atomically(&path, &bytes)?;
@@ -263,6 +274,7 @@ impl PaperStore {
             papers: &self.papers,
             projects: &self.projects,
             bibtex_options: &self.bibtex_options,
+            persons: &self.persons,
         })
         .map_err(|error| AppError::Internal(format!("cannot serialize the library: {error}")))
     }
@@ -336,6 +348,7 @@ impl PaperStore {
         self.papers = restored.papers;
         self.projects = restored.projects;
         self.bibtex_options = restored.bibtex_options;
+        self.persons = restored.persons.loaded();
         self.mark_dirty();
         Ok(())
     }

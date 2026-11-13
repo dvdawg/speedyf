@@ -225,6 +225,28 @@ pub struct PaperDto {
     /// year older than the newest work it cites.
     #[serde(default)]
     pub year_hint: Option<String>,
+    /// Where the DOI and the arXiv id came from; `citations` for one taken
+    /// from citing papers (`vouched` says how many).
+    #[serde(default)]
+    pub doi_source: Option<MetaSource>,
+    #[serde(default)]
+    pub arxiv_source: Option<MetaSource>,
+    /// The person (`persons`) of each author, by position, when that
+    /// person has more than one item; `None` otherwise.
+    #[serde(default)]
+    pub author_persons: Vec<Option<String>>,
+}
+
+/// A person and their items: what "Items by John Smith" lists.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonItemsDto {
+    pub id: String,
+    /// The fullest given name seen, with the most support among those.
+    pub name: String,
+    /// The other forms the library prints, most frequent first.
+    pub variants: Vec<String>,
+    pub rows: Vec<PaperRowDto>,
 }
 
 /// One row of the paper list. Display strings, already resolved, so the list

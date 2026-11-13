@@ -116,6 +116,23 @@ pub async fn library_paper(
     read_store(state.0.clone(), move |store| store.paper_dto(&id)).await
 }
 
+/// A person (`library::persons`) and their items, in list order: what
+/// "Items by John Smith" shows. The persons are brought up to date first.
+#[tauri::command]
+pub async fn library_person(
+    state: tauri::State<'_, EngineState>,
+    id: String,
+) -> AppResult<crate::library::types::PersonItemsDto> {
+    let engine = state.0.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut store = engine.0.papers.lock();
+        store.refresh_persons();
+        store.person_items(&id)
+    })
+    .await
+    .map_err(|error| AppError::Internal(format!("library task failed: {error}")))?
+}
+
 /// The paper whose file is at `path`, or none when the path is not in the
 /// library - which is how the reader's Paper panel decides between showing
 /// the paper and offering to add it.

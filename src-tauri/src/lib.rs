@@ -427,6 +427,7 @@ pub fn run() {
             commands::library::library_counts,
             commands::library::library_paper,
             commands::library::library_paper_for_path,
+            commands::library::library_person,
             commands::library::library_update_paper,
             commands::library::library_projects,
             commands::library::library_create_project,
