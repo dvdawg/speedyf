@@ -244,6 +244,34 @@ point, on the engine thread, at no extra I/O:
   looked up by a batch, and show no cite key. The user can overrule either
   way, and a marked record is never dropped as a placeholder.
 
+- **OCR for scanned papers** (macOS only; `engine::ocr`, `library::ocrtext`).
+  Old publisher scans have a text layer that is missing, or capture-tool
+  garbage ("~ ,;l1 Il"), or good except for a title that is still a picture.
+  The scan probes each page it reads, at no extra I/O: its text against a
+  garbage heuristic (`ocr::needs_ocr`: too few characters on a page with
+  images, too few letters, too many 1–2 character tokens, too many
+  vowel-less words) and its image objects for one covering ≥ 60 % of the
+  page (a scan). A page that needs it, and a scanned first page whose layout
+  gave no confident title, are rendered at 2x and read by Apple's Vision
+  (`VNRecognizeTextRequest`, accurate, language correction on). The OCR text
+  replaces the page's text for classification, identifiers and the ISBN, and
+  its lines go through the same first-page reader for the title and authors.
+  The text pass does the same for every page whose text layer needs it, at
+  most six pages per idle job (a long scan resumes on the next), and marks
+  those pages `ocr` in the text sidecar; a document whose first three pages
+  are clean and whose first is not a scan is never rendered. Every reading
+  is cached per page beside the sidecar (`text/<hash>.ocr.json`), keyed by
+  the content fingerprint, so no page is read twice across rescans.
+  Cost: ~0.4 s a page on Apple silicon, on the engine thread — so only from
+  the idle-priority library jobs, never from a scan the user is waiting for
+  (an inbox copy reads the cache only and is scanned again at idle,
+  `ocr_deferred`). The first Vision call of a session loads its model and
+  can take tens of seconds. Elsewhere it compiles to nothing: Windows and
+  Linux keep the text layer. Follow-up: feed the OCR text to
+  `document:contributeText` so search in an open scan finds it too (an OCR
+  page's offsets are not PDFium character indices, so its hits need their
+  own highlighting).
+
 The first-line title heuristic and the filename patterns stay as the floor.
 
 ### Online, opt-in

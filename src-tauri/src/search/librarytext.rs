@@ -48,6 +48,12 @@ struct StoredPage {
     /// offset-map breakpoints, mapping a hit back to a raw PDFium index
     breaks: Vec<(u32, i32)>,
     char_count: u32,
+    /// The text is Vision's reading of the rendered page
+    /// (`library::ocrtext`), not the PDF's text layer: its offsets do not
+    /// index PDFium's characters, so a hit here cannot be highlighted by
+    /// them. Absent (false) in sidecars written before OCR.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    ocr: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -133,19 +139,21 @@ pub fn write_sidecar(
         .iter()
         .map(|(src, raw)| (*src, raw.clone(), Vec::new()))
         .collect();
-    write_spaced_sidecar(app_data_dir, document, mtime_ms, size, &spaced)
+    write_spaced_sidecar(app_data_dir, document, mtime_ms, size, &spaced, &[])
 }
 
 /// `write_sidecar` for pages that carry, beside the raw stream, the
 /// character indices before which the geometry puts a word gap
 /// (`library::word_breaks`). The gaps become spaces in the stored text;
-/// offsets still map to raw indices.
+/// offsets still map to raw indices. `ocr_pages` lists the pages whose text
+/// came from OCR rather than the text layer; they are marked so.
 pub fn write_spaced_sidecar(
     app_data_dir: &Path,
     document: &Path,
     mtime_ms: u64,
     size: u64,
     pages: &[(u32, String, Vec<u32>)],
+    ocr_pages: &[u32],
 ) -> AppResult<()> {
     let stored: Vec<StoredPage> = pages
         .iter()
@@ -159,6 +167,7 @@ pub fn write_spaced_sidecar(
                 folded: folded.to_owned(),
                 breaks: breaks.to_vec(),
                 char_count,
+                ocr: ocr_pages.contains(src),
             }
         })
         .collect();

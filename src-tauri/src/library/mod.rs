@@ -23,6 +23,7 @@ pub mod identifiers;
 pub mod lookup;
 pub mod merge;
 pub mod missing;
+pub mod ocrtext;
 pub mod paperness;
 pub mod papers;
 pub mod projects;
@@ -119,6 +120,17 @@ pub struct LibraryEntry {
     pub first_page_title_confident: bool,
     #[serde(default)]
     pub first_page_authors_confident: bool,
+    /// Whether the scan found the file worth OCR (`ocrtext::wants_ocr`):
+    /// one of its first pages has an unusable text layer, or the first is
+    /// a scanned image. The text pass OCRs such a file's pages.
+    #[serde(default)]
+    pub ocr_wanted: bool,
+    /// The scan wanted OCR it was not allowed to run — a file scanned on
+    /// demand (the inbox), outside the idle jobs — so its first-page
+    /// reading is the text layer's. The idle text pass scans it again
+    /// with OCR before extracting its text.
+    #[serde(default)]
+    pub ocr_deferred: bool,
 }
 
 /// The shape written to disk today. Both persisted files carry a version now:
@@ -162,10 +174,15 @@ pub struct LibraryEntry {
 /// again: text sidecars rewritten (v2), `cites` re-derived from the new
 /// text as each finishes, and its refs sidecar dropped so the reference
 /// provider is handed the new text (`do_library_text_next`).
-const FORMAT_VERSION: u32 = 11;
+/// v12: scanned papers are OCR'd (`ocrtext`, macOS Vision). Rescanned
+/// once — metadata only — so a scan's first page is read by OCR for its
+/// title, authors and identifiers. Text is extracted again only for the
+/// files that rescan finds worth OCR (`ocr_wanted`, see
+/// `keep_text_state`); every other sidecar stands.
+const FORMAT_VERSION: u32 = 12;
 /// Indexes older than this are rescanned on upgrade: what changed after
 /// it is re-derived from the text sidecars instead.
-const RESCAN_BELOW_VERSION: u32 = 11;
+const RESCAN_BELOW_VERSION: u32 = 12;
 /// Indexes older than this have every document's text extracted again.
 const TEXT_SINCE_VERSION: u32 = 11;
 /// Indexes older than this have their `cites` re-derived by the backfill.
@@ -418,8 +435,7 @@ impl LibraryState {
                 Some(existing)
                     if existing.mtime_ms == entry.mtime_ms && existing.size == entry.size =>
                 {
-                    entry.text_indexed = existing.text_indexed;
-                    entry.cites = existing.cites.clone();
+                    keep_text_state(&mut entry, existing);
                 }
                 _ => crate::search::librarytext::remove_sidecar(&self.app_data_dir, &entry.path),
             }
@@ -444,8 +460,7 @@ impl LibraryState {
             Some(existing)
                 if existing.mtime_ms == entry.mtime_ms && existing.size == entry.size =>
             {
-                entry.text_indexed = existing.text_indexed;
-                entry.cites = existing.cites.clone();
+                keep_text_state(&mut entry, existing);
             }
             _ => crate::search::librarytext::remove_sidecar(&self.app_data_dir, &entry.path),
         }
@@ -577,6 +592,15 @@ impl CitationResolver for LocalLibraryResolver {
         })?;
         state.contains(&entry.path)
     }
+}
+
+/// A rescan of the same bytes keeps the text pass's work — unless this
+/// scan is the first to find the file worth OCR, whose text is then
+/// extracted again with it (the v12 upgrade's one text pass, limited to
+/// scanned papers).
+fn keep_text_state(entry: &mut LibraryEntry, existing: &LibraryEntry) {
+    entry.text_indexed = existing.text_indexed && (existing.ocr_wanted || !entry.ocr_wanted);
+    entry.cites = existing.cites.clone();
 }
 
 /// Read a persisted index, accepting both the versioned envelope and the bare
@@ -893,6 +917,8 @@ pub fn entry_from_filename(candidate: &ScanCandidate) -> Option<LibraryEntry> {
         first_page_authors: Vec::new(),
         first_page_title_confident: false,
         first_page_authors_confident: false,
+        ocr_wanted: false,
+        ocr_deferred: false,
     })
 }
 
@@ -1024,6 +1050,8 @@ pub fn entry_from_page(
         first_page_authors,
         first_page_title_confident: title_confident,
         first_page_authors_confident,
+        ocr_wanted: false,
+        ocr_deferred: false,
     }
 }
 
@@ -1450,6 +1478,8 @@ mod tests {
             first_page_authors: Vec::new(),
             first_page_title_confident: false,
             first_page_authors_confident: false,
+            ocr_wanted: false,
+            ocr_deferred: false,
             doi_source: None,
             arxiv_source: None,
         }
@@ -2421,6 +2451,67 @@ mod tests {
     }
 
     #[test]
+    fn the_v12_rescan_reextracts_text_only_for_files_worth_ocr() {
+        let app_data = tempfile::tempdir().expect("app data");
+        let root = tempfile::tempdir().expect("root");
+        let mut pdfs = Vec::new();
+        for name in ["born-digital.pdf", "scan.pdf"] {
+            let pdf = root.path().join(name);
+            fs::write(&pdf, name.as_bytes()).unwrap();
+            pdfs.push(pdf.canonicalize().unwrap());
+        }
+        fs::write(
+            app_data.path().join(ROOT_FILE),
+            serde_json::json!({ "version": 2, "roots": [root.path()] }).to_string(),
+        )
+        .unwrap();
+        let entries: Vec<_> = pdfs
+            .iter()
+            .map(|pdf| {
+                let (mtime_ms, size) = file_stamp(pdf).unwrap();
+                serde_json::json!({
+                    "path": pdf, "mtime_ms": mtime_ms, "size": size, "fingerprint": "fp",
+                    "title": null, "doi": null, "arxiv": null, "text_indexed": true, "cites": []
+                })
+            })
+            .collect();
+        fs::write(
+            app_data.path().join(INDEX_FILE),
+            serde_json::json!({ "version": 11, "entries": entries }).to_string(),
+        )
+        .unwrap();
+
+        let mut state = LibraryState::load(app_data.path().to_path_buf());
+        assert!(
+            state.all_entries().iter().all(|entry| entry.text_indexed),
+            "v11 text stands until the rescan says otherwise"
+        );
+        while let Some(candidate) = state.next_candidate() {
+            assert!(!candidate.unchanged, "v11: rescanned once");
+            let mut scanned = entry_from_page(&candidate, "", None);
+            scanned.fingerprint = Some("fp".into());
+            scanned.ocr_wanted = candidate.path.ends_with("scan.pdf");
+            assert!(state.finish_candidate(&candidate, Some(scanned)));
+        }
+        assert!(state.entry_for_path(&pdfs[0]).unwrap().text_indexed);
+        assert!(
+            !state.entry_for_path(&pdfs[1]).unwrap().text_indexed,
+            "the scan's text is extracted again, with OCR"
+        );
+        assert_eq!(
+            state.next_text_candidate().map(|e| e.path),
+            Some(pdfs[1].clone())
+        );
+
+        // Once OCR'd, a later rescan of the same bytes keeps it.
+        state.finish_text(&pdfs[1], Vec::new());
+        let mut again = state.entry_for_path(&pdfs[1]).unwrap();
+        again.text_indexed = false;
+        state.upsert_entry(again);
+        assert!(state.entry_for_path(&pdfs[1]).unwrap().text_indexed);
+    }
+
+    #[test]
     fn a_bare_array_index_still_loads() {
         // What every existing install has on disk right now.
         let app_data = tempfile::tempdir().expect("app data");
@@ -2505,6 +2596,8 @@ mod tests {
                     first_page_authors: Vec::new(),
                     first_page_title_confident: false,
                     first_page_authors_confident: false,
+                    ocr_wanted: false,
+                    ocr_deferred: false,
                     doi_source: None,
                     arxiv_source: None,
                 },

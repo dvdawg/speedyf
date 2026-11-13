@@ -16,6 +16,7 @@ pub mod forms;
 pub mod invert;
 pub mod layout_text;
 pub mod links;
+pub mod ocr;
 pub mod pdfium_init;
 pub mod preview;
 pub mod queue;

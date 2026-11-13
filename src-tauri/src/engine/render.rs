@@ -238,6 +238,57 @@ fn image_rects(
     rects
 }
 
+/// Whether a page has raster images, and their combined share of the
+/// page's area (0..1): how the library tells a scanned page — the page as
+/// a picture — from a born-digital one (`library::ocrtext`). Combined,
+/// because capture tools cut the page into strips: Acrobat Capture's
+/// 1988 JCSS scan is twenty-one full-width bands, none over 5 %.
+/// An image inside a form XObject counts with the form's bounds, which is
+/// how capture tools often wrap a scan. A handful of FFI calls per object,
+/// no decoding.
+pub fn image_coverage(b: &dyn PdfiumLibraryBindings, page: FPDF_PAGE) -> (bool, f32) {
+    fn holds_image(b: &dyn PdfiumLibraryBindings, form: FPDF_PAGEOBJECT, depth: u8) -> bool {
+        let children = b.FPDFFormObj_CountObjects(form).max(0);
+        (0..children).take(MAX_OBJECTS_SCANNED as usize).any(|i| {
+            let child = b.FPDFFormObj_GetObject(form, i as std::os::raw::c_ulong);
+            !child.is_null()
+                && match b.FPDFPageObj_GetType(child) {
+                    FPDF_PAGEOBJ_IMAGE => true,
+                    FPDF_PAGEOBJ_FORM if depth < MAX_FORM_DEPTH => holds_image(b, child, depth + 1),
+                    _ => false,
+                }
+        })
+    }
+    let page_area = b.FPDF_GetPageWidthF(page) * b.FPDF_GetPageHeightF(page);
+    let count = b
+        .FPDFPage_CountObjects(page)
+        .clamp(0, MAX_OBJECTS_SCANNED as i32);
+    let (mut any, mut covered) = (false, 0f32);
+    for i in 0..count {
+        let object = b.FPDFPage_GetObject(page, i);
+        if object.is_null() {
+            continue;
+        }
+        let image = match b.FPDFPageObj_GetType(object) {
+            FPDF_PAGEOBJ_IMAGE => true,
+            FPDF_PAGEOBJ_FORM => holds_image(b, object, 1),
+            _ => false,
+        };
+        if !image {
+            continue;
+        }
+        any = true;
+        let (mut left, mut bottom, mut right, mut top) = (0f32, 0f32, 0f32, 0f32);
+        if b.FPDFPageObj_GetBounds(object, &mut left, &mut bottom, &mut right, &mut top) != 0
+            && page_area > 0.0
+        {
+            let area = (right - left).abs() * (top - bottom).abs();
+            covered += area / page_area;
+        }
+    }
+    (any, covered.min(1.0))
+}
+
 /// Render a page (or a tile of it) at `scale` device pixels per point with an
 /// extra rotation on top of the page's own /Rotate, returning encoded PNG.
 ///
