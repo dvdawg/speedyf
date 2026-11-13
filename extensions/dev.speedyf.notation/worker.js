@@ -25,7 +25,7 @@
 
 /** Cache namespace. Bumped whenever what a scan produces changes, so a scan
  * made by older code is never drawn by newer code. */
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 2;
 const CACHE_PREFIX = `scan:v${CACHE_VERSION}:`;
 
 /** "Scan pages" setting values to page counts. */
@@ -41,6 +41,9 @@ const INVOKE_BUDGET_MS = 4000;
 const PROGRESS_EVERY = 32;
 /** The longest defining phrase shown. */
 const MAX_PHRASE = 120;
+/** How far a phrase may run past `MAX_PHRASE` to reach a natural end rather
+ * than stop on "of" or "for which". */
+const MAX_PHRASE_EXTENDED = 200;
 /** Rows per section; the host caps a panel at 500 rows in total. */
 const MAX_SYMBOL_ROWS = 300;
 const MAX_ACRONYM_ROWS = 190;
@@ -349,9 +352,10 @@ function describe(scan, acronymsShown, status) {
   const sections = [];
   if (status) sections.push({ title: status, rows: [] });
   if (scan.symbols.length > 0) {
+    const known = new Set(scan.symbols.map((def) => def.tex));
     sections.push({
       title: `Symbols (${scan.symbols.length})`,
-      rows: scan.symbols.slice(0, MAX_SYMBOL_ROWS).map(symbolRow),
+      rows: scan.symbols.slice(0, MAX_SYMBOL_ROWS).map((def) => symbolRow(def, known)),
     });
   }
   if (acronymsShown && scan.acronyms.length > 0) {
@@ -372,11 +376,14 @@ function describe(scan, acronymsShown, status) {
   return { sections, empty };
 }
 
-function symbolRow(def) {
+/** A symbol's row: the symbol, the phrase that defines it, and the page in
+ * the badge, where it does not wrap with the phrase. */
+function symbolRow(def, known) {
   return {
     id: `s:${def.key}`.slice(0, 200),
     title: `$${def.tex}$`,
-    subtitle: `${asciiText(def.phrase)} (p. ${def.page + 1})`,
+    subtitle: phraseText(def.phrase, known),
+    badge: `p. ${def.page + 1}`,
     action: { command: 'goto', value: actionValue(def) },
   };
 }
@@ -384,9 +391,9 @@ function symbolRow(def) {
 function acronymRow(def) {
   return {
     id: `a:${def.key}`.slice(0, 200),
-    title: `${def.key} (${asciiText(def.long)})`,
-    subtitle: `defined on p. ${def.page + 1}`,
-    ...(def.uses > 0 ? { badge: `used ${def.uses}x` } : {}),
+    title: def.key,
+    subtitle: asciiText(def.long),
+    badge: def.uses > 0 ? `p. ${def.page + 1}, used ${def.uses}x` : `p. ${def.page + 1}`,
     action: { command: 'goto', value: actionValue(def) },
   };
 }
@@ -802,11 +809,19 @@ const SYMBOL_PATTERNS_BEFORE = [
   new RegExp(`([Tt]he\\s+[^.;:,()]{3,80}?)\\s*,?\\s+(?:is\\s+)?denoted\\s+(?:by\\s+)?${SYM}`, 'gu'),
 ];
 
-/** "and k the spring constant", following a "where m is the mass". */
-const FOLLOW_ON = new RegExp(
-  `^\\s*(?:,|;)?\\s*(?:and\\s+)?${SYM}\\s+(?:(?:is|denotes|represents)\\s+)?(?=(?:the|a|an|its)\\s)`,
-  'u'
-);
+/** What may follow a symbol for it to start a definition of its own: a
+ * defining verb, or straight to "the", "a" or "an". */
+const DEFINES_NEXT =
+  '(?:(?:is|are|denotes|represents|stands\\s+for)\\s+(?!called\\b|given\\b)|(?=(?:the|a|an|its)\\s))';
+
+/** "and k the spring constant", following a "where m is the mass" - or any
+ * other definition: "Let F be an infinite set and C a collection of ...". */
+const FOLLOW_ON = new RegExp(`^\\s*(?:[,;]\\s*)?(?:and\\s+)?${SYM}\\s+${DEFINES_NEXT}`, 'u');
+
+/** An "and" that starts the next definition rather than continuing this
+ * one: "the diameter of the set and rho is the distance ...". Any other
+ * "and" belongs to the phrase ("if and only if"). */
+const COORDINATED = new RegExp(`^ and\\s+${SYM}\\s+${DEFINES_NEXT}`, 'u');
 
 /** Words that put a capital letter in prose without making it a symbol:
  * "Figure A denotes", "Appendix B represents". */
@@ -820,9 +835,8 @@ function precededByLabel(text, at) {
 function findSymbols(norm, page) {
   const { text } = norm;
   const found = [];
-  const add = (symbol, symbolAt, phrase, start, end) => {
+  const add = (symbol, symbolAt, clean, start, end) => {
     if (precededByLabel(text, symbolAt)) return;
-    const clean = tidyPhrase(phrase);
     if (!clean || !/\p{L}.*\p{L}/u.test(clean)) return;
     const tex = symbolTex(symbol);
     if (!tex) return;
@@ -841,21 +855,20 @@ function findSymbols(norm, page) {
     for (const match of text.matchAll(pattern)) {
       const symbolAt = match.index + match[0].indexOf(match[1]);
       const end = match.index + match[0].length;
-      const phrase = phraseAt(text, end);
+      const phrase = definitionPhrase(text, end);
       add(match[1], symbolAt, phrase.text, match.index, phrase.end);
 
-      // "where m is the mass, k the spring constant, and g the ..."
-      if (pattern === SYMBOL_PATTERNS[1]) {
-        let from = phrase.end;
-        for (let more = 0; more < 6; more++) {
-          const next = FOLLOW_ON.exec(text.slice(from, from + 200));
-          if (!next) break;
-          const at = from + next.index;
-          const nextPhrase = phraseAt(text, at + next[0].length);
-          add(next[1], at + next[0].indexOf(next[1]), nextPhrase.text, at, nextPhrase.end);
-          if (nextPhrase.end <= from) break;
-          from = nextPhrase.end;
-        }
+      // "where m is the mass, k the spring constant, and g the ...", or
+      // "Let F be an infinite set and C a collection of subsets of F".
+      let from = phrase.end;
+      for (let more = 0; more < 6; more++) {
+        const next = FOLLOW_ON.exec(text.slice(from, from + 200));
+        if (!next) break;
+        const at = from + next.index;
+        const nextPhrase = definitionPhrase(text, at + next[0].length);
+        add(next[1], at + next[0].indexOf(next[1]), nextPhrase.text, at, nextPhrase.end);
+        if (nextPhrase.end <= from) break;
+        from = nextPhrase.end;
       }
     }
   }
@@ -868,7 +881,7 @@ function findSymbols(norm, page) {
       const last = phrase.lastIndexOf(' the ');
       if (last > 0) phrase = phrase.slice(last + 1);
       const symbolAt = match.index + match[0].lastIndexOf(match[2]);
-      add(match[2], symbolAt, phrase, match.index, match.index + match[0].length);
+      add(match[2], symbolAt, tidyPhrase(phrase), match.index, match.index + match[0].length);
     }
   }
 
@@ -876,30 +889,24 @@ function findSymbols(norm, page) {
 }
 
 /** The clause starting at `from`: up to the end of the sentence, a semicolon,
- * a colon, a comma at the top level, or a closing bracket that was never
- * opened - whichever comes first. */
+ * a colon, a comma at the top level, a closing bracket that was never opened,
+ * a "where" or "which", or an "and" that starts the next definition -
+ * whichever comes first. `stop` says which kind of end it was: `hard` (the
+ * sentence or clause is over), `soft` (a comma, "where" or "which", which a
+ * phrase may run on past), or `next` (another definition starts here). */
 function phraseAt(text, from) {
   const tail = text.slice(from, from + 240);
   let depth = 0;
-  let end = tail.length;
   for (let i = 0; i < tail.length; i++) {
     const c = tail[i];
+    const at = (stop) => ({ text: tail.slice(0, i), end: from + i, stop });
     if (c === '(' || c === '[' || c === '{') depth++;
     else if (c === ')' || c === ']' || c === '}') {
-      if (depth === 0) {
-        end = i;
-        break;
-      }
+      if (depth === 0) return at('hard');
       depth--;
     } else if (depth === 0) {
-      if (c === ';' || (c === ':' && tail[i + 1] !== '=')) {
-        end = i;
-        break;
-      }
-      if (c === ',' && i >= 3) {
-        end = i;
-        break;
-      }
+      if (c === ';' || (c === ':' && tail[i + 1] !== '=')) return at('hard');
+      if (c === ',' && i >= 3) return at('soft');
       if (
         c === '.' &&
         (i + 1 >= tail.length || tail[i + 1] === ' ') &&
@@ -907,19 +914,125 @@ function phraseAt(text, from) {
           tail.slice(0, i)
         )
       ) {
-        end = i;
-        break;
+        return at('hard');
       }
-      if (tail.startsWith(' where ', i) || tail.startsWith(' which ', i)) {
-        end = i;
-        break;
-      }
+      if (tail.startsWith(' where ', i) || tail.startsWith(' which ', i)) return at('soft');
+      if (tail.startsWith(' and ', i) && COORDINATED.test(tail.slice(i))) return at('next');
     }
   }
-  return { text: tail.slice(0, end), end: from + end };
+  return { text: tail, end: from + tail.length, stop: 'hard' };
 }
 
-/** A phrase cut to length at a word, with surrounding punctuation dropped. */
+/** Words a phrase cannot end on: it would stop mid-thought ("events on",
+ * "the value of r for which"). */
+const DANGLING = new Set([
+  'on',
+  'of',
+  'for',
+  'which',
+  'that',
+  'to',
+  'by',
+  'with',
+  'in',
+  'at',
+  'from',
+  'as',
+  'whose',
+  'where',
+  'when',
+  'and',
+  'or',
+  'the',
+  'a',
+  'an',
+  // Verbs left waiting for what they say: "taken to be", "at which f is".
+  'be',
+  'is',
+  'are',
+]);
+
+function squash(phrase) {
+  return phrase
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[\s,;:.-]+$/, '');
+}
+
+/** Whether a phrase ends on a word it cannot end on. A capital A is a
+ * symbol, not an article. */
+function dangles(phrase) {
+  const last = /(?:^|\s)([A-Za-z]+)$/.exec(phrase);
+  return !!last && last[1] !== 'A' && DANGLING.has(last[1].toLowerCase());
+}
+
+/** Where the last bracket opened and never closed is, or -1. */
+function unclosed(phrase) {
+  const open = [];
+  for (let i = 0; i < phrase.length; i++) {
+    if ('([{'.includes(phrase[i])) open.push(i);
+    else if (')]}'.includes(phrase[i])) open.pop();
+  }
+  return open.length > 0 ? open[open.length - 1] : -1;
+}
+
+const complete = (phrase) => !dangles(phrase) && unclosed(phrase) === -1;
+
+/** A phrase cut back to its last complete word: out of any open bracket and
+ * off any dangling words. */
+function trimBack(phrase) {
+  let out = phrase;
+  for (let open = unclosed(out); open !== -1; open = unclosed(out)) out = out.slice(0, open);
+  out = squash(out);
+  while (dangles(out)) out = squash(out.replace(/\s*[A-Za-z]+$/, ''));
+  return out || squash(phrase);
+}
+
+/** At the word before `limit`. */
+function cutAt(phrase, limit) {
+  const cut = phrase.lastIndexOf(' ', limit);
+  return squash(phrase.slice(0, cut > 40 ? cut : limit));
+}
+
+/** The defining phrase starting at `from`, as `{ text, end }`.
+ *
+ * The clause `phraseAt` finds, unless it would end mid-thought: then it runs
+ * on past commas and "which" to the next natural end, up to
+ * `MAX_PHRASE_EXTENDED` characters. A phrase that still cannot end is cut
+ * back to its last complete word and marked "..."; one the sentence itself
+ * leaves hanging - extraction dropped inline math, "events on ." - keeps its
+ * words and gets " ..." where the math was. */
+function definitionPhrase(text, from) {
+  const first = phraseAt(text, from);
+  const clause = squash(first.text);
+  if (clause.length <= MAX_PHRASE && complete(clause)) return { text: clause, end: first.end };
+  const short = clause.length > MAX_PHRASE ? cutAt(clause, MAX_PHRASE) : clause;
+  if (clause.length > MAX_PHRASE && complete(short)) return { text: `${short}...`, end: first.end };
+
+  // Run on to the next natural end.
+  if (clause.length <= MAX_PHRASE_EXTENDED && complete(clause)) {
+    return { text: clause, end: first.end };
+  }
+  let last = first;
+  let longer = clause;
+  while (last.stop === 'soft' && longer.length <= MAX_PHRASE_EXTENDED) {
+    const next = phraseAt(text, last.end + 1);
+    if (next.end <= last.end) break;
+    last = next;
+    longer = squash(text.slice(from, next.end));
+    if (longer.length <= MAX_PHRASE_EXTENDED && complete(longer)) {
+      return { text: longer, end: next.end };
+    }
+  }
+
+  if (last.stop === 'hard' && longer.length <= MAX_PHRASE && unclosed(longer) === -1) {
+    return { text: `${longer} ...`, end: last.end };
+  }
+  return { text: `${trimBack(short)}...`, end: first.end };
+}
+
+/** A phrase cut to length at a word, with surrounding punctuation dropped.
+ * For acronyms' long forms and phrases that come before their symbol. */
 function tidyPhrase(phrase) {
   let out = phrase
     .replace(/\s+/g, ' ')
@@ -1132,6 +1245,12 @@ const PLAIN = {
  * letters and mathematical symbols as `$...$` TeX the panel typesets, and any
  * `$` already in the text escaped so it is not read as math. */
 function asciiText(text) {
+  return asciiParts(text).replace(/\s+/g, ' ').trim();
+}
+
+/** `asciiText` without the closing tidy, for text that is one piece of a
+ * longer line: its edge spaces are kept. */
+function asciiParts(text) {
   const parts = [];
   const push = (kind, value) => {
     const last = parts[parts.length - 1];
@@ -1160,12 +1279,164 @@ function asciiText(text) {
   }
   return parts
     .map((part) => (part.kind === 'math' ? `$${part.value.trim()}$` : part.value))
-    .join('')
+    .join('');
+}
+
+/** A symbol-shaped token in running text: `SYMBOL_CORE` without the
+ * space-set subscript (in prose "x i" is more often two words), standing
+ * alone - not part of a word, an abbreviation ("e.g.", "J. Smith") or a
+ * hyphenated compound ("n-dimensional"). */
+const PHRASE_SYMBOL = new RegExp(
+  `(?<![\\p{L}\\p{N}\\p{M}_^\\\\'.-])` +
+    `([A-Za-z${GREEK}][${MARKS}]*` +
+    `(?:[_^](?:\\{[^{}\\s]{1,10}\\}|[A-Za-z0-9${GREEK}+*-]{1,3})|[0-9]{1,2}(?![0-9])|'{1,2}|\\*){0,3}` +
+    '(?:\\([^()\\s]{1,8}(?:, ?[^()\\s]{1,8})?\\))?)' +
+    `(?![\\p{L}\\p{N}\\p{M}_^']|\\.\\s?\\p{L}|-\\p{L})`,
+  'gu'
+);
+
+/** A comparison with a number, after a formula: "x < 1". */
+const TRAILING_NUMBER = /^\s*[<>=]\s*-?[0-9]+(?:\.[0-9]+)?(?![\p{L}\p{N}])/u;
+
+/** What follows "I" when it is the pronoun. */
+const PRONOUN_VERB =
+  /^\s+(?:am|have|had|will|would|can|could|shall|should|may|might|must|do|did|think|mean|use|used|write|wrote|call|denote|define|assume|recall|note)\b/;
+
+/** Unicode math, one character at a time. */
+const MATH_CHAR = new RegExp(`[${Object.keys(MATH_TEX).join('')}]`, 'gu');
+
+/** Relations, spaced in the TeX the panel typesets. */
+const RELATION =
+  /\s*(<|>|=|\\(?:leq|geq|neq|in|notin|approx|equiv|sim|subset|subseteq|to|mapsto|propto)(?![A-Za-z]))\s*/g;
+
+/** Text allowed between two pieces of math for them to be one formula:
+ * spaces, numbers and operators. */
+const MATH_GLUE = /^[\s0-9+\-*/<>=|]*$/;
+
+/** Whether the token at `at` in `text` is math: Greek, a decorated letter
+ * (`x_i`, `x^2`, `f'`, `S(C)`), a symbol the document defines, or a Latin
+ * letter standing alone as a variable. "a" or "A" followed by a word is the
+ * article, and "I" followed by a verb the pronoun. */
+function isMathToken(token, text, at, known) {
+  if (greekTex(token[0])) return true;
+  if (/[_^('*]/.test(token)) return true;
+  const after = text.slice(at + token.length);
+  if ((token === 'a' || token === 'A') && /^\s+\p{L}{2,}/u.test(after)) return false;
+  if (token === 'I' && PRONOUN_VERB.test(after)) return false;
+  if (/^[A-Za-z]$/.test(token)) return true;
+  return known.has(symbolTex(token));
+}
+
+/** A defining phrase for the panel: words as ASCII text, math as `$...$`.
+ *
+ * Symbols the document defines, single letters used as variables, Greek
+ * letters and Unicode math are typeset, and neighbouring math with only
+ * spaces, numbers and operators between is one formula: "S(C)< +inf" reads
+ * as `$S(C) < +\infty$`. `$` in the words is escaped. */
+function phraseText(phrase, known) {
+  /** Math pieces, in order: `{ start, end, tex }`. */
+  const pieces = [];
+  for (const match of phrase.matchAll(PHRASE_SYMBOL)) {
+    if (!isMathToken(match[1], phrase, match.index, known)) continue;
+    const tex = symbolTex(match[1]);
+    if (tex) pieces.push({ start: match.index, end: match.index + match[0].length, tex });
+  }
+  for (const match of phrase.matchAll(MATH_CHAR)) {
+    pieces.push({
+      start: match.index,
+      end: match.index + match[0].length,
+      tex: MATH_TEX[match[0]],
+    });
+  }
+  pieces.sort((a, b) => a.start - b.start);
+
+  // Neighbours joined into formulas, each taking a sign written straight
+  // before it and a number compared with it.
+  const spans = [];
+  for (const piece of pieces) {
+    const prev = spans[spans.length - 1];
+    const between = prev ? phrase.slice(prev.end, piece.start) : '';
+    if (prev && MATH_GLUE.test(between)) {
+      prev.parts.push({ raw: between }, { tex: piece.tex });
+      prev.end = piece.end;
+    } else {
+      spans.push({ start: piece.start, end: piece.end, parts: [{ tex: piece.tex }] });
+    }
+  }
+  for (const span of spans) {
+    const sign = /(?:^|\s)([-+]|-?[0-9]+(?:\.[0-9]+)?\s*[<>=]\s*)$/.exec(
+      phrase.slice(0, span.start)
+    );
+    if (sign) {
+      span.start -= sign[1].length;
+      span.parts.unshift({ raw: sign[1] });
+    }
+    // After a relation already in the formula ("<= 1") the number alone.
+    const relation = /^(?:\\(?:leq|geq|neq|approx|equiv|sim|propto|pm|times|cdot))$/.test(
+      span.parts[span.parts.length - 1].tex ?? ''
+    );
+    const number = (relation ? /^\s*-?[0-9]+(?:\.[0-9]+)?(?![\p{L}\p{N}])/u : TRAILING_NUMBER).exec(
+      phrase.slice(span.end)
+    );
+    if (number) {
+      span.end += number[0].length;
+      span.parts.push({ raw: number[0] });
+    }
+  }
+
+  let out = '';
+  let from = 0;
+  for (const span of spans) {
+    if (span.start < from) continue;
+    out += asciiParts(phrase.slice(from, span.start));
+    out += `$${formulaTex(span.parts)}$`;
+    from = span.end;
+  }
+  out += asciiParts(phrase.slice(from));
+  return out.replace(/\s+/g, ' ').trim();
+}
+
+/** Pieces of one formula - `{ tex }` for the math, `{ raw }` for the
+ * operators and numbers joining it - as one TeX string. */
+function formulaTex(parts) {
+  let out = '';
+  parts.forEach((part) => {
+    const tex = part.tex ?? texChars(part.raw);
+    if (/\\[A-Za-z]+$/.test(out) && /^[A-Za-z]/.test(tex)) out += ' ';
+    out += tex;
+  });
+  return out.replace(RELATION, ' $1 ').replace(/\s+/g, ' ').trim();
+}
+
+// ---------- putting it together ----------
+
+/** A phrase reduced to what it says, for comparing two. */
+function gist(phrase) {
+  return phrase
+    .toLowerCase()
+    .replace(/\.\.\.$/, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\b(?:the|a|an)\b/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
-// ---------- putting it together ----------
+/** Symbols without the second of a pair where one is the other with an
+ * argument (`X` and `X(l)`) and both are defined as the same thing. A pair
+ * defined differently is two symbols and both are kept. */
+function withoutRepeats(defs) {
+  const byTex = new Map(defs.map((def) => [def.tex, def]));
+  const dropped = new Set();
+  for (const def of defs) {
+    const base = /^(.+?)\(.*\)$/.exec(def.tex);
+    const other = base && byTex.get(base[1]);
+    if (!other || gist(other.phrase) !== gist(def.phrase)) continue;
+    const otherFirst =
+      other.page < def.page || (other.page === def.page && other.index <= def.index);
+    dropped.add(otherFirst ? def : other);
+  }
+  return defs.filter((def) => !dropped.has(def));
+}
 
 /** Reads pages one at a time and keeps the first definition of each symbol
  * and acronym, with how often each acronym is used. */
@@ -1190,7 +1461,7 @@ function createExtractor() {
     result() {
       const strip = ({ index: _index, ...def }) => def;
       return {
-        symbols: [...symbols.values()].map(strip),
+        symbols: withoutRepeats([...symbols.values()]).map(strip),
         acronyms: [...acronyms.values()]
           .map((def) => ({
             ...strip(def),

@@ -37,12 +37,13 @@ interface Notation {
   createExtractor(): { addPage(page: number, text: string): void; result(): Extraction };
   symbolTex(symbol: string): string;
   asciiText(text: string): string;
+  phraseText(phrase: string, known: Set<string>): string;
   acronymCore(token: string): string | null;
 }
 
 const notation = new Function(
   'self',
-  `${SOURCE}\nreturn { createExtractor, symbolTex, asciiText, acronymCore };`
+  `${SOURCE}\nreturn { createExtractor, symbolTex, asciiText, phraseText, acronymCore };`
 )({}) as Notation;
 
 function extract(...pages: string[]): Extraction {
@@ -199,12 +200,141 @@ describe('notation: symbols', () => {
   });
 });
 
+/** Sentences as a long statistical learning text prints them, each of which
+ * once came out merged, cut mid-thought or with its math as plain text. */
+describe('notation: definitions in a book-length text', () => {
+  /** Each symbol's phrase as the panel shows it. */
+  const shown = (...pages: string[]) => {
+    const result = extract(...pages);
+    const known = new Set(result.symbols.map((s) => s.tex));
+    return Object.fromEntries(
+      result.symbols.map((s) => [s.key, notation.phraseText(s.phrase, known)])
+    );
+  };
+
+  it('splits "X is ... and Y is ..." into two definitions', () => {
+    expect(
+      shown(
+        'Here, where D is the diameter of the point set and ρ is the distance between the convex hulls.'
+      )
+    ).toEqual({
+      D: 'the diameter of the point set',
+      '\\rho': 'the distance between the convex hulls',
+    });
+  });
+
+  it('splits "Let F be ... and C a ..." and typesets the symbol in the phrase', () => {
+    expect(shown('Let F be an infinite set and C a collection of subsets of F.')).toEqual({
+      F: 'an infinite set',
+      C: 'a collection of subsets of $F$',
+    });
+  });
+
+  it('splits "a is ... and b the ..."', () => {
+    expect(
+      shown(
+        'Here, where a is the number of elements in the set of subsamples of the first type and ' +
+          'b the number of elements in the set of subsamples of the second type.'
+      )
+    ).toEqual({
+      a: 'the number of elements in the set of subsamples of the first type',
+      b: 'the number of elements in the set of subsamples of the second type',
+    });
+  });
+
+  it('splits lists, and keeps an "and" that is part of the phrase', () => {
+    expect(
+      shown('Let Y be the set of all points, Z the set of lines, and W the union of Y and Z.')
+    ).toEqual({ Y: 'the set of all points', Z: 'the set of lines', W: 'the union of $Y$ and $Z$' });
+    expect(shown('Let G be a group and a ring with unity.')).toEqual({
+      G: 'a group and a ring with unity',
+    });
+  });
+
+  it('typesets a formula in a phrase as one span', () => {
+    expect(
+      shown('The family C is called a Vapnik-Chervonenkis or VC class if and only if S(C)< +∞.')
+    ).toEqual({ C: 'a Vapnik-Chervonenkis or VC class if and only if $S(C) < +\\infty$' });
+  });
+
+  it('marks math the text dropped rather than ending on "on"', () => {
+    expect(
+      shown(
+        'Let X be a set of elementary events on . ' +
+          'Denote by X(l) the space of samples in X of size l.'
+      )
+    ).toEqual({
+      X: 'a set of elementary events on ...',
+      // Not the same thing as X, so both are kept.
+      'X(l)': 'the space of samples in $X$ of size $l$',
+    });
+  });
+
+  it('runs a phrase on past "which" rather than stop on "for"', () => {
+    expect(shown('Let n be a constant equaling the value of r for which .')).toEqual({
+      n: 'a constant equaling the value of $r$ for which ...',
+    });
+    expect(shown('Let m be the value of r for which the bound is tight.')).toEqual({
+      m: 'the value of $r$ for which the bound is tight',
+    });
+  });
+
+  it('runs a long phrase on to a natural end, or cuts it at a complete word', () => {
+    // Cut at 120 characters this would end "taken to be"; the clause ends
+    // within 200, so it is shown whole.
+    expect(
+      extract(
+        'Let A be a matrix of the form whose entries in the upper half are listed and whose ' +
+          'entries in the lower half are taken to be zeros of the polynomial which we described ' +
+          'at length in the previous chapter on.'
+      ).symbols[0]!.phrase
+    ).toBe(
+      'a matrix of the form whose entries in the upper half are listed and whose entries in ' +
+        'the lower half are taken to be zeros of the polynomial'
+    );
+
+    // No end within 200: cut back past "of the" to a complete word.
+    const long = extract(`Let q be ${'one of the '.repeat(30)}things.`).symbols[0]!.phrase;
+    expect(long).toMatch(/ one\.\.\.$/);
+    expect(long.length).toBeLessThanOrEqual(123);
+
+    const bracket = extract(
+      'Let h be the map (taking values in a set of all things of a kind that are listed in ' +
+        'the table and so on, with many more words here than fit in a row of the panel at all'
+    ).symbols[0]!.phrase;
+    expect(bracket).toBe('the map...');
+  });
+
+  it('drops X(l) when it is defined as the same thing as X', () => {
+    expect(
+      shown('Let X be the sample space. Denote by X(l) the sample space.', 'Nothing.')
+    ).toEqual({ X: 'the sample space' });
+  });
+});
+
 describe('notation: text for the panel', () => {
   it('writes Greek and math as TeX, and everything else as ASCII', () => {
     expect(notation.asciiText('the rate λ ∈ R, “quoted” café')).toBe(
       'the rate $\\lambda$ $\\in$ R, "quoted" cafe'
     );
     expect(notation.asciiText('costs $5')).toBe('costs \\$5');
+  });
+
+  it('typesets variables in a phrase, and leaves words as words', () => {
+    const none = new Set<string>();
+    expect(notation.phraseText('a set of x with x - y = 0 for 0 < t', none)).toBe(
+      'a set of $x$ with $x - y = 0$ for $0 < t$'
+    );
+    expect(notation.phraseText('A map from I to a', none)).toBe('A map from $I$ to $a$');
+    expect(notation.phraseText('as in e.g. J. Smith, an n-dimensional set', none)).toBe(
+      'as in e.g. J. Smith, an n-dimensional set'
+    );
+    expect(notation.phraseText('the rate λ_t ≤ 1 costs $5', none)).toBe(
+      'the rate $\\lambda_{t} \\leq 1$ costs \\$5'
+    );
+    // Decorated only by a digit, a letter is math when the paper defines it.
+    expect(notation.phraseText('the gap x1', none)).toBe('the gap x1');
+    expect(notation.phraseText('the gap x1', new Set(['x_{1}']))).toBe('the gap $x_{1}$');
   });
 });
 
@@ -373,11 +503,12 @@ describe('Notation worker: the panel', () => {
     expect(ui.sections!.map((s) => s.title)).toEqual(['Symbols (2)', 'Acronyms (1)']);
     const [lambda, n, ness] = rowsIn(ui);
     expect(lambda!.title).toBe('$\\lambda$');
-    expect(lambda!.subtitle).toBe('the control parameter (p. 2)');
+    expect(lambda!.subtitle).toBe('the control parameter');
+    expect(lambda!.badge).toBe('p. 2');
     expect(n!.title).toBe('$N$');
-    expect(ness!.title).toBe('NESS (nonequilibrium steady state)');
-    expect(ness!.subtitle).toBe('defined on p. 1');
-    expect(ness!.badge).toBe('used 2x');
+    expect(ness!.title).toBe('NESS');
+    expect(ness!.subtitle).toBe('nonequilibrium steady state');
+    expect(ness!.badge).toBe('p. 1, used 2x');
   });
 
   /** What is shown, that is: an action's value is handed back to the worker

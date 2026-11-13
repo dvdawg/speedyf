@@ -32,7 +32,8 @@ it, skipping small words like _of_ and _the_, splitting hyphenated words, and
 allowing one wrong letter ("carbon dioxide (CO2)"). So "(Fig. 2)", "(see
 [12])", "(2024)", "(i)", "(a)" and "(II)" are never acronyms, and neither is a
 capitalised word in parentheses whose letters the words before it do not
-spell. The badge counts the uses after the definition, plurals included.
+spell. The badge gives the page it is defined on and counts the uses after
+the definition, plurals included: `p. 1, used 12x`.
 
 Symbols, in sentences shaped like:
 
@@ -50,13 +51,34 @@ Symbols, in sentences shaped like:
 | _X_ is called …                               | H is called the Hamiltonian                             |
 | with _X_ the …                                | with γ the damping rate                                 |
 
+Definitions joined in one sentence are listed separately: "where D is the
+diameter of the point set and ρ is the distance between the convex hulls",
+"Let F be an infinite set and C a collection of subsets of F", "x the …, y the
+…, and z the …". A sentence is split at "and", a comma or a semicolon only
+where a symbol follows with _is_, _are_, _denotes_, _represents_, _stands for_
+or straight away _the_, _a_ or _an_; any other "and" is part of the phrase ("if
+and only if").
+
 A symbol is one Latin or Greek letter, with accents (x̂), up to three sub- and
 superscripts as the PDF's text gives them (`x_i`, `β_t`, `x1`, `E₀`, `x²`,
 `f'`, `ω*`, or `x i` with the subscript set off by a space), and a short
 argument (`Z(θ)`, `f(x, t)`). Mathematical italic and bold letters (𝜆, 𝑥) are
 read as the plain letter, and Greek variants (ϑ, ϕ, ϵ) as their usual form.
-Symbols are drawn as TeX, `$\lambda$`, which the panel typesets; Greek letters
-and math symbols inside a defining phrase are typeset too.
+Symbols are drawn as TeX, `$\lambda$`, which the panel typesets, with the page
+they are defined on in the badge. Math inside a defining phrase is typeset too:
+symbols the paper defines, single letters used as variables (not "a" or "A"
+before a word, or "I" before a verb), Greek letters and math characters, with
+neighbouring math and the operators and numbers between joined into one
+formula, so "if and only if S(C) < +∞" shows `$S(C) < +\infty$`.
+
+A phrase runs to the end of its clause, and never ends on a word left waiting
+for more (_of_, _on_, _for which_, _the_, _to be_ …) or inside brackets: it
+runs on to the next natural end, up to 200 characters, or is cut back to its
+last complete word and marked `...`. Where the sentence itself stops short -
+extraction dropped the inline math in "a set of elementary events on Ω" - the
+phrase keeps its words and shows `...` for what is missing. A symbol with an
+argument defined as the same thing as the bare symbol (`X(l)` and `X`) is
+listed once.
 
 The first definition of each symbol or acronym wins: a paper that reuses λ in
 an appendix keeps the meaning it gave λ first. Symbols are listed in the order
@@ -83,8 +105,9 @@ changing **Scan pages** reads again and reopening the panel does not.
 - **Definitions written as equations only.** A symbol introduced in a display
   block ("$$H = \sum_i \ldots$$") with no sentence around it is invisible: the
   extension reads prose, not mathematics.
-- **Lists of symbols.** "Let x, y and z be coordinates" and "where α and β
-  are rates" define several symbols at once and are not read.
+- **Lists of symbols sharing one phrase.** "Let x, y and z be coordinates"
+  and "where α and β are rates" define several symbols at once and are not
+  read.
 - **Symbols longer than one letter.** `Tr`, `KL`, `\mathrm{Var}` and the like
   are not symbols here; an all-capitals one may still be read as an acronym.
 - **Text the PDF scrambled.** Subscripts extracted on a separate line, or a
