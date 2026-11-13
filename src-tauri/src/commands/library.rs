@@ -901,6 +901,33 @@ pub async fn library_missing_works(
     .map_err(|error| AppError::Internal(format!("library task failed: {error}")))?
 }
 
+/// Works the library cites alongside the project's members that are not
+/// in it, cited with at least `min_members` of them, less what the missing
+/// works list shows at `min_cited_by` (`PaperStore::cocited_works`).
+#[tauri::command]
+pub async fn library_cocited_works(
+    state: tauri::State<'_, EngineState>,
+    project_id: String,
+    min_members: u32,
+    min_cited_by: u32,
+) -> AppResult<Vec<crate::library::cocitation::CoCitedWorkDto>> {
+    let engine = state.0.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (entries, refs, network) = citation_inputs(&engine);
+        let store = engine.0.papers.lock();
+        store.cocited_works(
+            &project_id,
+            min_members,
+            min_cited_by,
+            &entries,
+            &refs,
+            &network,
+        )
+    })
+    .await
+    .map_err(|error| AppError::Internal(format!("library task failed: {error}")))?
+}
+
 /// Projects the item is not in that the citation graph ties it to, at
 /// most three, strongest first (`PaperStore::suggest_projects`). Empty for
 /// an id that names no item. Read-only, against the same snapshots as

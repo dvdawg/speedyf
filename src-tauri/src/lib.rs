@@ -453,6 +453,7 @@ pub fn run() {
             commands::library::library_citation_links,
             commands::library::library_graph,
             commands::library::library_missing_works,
+            commands::library::library_cocited_works,
             commands::library::library_suggest_projects,
             commands::library::library_related_items,
             commands::library::library_duplicates,

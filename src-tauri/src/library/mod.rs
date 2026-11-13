@@ -20,6 +20,7 @@ pub mod bibtex;
 pub mod bundle;
 pub mod chain;
 pub mod citekey;
+pub mod cocitation;
 pub mod filing;
 pub mod firstpage;
 pub mod identifiers;

@@ -115,6 +115,23 @@ impl PaperStore {
                 self.in_list_order(self.papers.iter().filter(|p| p.is_paper()).collect())
             }
         };
+        let mut works = self.missing_over(view, min_cited_by, entries, refs, network);
+        works.truncate(MAX_MISSING);
+        Ok(works)
+    }
+
+    /// `missing_works` over a view the caller chose, every group kept:
+    /// the co-citation suggestions (`cocitation.rs`) read the whole
+    /// library's missing works through here, so their keys are the keys
+    /// this list uses.
+    pub(super) fn missing_over(
+        &self,
+        view: Vec<&PaperRecord>,
+        min_cited_by: u32,
+        entries: &[LibraryEntry],
+        refs: &DocRefs,
+        network: &NetworkEdges,
+    ) -> Vec<MissingWorkDto> {
         let tables = self.citation_tables();
         let paper_index: HashMap<&str, usize> = self
             .papers
@@ -318,8 +335,7 @@ impl PaperStore {
                 .then_with(|| b.year.cmp(&a.year))
                 .then_with(|| a.key.cmp(&b.key))
         });
-        works.truncate(MAX_MISSING);
-        Ok(works)
+        works
     }
 }
 
