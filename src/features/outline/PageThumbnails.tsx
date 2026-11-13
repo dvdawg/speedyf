@@ -116,6 +116,20 @@ export default function PageThumbnails() {
   // the sidebar by hand is left alone.
   let followRaf = 0;
   let followTarget: number | null = null;
+  // When the user last scrolled the sidebar themselves. The easing below
+  // writes scrollTop every frame, so without this a wheel turn made while a
+  // follow was in flight was pulled straight back: the sidebar "sometimes"
+  // refused to scroll. Their input wins, and following waits a moment.
+  let userScrolledAt = -Infinity;
+  const USER_SCROLL_HOLD_MS = 1200;
+  const userScrolled = () => {
+    userScrolledAt = performance.now();
+    followTarget = null;
+    if (followRaf) {
+      cancelAnimationFrame(followRaf);
+      followRaf = 0;
+    }
+  };
   const stepFollow = () => {
     followRaf = 0;
     if (followTarget === null) return;
@@ -141,6 +155,7 @@ export default function PageThumbnails() {
     // A drag is steering the main view from this sidebar; scrolling the
     // sidebar now would slide the thumbnail out from under the pointer.
     if (panPage() !== null || zoomPage() !== null) return;
+    if (performance.now() - userScrolledAt < USER_SCROLL_HOLD_MS) return;
 
     // How far through the current page the main viewer sits, 0..1.
     const ml = mainLayout();
@@ -341,7 +356,21 @@ export default function PageThumbnails() {
 
   return (
     <>
-      <div class="sidebar-scroll" ref={scroller} onScroll={() => setScrollTop(scroller.scrollTop)}>
+      <div
+        class="sidebar-scroll"
+        ref={scroller}
+        onScroll={() => setScrollTop(scroller.scrollTop)}
+        onWheel={userScrolled}
+        onTouchStart={userScrolled}
+        onKeyDown={(e) => {
+          if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(e.key))
+            userScrolled();
+        }}
+        onPointerDown={(e) => {
+          // A press on the scrollbar itself lands on the scroller, not a thumb.
+          if (e.target === scroller) userScrolled();
+        }}
+      >
         <div style={{ height: `${layout().totalH}px`, position: 'relative' }}>
           <For each={indices()}>
             {(i) => {
