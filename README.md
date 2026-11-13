@@ -20,6 +20,14 @@ manual QA before a public release.
 - Continuous virtualized scrolling with progressive page rendering
 - Fit page, fit width, anchored zoom, whole-view rotation, and large-page tiles
 - Virtualized thumbnails and direct page navigation
+- An outline for PDFs that ship none (or only a title bookmark), generated
+  at idle from the document's own headings: a tagged PDF's heading
+  structure, else a printed table of contents mapped onto its pages, else
+  typography (size, weight, capitals, spacing and section numbering, with
+  running heads, captions, theorem labels, equations, list items, references
+  and title-page lines filtered out). Precision first: when the evidence is
+  thin it shows nothing. Marked "Generated from headings" in the sidebar,
+  cached by file fingerprint, never written into the PDF
 - Selectable PDF text and incremental, normalized search
 - Hover previews for internal PDF links and DOI/arXiv citations, with optional
   local-library first-page previews
