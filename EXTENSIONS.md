@@ -92,6 +92,7 @@ rather than a silently ignored setting.
     "citationActions": [{ "command": "run", "title": "Look up in Thing" }],
     "documentTasks": [{ "command": "run", "title": "Thing: Scan Document" }],
     "referenceProvider": { "command": "run" },
+    "termProvider": { "command": "run" },
     "equationActions": [{ "command": "run", "title": "Copy LaTeX" }],
     "settings": [
       {
@@ -122,8 +123,9 @@ rather than a silently ignored setting.
 Command and panel ids must be non-empty and contain no `/` - that character
 separates them from your extension id. Every `keybindings`, `selectionActions`,
 `citationActions`, `documentTasks` and `equationActions` entry, and
-`referenceProvider`, must name a command you declared; `referenceProvider` also needs the
-`library:contributeReferences` permission. (The example above lists every
+`referenceProvider` and `termProvider`, must name a command you declared;
+`referenceProvider` also needs the `library:contributeReferences` permission,
+and `termProvider` the `document:contributeTerms` permission. (The example above lists every
 field - a real extension would not make one command all of these.)
 
 ---
@@ -145,6 +147,7 @@ Declared in the manifest, refused if not declared. Absent = refused.
 | `library:contributeReferences` | Being handed the stored text of library documents during idle indexing - never their paths - and returning their reference entries. Only with `referenceProvider`.                                     |
 | `document:layout`              | The open document's typeset characters with their fonts, sizes and boxes, the thin rules between them, and its tagged-PDF Formula elements (`selection.glyphs`, `region.glyphs`, `document.mathTags`). |
 | `network`                      | `net.fetch` to the hosts in your manifest's `network` list, and nowhere else. Needs a non-empty list; a list needs it.                                                                                 |
+| `document:contributeTerms`     | Answering `termProvider` with the terms the open document defines (`terms.contribute`), which SpeedyF previews when the reader hovers them. Only with `termProvider`.                                  |
 
 `ui.render`, `ui.showMath` and `settings.get` need no permission: drawing into
 a panel you declared, showing a formula in SpeedyF's popover, and reading
@@ -202,6 +205,7 @@ whenever they suffice.
 | `settings`          | Fields rendered in the Extensions panel; `type` is `text`, `checkbox` or `select`.      |
 | `referenceProvider` | `{ "command": "<id>" }`: reads library documents' reference lists at idle (below).      |
 | `equationActions`   | A button on each display equation SpeedyF detects; your command receives the block.     |
+| `termProvider`      | `{ "command": "<id>" }`: the terms a document defines, previewed on hover (below).      |
 
 ### `equationActions`
 
@@ -249,6 +253,40 @@ to be cut into entries: that is the provider's job.
   next session.
 - A provider command does not appear in the palette.
 
+### `termProvider`
+
+Hovering a term the paper defines - an acronym, say - shows what it stands
+for in SpeedyF's link-preview popover, with "Defined on p. 3"; clicking goes
+there, and Back returns. Knowing what a paper defines is your part; finding
+every use on every page is SpeedyF's.
+
+- **Only one provider is active**: the first enabled extension that declares
+  one. In practice that is the built-in Notation, which contributes every
+  acronym it reads ("fluctuation-dissipation theorem (FDT)" or "FDT
+  (fluctuation-dissipation theorem)"). Disable it and there are no term hovers.
+- When a document comes on screen, SpeedyF invokes your command with `value:
+{ document }`, an opaque token. Read the document with the usual APIs
+  (`document:read`), then call `terms.contribute { document, terms }` - before
+  or after you report `done`, as long as the reader has not switched documents
+  in between; an answer for a document no longer on screen is dropped
+  (`{ stored: 0 }`), and SpeedyF asks again when it comes back.
+- Each term is `{ text, body, page, caseSensitive?, kind?, title?, box? }`:
+  `text` as it appears in the text (`"FDT"`, `"mRNA"`, `"COVID-19"`; two to 64
+  characters, never a single letter), `body` what the popover shows (plain
+  text, or with `$...$` TeX), `page` where it is defined (zero-based, as the
+  reader sees pages), `box` the `ApiBox` of the definition. `title` defaults
+  to `text`, `caseSensitive` to `true`. At most 2000; a malformed term is
+  dropped on its own.
+- SpeedyF matches whole tokens only: `FDT` matches `FDTs`, `FDT's`,
+  `FDT-based` and `non-FDT`, never `SFDT`; a case-sensitive `IT` never matches
+  `it` or `ITS`. Nothing matches inside mathematics, sub- and superscripts, the
+  bibliography, a running head or a table of contents, nor inside `box` - the
+  definition itself - or another "long form (TERM)" for it. Where a link
+  already covers the text, the link's preview wins.
+- The same `text` contributed twice with different bodies: each use shows the
+  nearest preceding definition, or every one when none precedes it.
+- The provider command does not appear in the palette.
+
 **Key chords** use `mod` (Cmd on macOS, Ctrl elsewhere), `shift`, `alt`, then the
 key: `j`, `mod+k`, `shift+g`, `alt+ArrowDown`. Chords SpeedyF already uses are
 refused and reported in the Extensions panel - built-ins always win. If two
@@ -272,8 +310,9 @@ Asynchronous request/response with correlation ids, both directions.
 ```
 
 `value` carries the selected text or citation for an action, `{ page, bbox,
-number }` for an equation action, and `{ document, text }` for a
-`referenceProvider` command. `reason` is
+number }` for an equation action, `{ document, text }` for a
+`referenceProvider` command, and `{ document }` for a `termProvider`
+command. `reason` is
 `'panel'` when your panel was opened rather than a command being run.
 
 ### You -> SpeedyF
@@ -353,6 +392,7 @@ cannot reach a tab the user is not looking at. Pages are zero-based.
 | `document.contributeText`  | `{ page, text }`                         | `{ stored }`                                                                                                                   | `document:contributeText`      |
 | `document.contributedText` | -                                        | `{ extensionId, pages } \| null`                                                                                               | `document:contributeText`      |
 | `references.contribute`    | `{ document, entries }`                  | `{ stored }` - only for the document you are being invoked with                                                                | `library:contributeReferences` |
+| `terms.contribute`         | `{ document, terms }`                    | `{ stored }` - only while that document is still on screen                                                                     | `document:contributeTerms`     |
 | `clipboard.write`          | `{ text }`                               | `{ written }`                                                                                                                  | `clipboard:write`              |
 | `storage.get`              | `{ key }`                                | `string \| null`                                                                                                               | `storage`                      |
 | `storage.set`              | `{ key, value }`                         | `{ stored }`                                                                                                                   | `storage`                      |

@@ -8,7 +8,7 @@
  * its commands is actually run, which keeps a shelf of installed-but-unused
  * extensions off the startup path.
  */
-import { createSignal } from 'solid-js';
+import { createEffect, createRoot, createSignal } from 'solid-js';
 import { createStore, produce } from 'solid-js/store';
 import { invoke } from '@tauri-apps/api/core';
 import { ExtensionHost, blobWorkerFactory } from './host';
@@ -57,6 +57,8 @@ import { pdfRectToCssRect } from '../../lib/coordinates/coords';
 import { revealPlace } from '../../stores/revealStore';
 import { parseUi, type UiDescription } from './ui';
 import { ReferenceQueue, chooseProvider, idleWait, readerBusy } from './referenceProvider';
+import { TermSession, chooseTermProvider } from './termProvider';
+import { clearAllTerms, setDocumentTerms } from '../hovers/hoverStore';
 import {
   openMathLoading,
   settleMath,
@@ -143,6 +145,9 @@ export interface ExtensionRecord {
   /** The bare command id SpeedyF invokes to read a library document's
    * reference list, when this extension is a reference provider. */
   referenceProvider: string | null;
+  /** The bare command id SpeedyF invokes for the terms the open document
+   * defines, when this extension is a term provider. */
+  termProvider: string | null;
   iconUrl: string | null;
   /** Why it cannot run: a bad manifest, or a worker that died. */
   error: string | null;
@@ -203,6 +208,7 @@ interface ExtensionDto {
   network?: string[];
   settings: ExtensionSetting[];
   referenceProvider?: string | null;
+  termProvider?: string | null;
   iconUrl: string | null;
   error: string | null;
 }
@@ -228,6 +234,7 @@ export async function loadExtensions(): Promise<void> {
           builtin: dto.builtin ?? false,
           keybindings: dto.manifest?.contributes?.keybindings ?? [],
           referenceProvider: dto.referenceProvider ?? null,
+          termProvider: dto.termProvider ?? null,
           error: dto.error ?? null,
           log: previous.get(dto.id) ?? [],
         }));
@@ -235,6 +242,7 @@ export async function loadExtensions(): Promise<void> {
       })
     );
     syncReferenceProvider();
+    syncTermProvider();
   } catch (err) {
     setState('loaded', true);
     console.error('could not list extensions', err);
@@ -262,6 +270,36 @@ const referenceQueue = new ReferenceQueue({
  * version) reads the library again. */
 function syncReferenceProvider(): void {
   void referenceQueue.setProvider(chooseProvider(state.extensions));
+}
+
+/** Terms the open document defines, through the active term provider. */
+const termSession = new TermSession({
+  invoke: async (choice, value) => {
+    const extension = record(choice.extensionId);
+    if (!extension?.enabled) throw new Error('the term provider is not enabled');
+    await hostFor(extension).invoke(choice.command, { value });
+  },
+  store: setDocumentTerms,
+  clearAll: clearAllTerms,
+  log: (id, level, message) => appendLog(id, level, message),
+});
+
+let tracking = false;
+
+/** Point term hovers at the active term provider - the first enabled
+ * extension declaring one - and, the first time, start telling it which
+ * document is on screen. Disabling it takes every term back. */
+function syncTermProvider(): void {
+  if (!tracking) {
+    tracking = true;
+    createRoot(() =>
+      createEffect(() => {
+        const doc = activeTab()?.documentStore.state;
+        termSession.noteActive(doc?.loaded ? doc.docId : null);
+      })
+    );
+  }
+  termSession.setProvider(chooseTermProvider(state.extensions));
 }
 
 /** Batch jobs extensions offer over a whole document. */
@@ -518,6 +556,21 @@ async function handleCall(extension: ExtensionRecord, call: CallMessage): Promis
       throw new Error(apiRefusalReason(extension.permissions, call.api));
     }
     return referenceQueue.contribute(extension.id, call.args);
+  }
+
+  if (call.api === 'terms.contribute') {
+    if (!canCallApi(extension.permissions, call.api)) {
+      throw new Error(apiRefusalReason(extension.permissions, call.api));
+    }
+    const doc = activeTab()?.documentStore.state;
+    const view = doc?.loaded
+      ? {
+          docId: doc.docId,
+          pageCount: doc.pages.length,
+          srcOf: (page: number) => doc.pages[page]?.srcIndex ?? null,
+        }
+      : null;
+    return termSession.contribute(extension.id, call.args, view);
   }
 
   if (call.api === 'document.contributeText') {

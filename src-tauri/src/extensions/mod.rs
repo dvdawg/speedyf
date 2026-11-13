@@ -168,6 +168,10 @@ pub enum Permission {
     /// host, and shown in the status bar while they run.
     #[serde(rename = "network")]
     Network,
+    /// Terms the open document defines, contributed for SpeedyF to match
+    /// against its pages and preview on hover (`termProvider`).
+    #[serde(rename = "document:contributeTerms")]
+    DocumentContributeTerms,
 }
 
 /// An action offered on something the user picked - a text selection, a
@@ -266,6 +270,15 @@ pub struct ReferenceProviderContribution {
     pub command: String,
 }
 
+/// The command SpeedyF invokes for the terms a document defines
+/// (`termProvider`). Needs `document:contributeTerms`.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TermProviderContribution {
+    /// One of this extension's declared command ids.
+    pub command: String,
+}
+
 /// Deliberately strict on both counts.
 ///
 /// `camelCase` because that is what the rest of the manifest uses, and an
@@ -306,6 +319,10 @@ pub struct Contributions {
     /// command is invoked with `{ page, bbox, number }`.
     #[serde(default)]
     pub equation_actions: Vec<ActionContribution>,
+    /// Terms the open document defines, matched by SpeedyF against its pages
+    /// and previewed on hover. The command is invoked with `{ document }`.
+    #[serde(default)]
+    pub term_provider: Option<TermProviderContribution>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -353,6 +370,7 @@ pub enum ManifestError {
     DuplicatePanel(String),
     BadPanelId(String),
     ProviderNeedsPermission,
+    TermProviderNeedsPermission,
     BadNetworkHost(String),
     TooManyNetworkHosts,
     NetworkWithoutHosts,
@@ -396,6 +414,10 @@ impl std::fmt::Display for ManifestError {
             ManifestError::ProviderNeedsPermission => write!(
                 f,
                 "referenceProvider needs the \"library:contributeReferences\" permission"
+            ),
+            ManifestError::TermProviderNeedsPermission => write!(
+                f,
+                "termProvider needs the \"document:contributeTerms\" permission"
             ),
             ManifestError::BadNetworkHost(host) => write!(
                 f,
@@ -519,6 +541,17 @@ pub fn parse_manifest(source: &str) -> Result<Manifest, ManifestError> {
             .contains(&Permission::LibraryContributeReferences)
         {
             return Err(ManifestError::ProviderNeedsPermission);
+        }
+    }
+    if let Some(provider) = &manifest.contributes.term_provider {
+        if !seen.contains(provider.command.as_str()) {
+            return Err(ManifestError::UnknownBoundCommand(provider.command.clone()));
+        }
+        if !manifest
+            .permissions
+            .contains(&Permission::DocumentContributeTerms)
+        {
+            return Err(ManifestError::TermProviderNeedsPermission);
         }
     }
     validate_network(&manifest)?;
@@ -1716,6 +1749,36 @@ mod tests {
                 .map(|p| p.command)
                 .as_deref(),
             Some("refs")
+        );
+    }
+
+    #[test]
+    fn reads_a_term_provider_that_needs_its_command_and_its_permission() {
+        let m = parse_manifest(&manifest_json(
+            r#","permissions":["document:contributeTerms"],
+               "contributes":{"commands":[{"id":"terms","title":"Terms"}],
+               "termProvider":{"command":"terms"}}"#,
+        ))
+        .expect("valid");
+        assert_eq!(
+            m.contributes.term_provider.map(|p| p.command).as_deref(),
+            Some("terms")
+        );
+        let undeclared = parse_manifest(&manifest_json(
+            r#","permissions":["document:contributeTerms"],
+               "contributes":{"termProvider":{"command":"terms"}}"#,
+        ));
+        assert_eq!(
+            undeclared.unwrap_err(),
+            ManifestError::UnknownBoundCommand("terms".into())
+        );
+        let ungranted = parse_manifest(&manifest_json(
+            r#","contributes":{"commands":[{"id":"terms","title":"Terms"}],
+               "termProvider":{"command":"terms"}}"#,
+        ));
+        assert_eq!(
+            ungranted.unwrap_err(),
+            ManifestError::TermProviderNeedsPermission
         );
     }
 

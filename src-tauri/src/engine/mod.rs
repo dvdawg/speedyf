@@ -14,6 +14,7 @@ pub mod figures;
 pub mod formal;
 pub mod forms;
 pub mod glyphs;
+pub mod hovers;
 pub mod invert;
 pub mod layout_text;
 pub mod links;
@@ -243,6 +244,32 @@ pub enum Work {
     ImageSize {
         path: String,
         respond: Respond<[u32; 2]>,
+    },
+    /// A page's hover spans: cross-references, footnotes, contributed
+    /// terms. Answered once the document's hover index is read.
+    PageHovers {
+        doc: DocId,
+        src: u32,
+        respond: Respond<hovers::PageHoversDto>,
+    },
+    /// Read a few more pages of a document's hover index; requeues itself.
+    HoverIndexNext {
+        doc: DocId,
+    },
+    /// Terms an extension contributed for a document (`termProvider`).
+    SetHoverTerms {
+        doc: DocId,
+        terms: Vec<hovers::terms::TermInput>,
+        respond: Respond<u32>,
+    },
+    /// The crop a hover span previews: its region, an equation's widened to
+    /// the display the page raster finds there.
+    HoverPreview {
+        doc: DocId,
+        src: u32,
+        kind: String,
+        region: [f32; 4],
+        respond: Respond<PreviewSpecDto>,
     },
 }
 

@@ -42,8 +42,14 @@ export interface EquationTarget {
   number: string | null;
 }
 
+/** What a term provider's command is invoked with: the document on screen,
+ * as an opaque token to answer `terms.contribute` with. */
+export interface TermRequest {
+  document: string;
+}
+
 /** Any value an invoke can carry. */
-export type InvokeValue = string | ReferenceRequest | EquationTarget;
+export type InvokeValue = string | ReferenceRequest | EquationTarget | TermRequest;
 
 /** Run one of the extension's contributed commands. */
 export interface InvokeMessage {

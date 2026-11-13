@@ -197,6 +197,7 @@ custom URI scheme path.
 | `filesystem:read` / `filesystem:write` | User-chosen paths only, via a picker                                                       | v3               |
 | `document:layout`                      | Glyph geometry and math tags of the open document                                          | v3 (implemented) |
 | `network`                              | Outbound HTTPS to the manifest's listed hosts, made by the core                            | v3 (implemented) |
+| `document:contributeTerms`             | Contribute the terms the open document defines, matched and previewed on hover by the core | v3 (implemented) |
 
 **What `document:read` actually grants.** Page text, in a loop, is the whole
 document's text. The permission means "everything this document says", not "a
@@ -239,17 +240,29 @@ allowlist of hosts declared in the manifest.
 
 ## 8. Contribution point catalogue
 
-| Surface                | Effect                                                | Version          |
-| ---------------------- | ----------------------------------------------------- | ---------------- |
-| `commands`             | Entries in the command palette and keymap             | v1               |
-| `panels` (declarative) | A sidebar tab built from the UI vocabulary            | v2               |
-| `citationActions`      | A row action on a resolved citation                   | v2               |
-| `selectionActions`     | An action on selected text                            | v2               |
-| `settings`             | Declarative fields in the extension's settings page   | v2               |
-| `panels` (custom)      | A sandboxed iframe pane                               | v3               |
-| `documentTasks`        | Batch work over a document, contributing results back | v2               |
-| `referenceProvider`    | The provider slot for library reference lists (below) | v3 (implemented) |
-| `equationActions`      | A button on each detected display equation            | v3 (implemented) |
+| Surface                | Effect                                                 | Version          |
+| ---------------------- | ------------------------------------------------------ | ---------------- |
+| `commands`             | Entries in the command palette and keymap              | v1               |
+| `panels` (declarative) | A sidebar tab built from the UI vocabulary             | v2               |
+| `citationActions`      | A row action on a resolved citation                    | v2               |
+| `selectionActions`     | An action on selected text                             | v2               |
+| `settings`             | Declarative fields in the extension's settings page    | v2               |
+| `panels` (custom)      | A sandboxed iframe pane                                | v3               |
+| `documentTasks`        | Batch work over a document, contributing results back  | v2               |
+| `referenceProvider`    | The provider slot for library reference lists (below)  | v3 (implemented) |
+| `equationActions`      | A button on each detected display equation             | v3 (implemented) |
+| `termProvider`         | The provider slot for terms previewed on hover (below) | v3 (implemented) |
+
+**`termProvider`.** Knowing what a document defines is reading, which is an
+extension's job; matching it against the page is the core's, which alone
+knows where each character sits, which are mathematics and where the
+bibliography is. So the provider (Notation, built in) is invoked with an
+opaque `{ document }` token when a document comes on screen, answers - then
+or later - with `terms.contribute { document, terms }`, and the core matches
+the terms by whole token and shows them in the link-preview popover. An
+answer for a token is dropped once the reader has switched documents, since
+the extension's page reads went to whatever was open. One provider is active,
+the first enabled one; disabling it takes every term back.
 
 ## 9. Consumers and contributors
 

@@ -8,6 +8,9 @@ import { openInNewTabOrFocus } from '../document/tabsController';
 import { activeTab } from '../../stores/tabsStore';
 import type { TabRecord } from '../../stores/tabsStore';
 import { citationLabel } from './citationLabel';
+import MathText from '../../components/MathText';
+import type { HoverSpan } from '../hovers/hoverTypes';
+import { followSpan, readerPage } from '../hovers/followSpan';
 import type { HoverPreview } from './linkStore';
 import { libraryStore } from './libraryStore';
 import {
@@ -40,7 +43,9 @@ function RasterCard(props: {
   detail?: string;
   pageCount?: number;
   fullPage?: boolean;
-  pageNumber?: number;
+  pageNumber?: number | undefined;
+  /** A line beside the page number: "Continues on the next page". */
+  note?: string | undefined;
   activate: () => void;
 }) {
   const url = createMemo(() => urlFor(props.tab, props.preview));
@@ -104,6 +109,9 @@ function RasterCard(props: {
       <Show when={props.pageNumber !== undefined}>
         <div class="citation-preview-page-number">Page {props.pageNumber}</div>
       </Show>
+      <Show when={props.note}>
+        <div class="citation-preview-note">{props.note}</div>
+      </Show>
       <Show when={props.caption !== undefined}>
         <div class="citation-preview-caption">
           <strong>{props.caption}</strong>
@@ -149,9 +157,52 @@ function CitationActions(props: { id: CitationId }) {
   );
 }
 
+/** A contributed term: what it stands for, and where. */
+function TermCard(props: { tab: TabRecord; span: HoverSpan }) {
+  return (
+    <div class="hover-term-card">
+      <For each={props.span.target.terms}>
+        {(entry, index) => {
+          const page = () => readerPage(props.tab, entry.page);
+          return (
+            <button
+              type="button"
+              class="hover-term-entry"
+              onClick={() => followSpan(props.tab, props.span, index())}
+            >
+              <strong>
+                <MathText text={entry.title} />
+              </strong>
+              <MathText text={entry.body} />
+              <Show when={page()}>
+                <span class="hover-term-page">Defined on p. {page()}</span>
+              </Show>
+            </button>
+          );
+        }}
+      </For>
+    </div>
+  );
+}
+
 function PreviewContent(props: { tab: TabRecord; result: HoverPreview }) {
   return (
     <>
+      <Show when={props.result.kind === 'span' ? props.result : null}>
+        {(result) => (
+          <RasterCard
+            tab={props.tab}
+            preview={result().preview}
+            alt={`Preview of ${result().span.label}`}
+            pageNumber={readerPage(props.tab, result().span.target.page) ?? undefined}
+            note={result().span.target.continues ? 'Continues on the next page' : undefined}
+            activate={() => followSpan(props.tab, result().span)}
+          />
+        )}
+      </Show>
+      <Show when={props.result.kind === 'term' ? props.result : null}>
+        {(result) => <TermCard tab={props.tab} span={result().span} />}
+      </Show>
       <Show when={props.result.kind === 'internal' ? props.result : null}>
         {(result) => (
           <RasterCard
@@ -254,12 +305,22 @@ export default function PreviewPopover() {
     onCleanup(() => window.removeEventListener('resize', resize));
   });
 
-  const variant = (): PreviewPopoverVariant =>
-    hover()?.request?.target.kind === 'internal' ? 'internal' : 'default';
+  const variant = (): PreviewPopoverVariant => {
+    const target = hover()?.request?.target;
+    if (target?.kind === 'internal') return 'internal';
+    // A cross-reference or footnote previews a region of a page, sized to
+    // it like an internal link; a term is text.
+    if (target?.kind === 'span' && target.span.kind !== 'term' && target.span.target.region) {
+      return 'internal';
+    }
+    return 'default';
+  };
 
   const internalContentSize = () => {
     const result = hover()?.result;
-    return result?.kind === 'internal' ? previewContentSize(result.preview) : undefined;
+    return result?.kind === 'internal' || result?.kind === 'span'
+      ? previewContentSize(result.preview)
+      : undefined;
   };
 
   const popoverSize = createMemo(() =>
@@ -289,7 +350,9 @@ export default function PreviewPopover() {
             classList={{ 'is-internal': variant() === 'internal' }}
             style={style()}
             role="dialog"
-            aria-label="Citation preview"
+            aria-label={
+              hover()?.request?.target.kind === 'span' ? 'Reference preview' : 'Citation preview'
+            }
             onPointerEnter={() => tab().citationStore.enterPopover()}
             onPointerLeave={() => tab().citationStore.leave()}
             onKeyDown={(event) => {

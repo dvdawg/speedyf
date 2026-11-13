@@ -18,6 +18,8 @@ import type { ViewportStore } from '../../stores/viewportStore';
 import { libraryStore } from './libraryStore';
 import { citationKey, citationLabel } from './citationLabel';
 import { recordJumpForViewport } from '../viewer/navHistory';
+import type { HoverSpan } from '../hovers/hoverTypes';
+import { hoverPreview } from '../hovers/hoverStore';
 
 export type HoverPhase = 'idle' | 'dwelling' | 'loading' | 'shown' | 'leaving';
 
@@ -30,7 +32,15 @@ export interface AnchorRect {
   height: number;
 }
 
-type HoverableTarget = Exclude<LinkTarget, { kind: 'unknown' }>;
+/** A span the engine found in page text: a cross-reference, a footnote
+ * mark, a contributed term (`features/hovers`). Shares the link previews'
+ * popover, dwell and pointer handling, so there is only ever one. */
+export interface SpanTarget {
+  kind: 'span';
+  span: HoverSpan;
+}
+
+type HoverableTarget = Exclude<LinkTarget, { kind: 'unknown' }> | SpanTarget;
 
 export interface HoverRequest {
   key: string;
@@ -61,7 +71,11 @@ export type HoverPreview =
       libraryRoot: string | null;
       libraryScanning: boolean;
     }
-  | { kind: 'error'; message: string; label: string };
+  | { kind: 'error'; message: string; label: string }
+  /** A cross-reference or footnote: the target region, rendered. */
+  | { kind: 'span'; span: HoverSpan; preview: PreviewSpec }
+  /** A contributed term: its definitions as text. */
+  | { kind: 'term'; span: HoverSpan };
 
 export interface HoverSnapshot<Request, Result> {
   phase: HoverPhase;
@@ -239,6 +253,12 @@ export class HoverMachine<Request extends { key: string }, Result> {
 }
 
 function targetKey(docId: number, target: HoverableTarget): string {
+  if (target.kind === 'span') {
+    const { kind, label, target: to } = target.span;
+    return `span:${docId}:${kind}:${label}:${to.page}:${to.y}:${(to.region ?? []).join(',')}:${to.terms
+      .map((t) => `${t.page}/${(t.rect ?? []).join(',')}`)
+      .join(';')}`;
+  }
   if (target.kind === 'internal') {
     return `internal:${docId}:${target.page}:${target.x ?? ''}:${target.y ?? ''}`;
   }
@@ -287,6 +307,11 @@ export function createCitationStore(doc: DocumentStore, vp: ViewportStore): Cita
   });
 
   async function loadPreview(request: HoverRequest): Promise<HoverPreview> {
+    if (request.target.kind === 'span') {
+      const span = request.target.span;
+      if (span.kind === 'term' || !span.target.region) return { kind: 'term', span };
+      return { kind: 'span', span, preview: await hoverPreview(request.docId, span) };
+    }
     if (request.target.kind === 'internal') {
       const target = request.target;
       const preview = await engine.getPreviewRect(request.docId, target.page, target.x, target.y);
