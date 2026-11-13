@@ -816,7 +816,7 @@ fn do_library_text_next(state: &mut WorkerState, shared: &EngineShared) {
     if let Some(entry) = candidate {
         let pages = extract_library_text(state, &entry.path);
         if let Some(pages) = &pages {
-            if let Err(error) = crate::search::librarytext::write_sidecar(
+            if let Err(error) = crate::search::librarytext::write_spaced_sidecar(
                 &app_data_dir,
                 &entry.path,
                 entry.mtime_ms,
@@ -826,6 +826,11 @@ fn do_library_text_next(state: &mut WorkerState, shared: &EngineShared) {
                 log::warn!("cannot index {} for search: {error}", entry.path.display());
             }
         }
+        // A reference list read from the old text describes text that is
+        // gone: drop it, so the provider is handed the new text. Its stamp
+        // alone would not say so — a re-extraction of the same bytes (after
+        // an upgrade that changes the text) keeps the stamp.
+        crate::search::librarytext::remove_refs(&app_data_dir, &entry.path);
         // The cited identifiers come from the same text while it is in
         // hand, in the form the sidecar stores it so the backfill would read
         // the same ones. The reference list is the reference provider's to
@@ -836,7 +841,9 @@ fn do_library_text_next(state: &mut WorkerState, shared: &EngineShared) {
             Some(pages) => {
                 let text = pages
                     .iter()
-                    .map(|(_, text)| crate::search::librarytext::normalized_text(text))
+                    .map(|(_, text, breaks)| {
+                        crate::search::librarytext::normalized_spaced_text(text, breaks)
+                    })
                     .collect::<Vec<_>>()
                     .join("\n");
                 library::record_citations(&entry, &text)
@@ -892,9 +899,18 @@ fn requeue_library_text(shared: &EngineShared) {
     );
 }
 
-/// Every page's text, using the cheap extraction path — no character boxes, no
-/// font info, which is thousands of FFI calls a page the index does not need.
-fn extract_library_text(state: &mut WorkerState, path: &Path) -> Option<Vec<(u32, String)>> {
+/// Every page's raw character stream and the word breaks its geometry
+/// implies (`library::word_breaks`). The stream stays raw because a hit's
+/// offsets are PDFium character indices, which is how it is highlighted
+/// once the document is open; the breaks become whitespace in the sidecar's
+/// normalized text, so a LaTeX paper's words are searchable — and handed to
+/// the cites pass and the reference provider — as words. Four FFI calls a
+/// character (`layout_text::extract_spacing_glyphs`) where the raw stream
+/// alone costs one, at idle priority, once per document; no font queries.
+fn extract_library_text(
+    state: &mut WorkerState,
+    path: &Path,
+) -> Option<Vec<(u32, String, Vec<u32>)>> {
     let path = path.to_str()?;
     let doc = render::open_document(state.bindings, path, None).ok()?;
     let count = state.bindings.FPDF_GetPageCount(doc).max(0);
@@ -904,10 +920,13 @@ fn extract_library_text(state: &mut WorkerState, path: &Path) -> Option<Vec<(u32
         if page.is_null() {
             continue;
         }
-        let extracted = crate::engine::text::extract_search_text(state.bindings, page);
+        let [w, h] =
+            render::page_display_size(state.bindings, doc, index).unwrap_or([612.0, 792.0]);
+        let glyphs = layout_text::extract_spacing_glyphs(state.bindings, page, w, h);
         state.bindings.FPDF_ClosePage(page);
-        if !extracted.raw.trim().is_empty() {
-            pages.push((index as u32, extracted.raw));
+        if !glyphs.raw.trim().is_empty() {
+            let breaks = library::word_breaks(&glyphs.raw, &glyphs.boxes, &glyphs.upright);
+            pages.push((index as u32, glyphs.raw, breaks));
         }
     }
     state.bindings.FPDF_CloseDocument(doc);
@@ -969,12 +988,13 @@ fn do_classify_document(state: &mut WorkerState, doc: DocId) -> AppResult<Papern
 const EXTRA_CLASSIFY_PAGES: u32 = 3;
 
 /// One page's text with its word spaces repaired, uncapped; empty for a
-/// page that cannot be loaded. Positioned runs, not the raw character
-/// stream: many PDFs — LaTeX output above all — encode word gaps as
+/// page that cannot be loaded. Character geometry, not the raw character
+/// stream alone: many PDFs — LaTeX output above all — encode word gaps as
 /// position rather than as space characters, so the raw stream yields
 /// titles like "PrivateandpolynomialtimealgorithmsforlearningGaussians".
-/// Runs carry geometry, so `lines_from_runs` can put the spaces back. Same
-/// extraction as `page_text_and_title`, which keeps only enough for a
+/// `library::text_from_page` puts the spaces back from each glyph's loose
+/// box, leaving rotated glyphs (the arXiv stamp) whole on their own line.
+/// Same extraction as `page_text_and_title`, which keeps only enough for a
 /// hover; a publisher's footer is at the bottom of the page.
 ///
 /// With `layout`, the page's typeset lines are also read, while it is
@@ -990,14 +1010,13 @@ fn repaired_page_text(
         return (String::new(), None);
     }
     let [w, h] = render::page_display_size(b, raw, index as i32).unwrap_or([612.0, 792.0]);
-    let extracted = text::extract_page(b, page, w, h);
+    let glyphs = layout_text::extract_spacing_glyphs(b, page, w, h);
     let first_page = layout.then(|| {
         let lines = layout_text::extract_lines(b, page, w, h);
         library::firstpage::extract(&lines, w, h)
     });
     b.FPDF_ClosePage(page);
-    // `extracted.boxes` are `[x, y, w, h]` but `lines_from_chars` reads `[l, b, r, t]`, so its gap repair finds no advance and falls back to PDFium's own lines.
-    let text = library::text_from_page(&extracted.raw, &extracted.boxes);
+    let text = library::text_from_page(&glyphs.raw, &glyphs.boxes, &glyphs.upright);
     (text, first_page)
 }
 
@@ -1276,8 +1295,8 @@ fn open_library_document(
 fn page_text_and_title(state: &mut WorkerState, doc: DocId) -> AppResult<(String, Option<String>)> {
     let [w_pt, h_pt] = state.display_size(doc, 0)?;
     let page = state.page_handle(doc, 0)?;
-    let extracted = text::extract_page(state.bindings, page, w_pt, h_pt);
-    let repaired = library::text_from_page(&extracted.raw, &extracted.boxes);
+    let glyphs = layout_text::extract_spacing_glyphs(state.bindings, page, w_pt, h_pt);
+    let repaired = library::text_from_page(&glyphs.raw, &glyphs.boxes, &glyphs.upright);
 
     let text = repaired
         .lines()

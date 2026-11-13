@@ -31,7 +31,10 @@ use std::path::{Path, PathBuf};
 
 /// Bumped when the sidecar shape changes. Anything else is discarded and
 /// re-extracted rather than misread.
-const SIDECAR_VERSION: u32 = 1;
+/// v2: the text carries the word spaces its geometry implies
+/// (`write_spaced_sidecar`); a v1 sidecar has LaTeX papers' words run
+/// together. The library index's v11 re-extracts every document.
+const SIDECAR_VERSION: u32 = 2;
 /// Refuse to load something implausible as one document's text.
 const MAX_SIDECAR_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -103,9 +106,12 @@ pub fn refs_path(app_data_dir: &Path, document: &Path) -> PathBuf {
 /// One page's text as a sidecar stores it — NFKC, quotes straightened,
 /// whitespace collapsed — for a reader that must see what a later read of
 /// the sidecar would.
-pub fn normalized_text(raw: &str) -> String {
+///
+/// `breaks` are the word breaks the page's geometry implies
+/// (`library::word_breaks`), as `write_spaced_sidecar` stores them.
+pub fn normalized_spaced_text(raw: &str, breaks: &[u32]) -> String {
     let count = raw.chars().count().min(u32::MAX as usize) as u32;
-    PageEntry::new_indexed(raw, count)
+    PageEntry::new_spaced(raw, count, breaks)
         .indexed_parts()
         .0
         .to_owned()
@@ -115,6 +121,7 @@ pub fn normalized_text(raw: &str) -> String {
 ///
 /// `pages` arrives as the raw PDFium stream; normalizing here means every
 /// reader of a sidecar sees the same form.
+#[cfg(test)]
 pub fn write_sidecar(
     app_data_dir: &Path,
     document: &Path,
@@ -122,11 +129,29 @@ pub fn write_sidecar(
     size: u64,
     pages: &[(u32, String)],
 ) -> AppResult<()> {
+    let spaced: Vec<(u32, String, Vec<u32>)> = pages
+        .iter()
+        .map(|(src, raw)| (*src, raw.clone(), Vec::new()))
+        .collect();
+    write_spaced_sidecar(app_data_dir, document, mtime_ms, size, &spaced)
+}
+
+/// `write_sidecar` for pages that carry, beside the raw stream, the
+/// character indices before which the geometry puts a word gap
+/// (`library::word_breaks`). The gaps become spaces in the stored text;
+/// offsets still map to raw indices.
+pub fn write_spaced_sidecar(
+    app_data_dir: &Path,
+    document: &Path,
+    mtime_ms: u64,
+    size: u64,
+    pages: &[(u32, String, Vec<u32>)],
+) -> AppResult<()> {
     let stored: Vec<StoredPage> = pages
         .iter()
-        .map(|(src, raw)| {
+        .map(|(src, raw, breaks)| {
             let count = raw.chars().count().min(u32::MAX as usize) as u32;
-            let entry = PageEntry::new_indexed(raw, count);
+            let entry = PageEntry::new_spaced(raw, count, breaks);
             let (text, folded, breaks, char_count) = entry.indexed_parts();
             StoredPage {
                 src: *src,
@@ -270,6 +295,12 @@ pub fn read_sidecar_text(
     )
 }
 
+/// Delete a document's reference-list sidecar alone, when its text has
+/// been extracted again: the list was read from the old text.
+pub fn remove_refs(app_data_dir: &Path, document: &Path) {
+    let _ = std::fs::remove_file(refs_path(app_data_dir, document));
+}
+
 /// Delete a document's sidecar. Best effort: a leftover only wastes disk, and
 /// is rejected on load anyway once its fingerprint stops matching.
 pub fn remove_sidecar(app_data_dir: &Path, document: &Path) {
@@ -325,7 +356,11 @@ pub fn library_signature(documents: &[LibraryDocument]) -> u64 {
         .iter()
         .map(|document| (document.path.clone(), document.mtime_ms, document.size))
         .collect();
-    signature_of(&fingerprints)
+    // The text's form is part of what an index describes: the same bytes
+    // re-extracted into a new sidecar version have new grams (word spaces
+    // where v1 had none), and an index of the old text would rule out
+    // documents the new text matches.
+    signature_of(&fingerprints) ^ u64::from(SIDECAR_VERSION).wrapping_mul(0x9e37_79b9_7f4a_7c15)
 }
 
 /// Build the inverted index by reading every document's scan copy.

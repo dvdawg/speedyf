@@ -122,6 +122,26 @@ impl DispMapper {
         (dx as f32, self.disp_h - dy as f32)
     }
 
+    /// user-space direction → display-normalized (y-up) direction: where a
+    /// step of (`ux`, `uy`) in user space goes on the displayed page.
+    pub(crate) fn map_vector(&self, ux: f64, uy: f64) -> (f32, f32) {
+        let dx = ux * self.x_axis.0 + uy * self.y_axis.0;
+        let dy = ux * self.x_axis.1 + uy * self.y_axis.1;
+        (dx as f32, -dy as f32)
+    }
+
+    /// A mapper for a page whose user space already is display space
+    /// (no crop offset, no /Rotate), so tests can build one without PDFium.
+    #[cfg(test)]
+    pub(crate) fn identity(disp_h: f32) -> Self {
+        DispMapper {
+            origin: (0.0, disp_h as f64),
+            x_axis: (1.0, 0.0),
+            y_axis: (0.0, -1.0),
+            disp_h,
+        }
+    }
+
     /// user-space char box → display rect (x, y_bottom, w, h), y-up
     pub(crate) fn map_box(&self, l: f64, r: f64, b_: f64, t: f64) -> (f32, f32, f32, f32) {
         let (x1, y1) = self.map(l, b_);
