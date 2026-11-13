@@ -395,6 +395,7 @@ pub fn run() {
             commands::get_page_glyphs,
             commands::get_math_tags,
             commands::get_equation_blocks,
+            commands::get_column_layout,
             commands::get_preview_rect,
             commands::resolve_citation,
             commands::change_library_root,

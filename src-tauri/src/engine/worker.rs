@@ -4,6 +4,7 @@
 
 use super::annots;
 use super::bubbles;
+use super::columns;
 use super::glyphs;
 use super::layout_text;
 use super::links;
@@ -344,6 +345,7 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         Work::PageGlyphs { respond, .. } => respond(Err(err())),
         Work::MathTags { respond, .. } => respond(Err(err())),
         Work::EquationBlocks { respond, .. } => respond(Err(err())),
+        Work::ColumnLayout { respond, .. } => respond(Err(err())),
         Work::PreviewRect { respond, .. } => respond(Err(err())),
         Work::ResolveCitation { respond, .. } => respond(Err(err())),
         Work::LibraryPreview { respond, .. } => respond(Err(err())),
@@ -423,6 +425,9 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
         } => respond(do_page_glyphs(state, doc, src, &rects, grow)),
         Work::MathTags { doc, src, respond } => respond(do_math_tags(state, doc, src)),
         Work::EquationBlocks { doc, src, respond } => respond(do_equation_blocks(state, doc, src)),
+        Work::ColumnLayout { doc, src, respond } => {
+            respond(do_column_layout(state, shared, doc, src))
+        }
         Work::PreviewRect {
             doc,
             src,
@@ -895,6 +900,36 @@ fn do_equation_blocks(
     }
     cache.insert(src, blocks.clone());
     Ok(blocks)
+}
+
+/// A page's reading segments for column zoom: from the cached text layout
+/// and the page's graphics, or from its pixels when it has no text layer.
+/// Cheap enough to recompute; the viewer keeps the answer per page.
+fn do_column_layout(
+    state: &mut WorkerState,
+    shared: &EngineShared,
+    doc: DocId,
+    src: u32,
+) -> AppResult<columns::ColumnLayoutDto> {
+    if src >= state.doc(doc)?.page_count {
+        return Err(AppError::Malformed(format!("page {src} is out of range")));
+    }
+    let layout = ensure_text_layout(state, shared, doc, src)?;
+    let [w, h] = state.display_size(doc, src)?;
+    let page = state.page_handle(doc, src)?;
+    let content = columns::PageContent {
+        page_w: w,
+        page_h: h,
+        text: layout
+            .runs
+            .iter()
+            .map(|r| columns::Bx::from_up([r.x, r.y, r.w, r.h], h))
+            .collect(),
+        graphics: columns::page_graphics(state.bindings, page, w, h),
+    };
+    let (analysis, source) =
+        columns::analyze_page(content, || page_raster(state, doc, src).ok().flatten());
+    Ok(analysis.into_dto(src, h, source))
 }
 
 fn do_page_links(

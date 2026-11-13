@@ -10,6 +10,7 @@
 pub mod annots;
 pub mod bubbles;
 pub mod citation;
+pub mod columns;
 pub mod figures;
 pub mod formal;
 pub mod forms;
@@ -134,6 +135,13 @@ pub enum Work {
         doc: DocId,
         src: u32,
         respond: Respond<Vec<glyphs::EquationBlockDto>>,
+    },
+    /// A page's reading segments (full-width blocks and columns, in reading
+    /// order), for column zoom.
+    ColumnLayout {
+        doc: DocId,
+        src: u32,
+        respond: Respond<columns::ColumnLayoutDto>,
     },
     PreviewRect {
         doc: DocId,
