@@ -382,7 +382,8 @@ something other than an item - a manual, a form, a slide deck - and leaves
 those out of `library.papers`; a record reached by id may still be one, and
 `isPaper` says so. Each record's metadata carries where it came from (`user`,
 `crossref`, `inspire`, `datacite`, `arxiv`, `semantic-scholar`, `dblp`,
-`openalex`, `open-library`, `xmp`, `pdf-info`, `first-page`, `filename`), so a
+`openalex`, `open-library`, `xmp`, `identifier`, `citations`, `pdf-info`,
+`first-page`, `filename`), so a
 title the user typed can be told from one a heuristic guessed. Nothing here
 can write: there is no `library:write` permission.
 

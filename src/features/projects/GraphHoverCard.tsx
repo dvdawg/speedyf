@@ -10,7 +10,7 @@
  * moving from node to node swaps the content in place, without a remount. */
 import { Show } from 'solid-js';
 import type { MissingWork, Paper, PaperKind, PaperRow } from '../../types/engine';
-import { authorsLine } from './paperFields';
+import { authorsLine, yearText } from './paperFields';
 import MathText from '../../components/MathText';
 
 /** Past this many authors the list ends in "et al.". */
@@ -50,7 +50,7 @@ export default function GraphHoverCard(props: {
     return value ? (KIND_LABEL[value] ?? null) : null;
   };
   const meta = () =>
-    [props.row.year, props.row.venue ?? props.paper?.meta.venue?.value]
+    [yearText(props.row), props.row.venue ?? props.paper?.meta.venue?.value]
       .filter((part) => part !== null && part !== undefined && part !== '')
       .join(', ');
   const abstract = () => props.paper?.meta.abstract?.value.trim() || null;

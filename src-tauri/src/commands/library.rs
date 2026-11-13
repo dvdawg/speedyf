@@ -970,7 +970,8 @@ pub async fn library_related_items(
 /* ---- Duplicates and merging (projects.md sec. 2) ---- */
 
 /// Groups of items that look like one work. The lookup cache supplies
-/// what arXiv said each preprint was published as.
+/// what arXiv said each preprint was published as; the reference lists
+/// supply version pairs (`library::versions`).
 #[tauri::command]
 pub async fn library_duplicates(
     state: tauri::State<'_, EngineState>,
@@ -995,8 +996,10 @@ pub async fn library_duplicates(
                 })
                 .collect()
         };
+        let (entries, refs, _) = citation_inputs(&engine);
         let store = engine.0.papers.lock();
-        Ok(store.duplicates(&preprint_dois))
+        let versions = store.version_pairs(&entries, &refs);
+        Ok(store.duplicates_with_versions(&preprint_dois, &versions))
     })
     .await
     .map_err(|error| AppError::Internal(format!("library task failed: {error}")))?
@@ -1066,6 +1069,8 @@ pub async fn library_refs_provider(
         .map(|provider| provider.trim().to_owned())
         .filter(|provider| !provider.is_empty() && provider.len() <= 300);
     state.0 .0.refs_provider.lock().set_active(provider);
+    // Citation-derived metadata follows the provider's lists.
+    super::citations::schedule(&state.0);
     // Title edges count only for the active provider's sidecars, so the
     // graph and the panels change the moment it does. Without this a view
     // drawn at launch, before the window had registered the provider, kept
@@ -1137,6 +1142,7 @@ pub async fn library_refs_store(
     // at most a refresh every half second or so while a backlog drains.
     if stored {
         engine.0.notify_library_changed();
+        super::citations::schedule(&engine);
     }
     Ok(stored)
 }

@@ -21,6 +21,7 @@ pub mod bundle;
 pub mod chain;
 pub mod citekey;
 pub mod cocitation;
+pub mod consensus;
 pub mod filing;
 pub mod firstpage;
 pub mod identifiers;
@@ -40,7 +41,9 @@ pub mod store;
 pub mod suggest;
 pub mod titlematch;
 pub mod types;
+pub mod versions;
 pub mod watch;
+pub mod witness;
 pub mod xmp;
 
 const INDEX_FILE: &str = "library-index.json";

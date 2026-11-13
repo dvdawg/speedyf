@@ -18,6 +18,7 @@ export const SOURCE_LABEL: Record<MetaSource, string> = {
   xmp: 'XMP',
   identifier: 'identifier',
   'pdf-info': 'PDF info',
+  citations: 'citing papers',
   'first-page': 'first page',
   filename: 'file name',
 };
@@ -56,9 +57,29 @@ export function parseYear(text: string): number | null | 'invalid' {
   return /^\d{1,4}$/.test(trimmed) ? Number(trimmed) : 'invalid';
 }
 
+/** The year as shown: the year, else "2019+" when the item's references
+ * say it is at least that new, else ''. Never a year for BibTeX. */
+export function yearText(item: {
+  year?: number | null | undefined;
+  yearFloor?: number | null | undefined;
+}): string {
+  if (item.year !== null && item.year !== undefined) return String(item.year);
+  if (item.yearFloor !== null && item.yearFloor !== undefined) return `${item.yearFloor}+`;
+  return '';
+}
+
+/** A field's provenance tag: the source's name, or for a value citing
+ * papers agreed on, how many ("from 3 citing papers"). */
+export function sourceText(source: MetaSource, vouched?: number): string {
+  if (source === 'citations' && vouched !== undefined && vouched > 0) {
+    return `from ${vouched} citing paper${vouched === 1 ? '' : 's'}`;
+  }
+  return SOURCE_LABEL[source];
+}
+
 /** The dimmed second line of a list row. */
 export function metaLine(row: PaperRow): string {
-  return [row.authors, row.year, row.venue]
+  return [row.authors, yearText(row), row.venue]
     .filter((part) => part !== null && part !== '')
     .map(String)
     .join(', ');

@@ -12,7 +12,9 @@
 //! journal DOI); an arXiv id the lookup cache says was published as a DOI
 //! another record holds; equal normalized titles of four words or more with
 //! years at most one apart or unknown ("same title"); a near-identical title
-//! (`titlematch::judge` Near) with known years at most one apart. Pairs the
+//! (`titlematch::judge` Near) with known years at most one apart; nearly
+//! the same reference list (`versions`, weakest: "nearly the same 48
+//! references"), only suggested, never merged on its own. Pairs the
 //! user dismissed (`not_duplicates`) are never joined, directly or through a
 //! third record. Groups are disjoint, members and groups in list order.
 
@@ -200,6 +202,16 @@ impl PaperStore {
     /// doc). `preprint_dois` maps an arXiv id to the journal DOI the lookup
     /// cache's arXiv answer names for it.
     pub fn duplicates(&self, preprint_dois: &HashMap<String, String>) -> Vec<DuplicateGroupDto> {
+        self.duplicates_with_versions(preprint_dois, &[])
+    }
+
+    /// `duplicates`, plus the version pairs `version_pairs` spotted from
+    /// reference lists, as (id, id, shared references).
+    pub fn duplicates_with_versions(
+        &self,
+        preprint_dois: &HashMap<String, String>,
+        versions: &[(String, String, usize)],
+    ) -> Vec<DuplicateGroupDto> {
         let items: Vec<&PaperRecord> =
             self.in_list_order(self.papers.iter().filter(|p| p.is_paper()).collect());
         let mut groups = Groups::new(&items);
@@ -306,6 +318,18 @@ impl PaperStore {
                         groups.join(a, b, 3, || format!("near-identical title, {year}"));
                     }
                 }
+            }
+        }
+
+        // Nearly the same reference list.
+        let position: HashMap<&str, usize> = items
+            .iter()
+            .enumerate()
+            .map(|(at, item)| (item.id.as_str(), at))
+            .collect();
+        for (a, b, shared) in versions {
+            if let (Some(&a), Some(&b)) = (position.get(a.as_str()), position.get(b.as_str())) {
+                groups.join(a, b, 4, || format!("nearly the same {shared} references"));
             }
         }
 

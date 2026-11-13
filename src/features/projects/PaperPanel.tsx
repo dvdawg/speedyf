@@ -30,6 +30,7 @@ import { chooseInbox } from './fileDrop';
 import { settings, updateSettings } from '../../stores/settings';
 import { goHome, openInNewTabOrFocus } from '../document/tabsController';
 import type { Author, CitationLinks, Paper, Paperness, PaperRow } from '../../types/engine';
+import { yearText } from './paperFields';
 import MathText from '../../components/MathText';
 import ProjectSuggestionLine from './ProjectSuggestion';
 import RelatedItems from './RelatedItems';
@@ -330,7 +331,12 @@ export default function PaperPanel() {
   const title = (current: Paper) =>
     current.meta.title?.value.trim() || current.files[0]?.name || 'Untitled';
   const yearVenue = (current: Paper) =>
-    [current.meta.year?.value, current.meta.venue?.value].filter(Boolean).join(', ');
+    [
+      yearText({ year: current.meta.year?.value ?? null, yearFloor: current.yearFloor }),
+      current.meta.venue?.value,
+    ]
+      .filter(Boolean)
+      .join(', ');
   const hasIdentifier = (current: Paper) => current.doi !== null || current.arxiv !== null;
 
   const LinkList = (props: { heading: string; rows: PaperRow[] }) => (
@@ -347,7 +353,7 @@ export default function PaperPanel() {
           >
             <MathText class="paper-panel-link-title" text={row.title} />
             <span class="paper-panel-link-meta">
-              {[row.authors, row.year].filter(Boolean).join(', ')}
+              {[row.authors, yearText(row)].filter(Boolean).join(', ')}
             </span>
           </button>
         )}

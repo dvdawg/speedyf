@@ -113,6 +113,22 @@ files, then the earlier `addedAt`, then the smaller id; the reason is kept
 on it and shown beside Split. Splitting an automatic merge records the
 records as not duplicates, so they are not merged again.
 
+**Merge suggestions** (`merge::duplicates`, offered through Merge in the
+detail column), strongest reason first: a shared DOI or arXiv id; an arXiv
+id the lookup cache says became a DOI another record holds; the same title
+(years at most one apart); a near-identical title with the same year; and
+**nearly the same reference list** (`library::versions`): both items have at
+least 12 stored references, the Jaccard index of the two lists is at least
+0.7 (a reference matches by the library item it resolves to, a printed DOI
+or arXiv id, its title, its volume and first page, or for an untitled entry
+its first author and year; an inverted index over those keys, never all
+pairs), and one weak signal agrees - titles alike (similarity >= 0.5), the
+same first-author family, or known years at most 2 apart. Reason: "nearly
+the same 48 references". Surveys of one field (about 30 % shared, Jaccard
+~0.2) and a follow-up by the same authors (about half shared, ~0.33) stay
+apart. This signal is only ever a suggestion; an automatic merge still
+needs one of the two rules above.
+
 All of an item's files stay visible: the detail column lists them, and any
 can be opened or made the main one (`files[0]`: the one Open, previews and
 the scan's fields use), which a rescan keeps.
@@ -156,8 +172,19 @@ Each field carries where it came from:
 
 ```
 title, authors, year, venue, volume, issue, pages, publisher, abstract, kind
-source: one of user | crossref | arxiv | openalex | pdf-info | first-page | filename
+source: one of the ranks below
 ```
+
+| Rank (strongest first) | Source                                                                                                         |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------- |
+| 1                      | `user`                                                                                                         |
+| 2-9                    | lookups: `crossref`, `inspire`, `datacite`, `arxiv`, `semantic-scholar`, `dblp`, `openalex`, `open-library`    |
+| 10                     | `xmp`                                                                                                          |
+| 11                     | `identifier` (the year an arXiv id or DOI carries)                                                             |
+| 12                     | `citations`: what at least two independent citing items in the library agree on (sec. 4, "From citing papers") |
+| 13                     | `pdf-info`                                                                                                     |
+| 14                     | `first-page`                                                                                                   |
+| 15                     | `filename`                                                                                                     |
 
 Precedence is fixed and the rule is one line: **a value never loses to a
 weaker source.** A user edit is never overwritten. A lookup overwrites the
@@ -386,6 +413,31 @@ point, on the engine thread, at no extra I/O:
   characters.
 
 The first-line title heuristic and the filename patterns stay as the floor.
+
+### From citing papers
+
+Offline, from the reference lists the provider already read
+(`library::consensus`, `library::witness`). Every reference entry of a
+library item that resolves to another item (by identifier or title) is an
+independent witness of the cited item's authors (family names and
+initials), year, title, venue, volume and first page; the engine reads the
+entry in the common styles (APS, IEEE, Elsevier, Springer, Nature, APA,
+Vancouver, ACM) and leaves a field empty rather than guess. A field is taken
+when **at least 2 independent citing items agree and they are a strict
+majority** of the citing items that say anything about it. An "et al." list
+supports the full list it opens. Citing items that are versions of one
+another (a version pair above, or one title) count once, and a version of
+the item never vouches for it. Venues match across abbreviation ("Phys. Rev.
+Lett." is "Physical Review Letters", not "Phys. Rev. A" vs "Applied").
+
+The value lands at rank `citations`: above the first page, the file name and
+the Info dictionary, below the identifier, XMP, lookups and the user, via the
+same `offer`, so user edits are never touched. A value the record already
+holds that agrees stays under its own source. The record keeps which items
+vouched (`citationFacts.vouched`); the detail column's provenance tag reads
+"from 3 citing papers". When the consensus goes, a value from it is dropped
+and the primary file reconciled again. The pass runs at idle a few seconds
+after the provider stores a list (coalesced) and when the provider changes.
 
 ### Online, opt-in
 
@@ -735,6 +787,17 @@ project, Cited with with its "with >= N of these" stepper. Both kinds of
 ghost may be on at once. The defaults draw the graph as before; the
 choices are kept across sessions in their own localStorage key. Escape or
 a press outside closes it.
+
+**Dating.** A paper is at least as new as what it cites. Its `yearFloor` is
+the latest year its reference list gives, ignoring years in the future and a
+single newest year more than 3 above the next, and supported by the
+references at or after it: one with an identifier or two without (else the
+next older year is tried). An item with no year shows the floor where the
+year goes, as "2019+", sorts as that year, and the detail column says "from
+its references"; it is never a BibTeX year. An item whose recorded year is
+more than 1 below the floor gets a quiet hint beside its year, "cites work
+from 2021; year may be wrong". The graph's time pull uses the floor for an
+item without a year.
 
 ---
 

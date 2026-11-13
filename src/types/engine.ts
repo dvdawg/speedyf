@@ -246,6 +246,7 @@ export type MetaSource =
   | 'xmp'
   | 'identifier'
   | 'pdf-info'
+  | 'citations'
   | 'first-page'
   | 'filename';
 
@@ -318,6 +319,13 @@ export interface Paper {
   /** why records were merged into this one automatically ("same arXiv id
    * 2606.13614"); empty when none were */
   autoMerged: string[];
+  /** for each field whose value came from citing papers ('citations'),
+   * how many independent citing items vouched for it */
+  vouched?: Record<string, number>;
+  /** with no year: the year its references say it is at least as new as */
+  yearFloor?: number | null;
+  /** "cites work from 2021; year may be wrong" */
+  yearHint?: string | null;
 }
 
 /** One row of the paper list: display strings, already resolved. */
@@ -341,6 +349,9 @@ export interface PaperRow {
   candidateCount: number;
   /** files of the item that are on disk */
   fileCount: number;
+  /** with no year: the year its references say it is at least as new as,
+   * shown as "2019+" */
+  yearFloor?: number | null;
 }
 
 /** What Export bundle wrote (`library_export_bundle`). */

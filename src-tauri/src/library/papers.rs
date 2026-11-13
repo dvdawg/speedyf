@@ -13,6 +13,7 @@
 //!   the library.
 
 use super::chain::{ChainKind, PARK_LIMIT};
+use super::consensus::CitationFacts;
 use super::lookup::NetworkEdges;
 use super::references::{DocRefs, StoredRef, TitleIndex};
 use super::store::{format_rfc3339, now_rfc3339, parse_rfc3339, PaperStore};
@@ -130,6 +131,11 @@ pub struct PaperRecord {
     /// that reattaches files keeps it first.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub primary_path: Option<String>,
+    /// What the library's citation graph says about this record
+    /// (`consensus`): which citing items vouched for each field taken
+    /// from them, and the year its own references put it at or after.
+    #[serde(default, skip_serializing_if = "CitationFacts::is_empty")]
+    pub citation_facts: CitationFacts,
 }
 
 /// What a merge did, kept on the merged record's snapshot.
@@ -450,6 +456,7 @@ impl PaperRecord {
             merge_trace: None,
             auto_merge_reasons: Vec::new(),
             primary_path: None,
+            citation_facts: CitationFacts::default(),
         }
     }
 
@@ -1485,6 +1492,9 @@ impl PaperStore {
             candidates: paper.candidates.clone(),
             merged_count: paper.merged_from.len().min(u32::MAX as usize) as u32,
             auto_merged: paper.auto_merge_reasons.clone(),
+            vouched: paper.vouched_counts(),
+            year_floor: paper.shown_year_floor(),
+            year_hint: paper.year_hint(),
         }
     }
 
@@ -1605,6 +1615,7 @@ impl PaperStore {
             is_paper: paper.is_paper(),
             candidate_count: paper.candidates.len().min(u32::MAX as usize) as u32,
             file_count: mainfile::distinct_present(&paper.files).min(u32::MAX as usize) as u32,
+            year_floor: paper.shown_year_floor(),
         }
     }
 
@@ -2431,7 +2442,8 @@ pub(super) fn has_user_edit(paper: &PaperRecord) -> bool {
         || is_user(meta.kind.as_ref().map(|f| f.source))
 }
 
-/// First author's family, then year, then title; case- and accent-blind;
+/// First author's family, then year (else the year its references give),
+/// then title; case- and accent-blind;
 /// papers lacking a part sort after those that have it.
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 struct SortKey {
@@ -2452,8 +2464,8 @@ impl SortKey {
         Self {
             no_author: family.is_empty(),
             family,
-            no_year: paper.year().is_none(),
-            year: paper.year().unwrap_or(0),
+            no_year: paper.sort_year().is_none(),
+            year: paper.sort_year().unwrap_or(0),
             title: fold(&paper.display_title()),
         }
     }

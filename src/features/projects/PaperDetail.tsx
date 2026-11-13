@@ -48,6 +48,8 @@ import {
   parseAuthors,
   parseYear,
   SOURCE_LABEL,
+  sourceText,
+  yearText,
 } from './paperFields';
 import { projectsStore } from './projectsStore';
 import ProjectSuggestionLine from './ProjectSuggestion';
@@ -96,10 +98,23 @@ function candidateMeta(candidate: LookupCandidate): string {
     .join(', ');
 }
 
-function SourceTag(props: { source: MetaSource | null | undefined }) {
+function SourceTag(props: {
+  source: MetaSource | null | undefined;
+  /** citing papers that vouched, for a 'citations' value */
+  vouched?: number | undefined;
+  /** says where a shown value came from when no source does */
+  label?: string | undefined;
+}) {
   return (
-    <Show when={props.source}>
-      {(source) => <span class="paper-field-source">{SOURCE_LABEL[source()]}</span>}
+    <Show
+      when={props.source}
+      fallback={
+        <Show when={props.label}>
+          <span class="paper-field-source">{props.label}</span>
+        </Show>
+      }
+    >
+      {(source) => <span class="paper-field-source">{sourceText(source(), props.vouched)}</span>}
     </Show>
   );
 }
@@ -116,6 +131,12 @@ function EditableField(props: {
   display: string;
   text: string;
   source?: MetaSource | null | undefined;
+  /** citing papers that vouched for a 'citations' value */
+  vouched?: number | undefined;
+  /** the provenance of a shown value that is not a stored one */
+  sourceLabel?: string | undefined;
+  /** a quiet remark after the provenance */
+  hint?: string | null | undefined;
   multiline?: boolean;
   /** Shown folded until asked for; the abstract. */
   collapsible?: boolean;
@@ -238,7 +259,10 @@ function EditableField(props: {
             />
           </Show>
         </Show>
-        <SourceTag source={props.source} />
+        <SourceTag source={props.source} vouched={props.vouched} label={props.sourceLabel} />
+        <Show when={props.hint}>
+          <span class="paper-field-source">{props.hint}</span>
+        </Show>
         <Show when={problem()}>
           <span class="paper-inline-error" role="alert">
             {problem()}
@@ -401,6 +425,7 @@ function Fields(props: { paper: Paper }) {
         text={text('title')}
         math
         source={props.paper.meta.title?.source}
+        vouched={props.paper.vouched?.['title']}
         onSave={(v) => save(textPatch('title', v.trim() || null))}
       />
       <EditableField
@@ -408,6 +433,7 @@ function Fields(props: { paper: Paper }) {
         display={formatAuthors(authors())}
         text={formatAuthors(authors())}
         source={props.paper.meta.authors?.source}
+        vouched={props.paper.vouched?.['authors']}
         multiline
         onSave={(v) => {
           const list = parseAuthors(v);
@@ -416,9 +442,17 @@ function Fields(props: { paper: Paper }) {
       />
       <EditableField
         label="Year"
-        display={props.paper.meta.year ? String(props.paper.meta.year.value) : ''}
+        display={yearText({
+          year: props.paper.meta.year?.value ?? null,
+          yearFloor: props.paper.yearFloor,
+        })}
         text={props.paper.meta.year ? String(props.paper.meta.year.value) : ''}
         source={props.paper.meta.year?.source}
+        vouched={props.paper.vouched?.['year']}
+        sourceLabel={
+          !props.paper.meta.year && props.paper.yearFloor ? 'from its references' : undefined
+        }
+        hint={props.paper.yearHint}
         onSave={(v) => {
           const year = parseYear(v);
           if (year === 'invalid') return Promise.resolve('A year is up to four digits');
@@ -432,6 +466,7 @@ function Fields(props: { paper: Paper }) {
             display={text(field.key)}
             text={text(field.key)}
             source={props.paper.meta[field.key]?.source}
+            vouched={props.paper.vouched?.[field.key]}
             onSave={(v) => save(textPatch(field.key, v.trim() || null))}
           />
         )}
