@@ -192,6 +192,8 @@ fn vowelless_runs(text: &str) -> (usize, usize) {
 /// row when its vertical center falls inside the row's first line, so a
 /// two-column header ("Received …" | "Accepted …") stays left before right
 /// even when the two boxes differ by a pixel in y.
+// Only the Vision path (and its tests) sorts; elsewhere OCR is a no-op.
+#[cfg(any(target_os = "macos", test))]
 fn sort_reading_order(lines: &mut Vec<OcrLine>) {
     lines.sort_by(|a, b| a.bbox[1].total_cmp(&b.bbox[1]));
     let mut out = Vec::with_capacity(lines.len());
