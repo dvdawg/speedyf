@@ -182,7 +182,7 @@ fn stamp_missing_since(file: &mut PaperFile, now: &str) -> bool {
 }
 
 /// Whether `path` is on a volume under `/Volumes` that is not mounted now.
-fn on_unmounted_volume(path: &str) -> bool {
+pub(crate) fn on_unmounted_volume(path: &str) -> bool {
     let Some(rest) = path.strip_prefix("/Volumes/") else {
         return false;
     };
@@ -1340,6 +1340,38 @@ impl PaperStore {
             }
         }
         changed |= self.remove_long_missing(parse_rfc3339(&now).unwrap_or(0));
+        if changed {
+            self.mark_dirty();
+        }
+        changed
+    }
+
+    /// The watcher saw these paths go - files, or folders whose files went
+    /// with them: mark each paper file at or below one missing now, with
+    /// its missing clock started, rather than at the next full scan. A
+    /// file that is somehow still there is left alone.
+    pub fn mark_paths_missing(&mut self, gone: &[PathBuf]) -> bool {
+        if !self.writable() || gone.is_empty() {
+            return false;
+        }
+        let now = now_rfc3339();
+        let mut changed = false;
+        for paper in &mut self.papers {
+            let mut touched = false;
+            for file in &mut paper.files {
+                let path = Path::new(&file.path);
+                if !file.missing && gone.iter().any(|g| path.starts_with(g)) && !path.is_file() {
+                    file.missing = true;
+                    stamp_missing_since(file, &now);
+                    touched = true;
+                }
+            }
+            if touched {
+                paper.order_files();
+                paper.touch();
+                changed = true;
+            }
+        }
         if changed {
             self.mark_dirty();
         }

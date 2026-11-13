@@ -38,6 +38,7 @@ pub mod store;
 pub mod suggest;
 pub mod titlematch;
 pub mod types;
+pub mod watch;
 pub mod xmp;
 
 const INDEX_FILE: &str = "library-index.json";
@@ -246,6 +247,16 @@ pub struct LibraryState {
     /// Backfilled entries since the index was last written; see
     /// `finish_cites`.
     cites_unsaved: u32,
+    /// Files the watcher saw settle, to scan one per idle job (`watch`).
+    watch_files: VecDeque<PathBuf>,
+    watch_queued: HashSet<PathBuf>,
+    /// Paths the watcher saw go: files, or folders with files under them.
+    watch_gone: Vec<PathBuf>,
+    /// Whether a `LibraryWatchNext` job is queued or running, so a second
+    /// batch joins its queue rather than starting another chain.
+    watch_job: bool,
+    /// Entries the watch jobs changed since the index was last written.
+    watch_unsaved: u32,
 }
 
 impl LibraryState {
@@ -288,7 +299,13 @@ impl LibraryState {
                 contained_in_any(&configured, &entry.path)
                     .and_then(|path| file_stamp(&path).map(|fingerprint| (path, fingerprint)))
                     .is_some_and(|(path, (mtime_ms, size))| {
-                        path == entry.path && mtime_ms == entry.mtime_ms && size == entry.size
+                        path == entry.path
+                            && mtime_ms == entry.mtime_ms
+                            && size == entry.size
+                            // Indexed before hidden folders (a Trash) and
+                            // partial downloads were skipped: not the
+                            // library's, so its paper file goes missing.
+                            && !watch::is_ignored(&path, &configured, &[])
                     })
             })
             .map(|entry| (entry.path.clone(), entry))
@@ -304,6 +321,11 @@ impl LibraryState {
             scanning: false,
             scan_epoch: 0,
             cites_unsaved: 0,
+            watch_files: VecDeque::new(),
+            watch_queued: HashSet::new(),
+            watch_gone: Vec::new(),
+            watch_job: false,
+            watch_unsaved: 0,
         };
         state.schedule_scan();
         state
@@ -505,7 +527,9 @@ impl LibraryState {
 
     /// The next document whose text has not been extracted yet.
     pub fn next_text_candidate(&self) -> Option<LibraryEntry> {
-        self.all_entries().into_iter().find(|e| !e.text_indexed)
+        self.all_entries()
+            .into_iter()
+            .find(|e| !e.text_indexed && !is_dataless(&e.path))
     }
 
     /// Record that a document's text is now on disk - or that extracting it
@@ -521,8 +545,136 @@ impl LibraryState {
         self.persist_index();
     }
 
+    /// A cloud placeholder (`is_dataless`) is not text work: reading it
+    /// would download it. It is once it has been downloaded.
     pub fn has_text_work(&self) -> bool {
-        self.entries.values().any(|entry| !entry.text_indexed)
+        self.entries
+            .values()
+            .any(|entry| !entry.text_indexed && !is_dataless(&entry.path))
+    }
+
+    /// Whether a full scan is under way; the watcher's safety net waits.
+    pub fn is_scanning(&self) -> bool {
+        self.scanning
+    }
+
+    /// Every indexed path's stamp, for the watcher's safety net.
+    pub fn stamps(&self) -> HashMap<PathBuf, (u64, u64)> {
+        self.entries
+            .iter()
+            .map(|(path, entry)| (path.clone(), (entry.mtime_ms, entry.size)))
+            .collect()
+    }
+
+    /// A settled batch from the watcher. Returns whether the caller should
+    /// queue a `LibraryWatchNext` job: there is work and none is queued.
+    pub fn queue_watched(&mut self, files: Vec<PathBuf>, gone: Vec<PathBuf>) -> bool {
+        for path in files {
+            if self.watch_queued.insert(path.clone()) {
+                self.watch_files.push_back(path);
+            }
+        }
+        for path in gone {
+            // Gone, so it cannot be canonicalized itself; its folder can.
+            let path = match (
+                path.parent().and_then(|p| p.canonicalize().ok()),
+                path.file_name(),
+            ) {
+                (Some(parent), Some(name)) => parent.join(name),
+                _ => path,
+            };
+            if !self.watch_gone.contains(&path) {
+                self.watch_gone.push(path);
+            }
+        }
+        let work = !self.watch_files.is_empty() || !self.watch_gone.is_empty();
+        if work && !self.watch_job {
+            self.watch_job = true;
+            return true;
+        }
+        false
+    }
+
+    /// The paths the watcher saw go, with every index entry at or below one
+    /// that is really gone dropped (and its text sidecar with it). Returns
+    /// the paths, for the paper records to mark missing.
+    pub fn take_gone(&mut self) -> Vec<PathBuf> {
+        let gone = std::mem::take(&mut self.watch_gone);
+        if gone.is_empty() {
+            return gone;
+        }
+        let dropped: Vec<PathBuf> = self
+            .entries
+            .keys()
+            .filter(|path| gone.iter().any(|g| path.starts_with(g)) && !path.is_file())
+            .cloned()
+            .collect();
+        for path in &dropped {
+            self.entries.remove(path);
+            crate::search::librarytext::remove_sidecar(&self.app_data_dir, path);
+        }
+        if !dropped.is_empty() {
+            self.watch_unsaved += 1;
+        }
+        gone
+    }
+
+    /// The next watched file still in a root, as a candidate: unchanged
+    /// when the index already has these bytes.
+    pub fn next_watched(&mut self) -> Option<ScanCandidate> {
+        while let Some(path) = self.watch_files.pop_front() {
+            self.watch_queued.remove(&path);
+            let Some(path) = contained_in_any(&self.roots, &path) else {
+                continue;
+            };
+            let Some((mtime_ms, size)) = file_stamp(&path) else {
+                continue;
+            };
+            let unchanged = self.entries.get(&path).is_some_and(|entry| {
+                entry.mtime_ms == mtime_ms && entry.size == size && entry.fingerprint.is_some()
+            });
+            return Some(ScanCandidate {
+                path,
+                mtime_ms,
+                size,
+                epoch: self.scan_epoch,
+                unchanged,
+            });
+        }
+        None
+    }
+
+    /// A watched file's scan: like `upsert_entry`, but the index is written
+    /// when the batch ends (`finish_watch_step`), not per file.
+    pub fn record_watched(&mut self, mut entry: LibraryEntry) {
+        match self.entries.get(&entry.path) {
+            Some(existing)
+                if existing.mtime_ms == entry.mtime_ms && existing.size == entry.size =>
+            {
+                keep_text_state(&mut entry, existing);
+            }
+            _ => crate::search::librarytext::remove_sidecar(&self.app_data_dir, &entry.path),
+        }
+        self.entries.insert(entry.path.clone(), entry);
+        self.watch_unsaved += 1;
+    }
+
+    /// After one watch job: true when another should follow. Otherwise the
+    /// chain ends here and the index is written if the batch changed it.
+    pub fn finish_watch_step(&mut self) -> bool {
+        if !self.watch_files.is_empty() || !self.watch_gone.is_empty() {
+            if self.watch_unsaved >= 25 {
+                self.watch_unsaved = 0;
+                self.persist_index();
+            }
+            return true;
+        }
+        self.watch_job = false;
+        if self.watch_unsaved > 0 {
+            self.watch_unsaved = 0;
+            self.persist_index();
+        }
+        false
     }
 
     /// The next document whose text is on disk but whose cited identifiers
@@ -1404,6 +1556,32 @@ pub fn file_stamp(path: &Path) -> Option<(u64, u64)> {
     Some((mtime_ms, metadata.len()))
 }
 
+/// Whether `path` is a cloud placeholder whose bytes are not on this Mac:
+/// iCloud Drive, Dropbox or OneDrive with "optimize storage" evicted it.
+/// Opening one to fingerprint or index it downloads it, so the scan reads
+/// only its stamp and name, and the text pass leaves it until it is
+/// downloaded. It is still there: never missing.
+#[cfg(target_os = "macos")]
+pub fn is_dataless(path: &Path) -> bool {
+    use std::os::macos::fs::MetadataExt;
+    fs::metadata(path).is_ok_and(|metadata| dataless_flag(metadata.st_flags()))
+}
+
+/// Other platforms have no such placeholder in `stat`.
+#[cfg(not(target_os = "macos"))]
+pub fn is_dataless(_path: &Path) -> bool {
+    false
+}
+
+/// `SF_DATALESS` from `<sys/stat.h>`.
+#[cfg(target_os = "macos")]
+const SF_DATALESS: u32 = 0x4000_0000;
+
+#[cfg(target_os = "macos")]
+fn dataless_flag(flags: u32) -> bool {
+    flags & SF_DATALESS != 0
+}
+
 /// Bytes read from each end of a file for its content fingerprint.
 const FINGERPRINT_EDGE: u64 = 64 * 1024;
 
@@ -1459,6 +1637,12 @@ fn collect_pdfs(root: &Path) -> Vec<PathBuf> {
             if metadata.file_type().is_symlink() {
                 continue;
             }
+            // Hidden files and folders (a Trash among them, when a root
+            // holds the home folder) and downloads still arriving are not
+            // the library's; the watcher ignores them the same way.
+            if watch::ignored_below(root, &path) {
+                continue;
+            }
             if metadata.is_dir() {
                 directories.push(path);
             } else if metadata.is_file()
@@ -1509,6 +1693,44 @@ mod tests {
             doi_source: None,
             arxiv_source: None,
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_cloud_placeholder_is_told_by_its_dataless_flag_alone() {
+        assert!(dataless_flag(0x4000_0000));
+        // UF_HIDDEN, UF_COMPRESSED and SF_ARCHIVED say nothing about it.
+        assert!(!dataless_flag(0x8000 | 0x20 | 0x1_0000));
+        assert!(dataless_flag(0x4000_0000 | 0x8000));
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("here.pdf");
+        fs::write(&file, b"%PDF-1.4").unwrap();
+        assert!(!is_dataless(&file), "a file on disk is read as usual");
+        assert!(!is_dataless(&dir.path().join("gone.pdf")));
+    }
+
+    #[test]
+    fn the_full_scan_skips_hidden_folders_the_trash_and_partial_downloads() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        for folder in [".Trash", ".cache", "x.pdf.download", "sub"] {
+            fs::create_dir_all(root.join(folder)).unwrap();
+        }
+        for file in [
+            "kept.pdf",
+            "sub/also.PDF",
+            ".hidden.pdf",
+            ".Trash/trashed.pdf",
+            ".cache/cached.pdf",
+            "x.pdf.download/x.pdf",
+            "y.pdf.crdownload",
+        ] {
+            fs::write(root.join(file), b"%PDF-1.4").unwrap();
+        }
+        assert_eq!(
+            collect_pdfs(&root),
+            vec![root.join("kept.pdf"), root.join("sub/also.PDF")]
+        );
     }
 
     #[test]
