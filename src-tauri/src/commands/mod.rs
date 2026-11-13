@@ -662,6 +662,26 @@ pub async fn get_equation_blocks(
         .await
 }
 
+/// A page's reading segments, for column zoom. Asked for the page being
+/// read and its neighbours, so it queues with adjacent pages.
+#[tauri::command]
+pub async fn get_column_layout(
+    state: tauri::State<'_, EngineState>,
+    doc_id: DocId,
+    src: u32,
+) -> AppResult<crate::engine::columns::ColumnLayoutDto> {
+    state
+        .0
+        .call_async(Priority::AdjacentPage, doc_id, move |respond| {
+            Work::ColumnLayout {
+                doc: doc_id,
+                src,
+                respond,
+            }
+        })
+        .await
+}
+
 // ---------- extensions ----------
 
 use crate::extensions::{self, builtin, InstalledExtension, Manifest};

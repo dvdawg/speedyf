@@ -47,6 +47,9 @@ export interface JumpOptions {
    * default is half a viewport, so a jump to something already on screen
    * does not leave a Back step that goes nowhere visible. */
   minDistance?: number;
+  /** x of the target in display page points, when known, so column zoom
+   * lands in the target's column (viewportStore's `focusX`). */
+  focusX?: number;
 }
 
 export const NAV_HISTORY_LIMIT = 100;
@@ -206,7 +209,7 @@ export function jumpToPage(
   opts?: JumpOptions
 ): void {
   recordJump(tab, { page, offsetCss }, opts);
-  tab.viewport.requestScrollToPage(page, offsetCss);
+  tab.viewport.requestScrollToPage(page, offsetCss, opts?.focusX);
 }
 
 /** A jump that landed in another tab: Back from `targetId` returns to `from`. */
@@ -222,10 +225,22 @@ export function noteTabSwitch(from: NavEntry | null, targetId: string): void {
 export function restoreView(tab: TabRecord, entry: NavEntry): void {
   const page = resolvePage(tab, entry);
   const vp = tab.viewport;
+  // Column zoom stays on: the position is restored at the column zoom and
+  // the viewer settles it into the column the entry was looking at, found
+  // from where the middle of its view was across the page.
+  if (vp.state.fitMode === 'column') {
+    const layout = tab.zoom.layoutFor(entry.zoom);
+    const left = layout.lefts[page] ?? 0;
+    const focusX = (entry.scrollLeft + vp.state.containerW / 2 - left) / entry.zoom;
+    vp.requestRestoreView(page, entry.fraction, 0, focusX);
+    return;
+  }
+  // An entry left in column zoom comes back at its zoom, not in the mode.
+  const fitMode = entry.fitMode === 'column' ? 'custom' : entry.fitMode;
   if (Math.abs(vp.state.zoom - entry.zoom) > 1e-6) {
-    tab.zoom.setZoomAnchored(entry.zoom, undefined, entry.fitMode);
-  } else if (vp.state.fitMode !== entry.fitMode) {
-    vp.setState('fitMode', entry.fitMode);
+    tab.zoom.setZoomAnchored(entry.zoom, undefined, fitMode);
+  } else if (vp.state.fitMode !== fitMode) {
+    vp.setState('fitMode', fitMode);
   }
   vp.requestRestoreView(page, entry.fraction, entry.scrollLeft);
 }

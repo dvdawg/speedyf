@@ -398,6 +398,7 @@ pub fn run() {
             commands::hovers::get_page_hovers,
             commands::hovers::set_hover_terms,
             commands::hovers::get_hover_preview,
+            commands::get_column_layout,
             commands::get_preview_rect,
             commands::resolve_citation,
             commands::change_library_root,

@@ -82,6 +82,11 @@ export default function StatusBar() {
           <Show when={doc()!.saving}>
             <span class="sb-dim">saving...</span>
           </Show>
+          <Show when={activeTab()?.viewport.state.fitMode === 'column'}>
+            <span class="sb-dim sb-column" title="Column zoom: Escape or the same shortcut leaves">
+              Column
+            </span>
+          </Show>
         </Show>
       </div>
       <div class="sb-center" aria-live="polite">

@@ -149,8 +149,27 @@ into a new window or into any other open window, edits and all.
 | Undo / redo                | `Cmd+Z` / `Cmd+Shift+Z` | `Ctrl+Z` / `Ctrl+Y`       |
 | Zoom in/out                | `Cmd++` / `Cmd+-`       | `Ctrl++` / `Ctrl+-`       |
 | Fit page / 100%            | `Cmd+0` / `Cmd+1`       | `Ctrl+0` / `Ctrl+1`       |
+| Zoom to column             | `Cmd+Option+0`          | `Ctrl+Alt+0`              |
 | Previous/next page         | Page Up / Page Down     | Page Up / Page Down       |
 | Close panel/tool/selection | Escape                  | Escape                    |
+
+**Column zoom** reads a two- or three-column paper one column at a time.
+Double-click blank space inside a column (between lines or paragraphs; a
+double-click on a word still selects it), or choose **Zoom to Column** in the
+command palette's View group, to fit the column under the pointer, or the one
+at the reading position, to the window's width. Scrolling stays inside the
+column. At its end, a fresh scroll gesture past the end (or Space, or an arrow
+key pressed again) moves on: down the left column, up to the top of the right
+one, then to the next page. The swipe that reaches the end stops there, so
+trackpad momentum never skips a column. Titles, abstracts, wide figures and
+footnotes across the page are read at the text's full width where they stand.
+Page Down goes to the first column of the next page; links, search hits,
+outline entries and Back land in the column holding their target. On a
+single-column page the command fits the text without its margins; on slides,
+posters and pages it cannot read confidently it fits the page width instead.
+Escape, the same shortcut, or any zoom command returns to the previous zoom.
+The status bar shows Column while it is on; nothing is remembered between
+sessions.
 
 Search starts returning results from the pages already indexed instead of
 waiting for the whole document. Scanned PDFs without an embedded text layer
