@@ -14,6 +14,10 @@ pub enum MetaSource {
     Filename,
     FirstPage,
     PdfInfo,
+    /// Agreed on by the reference lists of at least two independent items
+    /// in the library that cite this one (`consensus`). Above what one
+    /// file's heuristics say, below anything the file or a registry states.
+    Citations,
     /// Derived from an identifier the file carries: the year in an arXiv id
     /// or a DOI, the year and DOI in an Elsevier PII. Certain as far as it
     /// goes, which is never further than a year.
@@ -34,7 +38,8 @@ pub enum MetaSource {
 
 impl MetaSource {
     /// Higher wins. `User` beats every lookup; every lookup beats every local
-    /// source; among the local ones XMP beats the Info dictionary beats the
+    /// source; among the local ones XMP beats the identifier beats what
+    /// citing papers agree on beats the Info dictionary beats the
     /// first-page guess. Among lookups the registration agencies (Crossref,
     /// DataCite) and INSPIRE's curated records rank above aggregators.
     pub fn rank(self) -> u8 {
@@ -42,17 +47,18 @@ impl MetaSource {
             MetaSource::Filename => 0,
             MetaSource::FirstPage => 1,
             MetaSource::PdfInfo => 2,
-            MetaSource::Identifier => 3,
-            MetaSource::Xmp => 4,
-            MetaSource::OpenLibrary => 5,
-            MetaSource::Openalex => 6,
-            MetaSource::Dblp => 7,
-            MetaSource::SemanticScholar => 8,
-            MetaSource::Arxiv => 9,
-            MetaSource::Datacite => 10,
-            MetaSource::Inspire => 11,
-            MetaSource::Crossref => 12,
-            MetaSource::User => 13,
+            MetaSource::Citations => 3,
+            MetaSource::Identifier => 4,
+            MetaSource::Xmp => 5,
+            MetaSource::OpenLibrary => 6,
+            MetaSource::Openalex => 7,
+            MetaSource::Dblp => 8,
+            MetaSource::SemanticScholar => 9,
+            MetaSource::Arxiv => 10,
+            MetaSource::Datacite => 11,
+            MetaSource::Inspire => 12,
+            MetaSource::Crossref => 13,
+            MetaSource::User => 14,
         }
     }
 
@@ -206,6 +212,19 @@ pub struct PaperDto {
     /// were ("same arXiv id 2606.13614"). Empty for manual merges only.
     #[serde(default)]
     pub auto_merged: Vec<String>,
+    /// For each field whose value came from citing papers (`citations`
+    /// source): how many independent citing items vouched for it.
+    #[serde(default)]
+    pub vouched: std::collections::BTreeMap<String, u32>,
+    /// The year the item's own reference list says it is at least as new
+    /// as (`consensus::year_floor`). Only when it has no year; never a
+    /// BibTeX year.
+    #[serde(default)]
+    pub year_floor: Option<i32>,
+    /// "cites work from 2021; year may be wrong": its year is more than one
+    /// year older than the newest work it cites.
+    #[serde(default)]
+    pub year_hint: Option<String>,
 }
 
 /// One row of the paper list. Display strings, already resolved, so the list
@@ -235,6 +254,10 @@ pub struct PaperRowDto {
     /// Files of the item that are on disk.
     #[serde(default)]
     pub file_count: u32,
+    /// With no year: the year its references say it is at least as new as,
+    /// shown as "2019+" and sorted as that year.
+    #[serde(default)]
+    pub year_floor: Option<i32>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

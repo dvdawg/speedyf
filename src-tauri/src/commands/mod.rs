@@ -7,6 +7,7 @@ use crate::engine::{EngineHandle, Work};
 use crate::errors::{AppError, AppResult};
 use std::path::PathBuf;
 
+pub mod citations;
 pub mod library;
 
 pub struct EngineState(pub EngineHandle);

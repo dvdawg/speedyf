@@ -454,6 +454,9 @@ mod tests {
             candidates: vec![],
             merged_count: 0,
             auto_merged: vec![],
+            vouched: Default::default(),
+            year_floor: None,
+            year_hint: None,
         }
     }
 
