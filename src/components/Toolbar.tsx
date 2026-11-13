@@ -32,7 +32,7 @@ import {
 } from './icons';
 import { saveDocument } from '../features/document/controller';
 import { openFromDialog } from '../features/document/tabsController';
-import { activeTab } from '../stores/tabsStore';
+import { activeTab, tabsStore } from '../stores/tabsStore';
 import {
   canGoBack,
   canGoForward,
@@ -77,18 +77,23 @@ export default function Toolbar() {
 
   const showStroke = () => toolState.active === 'ink' || toolState.active === 'rect';
   const showStyle = () => toolState.active !== 'select' && toolState.active !== 'textbox';
+  // Home and Projects show no document, so every reader control would sit
+  // there disabled. Only Open stays; the bar keeps its height.
+  const reader = () => tabsStore.state.activeId !== null;
 
   return (
     <div class="toolbar" role="toolbar" aria-label="Main toolbar">
-      <div class="tb-group">
-        <IconButton
-          label="Toggle sidebar"
-          active={ui.sidebarOpen}
-          onClick={() => setUi('sidebarOpen', !ui.sidebarOpen)}
-        >
-          <IconSidebar />
-        </IconButton>
-      </div>
+      <Show when={reader()}>
+        <div class="tb-group">
+          <IconButton
+            label="Toggle sidebar"
+            active={ui.sidebarOpen}
+            onClick={() => setUi('sidebarOpen', !ui.sidebarOpen)}
+          >
+            <IconSidebar />
+          </IconButton>
+        </div>
+      </Show>
 
       <div class="tb-group">
         <IconButton
@@ -97,332 +102,338 @@ export default function Toolbar() {
         >
           <IconOpen />
         </IconButton>
-        <IconButton
-          label={`Save (${formatShortcut('mod+s')})`}
-          disabled={!loaded() || !doc()?.dirty || doc()?.saving || !saveSupported()}
-          onClick={() => {
-            const tab = activeTab();
-            if (tab) void saveDocument(tab, false);
-          }}
-        >
-          <IconSave />
-        </IconButton>
-        <IconButton
-          label={`Save As... (${formatShortcut('mod+shift+s')})`}
-          disabled={!loaded() || doc()?.saving || !saveSupported()}
-          onClick={() => {
-            const tab = activeTab();
-            if (tab) void saveDocument(tab, true);
-          }}
-        >
-          <IconSaveAs />
-        </IconButton>
-        <IconButton
-          label={`Print (${formatShortcut('mod+p')})`}
-          disabled={!loaded()}
-          onClick={() => {
-            const tab = activeTab();
-            if (tab) void beginPrint(tab);
-          }}
-        >
-          <IconPrint />
-        </IconButton>
-      </div>
-
-      <div class="tb-group">
-        <IconButton
-          label={`Undo (${formatShortcut('mod+z')})`}
-          disabled={(doc()?.historyDepth ?? 0) === 0}
-          onClick={() => activeTab()?.documentStore.undo()}
-        >
-          <IconUndo />
-        </IconButton>
-        <IconButton
-          label={`Redo (${formatShortcut('mod+shift+z')})`}
-          disabled={(doc()?.redoDepth ?? 0) === 0}
-          onClick={() => activeTab()?.documentStore.redo()}
-        >
-          <IconRedo />
-        </IconButton>
-      </div>
-
-      <div class="tb-group">
-        <IconButton
-          label={`Back (${formatShortcut('mod+[')})`}
-          disabled={!loaded() || !canGoBack()}
-          onClick={() => goBack()}
-        >
-          <IconBack />
-        </IconButton>
-        <IconButton
-          label={`Forward (${formatShortcut('mod+]')})`}
-          disabled={!loaded() || !canGoForward()}
-          onClick={() => goForward()}
-        >
-          <IconForward />
-        </IconButton>
-        <IconButton
-          label="Previous page (Page Up)"
-          disabled={!loaded() || (activeTab()?.viewport.state.currentPage ?? 0) <= 0}
-          onClick={() => {
-            const tab = activeTab();
-            if (tab) tab.viewport.requestScrollToPage(tab.viewport.state.currentPage - 1);
-          }}
-        >
-          <IconChevronUp />
-        </IconButton>
-        <IconButton
-          label="Next page (Page Down)"
-          disabled={!loaded() || (activeTab()?.viewport.state.currentPage ?? 0) >= pageCount() - 1}
-          onClick={() => {
-            const tab = activeTab();
-            if (tab) tab.viewport.requestScrollToPage(tab.viewport.state.currentPage + 1);
-          }}
-        >
-          <IconChevronDown />
-        </IconButton>
-        <label class="tb-field" title="Current page">
-          <span class="sr-only">Current page</span>
-          <input
-            class="tb-input page-input"
-            type="text"
-            inputmode="numeric"
+        <Show when={reader()}>
+          <IconButton
+            label={`Save (${formatShortcut('mod+s')})`}
+            disabled={!loaded() || !doc()?.dirty || doc()?.saving || !saveSupported()}
+            onClick={() => {
+              const tab = activeTab();
+              if (tab) void saveDocument(tab, false);
+            }}
+          >
+            <IconSave />
+          </IconButton>
+          <IconButton
+            label={`Save As... (${formatShortcut('mod+shift+s')})`}
+            disabled={!loaded() || doc()?.saving || !saveSupported()}
+            onClick={() => {
+              const tab = activeTab();
+              if (tab) void saveDocument(tab, true);
+            }}
+          >
+            <IconSaveAs />
+          </IconButton>
+          <IconButton
+            label={`Print (${formatShortcut('mod+p')})`}
             disabled={!loaded()}
-            value={
-              pageInput() ??
-              (loaded() ? String((activeTab()?.viewport.state.currentPage ?? 0) + 1) : '-')
-            }
-            onFocus={(e) => {
-              setPageInput(e.currentTarget.value);
-              e.currentTarget.select();
+            onClick={() => {
+              const tab = activeTab();
+              if (tab) void beginPrint(tab);
             }}
-            onInput={(e) => setPageInput(e.currentTarget.value)}
-            onBlur={(e) => commitPageInput(e.currentTarget.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') e.currentTarget.blur();
-              if (e.key === 'Escape') {
-                setPageInput(null);
-                e.currentTarget.blur();
-              }
-            }}
-            aria-label="Current page number"
-          />
-        </label>
-        <span class="tb-total" aria-label="Total pages">
-          / {loaded() ? pageCount() : '-'}
-        </span>
-      </div>
-
-      <div class="tb-group">
-        <IconButton
-          label={`Zoom out (${formatShortcut('mod+minus')})`}
-          disabled={!loaded()}
-          onClick={() => activeTab()?.zoom.zoomStep(-1)}
-        >
-          <IconZoomOut />
-        </IconButton>
-        <input
-          class="tb-input zoom-input"
-          type="text"
-          disabled={!loaded()}
-          value={zoomInput() ?? `${Math.round((activeTab()?.viewport.state.zoom ?? 1) * 100)}%`}
-          onFocus={(e) => {
-            setZoomInput(e.currentTarget.value);
-            e.currentTarget.select();
-          }}
-          onInput={(e) => setZoomInput(e.currentTarget.value)}
-          onBlur={(e) => commitZoomInput(e.currentTarget.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') e.currentTarget.blur();
-            if (e.key === 'Escape') {
-              setZoomInput(null);
-              e.currentTarget.blur();
-            }
-          }}
-          aria-label="Zoom percentage"
-        />
-        <IconButton
-          label={`Zoom in (${formatShortcut('mod+plus')})`}
-          disabled={!loaded()}
-          onClick={() => activeTab()?.zoom.zoomStep(1)}
-        >
-          <IconZoomIn />
-        </IconButton>
-        <IconButton
-          label="Fit page"
-          disabled={!loaded()}
-          active={activeTab()?.viewport.state.fitMode === 'fit-page'}
-          onClick={() => activeTab()?.zoom.applyFit('fit-page')}
-        >
-          <IconFitPage />
-        </IconButton>
-        <IconButton
-          label="Fit width"
-          disabled={!loaded()}
-          active={activeTab()?.viewport.state.fitMode === 'fit-width'}
-          onClick={() => activeTab()?.zoom.applyFit('fit-width')}
-        >
-          <IconFitWidth />
-        </IconButton>
-        <IconButton
-          label="Rotate view 90 degrees"
-          disabled={!loaded()}
-          onClick={() => {
-            const tab = activeTab();
-            if (!tab) return;
-            tab.viewport.rotateView();
-            tab.zoom.refreshFit();
-          }}
-        >
-          <IconRotate />
-        </IconButton>
-      </div>
-
-      <div class="tb-group" role="group" aria-label="Annotation tools">
-        <IconButton
-          label="Select (Esc)"
-          disabled={!loaded()}
-          active={toolState.active === 'select'}
-          onClick={() => toggleTool('select')}
-        >
-          <IconSelect />
-        </IconButton>
-        <IconButton
-          label="Highlight text"
-          disabled={!loaded()}
-          active={toolState.active === 'highlight'}
-          onClick={() => toggleTool('highlight')}
-        >
-          <IconHighlight />
-        </IconButton>
-        <IconButton
-          label="Freehand ink"
-          disabled={!loaded()}
-          active={toolState.active === 'ink'}
-          onClick={() => toggleTool('ink')}
-        >
-          <IconInk />
-        </IconButton>
-        <IconButton
-          label="Rectangle outline"
-          disabled={!loaded()}
-          active={toolState.active === 'rect'}
-          onClick={() => toggleTool('rect')}
-        >
-          <IconRect />
-        </IconButton>
-        <IconButton
-          label="Text box"
-          disabled={!loaded()}
-          active={toolState.active === 'textbox'}
-          onClick={() => toggleTool('textbox')}
-        >
-          <IconTextBox />
-        </IconButton>
-        <IconButton
-          label="Sticky note"
-          disabled={!loaded()}
-          active={toolState.active === 'note'}
-          onClick={() => toggleTool('note')}
-        >
-          <IconNote />
-        </IconButton>
-        <IconButton
-          label="Shade bubbles"
-          disabled={!loaded()}
-          active={toolState.active === 'bubble'}
-          onClick={() => toggleTool('bubble')}
-        >
-          <IconBubble />
-        </IconButton>
-        <Show when={showStyle()}>
-          <div class="tool-options" role="group" aria-label="Tool style">
-            <input
-              type="color"
-              class="tb-color"
-              value={activeStyle().color}
-              onInput={(e) => updateActiveStyle({ color: e.currentTarget.value })}
-              title="Color"
-              aria-label="Annotation color"
-            />
-            <label class="tb-slider" title="Opacity">
-              <span class="sr-only">Opacity</span>
-              <input
-                type="range"
-                min="0.1"
-                max="1"
-                step="0.05"
-                value={activeStyle().opacity}
-                onInput={(e) => updateActiveStyle({ opacity: parseFloat(e.currentTarget.value) })}
-                aria-label="Annotation opacity"
-              />
-            </label>
-            <Show when={showStroke()}>
-              <label class="tb-slider" title="Stroke width">
-                <span class="sr-only">Stroke width</span>
-                <input
-                  type="range"
-                  min="0.5"
-                  max="12"
-                  step="0.5"
-                  value={activeStyle().strokeWidth}
-                  onInput={(e) =>
-                    updateActiveStyle({ strokeWidth: parseFloat(e.currentTarget.value) })
-                  }
-                  aria-label="Stroke width"
-                />
-              </label>
-            </Show>
-          </div>
+          >
+            <IconPrint />
+          </IconButton>
         </Show>
       </div>
 
-      <div class="tb-group tb-right">
-        <IconButton
-          label="Add image to page"
-          disabled={!loaded() || !activeTab()?.viewport.state.editMode}
-          onClick={() => {
-            const tab = activeTab();
-            if (tab) void addImageFromDialog(tab.documentStore, tab.viewport);
-          }}
-        >
-          <IconImage />
-        </IconButton>
-        <IconButton
-          label="Form fields"
-          disabled={!loaded()}
-          active={activeTab()?.viewport.state.formPanelOpen ?? false}
-          onClick={() => {
-            const tab = activeTab();
-            if (tab) tab.viewport.setState('formPanelOpen', !tab.viewport.state.formPanelOpen);
-          }}
-        >
-          <IconForm />
-        </IconButton>
-        <IconButton
-          label="Edit mode (page reorder, delete, rotate)"
-          disabled={!loaded()}
-          active={activeTab()?.viewport.state.editMode ?? false}
-          onClick={() => {
-            const tab = activeTab();
-            if (tab) tab.viewport.setState('editMode', !tab.viewport.state.editMode);
-          }}
-        >
-          <IconEdit />
-        </IconButton>
-        <IconButton
-          label={`Search (${formatShortcut('mod+f')})`}
-          disabled={!loaded()}
-          active={activeTab()?.viewport.state.searchOpen ?? false}
-          onClick={() => {
-            const tab = activeTab();
-            if (tab) tab.viewport.setState('searchOpen', !tab.viewport.state.searchOpen);
-          }}
-        >
-          <IconSearch />
-        </IconButton>
-      </div>
-      <TextTools />
+      <Show when={reader()}>
+        <div class="tb-group">
+          <IconButton
+            label={`Undo (${formatShortcut('mod+z')})`}
+            disabled={(doc()?.historyDepth ?? 0) === 0}
+            onClick={() => activeTab()?.documentStore.undo()}
+          >
+            <IconUndo />
+          </IconButton>
+          <IconButton
+            label={`Redo (${formatShortcut('mod+shift+z')})`}
+            disabled={(doc()?.redoDepth ?? 0) === 0}
+            onClick={() => activeTab()?.documentStore.redo()}
+          >
+            <IconRedo />
+          </IconButton>
+        </div>
+
+        <div class="tb-group">
+          <IconButton
+            label={`Back (${formatShortcut('mod+[')})`}
+            disabled={!loaded() || !canGoBack()}
+            onClick={() => goBack()}
+          >
+            <IconBack />
+          </IconButton>
+          <IconButton
+            label={`Forward (${formatShortcut('mod+]')})`}
+            disabled={!loaded() || !canGoForward()}
+            onClick={() => goForward()}
+          >
+            <IconForward />
+          </IconButton>
+          <IconButton
+            label="Previous page (Page Up)"
+            disabled={!loaded() || (activeTab()?.viewport.state.currentPage ?? 0) <= 0}
+            onClick={() => {
+              const tab = activeTab();
+              if (tab) tab.viewport.requestScrollToPage(tab.viewport.state.currentPage - 1);
+            }}
+          >
+            <IconChevronUp />
+          </IconButton>
+          <IconButton
+            label="Next page (Page Down)"
+            disabled={
+              !loaded() || (activeTab()?.viewport.state.currentPage ?? 0) >= pageCount() - 1
+            }
+            onClick={() => {
+              const tab = activeTab();
+              if (tab) tab.viewport.requestScrollToPage(tab.viewport.state.currentPage + 1);
+            }}
+          >
+            <IconChevronDown />
+          </IconButton>
+          <label class="tb-field" title="Current page">
+            <span class="sr-only">Current page</span>
+            <input
+              class="tb-input page-input"
+              type="text"
+              inputmode="numeric"
+              disabled={!loaded()}
+              value={
+                pageInput() ??
+                (loaded() ? String((activeTab()?.viewport.state.currentPage ?? 0) + 1) : '-')
+              }
+              onFocus={(e) => {
+                setPageInput(e.currentTarget.value);
+                e.currentTarget.select();
+              }}
+              onInput={(e) => setPageInput(e.currentTarget.value)}
+              onBlur={(e) => commitPageInput(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') e.currentTarget.blur();
+                if (e.key === 'Escape') {
+                  setPageInput(null);
+                  e.currentTarget.blur();
+                }
+              }}
+              aria-label="Current page number"
+            />
+          </label>
+          <span class="tb-total" aria-label="Total pages">
+            / {loaded() ? pageCount() : '-'}
+          </span>
+        </div>
+
+        <div class="tb-group">
+          <IconButton
+            label={`Zoom out (${formatShortcut('mod+minus')})`}
+            disabled={!loaded()}
+            onClick={() => activeTab()?.zoom.zoomStep(-1)}
+          >
+            <IconZoomOut />
+          </IconButton>
+          <input
+            class="tb-input zoom-input"
+            type="text"
+            disabled={!loaded()}
+            value={zoomInput() ?? `${Math.round((activeTab()?.viewport.state.zoom ?? 1) * 100)}%`}
+            onFocus={(e) => {
+              setZoomInput(e.currentTarget.value);
+              e.currentTarget.select();
+            }}
+            onInput={(e) => setZoomInput(e.currentTarget.value)}
+            onBlur={(e) => commitZoomInput(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') e.currentTarget.blur();
+              if (e.key === 'Escape') {
+                setZoomInput(null);
+                e.currentTarget.blur();
+              }
+            }}
+            aria-label="Zoom percentage"
+          />
+          <IconButton
+            label={`Zoom in (${formatShortcut('mod+plus')})`}
+            disabled={!loaded()}
+            onClick={() => activeTab()?.zoom.zoomStep(1)}
+          >
+            <IconZoomIn />
+          </IconButton>
+          <IconButton
+            label="Fit page"
+            disabled={!loaded()}
+            active={activeTab()?.viewport.state.fitMode === 'fit-page'}
+            onClick={() => activeTab()?.zoom.applyFit('fit-page')}
+          >
+            <IconFitPage />
+          </IconButton>
+          <IconButton
+            label="Fit width"
+            disabled={!loaded()}
+            active={activeTab()?.viewport.state.fitMode === 'fit-width'}
+            onClick={() => activeTab()?.zoom.applyFit('fit-width')}
+          >
+            <IconFitWidth />
+          </IconButton>
+          <IconButton
+            label="Rotate view 90 degrees"
+            disabled={!loaded()}
+            onClick={() => {
+              const tab = activeTab();
+              if (!tab) return;
+              tab.viewport.rotateView();
+              tab.zoom.refreshFit();
+            }}
+          >
+            <IconRotate />
+          </IconButton>
+        </div>
+
+        <div class="tb-group" role="group" aria-label="Annotation tools">
+          <IconButton
+            label="Select (Esc)"
+            disabled={!loaded()}
+            active={toolState.active === 'select'}
+            onClick={() => toggleTool('select')}
+          >
+            <IconSelect />
+          </IconButton>
+          <IconButton
+            label="Highlight text"
+            disabled={!loaded()}
+            active={toolState.active === 'highlight'}
+            onClick={() => toggleTool('highlight')}
+          >
+            <IconHighlight />
+          </IconButton>
+          <IconButton
+            label="Freehand ink"
+            disabled={!loaded()}
+            active={toolState.active === 'ink'}
+            onClick={() => toggleTool('ink')}
+          >
+            <IconInk />
+          </IconButton>
+          <IconButton
+            label="Rectangle outline"
+            disabled={!loaded()}
+            active={toolState.active === 'rect'}
+            onClick={() => toggleTool('rect')}
+          >
+            <IconRect />
+          </IconButton>
+          <IconButton
+            label="Text box"
+            disabled={!loaded()}
+            active={toolState.active === 'textbox'}
+            onClick={() => toggleTool('textbox')}
+          >
+            <IconTextBox />
+          </IconButton>
+          <IconButton
+            label="Sticky note"
+            disabled={!loaded()}
+            active={toolState.active === 'note'}
+            onClick={() => toggleTool('note')}
+          >
+            <IconNote />
+          </IconButton>
+          <IconButton
+            label="Shade bubbles"
+            disabled={!loaded()}
+            active={toolState.active === 'bubble'}
+            onClick={() => toggleTool('bubble')}
+          >
+            <IconBubble />
+          </IconButton>
+          <Show when={showStyle()}>
+            <div class="tool-options" role="group" aria-label="Tool style">
+              <input
+                type="color"
+                class="tb-color"
+                value={activeStyle().color}
+                onInput={(e) => updateActiveStyle({ color: e.currentTarget.value })}
+                title="Color"
+                aria-label="Annotation color"
+              />
+              <label class="tb-slider" title="Opacity">
+                <span class="sr-only">Opacity</span>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="1"
+                  step="0.05"
+                  value={activeStyle().opacity}
+                  onInput={(e) => updateActiveStyle({ opacity: parseFloat(e.currentTarget.value) })}
+                  aria-label="Annotation opacity"
+                />
+              </label>
+              <Show when={showStroke()}>
+                <label class="tb-slider" title="Stroke width">
+                  <span class="sr-only">Stroke width</span>
+                  <input
+                    type="range"
+                    min="0.5"
+                    max="12"
+                    step="0.5"
+                    value={activeStyle().strokeWidth}
+                    onInput={(e) =>
+                      updateActiveStyle({ strokeWidth: parseFloat(e.currentTarget.value) })
+                    }
+                    aria-label="Stroke width"
+                  />
+                </label>
+              </Show>
+            </div>
+          </Show>
+        </div>
+
+        <div class="tb-group tb-right">
+          <IconButton
+            label="Add image to page"
+            disabled={!loaded() || !activeTab()?.viewport.state.editMode}
+            onClick={() => {
+              const tab = activeTab();
+              if (tab) void addImageFromDialog(tab.documentStore, tab.viewport);
+            }}
+          >
+            <IconImage />
+          </IconButton>
+          <IconButton
+            label="Form fields"
+            disabled={!loaded()}
+            active={activeTab()?.viewport.state.formPanelOpen ?? false}
+            onClick={() => {
+              const tab = activeTab();
+              if (tab) tab.viewport.setState('formPanelOpen', !tab.viewport.state.formPanelOpen);
+            }}
+          >
+            <IconForm />
+          </IconButton>
+          <IconButton
+            label="Edit mode (page reorder, delete, rotate)"
+            disabled={!loaded()}
+            active={activeTab()?.viewport.state.editMode ?? false}
+            onClick={() => {
+              const tab = activeTab();
+              if (tab) tab.viewport.setState('editMode', !tab.viewport.state.editMode);
+            }}
+          >
+            <IconEdit />
+          </IconButton>
+          <IconButton
+            label={`Search (${formatShortcut('mod+f')})`}
+            disabled={!loaded()}
+            active={activeTab()?.viewport.state.searchOpen ?? false}
+            onClick={() => {
+              const tab = activeTab();
+              if (tab) tab.viewport.setState('searchOpen', !tab.viewport.state.searchOpen);
+            }}
+          >
+            <IconSearch />
+          </IconButton>
+        </div>
+        <TextTools />
+      </Show>
     </div>
   );
 }
