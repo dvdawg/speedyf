@@ -255,7 +255,14 @@ in every project's `.bib`.
   library-root.json     # the folders, as today
   lookup-cache.json     # raw lookup responses by identifier - disposable
   text/                 # full-text sidecars, as today
+  outlines/             # generated outlines by content fingerprint - disposable
 ```
+
+`outlines/<fingerprint>.json` holds the outline the reader generated from a
+PDF's headings when the file has none of its own (`engine/outline_gen`):
+versioned, keyed by the same content fingerprint as the scan, so a saved or
+edited file gets a new one and a stale rule version is recomputed. Any PDF
+opened in the reader can have one, library or not.
 
 The split is between what can be regenerated and what cannot. The index and
 the sidecars are rebuilt from the folders; `library.json` is the only file

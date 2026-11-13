@@ -11,9 +11,9 @@
  * Reads the bookmark outline rather than the structure index: the index omits
  * headings that contain no environments, which is right for a list of theorems
  * and wrong for a breadcrumb, where a section with none would go unnamed and
- * leave the previous one showing. */
-import { createMemo, createResource, Show, useContext } from 'solid-js';
-import { engine } from '../../lib/transport/engine';
+ * leave the previous one showing. The outline comes from the tab's structure
+ * store, so a generated outline (for a PDF with none) tracks here too. */
+import { createMemo, Show, useContext } from 'solid-js';
 import type { FormalEntry } from '../../types/engine';
 import {
   anchorsForPosition,
@@ -35,9 +35,10 @@ export default function ContextHeader() {
   const { documentStore, viewport: vp, zoom } = tab;
   const doc = documentStore.state;
 
-  const docKey = () => (doc.loaded ? doc.docId : null);
-  const [outline] = createResource(docKey, (docId) => engine.getOutline(docId).catch(() => []));
-  const entries = createMemo<FormalEntry[]>(() => outlineAsEntries(outline() ?? []));
+  const structure = tab.structureStore.state;
+  const entries = createMemo<FormalEntry[]>(() =>
+    doc.loaded && structure.docId === doc.docId ? outlineAsEntries(structure.outline) : []
+  );
 
   // Layout is memoized on zoom, not scroll: this recomputes on every scroll
   // frame and must not drag an O(pages) layout along with it.

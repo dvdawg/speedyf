@@ -476,6 +476,25 @@ pub async fn get_outline(
         .await
 }
 
+/// An outline generated from the document's headings, one idle slice per
+/// call: the reader calls again until `done`. Only asked for when the PDF's
+/// own outline is missing or trivial.
+#[tauri::command]
+pub async fn get_generated_outline(
+    state: tauri::State<'_, EngineState>,
+    doc_id: DocId,
+) -> AppResult<crate::engine::outline_gen::GeneratedOutlineDto> {
+    state
+        .0
+        .call_async(Priority::Idle, doc_id, move |respond| {
+            Work::GeneratedOutline {
+                doc: doc_id,
+                respond,
+            }
+        })
+        .await
+}
+
 /// Theorems, lemmas, definitions and captions recovered from a LaTeX-compiled
 /// document. Empty for PDFs that were not built with hyperref.
 /// Figures, tables and algorithms with a crop of each, for the figure panel.

@@ -15,6 +15,7 @@ import type {
   PrintOption,
   FormalEntry,
   FormFieldInfo,
+  GeneratedOutline,
   LibraryStatus,
   OutlineNode,
   Bubble,
@@ -142,6 +143,9 @@ export interface EngineApi {
   saveDocument(docId: number, plan: EditPlan, destPath: string): Promise<SaveResult>;
   getFormFields(docId: number): Promise<FormFieldInfo[]>;
   getOutline(docId: number): Promise<OutlineNode[]>;
+  /** One idle slice of generating an outline from the page headings; call
+   * again until `done`. */
+  getGeneratedOutline(docId: number): Promise<GeneratedOutline>;
   /** Annotations already in the file, so they can be edited rather than
    * merely looked at. */
   getAnnotations(docId: number): Promise<PageAnnotations[]>;
@@ -309,6 +313,7 @@ export const engine: EngineApi = {
   saveDocument: (docId, plan, destPath) => invoke('save_document', { docId, plan, destPath }),
   getFormFields: (docId) => invoke('get_form_fields', { docId }),
   getOutline: (docId) => invoke('get_outline', { docId }),
+  getGeneratedOutline: (docId) => invoke('get_generated_outline', { docId }),
   getAnnotations: (docId) => invoke('get_annotations', { docId }),
   getFormalEnvs: (docId) => invoke('get_formal_envs', { docId }),
   getFigures: (docId) => invoke('get_figures', { docId }),

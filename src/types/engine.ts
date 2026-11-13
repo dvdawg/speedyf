@@ -223,6 +223,15 @@ export interface OutlineNode {
   children: OutlineNode[];
 }
 
+/** One slice of an outline generated from the document's headings, for a
+ * PDF that ships none. `done` false means: ask again. */
+export interface GeneratedOutline {
+  done: boolean;
+  outline: OutlineNode[];
+  pagesDone: number;
+  pageCount: number;
+}
+
 export interface SaveResult {
   path: string;
   bytes: number;

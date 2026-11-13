@@ -347,14 +347,28 @@ pub(crate) fn is_bold_font_name(name: &str) -> bool {
 /// separates it from the previous glyph. Glyphs that do not run left to
 /// right (margin stamps, rotated figure labels) are left out.
 pub(crate) fn assemble_lines(glyphs: &[LayoutGlyph]) -> Vec<TextLine> {
-    let mut lines = Vec::new();
-    let mut current: Vec<&LayoutGlyph> = Vec::new();
+    line_groups(glyphs)
+        .iter()
+        .filter_map(|group| {
+            let members: Vec<&LayoutGlyph> = group.iter().map(|&i| &glyphs[i]).collect();
+            build_line(&members)
+        })
+        .collect()
+}
+
+/// The grouping `assemble_lines` makes, as indices into `glyphs`: one entry
+/// per line or segment, in reading order. Exposed so a reader that needs more
+/// about each line than `TextLine` carries (the outline generator's per-glyph
+/// font facts) groups exactly the same way.
+pub(crate) fn line_groups(glyphs: &[LayoutGlyph]) -> Vec<Vec<usize>> {
+    let mut groups = Vec::new();
+    let mut current: Vec<usize> = Vec::new();
     // Reference baseline and size: the largest glyph so far, so a
     // superscript that opens a line does not set the line's baseline.
     let mut reference: Option<(f32, f32)> = None;
     let mut last: Option<[f32; 4]> = None;
 
-    for glyph in glyphs {
+    for (index, glyph) in glyphs.iter().enumerate() {
         // A line break PDFium states is only its guess, and it guesses one
         // before every superscript; it separates words, and the geometry
         // decides lines.
@@ -363,13 +377,13 @@ pub(crate) fn assemble_lines(glyphs: &[LayoutGlyph]) -> Vec<TextLine> {
         }
         let Some(bbox) = glyph.bbox else {
             if !current.is_empty() {
-                current.push(glyph);
+                current.push(index);
             }
             continue;
         };
         if glyph.ch.is_whitespace() {
             if !current.is_empty() {
-                current.push(glyph);
+                current.push(index);
             }
             continue;
         }
@@ -379,32 +393,29 @@ pub(crate) fn assemble_lines(glyphs: &[LayoutGlyph]) -> Vec<TextLine> {
             let wide_gap = bbox[0] - prev[2] > SEGMENT_GAP_EMS * em;
             let jumped_back = bbox[0] < prev[0] - em;
             if new_line || wide_gap || jumped_back {
-                flush(&mut current, &mut lines);
+                if !current.is_empty() {
+                    groups.push(std::mem::take(&mut current));
+                }
                 reference = None;
             }
         }
-        current.push(glyph);
+        current.push(index);
         match reference {
             Some((_, size)) if glyph.size <= size + 0.5 => {}
             _ => reference = Some((glyph.baseline, glyph.size)),
         }
         last = Some(bbox);
     }
-    flush(&mut current, &mut lines);
-    lines
-}
-
-fn flush(glyphs: &mut Vec<&LayoutGlyph>, lines: &mut Vec<TextLine>) {
-    if let Some(line) = build_line(glyphs) {
-        lines.push(line);
+    if !current.is_empty() {
+        groups.push(current);
     }
-    glyphs.clear();
+    groups
 }
 
 /// One line from its glyphs: dominant size and weight, the union of the
 /// inked boxes, and the text with word spaces put back and superscripts
 /// marked.
-fn build_line(glyphs: &[&LayoutGlyph]) -> Option<TextLine> {
+pub(crate) fn build_line(glyphs: &[&LayoutGlyph]) -> Option<TextLine> {
     let inked: Vec<(&LayoutGlyph, [f32; 4])> = glyphs
         .iter()
         .filter(|g| !g.ch.is_whitespace())

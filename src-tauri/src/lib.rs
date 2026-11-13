@@ -415,6 +415,7 @@ pub fn run() {
             commands::submit_print,
             commands::get_form_fields,
             commands::get_outline,
+            commands::get_generated_outline,
             commands::get_annotations,
             commands::get_formal_envs,
             commands::get_figures,

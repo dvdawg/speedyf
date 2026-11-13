@@ -20,6 +20,7 @@ pub mod layout_text;
 pub mod links;
 pub mod ocr;
 pub mod ocr_thread;
+pub mod outline_gen;
 pub mod pdfium_init;
 pub mod preview;
 pub mod queue;
@@ -228,6 +229,12 @@ pub enum Work {
     Outline {
         doc: DocId,
         respond: Respond<Vec<OutlineNodeDto>>,
+    },
+    /// One idle slice of generating an outline from the document's headings,
+    /// for PDFs that ship none (`outline_gen`).
+    GeneratedOutline {
+        doc: DocId,
+        respond: Respond<outline_gen::GeneratedOutlineDto>,
     },
     FormalEnvs {
         doc: DocId,

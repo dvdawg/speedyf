@@ -1,5 +1,8 @@
 /** Table-of-contents panel: the PDF's bookmark tree, click to jump to a page.
- * Alternate sidebar mode to PageThumbnails, toggled from Sidebar.tsx. */
+ * Alternate sidebar mode to PageThumbnails, toggled from Sidebar.tsx.
+ *
+ * A PDF with no outline of its own may show one generated from its headings
+ * (see structureStore); a quiet note above it says so. */
 import { For, Show, useContext } from 'solid-js';
 import type { OutlineNode } from '../../types/engine';
 import { TabContext } from '../../app/TabContext';
@@ -54,6 +57,9 @@ export default function Outline() {
           when={structure.outline.length > 0}
           fallback={<div class="panel-note">This document has no table of contents.</div>}
         >
+          <Show when={structure.outlineGenerated}>
+            <div class="outline-generated-note">Generated from headings</div>
+          </Show>
           <For each={structure.outline}>
             {(node) => <OutlineEntry node={node} depth={0} onNavigate={navigate} />}
           </For>
