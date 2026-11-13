@@ -643,7 +643,7 @@ const UNICODE_PAIRS = `
 ϖ \\varpi|ρ \\rho|ϱ \\varrho|σ \\sigma|ς \\varsigma|τ \\tau|υ \\upsilon|φ \\varphi|ϕ \\phi
 χ \\chi|ψ \\psi|ω \\omega|Γ \\Gamma|Δ \\Delta|Θ \\Theta|Λ \\Lambda|Ξ \\Xi|Π \\Pi|Σ \\Sigma
 Υ \\Upsilon|Φ \\Phi|Ψ \\Psi|Ω \\Omega|Α A|Β B|Ε E|Ζ Z|Η H|Ι I|Κ K|Μ M|Ν N|Ο O|Ρ P|Τ T|Χ X
-ϝ \\digamma|µ \\mu
+ϝ \\digamma|µ \\mu|∆ \\Delta|Ω \\Omega|◦ \\circ|ℓ \\ell
 − -|∓ \\mp|± \\pm|× \\times|÷ \\div|· \\cdot|⋅ \\cdot|∙ \\cdot|∗ \\ast|∘ \\circ|• \\bullet
 ⊕ \\oplus|⊖ \\ominus|⊗ \\otimes|⊘ \\oslash|⊙ \\odot|∪ \\cup|∩ \\cap|⊎ \\uplus|⊔ \\sqcup
 ⊓ \\sqcap|∧ \\wedge|∨ \\vee|∖ \\setminus|≀ \\wr|⋄ \\diamond|△ \\bigtriangleup
@@ -682,6 +682,9 @@ const UNICODE_PAIRS = `
 ∑ \\sum|∏ \\prod|∐ \\coprod|∫ \\int|∬ \\iint|∭ \\iiint|∮ \\oint|⋃ \\bigcup|⋂ \\bigcap
 ⨁ \\bigoplus|⨂ \\bigotimes|⨀ \\bigodot|⋁ \\bigvee|⋀ \\bigwedge|⨄ \\biguplus|⨆ \\bigsqcup
 √ radical|∛ radical3|∜ radical4
+⎛ stack:(|⎜ stack:(|⎝ stack:(|⎞ stack:)|⎟ stack:)|⎠ stack:)|⎡ stack:[|⎢ stack:[|⎣ stack:[
+⎤ stack:]|⎥ stack:]|⎦ stack:]|⎧ stack:\\{|⎨ stack:\\{|⎩ stack:\\{|⎫ stack:\\}|⎬ stack:\\}|⎭ stack:\\}
+⎪ stack:brace|⌠ stack:\\int|⎮ stack:\\int|⌡ stack:\\int
 ℂ \\mathbb{C}|ℍ \\mathbb{H}|ℕ \\mathbb{N}|ℙ \\mathbb{P}|ℚ \\mathbb{Q}|ℝ \\mathbb{R}|ℤ \\mathbb{Z}
 ℬ \\mathcal{B}|ℰ \\mathcal{E}|ℱ \\mathcal{F}|ℋ \\mathcal{H}|ℐ \\mathcal{I}|ℒ \\mathcal{L}
 ℳ \\mathcal{M}|ℛ \\mathcal{R}|ℭ \\mathfrak{C}|ℌ \\mathfrak{H}|ℨ \\mathfrak{Z}
@@ -709,6 +712,9 @@ const UNICODE = (() => {
   // `‖ \|` reads as "‖", "\", "" across the separator; fix it by hand.
   map.set('‖', '\\|');
   map.set('\u2016', '\\|');
+  // ∥ is how TeX's \| maps to Unicode; in a formula it is nearly always a
+  // norm, not the relation \parallel.
+  map.set('∥', '\\|');
   map.set('|', '|');
   return map;
 })();
@@ -930,6 +936,9 @@ function fromEntry(entry) {
     return { tex, kind: 'accent', wide: tex.startsWith('\\wide') };
   }
   if (entry.startsWith('piece:')) return { tex: entry.slice(6), kind: 'piece', side: '?' };
+  // A piece of a tall delimiter built from Unicode's bracket pieces (⎛ ⎜ ⎝).
+  if (entry.startsWith('stack:'))
+    return { tex: entry.slice(6), kind: 'piece', side: '?', stack: true };
   if (entry.startsWith('radical')) return { tex: '\\sqrt', kind: 'radical', index: entry.slice(7) };
   if (/^[A-Za-z]$/.test(entry)) return { tex: entry, kind: 'letter' };
   if (/^[0-9]$/.test(entry)) return { tex: entry, kind: 'ord' };
@@ -971,63 +980,181 @@ function fromUnicode(text) {
   if ('+-=<>()[]/,;:.!?*|@'.includes(ch)) return fromEntry(ch);
   if (ch === '^') return { tex: '\\hat', kind: 'accent' };
   if (ch === '\\') return { tex: '\\backslash', kind: 'ord' };
+  // TeX's \not maps to the combining long solidus; it negates what follows.
+  if (cp === 0x338) return fromEntry('piece:not');
   if (cp >= 0x300 && cp < 0x370) return { tex: '', kind: 'space' };
   // Accented Latin letters and the like: KaTeX renders them as text.
   if (/\p{L}/u.test(ch)) return { tex: ch, kind: 'letter', ok: true };
   return { tex: ch, kind: 'ord', ok: false };
 }
 
+/** How far a cmex glyph's ink reaches above and below its origin, in ems:
+ * the TFM height and depth, by code. A delimiter or big operator hangs
+ * from its baseline; TeX shifts it onto the axis. The host's box for a
+ * glyph is the font's ascent and descent, the same for every glyph of the
+ * font, so these say how tall a delimiter really is. */
+function omxExtent(code) {
+  const h = 0.04;
+  if (code < 0x10) return [h, code === 0x0c || code === 0x0d ? 0.56 : 1.16];
+  if (code < 0x12) return [h, 1.76];
+  if (code < 0x20) return [h, 2.36];
+  if (code < 0x30) return [h, 2.96];
+  if (code < 0x40) return [0, code >= 0x3c && code <= 0x3e ? 0.6 : 1.8];
+  if (code < 0x44) return [0, 1.8];
+  if (code < 0x46) return [h, 2.96];
+  if (code >= 0x46 && code <= 0x61) {
+    const display = code < 0x50 ? code % 2 === 1 : code >= 0x58 && code !== 0x60;
+    const integral = code === 0x48 || code === 0x49 || code === 0x52 || code === 0x5a;
+    if (integral) return [0, display ? 2.22 : 1.11];
+    return [0, display ? 1.4 : 1.0];
+  }
+  if (code < 0x68) return [0.75, -0.55];
+  if (code < 0x70) return [h, 1.76];
+  if (code < 0x74) return [h, [1.16, 1.76, 2.36, 2.96][code - 0x70]];
+  if (code < 0x77) return [0, 0.6];
+  if (code < 0x7a) return [0, 0.6];
+  // Brace tips: the ends (7C, 7D) of an underbrace curl up, the middles
+  // (7A, 7B) point down; an overbrace uses them the other way round.
+  if (code < 0x7c) return [0.12, 0.6];
+  if (code < 0x7e) return [0.33, 0.6];
+  return [0, 0.6];
+}
+
+/** The delimiter size step (1 \big … 4 \Bigg) of a glyph `extent` ems tall. */
+function delimStep(extent) {
+  if (extent < 1.5) return 1;
+  if (extent < 2.1) return 2;
+  if (extent < 2.7) return 3;
+  return 4;
+}
+
 /** One glyph → an atom: its identity plus its geometry. `ok` is false when
- * nothing could say what the glyph is. */
+ * nothing could say what the glyph is.
+ *
+ * The glyph's Unicode text, when it has one, says what it is: PDFium gives
+ * no raw codes for a mapped font (`code` is then the Unicode value), so the
+ * TeX encoding tables are read only for a glyph with no text. The font
+ * still says how it is styled: blackboard, calligraphic, fraktur, script,
+ * bold, and which delimiters and operators come from the extension font. */
 function decodeGlyph(g) {
   const font = fontKind(g.font);
-  const geometry = {
-    x: num(g.x),
-    y: num(g.y),
-    w: num(g.w),
-    h: num(g.h),
-    baseline: Number.isFinite(g.baseline) ? g.baseline : num(g.y) + num(g.h) * 0.8,
-    size: num(g.size) || num(g.h) || 10,
-  };
-  if (font.enc === 'rule') return { tex: '', kind: 'rule', ok: true, ...geometry };
+  const size = num(g.size) || num(g.h) || 10;
+  const baseline = Number.isFinite(g.baseline) ? g.baseline : num(g.y) + num(g.h) * 0.8;
+  if (font.enc === 'rule') {
+    return {
+      tex: '',
+      kind: 'rule',
+      ok: true,
+      x: num(g.x),
+      y: num(g.y),
+      w: num(g.w),
+      h: num(g.h),
+      baseline,
+      size,
+    };
+  }
   const code = Number.isInteger(g.code) ? g.code : -1;
-  const text = typeof g.text === 'string' ? g.text : '';
+  const ink =
+    Array.isArray(g.ink) && g.ink.length === 4 && g.ink.every(Number.isFinite) && g.ink[3] > 0
+      ? { y: g.ink[1], h: g.ink[3] }
+      : null;
+  // A control character is no text: PDFium reports some unmapped codes
+  // (cmex's 0, the \big left parenthesis) as U+0000.
+  const raw = typeof g.text === 'string' ? g.text : '';
+  const text = Array.from(raw).every((c) => c.charCodeAt(0) < 0x20) ? '' : raw;
+  // A glyph's box from the host is the font's ascent and descent, not its
+  // ink; the structure is read from baselines and sizes, so every glyph gets
+  // the same body around its baseline. Extension-font glyphs, which hang
+  // below their origin, get their real reach.
+  let top = baseline - 0.7 * size;
+  let foot = baseline + 0.2 * size;
   let id = null;
   let style = font.style;
-  switch (font.enc) {
-    case 'OML':
-      id = fromEntry(OML[code]);
-      break;
-    case 'OMS':
-      id = fromEntry(OMS[code]);
-      break;
-    case 'OMX':
-      id = fromEntry(OMX[code]);
-      break;
-    case 'MSAM':
-      id = fromEntry(MSAM[code]);
-      break;
-    case 'MSBM':
-      id = fromEntry(MSBM[code]);
-      break;
-    case 'OT1':
-      id = fromEntry(OT1[code]);
-      break;
-    case 'ALPHA': {
-      const ch = code >= 33 && code < 127 ? String.fromCharCode(code) : text;
-      if (/^[A-Za-z]$/.test(ch)) {
-        id = { tex: `${style}{${ch}}`, kind: 'ord' };
+  if (text === '') {
+    switch (font.enc) {
+      case 'OML':
+        id = fromEntry(OML[code]);
+        break;
+      case 'OMS':
+        id = fromEntry(OMS[code]);
+        break;
+      case 'OMX':
+        id = fromEntry(OMX[code]);
+        break;
+      case 'MSAM':
+        id = fromEntry(MSAM[code]);
+        break;
+      case 'MSBM':
+        id = fromEntry(MSBM[code]);
+        break;
+      case 'OT1':
+        id = fromEntry(OT1[code]);
+        break;
+      case 'ALPHA': {
+        const ch = code >= 33 && code < 127 ? String.fromCharCode(code) : '';
+        if (/^[A-Za-z]$/.test(ch)) {
+          id = { tex: `${style}{${ch}}`, kind: 'ord' };
+          style = '';
+        }
+        break;
+      }
+      default:
+        break;
+    }
+    if (!id && (font.enc === 'T1' || font.enc === 'OT1') && code > 32 && code < 127) {
+      id = fromUnicode(String.fromCharCode(code));
+    }
+    if (id && font.enc === 'OMX' && code >= 0 && code < 128) {
+      const [above, below] = omxExtent(code);
+      top = baseline - above * size;
+      foot = baseline + Math.max(below, -above + 0.1) * size;
+    }
+    if (id && font.enc === 'OMX' && ink) {
+      top = ink.y;
+      foot = ink.y + ink.h;
+    }
+  } else {
+    id = fromUnicode(text);
+    const letter = /^[A-Za-z]$/.test(text);
+    if (id && letter) {
+      const styled = {
+        MSBM: /[A-Z]/.test(text) ? '\\mathbb' : '',
+        OMS: /[A-Z]/.test(text) ? '\\mathcal' : '',
+        ALPHA: style,
+      }[font.enc];
+      if (styled) {
+        id = { tex: `${styled}{${text}}`, kind: 'ord' };
         style = '';
       }
-      break;
     }
-    default:
-      break;
+    const sized = id && ['open', 'close', 'fence', 'bigop', 'radical', 'piece'].includes(id.kind);
+    if (sized && ink) {
+      // An OpenType math font's big variants (a display ∑, a tall
+      // parenthesis) share the small one's Unicode: only the ink says which.
+      top = ink.y;
+      foot = ink.y + ink.h;
+      const extent = ink.h / size;
+      if (id.kind === 'bigop' || id.kind === 'radical' || extent > 1.3 || font.enc === 'OMX') {
+        id = { ...id, tall: true };
+        if (['open', 'close', 'fence'].includes(id.kind)) id.delimSize = delimStep(extent);
+      }
+    } else if (sized && font.enc === 'OMX') {
+      // Without ink, sized by the box, which may be loose: a guess, and
+      // \left…\right pairs do not care.
+      const extent = num(g.h) / size;
+      id = { ...id, tall: true, delimSize: id.kind === 'bigop' ? undefined : delimStep(extent) };
+      top = num(g.y);
+      foot = num(g.y) + num(g.h);
+    }
   }
-  if (!id && text) id = fromUnicode(text);
-  if (!id && (font.enc === 'T1' || font.enc === 'OT1') && code > 32 && code < 127) {
-    id = fromUnicode(String.fromCharCode(code));
+  if (id && font.enc === 'OMS' && id.kind === 'radical') {
+    // The symbol font's radical hangs from its baseline like a delimiter.
+    top = ink ? ink.y : baseline - 0.04 * size;
+    foot = ink ? ink.y + ink.h : baseline + 0.96 * size;
+    id = { ...id, tall: true };
   }
+  if (id && font.enc === 'OMX' && text === '' && code >= 0) id = { ...id, code };
+  const geometry = { x: num(g.x), y: top, w: num(g.w), h: foot - top, baseline, size };
   if (!id) return { tex: '', kind: 'unknown', ok: false, ...geometry };
   const upright =
     id.kind === 'letter' &&
@@ -1044,6 +1171,50 @@ function decodeGlyph(g) {
     enc: font.enc,
     ...geometry,
   };
+}
+
+// ---------- Symbol fonts read through the wrong map ----------
+//
+// A Symbol-encoded font (Symbol, MT Symbol, SymbolMT) whose PDF carries no
+// usable Unicode map gets its codes read as Mac Roman or Latin-1 text: the
+// summation sign (Symbol code E5) comes out "Â", ∫ (F2) "Ú", ∈ (CE) "Œ",
+// α ('a') "a". When a Symbol font's text has such characters, every glyph of
+// it is read back to its code and through the Symbol encoding.
+
+/** Adobe Symbol encoding, codes 0x20–0x7E then 0xA0–0xFE ('' unused). */
+const SYMBOL_LOW =
+  ' !∀#∃%&∋()∗+,−./0123456789:;<=>?≅ΑΒΧΔΕΦΓΗΙϑΚΛΜΝΟΠΘΡΣΤΥςΩΞΨΖ[∴]⊥_\u203Eαβχδεφγηιϕκλμνοπθρστυϖωξψζ{|}∼';
+const SYMBOL_HIGH =
+  '€ϒ′≤⁄∞ƒ♣♦♥♠↔←↑→↓°±″≥×∝∂•÷≠≡≈…⏐⎯↵ℵℑℜ℘⊗⊕∅∩∪⊃⊇⊄⊂⊆∈∉∠∇®©™∏√⋅¬∧∨⇔⇐⇑⇒⇓◊〈®©™∑⎛⎜⎝⎡⎢⎣⎧⎨⎩⎪\uF8FF〉∫⌠⎮⌡⎞⎟⎠⎤⎥⎦⎫⎬⎭';
+/** Mac Roman, codes 0x80–0xFF. */
+const MAC_ROMAN =
+  'ÄÅÇÉÑÖÜáàâäãåçéèêëíìîïñóòôöõúùûü†°¢£§•¶ß®©™´¨≠ÆØ∞±≤≥¥µ∂∑∏π∫ªºΩæø¿¡¬√ƒ≈∆«»…\u00A0ÀÃÕŒœ–—“”‘’÷◊ÿŸ⁄€‹›ﬁﬂ‡·‚„‰ÂÊÁËÈÍÎÏÌÓÔ\uF8FFÒÚÛÙıˆ˜¯˘˙˚¸˝˛ˇ';
+
+/** A code's character in the Symbol encoding, or null. */
+function symbolChar(code) {
+  if (code >= 0x20 && code <= 0x7e) return SYMBOL_LOW[code - 0x20];
+  if (code >= 0xa0 && code <= 0xfe) return SYMBOL_HIGH[code - 0xa0] || null;
+  return null;
+}
+
+const isSymbolFont = (name) => /symbol/i.test(String(name ?? '')) && !/apple/i.test(String(name));
+
+function fixSymbolFonts(glyphs) {
+  const misread = new Set();
+  for (const g of glyphs) {
+    if (!isSymbolFont(g.font) || typeof g.text !== 'string' || g.text.length !== 1) continue;
+    // Letters and Latin accented letters are never what a Symbol glyph is.
+    if (/[A-Za-z\u00C0-\u00FF\u0152\u0153¢£§•¶®©™´¨]/.test(g.text)) misread.add(g.font);
+  }
+  if (misread.size === 0) return glyphs;
+  return glyphs.map((g) => {
+    if (!misread.has(g.font) || typeof g.text !== 'string' || g.text.length !== 1) return g;
+    const c = g.text.charCodeAt(0);
+    const mac = MAC_ROMAN.indexOf(g.text);
+    const code = c < 0x80 ? c : mac >= 0 ? 0x80 + mac : c < 0x100 ? c : -1;
+    const ch = code >= 0 ? symbolChar(code) : null;
+    return ch ? { ...g, text: ch, code: ch.codePointAt(0) } : g;
+  });
 }
 
 function num(v) {
@@ -1092,6 +1263,16 @@ function union(items) {
   };
 }
 
+/** The body size of some atoms: big operators and delimiters are set
+ * larger (a Word or MathType ∑ or parenthesis in a bigger font) and say
+ * nothing about it. */
+function bodySize(items) {
+  const plain = items.filter(
+    (a) => !isTall(a) && !['bigop', 'open', 'close', 'fence', 'rule'].includes(a.kind)
+  );
+  return plain.length > 0 ? maxSize(plain) : maxSize(items);
+}
+
 function maxSize(items) {
   let s = 0;
   for (const a of items) if (a.kind !== 'rule' && a.size > s) s = a.size;
@@ -1102,7 +1283,7 @@ function maxSize(items) {
  * decoded, undecoded }`. */
 function reconstruct(glyphs) {
   const flags = { undecoded: 0, ambiguous: 0 };
-  let atoms = glyphs.map(decodeGlyph);
+  let atoms = fixSymbolFonts(glyphs).map(decodeGlyph);
   const real = atoms.filter((a) => a.kind !== 'rule');
   flags.undecoded = real.filter((a) => !a.ok).length;
   atoms = atoms.filter((a) => a.kind !== 'space' && (a.ok || a.kind !== 'unknown'));
@@ -1110,9 +1291,12 @@ function reconstruct(glyphs) {
   if (atoms.length === 0) {
     return { latex: '', confidence: 'low', rows: 0, decoded: 0, undecoded: flags.undecoded };
   }
+  const braces = takeBraces(atoms);
+  atoms = braces.atoms;
   atoms = mergePieces(atoms, flags);
   atoms = attachAccents(atoms, flags);
   atoms = applyRules(atoms, flags);
+  atoms = applyBraces(atoms, braces.braces, flags);
   const ctx = { flags, rows: 1 };
   const latex = tidy(layoutBlock(atoms, 0, ctx, true));
   const decoded = real.length - flags.undecoded;
@@ -1125,9 +1309,21 @@ function reconstruct(glyphs) {
 /** Pieces of an extensible delimiter, stacked in one column, are one
  * delimiter; pieces of a radical are one radical. */
 function mergePieces(atoms, flags) {
-  const pieces = atoms.filter((a) => a.kind === 'piece' && a.enc === 'OMX');
+  // A tall | or ‖ is the small one repeated, one piece over the other.
+  const isBar = (a) => a.enc === 'OMX' && (a.code === 0x0c || a.code === 0x0d || a.code === 0x77);
+  const bars = atoms.filter(isBar);
+  const stackedBar = (a) =>
+    bars.some(
+      (b) =>
+        b !== a &&
+        Math.abs(b.x - a.x) < 0.2 * a.size &&
+        Math.max(b.y - bottom(a), a.y - bottom(b)) < 0.1 * a.size
+    );
+  const isPiece = (a) =>
+    (a.kind === 'piece' && (a.enc === 'OMX' || a.stack)) || (isBar(a) && stackedBar(a));
+  const pieces = atoms.filter(isPiece);
   if (pieces.length === 0) return atoms;
-  const rest = atoms.filter((a) => !(a.kind === 'piece' && a.enc === 'OMX'));
+  const rest = atoms.filter((a) => !isPiece(a));
   const groups = [];
   for (const p of [...pieces].sort((a, b) => a.y - b.y)) {
     const group = groups.find((g) =>
@@ -1141,7 +1337,10 @@ function mergePieces(atoms, flags) {
     else groups.push([p]);
   }
   for (const group of groups) {
-    const named = group.find((p) => p.tex !== 'brace' && p.side !== '?') ?? group[0];
+    const named =
+      group.find((p) => p.tex !== 'brace' && p.side !== '?') ??
+      group.find((p) => p.tex !== 'brace') ??
+      group[0];
     let tex = named.tex;
     if (tex === 'brace') tex = '\\{';
     if (tex === 'brace-tip') {
@@ -1149,9 +1348,93 @@ function mergePieces(atoms, flags) {
       continue;
     }
     const box = union(group);
-    const base = { ...named, ...box, baseline: bottom(box), ok: true, tall: true, delimSize: 5 };
+    const delimSize = isBar(named) || named.stack ? delimStep(box.h / named.size) : 5;
+    const base = { ...named, ...box, baseline: bottom(box), ok: true, tall: true, delimSize };
     if (tex === '\\sqrt') rest.push({ ...base, tex, kind: 'radical' });
     else rest.push({ ...base, tex, kind: classOf(tex) });
+  }
+  return rest;
+}
+
+/** Horizontal braces: the extension-font tips of an \underbrace or
+ * \overbrace, and the rules that join them, set aside before rules are read
+ * as fraction bars. An underbrace starts with tip 7C, an overbrace with 7A. */
+function takeBraces(atoms) {
+  const isTip = (a) => a.enc === 'OMX' && a.code >= 0x7a && a.code <= 0x7d;
+  const tips = atoms.filter(isTip).sort((a, b) => a.x - b.x);
+  if (tips.length === 0) return { atoms, braces: [] };
+  const braces = [];
+  const used = new Set();
+  for (const t of tips) {
+    if (used.has(t) || (t.code !== 0x7c && t.code !== 0x7a)) continue;
+    const rest = tips.filter(
+      (u) =>
+        !used.has(u) && u !== t && u.x > t.x && Math.abs(u.baseline - t.baseline) < 0.5 * t.size
+    );
+    // The far end is the next tip of the closing kind.
+    const end = rest.find((u) => u.code === (t.code === 0x7c ? 0x7d : 0x7b));
+    if (!end) continue;
+    const group = [t, ...rest.filter((u) => u.x <= end.x)];
+    for (const u of group) used.add(u);
+    const box = union(group);
+    braces.push({ under: t.code === 0x7c, ...box, size: t.size });
+  }
+  const joins = (r) =>
+    r.kind === 'rule' &&
+    braces.some(
+      (b) =>
+        cx(r) >= b.x &&
+        cx(r) <= right(b) &&
+        cy(r) >= b.y - 0.2 * b.size &&
+        cy(r) <= bottom(b) + 0.2 * b.size
+    );
+  return { atoms: atoms.filter((a) => !used.has(a) && !joins(a)), braces };
+}
+
+/** Each brace with what it spans and its label: \underbrace{x+y}_{n}. */
+function applyBraces(atoms, braces, flags) {
+  let rest = atoms;
+  for (const b of [...braces].sort((p, q) => p.w - q.w)) {
+    const S = b.size;
+    const near = (a) =>
+      b.under
+        ? cy(a) < b.y && b.y - bottom(a) < 1.2 * S
+        : cy(a) > bottom(b) && a.y - bottom(b) < 1.2 * S;
+    const content = rest.filter(
+      (a) => a.kind !== 'rule' && cx(a) >= b.x - 0.1 * S && cx(a) <= right(b) + 0.1 * S && near(a)
+    );
+    if (content.length === 0) {
+      flags.ambiguous++;
+      continue;
+    }
+    const others = rest.filter((a) => !content.includes(a) && a.kind !== 'rule');
+    const seed = others.filter(
+      (a) =>
+        cx(a) >= b.x - S &&
+        cx(a) <= right(b) + S &&
+        (b.under
+          ? a.y >= bottom(b) - 0.3 * S && a.y - bottom(b) < 1.2 * S
+          : bottom(a) <= b.y + 0.3 * S && b.y - bottom(a) < 1.2 * S)
+    );
+    const label = chainRow(seed, others, S);
+    const size = bodySize(content);
+    const level = content.filter((a) => !isTall(a) && a.size >= 0.85 * size);
+    const baseline = median((level.length ? level : content).map((a) => a.baseline));
+    const ctx = { flags, rows: 1 };
+    const word = b.under ? 'underbrace' : 'overbrace';
+    let tex = `\\${word}{${layoutBlock(content, 0, ctx)}}`;
+    if (label.length) tex += `${b.under ? '_' : '^'}{${layoutBlock(label, 1, ctx)}}`;
+    const used = new Set([...content, ...label]);
+    rest = rest.filter((a) => !used.has(a));
+    rest.push({
+      tex,
+      kind: 'ord',
+      ok: true,
+      composite: 'brace',
+      ...union([b, ...content, ...label]),
+      baseline,
+      size,
+    });
   }
   return rest;
 }
@@ -1171,9 +1454,11 @@ function attachAccents(atoms, flags) {
     );
     let under;
     if (acc.wide) {
-      under = near.filter(
-        (b) => cx(b) >= acc.x - 0.1 * acc.size && cx(b) <= right(acc) + 0.1 * acc.size
-      );
+      // What the accent spans, without the scripts hanging off it:
+      // \widehat{f}_{S}, not \widehat{f_S}.
+      under = near.filter((b) => cx(b) >= acc.x && cx(b) <= right(acc));
+      const full = maxSize(under) * 0.85;
+      under = under.filter((b) => b.size >= full);
     } else {
       const overlap = (b) => Math.min(right(b), right(acc)) - Math.max(b.x, acc.x);
       const best = near
@@ -1222,7 +1507,8 @@ function applyRules(atoms, flags) {
       (r) =>
         r.kind === 'radical' &&
         Math.abs(right(r) - rule.x) < 0.5 * S &&
-        r.y <= rule.y + 0.5 * S &&
+        // The bar is the sign's top, not a fraction bar further down.
+        Math.abs(r.y - rule.y) < 0.4 * S &&
         bottom(r) > rule.y
     );
     if (radical) {
@@ -1230,6 +1516,8 @@ function applyRules(atoms, flags) {
         (b) =>
           b !== radical &&
           inX(b) &&
+          // Under the bar, not the punctuation just past its end.
+          right(b) <= right(rule) + 0.1 * S &&
           cy(b) > rule.y &&
           b.y >= rule.y - tol &&
           cy(b) < bottom(radical) + tol
@@ -1239,7 +1527,7 @@ function applyRules(atoms, flags) {
           b !== radical &&
           !content.includes(b) &&
           right(b) <= radical.x + radical.w * 0.75 &&
-          b.x >= radical.x - 1.5 * S &&
+          b.x >= radical.x - 0.15 * S &&
           b.baseline <= cy(radical) + tol &&
           b.size < 0.85 * S &&
           bottom(b) > radical.y - 0.5 * S
@@ -1257,7 +1545,7 @@ function applyRules(atoms, flags) {
         composite: 'radical',
         ...union([radical, rule, ...content, ...index]),
         baseline: content.length > 0 ? anchor.baseline : radical.baseline,
-        size: content.length > 0 ? maxSize(content) : radical.size,
+        size: content.length > 0 ? bodySize(content) : radical.size,
       });
       continue;
     }
@@ -1266,7 +1554,7 @@ function applyRules(atoms, flags) {
     const num = side(true);
     const den = side(false);
     if (num.length > 0 && den.length > 0) {
-      const size = maxSize([...num, ...den]);
+      const size = bodySize([...num, ...den]);
       const used = new Set([...num, ...den]);
       rest = rest.filter((b) => !used.has(b));
       rest.push({
@@ -1290,7 +1578,7 @@ function applyRules(atoms, flags) {
         composite: 'overline',
         ...union([rule, ...den]),
         baseline: anchor.baseline,
-        size: maxSize(den),
+        size: bodySize(den),
       });
     } else if (num.length > 0) {
       const used = new Set(num);
@@ -1303,7 +1591,7 @@ function applyRules(atoms, flags) {
         composite: 'underline',
         ...union([rule, ...num]),
         baseline: anchor.baseline,
-        size: maxSize(num),
+        size: bodySize(num),
       });
     } else {
       flags.ambiguous++;
@@ -1336,16 +1624,26 @@ function gatherSide(atoms, rule, above, S, blockers, inX) {
           ? r.y + r.h / 2 < ruleMid && r.y + r.h / 2 > cy(b)
           : r.y + r.h / 2 > ruleMid && r.y + r.h / 2 < cy(b))
     );
-  const members = candidates.filter((b) => gap(b) < 0.9 * S && gap(b) > -0.6 * S && !blocked(b));
+  const near = candidates.filter((b) => gap(b) < 0.9 * S && gap(b) > -0.6 * S && !blocked(b));
+  // The numerator is what sits right on the bar; a matrix cell a row
+  // further up, in the bar's column, is not.
+  const closest = Math.min(...near.map(gap));
+  const members = near.filter((b) => gap(b) < Math.max(closest, 0) + 0.45 * S);
   let grew = true;
   while (grew) {
     grew = false;
     for (const b of candidates) {
       if (members.includes(b) || blocked(b)) continue;
-      const touches = members.some((m) => {
-        const vgap = Math.max(m.y - bottom(b), b.y - bottom(m));
-        return vgap < 0.25 * S;
-      });
+      // Stacked onto a member (its script, a fraction over it), and no
+      // larger than the members: a full-size matrix cell above a
+      // script-size numerator is the row above, not part of it.
+      const largest = Math.max(...members.map((m) => m.size));
+      const touches =
+        b.size <= 1.15 * largest &&
+        members.some((m) => {
+          const vgap = Math.max(m.y - bottom(b), b.y - bottom(m));
+          return vgap < 0.25 * S;
+        });
       if (touches) {
         members.push(b);
         grew = true;
@@ -1366,7 +1664,7 @@ function layoutBlock(items, depth, ctx, top = false) {
   if (items.length === 1 && !items[0].tall && !(items[0].kind === 'letter' && items[0].textFont)) {
     return wrapStyle(items[0]);
   }
-  const B = maxSize(items);
+  const B = bodySize(items);
   const anchors = anchorsOf(items, B);
   const clusters = clusterBaselines(anchors, B);
   if (clusters.length <= 1) {
@@ -1386,6 +1684,8 @@ function layoutBlock(items, depth, ctx, top = false) {
   const rows = assignRows(items, clusters, B);
   if (top) ctx.rows = Math.max(ctx.rows, rows.length);
   const segs = rows.map((row) => rowSegments(row.items, row.baseline, B, depth, ctx));
+  // Lines in a script or a limit are a \substack.
+  if (depth > 0) return `\\substack{${segs.map((s) => segmentsToTex(s, depth)).join(' \\\\ ')}}`;
   return alignedRows(segs, B, depth);
 }
 
@@ -1605,24 +1905,86 @@ function rowSegments(items, baseline, B, depth, ctx) {
     return Math.abs(a.baseline - baseline) < 0.06 * B;
   };
   let bases = items.filter(isBase).sort((a, b) => a.x - b.x);
+  // A script's own script can sit back on the baseline (the * of
+  // U_{\lambda^*(t)}); a small symbol on the baseline right after a script
+  // is part of that script, not a symbol of the row.
+  const scriptRun = new Set(items.filter((a) => !bases.includes(a)));
+  for (const a of [...bases]) {
+    if (a.size >= 0.85 * B || isTall(a) || a.composite || a.axis !== undefined) continue;
+    const before = [...scriptRun].some(
+      (p) =>
+        p.size < 0.85 * B &&
+        right(p) <= a.x + 0.1 * B &&
+        a.x - right(p) < 0.25 * B &&
+        // A script beside it, not a limit far under the operator before it.
+        Math.abs(p.baseline - a.baseline) < 0.6 * B
+    );
+    if (before) {
+      scriptRun.add(a);
+      bases = bases.filter((b) => b !== a);
+    }
+  }
   let small = items.filter((a) => !bases.includes(a));
 
-  bases = groupWords(bases, B);
+  bases = groupWords(bases, B, depth);
 
   // Limits: small things centred over or under a big operator (or a
   // function like lim that takes limits).
   const limits = new Map();
+  const takesLimits = (b) => b.kind === 'bigop' || b.limits;
   for (const op of bases) {
-    const takes = op.kind === 'bigop' || op.limits;
-    if (!takes || small.length === 0) continue;
+    if (small.length === 0) continue;
+    const takes = takesLimits(op);
+    // Anything else (\mathbb{E}, \operatorname*) shows it takes limits by
+    // having something set well below or above it.
+    // Only a blackboard, bold or upright capital, or an operator's name.
+    const named = op.composite === 'word' || /^\\math(bb|bf|rm)\{[A-Z][a-z]*\}$/.test(op.tex);
+    if (!takes && !named) continue;
     const overlapsOp = (a) => Math.min(right(a), right(op)) - Math.max(a.x, op.x) > 0;
-    const upperSeed = small.filter((a) => overlapsOp(a) && bottom(a) <= op.y + 0.35 * op.h);
-    const lowerSeed = small.filter((a) => overlapsOp(a) && a.y >= op.y + 0.6 * op.h);
-    const upper = chainRow(upperSeed, small, B);
-    const lower = chainRow(lowerSeed, small, B).filter((a) => !upper.includes(a));
+    const overlapsOther = (a) =>
+      bases.some(
+        (o) =>
+          o !== op &&
+          takesLimits(o) &&
+          Math.min(right(a), right(o)) - Math.max(a.x, o.x) > 0.3 * a.w
+      );
+    const pool = small.filter((a) => !overlapsOther(a));
+    const upperSeed = pool.filter(
+      (a) =>
+        overlapsOp(a) &&
+        (takes ? bottom(a) <= op.y + 0.35 * op.h : a.baseline < op.baseline - 0.75 * B)
+    );
+    const lowerSeed = pool.filter(
+      (a) =>
+        overlapsOp(a) && (takes ? a.y >= op.y + 0.6 * op.h : a.baseline > op.baseline + 0.55 * B)
+    );
+    const upper = chainRow(upperSeed, pool, B);
+    const lower = chainRow(lowerSeed, pool, B).filter((a) => !upper.includes(a));
     if (upper.length || lower.length) {
-      limits.set(op, { upper, lower });
+      limits.set(op, { upper, lower, mathop: !takes });
       small = small.filter((a) => !upper.includes(a) && !lower.includes(a));
+    }
+  }
+
+  // A relation with something small set right over or under it:
+  // \overset{\mathrm{(i)}}{\leq}, \stackrel's output.
+  const stacked = new Map();
+  for (const rel of bases) {
+    if (rel.kind !== 'rel' || isTall(rel) || small.length === 0) continue;
+    const overRel = (a) => cx(a) >= rel.x - 0.1 * B && cx(a) <= right(rel) + 0.1 * B;
+    const over = chainRow(
+      small.filter((a) => overRel(a) && a.baseline < rel.baseline - 0.5 * B),
+      small.filter((a) => a.baseline < rel.baseline - 0.5 * B),
+      B
+    );
+    const under = chainRow(
+      small.filter((a) => overRel(a) && a.baseline > rel.baseline + 0.45 * B),
+      small.filter((a) => a.baseline > rel.baseline + 0.45 * B),
+      B
+    );
+    if (over.length || under.length) {
+      stacked.set(rel, { over, under });
+      small = small.filter((a) => !over.includes(a) && !under.includes(a));
     }
   }
 
@@ -1649,7 +2011,11 @@ function rowSegments(items, baseline, B, depth, ctx) {
   }
   for (const b of bases) {
     let tex = baseTex(b);
+    const st = stacked.get(b);
+    if (st?.over.length) tex = `\\overset{${layoutBlock(st.over, depth + 1, ctx)}}{${tex}}`;
+    if (st?.under.length) tex = `\\underset{${layoutBlock(st.under, depth + 1, ctx)}}{${tex}}`;
     const lim = limits.get(b);
+    if (lim?.mathop) tex = `\\mathop{${tex}}`;
     if (lim) {
       if (lim.lower.length) tex += `_${braced(layoutBlock(lim.lower, depth + 1, ctx))}`;
       if (lim.upper.length) tex += `^${braced(layoutBlock(lim.upper, depth + 1, ctx))}`;
@@ -1707,7 +2073,7 @@ function scriptTex(sub, sup, depth, ctx) {
 /** Runs of upright letters set side by side are words: a function name
  * (\sin), or text in math (\text{for all}). A single upright letter from a
  * TeX text font is \mathrm. */
-function groupWords(bases, B) {
+function groupWords(bases, B, depth = 0) {
   const out = [];
   let run = [];
   const flush = () => {
@@ -1731,7 +2097,8 @@ function groupWords(bases, B) {
     };
     const fn = functionWords(letters);
     if (fn && style !== '\\mathit') {
-      const limitsFn = fn.length === 1 && LIMIT_FUNCTIONS.has(fn[0]);
+      // \arg\min and \inf\sup take their limits like the last of them.
+      const limitsFn = LIMIT_FUNCTIONS.has(fn[fn.length - 1]);
       out.push({
         ...common,
         tex: fn
@@ -1755,6 +2122,17 @@ function groupWords(bases, B) {
       if (i > 0 && a.x - right(word[i - 1]) > 0.15 * B) text += ' ';
       text += a.tex;
     });
+    // One upright word on the line that is not an English one is an
+    // operator's name: \operatorname{diam}, \operatorname{err}.
+    if (
+      depth === 0 &&
+      !style &&
+      /^[A-Za-z]{2,6}$/.test(text) &&
+      !TEXT_WORDS.has(text.toLowerCase())
+    ) {
+      out.push({ ...common, tex: `\\operatorname{${text}}`, kind: 'op' });
+      return;
+    }
     const wrap =
       {
         '\\mathbf': '\\textbf',
@@ -1772,7 +2150,8 @@ function groupWords(bases, B) {
       (!prev ||
         (a.style === prev.style &&
           a.x - right(prev) < 0.45 * B &&
-          a.x - right(prev) > -0.3 * B &&
+          // The halves of a ligature (fi, ff) share one box.
+          (a.x - right(prev) > -0.3 * B || Math.abs(a.x - prev.x) < 0.05 * B) &&
           Math.abs(a.baseline - prev.baseline) < 0.1 * B));
     if (fits) {
       run.push(a);
@@ -1785,6 +2164,16 @@ function groupWords(bases, B) {
   flush();
   return out;
 }
+
+/** Short words that are prose in a formula ("x = 0 or x = 1"), written
+ * \text rather than as an operator name. */
+const TEXT_WORDS = new Set(
+  (
+    'and or for if iff where with then else otherwise all any some such that is as on in of ' +
+    'to when holds subject st s.t. let by since but not at each every else from over under ' +
+    'are be has have it its the a an if unless almost everywhere ae whenever while via'
+  ).split(' ')
+);
 
 /** "sin" → ['sin'], "sincos" → ['sin', 'cos'], "sinx" → null. */
 function functionWords(letters) {
@@ -1853,6 +2242,12 @@ function fixSequences(segments, baseline, B) {
       i++;
       continue;
     }
+    if (s.tex === ':' && next?.tex === '=' && next.x - s.right < 0.3 * B) {
+      // ":=" is one relation, not a colon and an equals sign.
+      out.push({ ...next, tex: ':=', x: s.x, kind: 'rel' });
+      i++;
+      continue;
+    }
     if (t === 'mapsto' && next && next.tex === '\\to') {
       out.push({ ...next, tex: '\\mapsto', x: s.x, kind: 'rel' });
       i++;
@@ -1880,9 +2275,16 @@ function pairDelimiters(segments, flags) {
   const stack = [];
   const sized = (s) => s.base && s.base.tall && ['open', 'close', 'fence'].includes(s.base.kind);
   const pairs = new Map();
+  const middles = new Set();
   segments.forEach((s, i) => {
     if (!sized(s)) return;
     const k = s.base.kind;
+    const top = stack[stack.length - 1];
+    if (k === 'fence' && top !== undefined && segments[top].base.kind === 'open') {
+      // A bar inside a bracket pair: \left\{ x \middle| y \right\}.
+      middles.add(i);
+      return;
+    }
     if (
       k === 'open' ||
       (k === 'fence' && !stack.some((j) => segments[j].base.tex === s.base.tex))
@@ -1895,9 +2297,17 @@ function pairDelimiters(segments, flags) {
     pairs.set(j, i);
     pairs.set(i, j);
   });
+  const paired = (i) => {
+    // A middle bar is \middle only when its brackets are a \left…\right pair.
+    for (const [open, close] of pairs) if (open < i && close > i) return true;
+    return false;
+  };
   return segments.map((s, i) => {
     if (!sized(s)) return s;
     const scripts = s.tex.slice(s.base.tex.length);
+    if (middles.has(i) && paired(i)) {
+      return { ...s, tex: `\\middle${s.base.tex}${scripts}`, kind: 'rel' };
+    }
     if (pairs.has(i)) {
       const open = pairs.get(i) > i;
       return {
@@ -1923,6 +2333,15 @@ function segmentsToTex(segments, depth) {
     let piece = s.tex;
     if (!piece) continue;
     const spaced = depth === 0 && (s.kind === 'rel' || (s.kind === 'bin' && isBinary(prev)));
+    // Words in a display keep the space set around them: \text{or} between
+    // two formulas reads "or" only with room either side.
+    const wordy = (t) =>
+      /^\\text(bf|it|sf|tt)?\{/.test(t) || /^\\text(bf|it|sf|tt)?\{[^{}]*\}$/.test(t);
+    const gap = prev && Number.isFinite(s.x) && Number.isFinite(prev.right) ? s.x - prev.right : 0;
+    const em = s.base?.size ?? prev?.base?.size ?? 10;
+    if (depth === 0 && prev && (wordy(piece) || wordy(prev.tex)) && gap > 0.15 * em) {
+      piece = `${gap > 0.7 * em ? '\\quad' : '\\'} ${piece}`;
+    }
     if (spaced) piece = out ? ` ${piece} ` : `${piece} `;
     else if (depth === 0 && prev && prev.kind === 'punct') piece = ` ${piece}`;
     out = joinTex(out, piece);
@@ -2108,9 +2527,13 @@ function assemble(files) {
 }
 
 /** Argument-free macros: \newcommand{\R}{\mathbb{R}}, \def\eps{\varepsilon},
- * \DeclareMathOperator{\Tr}{Tr}. A macro with arguments is left alone. */
+ * \DeclareMathOperator{\Tr}{Tr}. Macros with arguments,
+ * \newcommand{\err}[2]{\mathrm{err}_{#2}(#1)}, are kept apart, on the map's
+ * `withArgs`. */
 function collectMacros(text) {
   const macros = new Map();
+  const withArgs = new Map();
+  Object.defineProperty(macros, 'withArgs', { value: withArgs });
   const re =
     /\\(newcommand|renewcommand|providecommand|DeclareRobustCommand|def|DeclareMathOperator)(\*?)\s*(?:\{\s*\\([A-Za-z]+)\s*\}|\\([A-Za-z]+))/g;
   let m;
@@ -2118,6 +2541,28 @@ function collectMacros(text) {
     const name = m[3] ?? m[4];
     let i = re.lastIndex;
     while (/\s/.test(text[i] ?? '')) i++;
+    if (text[i] === '[' && m[1] !== 'def' && m[1] !== 'DeclareMathOperator') {
+      // [n] arguments, then perhaps [default] for the first.
+      const n = /^\[\s*(\d)\s*\]/.exec(text.slice(i, i + 8));
+      if (!n) continue;
+      let j = i + n[0].length;
+      while (/\s/.test(text[j] ?? '')) j++;
+      let optional = null;
+      if (text[j] === '[') {
+        const close = text.indexOf(']', j);
+        if (close < 0) continue;
+        optional = text.slice(j + 1, close);
+        j = close + 1;
+        while (/\s/.test(text[j] ?? '')) j++;
+      }
+      const body = bracedAt(text, j);
+      if (!body) continue;
+      if (m[1] === 'providecommand' && withArgs.has(name)) continue;
+      if (!withArgs.has(name) || m[1] !== 'newcommand') {
+        withArgs.set(name, { n: Number(n[1]), optional, body: body.inner.trim() });
+      }
+      continue;
+    }
     if (text[i] === '[' || (m[1] === 'def' && text[i] !== '{')) continue;
     const arg = bracedAt(text, i);
     if (!arg) continue;
@@ -2147,7 +2592,8 @@ function bracedAt(text, i) {
 }
 
 function expandMacros(tex, macros) {
-  if (!macros || macros.size === 0) return tex;
+  const withArgs = macros?.withArgs;
+  if (!macros || (macros.size === 0 && !withArgs?.size)) return tex;
   let out = tex;
   for (let pass = 0; pass < 6; pass++) {
     let changed = false;
@@ -2156,9 +2602,66 @@ function expandMacros(tex, macros) {
       changed = true;
       return macros.get(name);
     });
+    if (withArgs?.size) {
+      const expanded = expandWithArgs(out, withArgs);
+      if (expanded !== out) {
+        out = expanded;
+        changed = true;
+      }
+    }
     if (!changed) break;
   }
   return out;
+}
+
+/** One pass of the macros that take arguments: each use with its arguments
+ * read (braced groups, or one token) and put in place of #1…#n. */
+function expandWithArgs(tex, withArgs) {
+  let out = '';
+  let i = 0;
+  const re = /\\([A-Za-z]+)(?![A-Za-z])/g;
+  let m;
+  while ((m = re.exec(tex))) {
+    const macro = withArgs.get(m[1]);
+    if (!macro) continue;
+    let j = re.lastIndex;
+    const args = [];
+    if (macro.optional !== null) {
+      let k = j;
+      while (tex[k] === ' ') k++;
+      if (tex[k] === '[') {
+        const close = tex.indexOf(']', k);
+        if (close < 0) continue;
+        args.push(tex.slice(k + 1, close));
+        j = close + 1;
+      } else {
+        args.push(macro.optional);
+      }
+    }
+    let ok = true;
+    while (args.length < macro.n) {
+      while (tex[j] === ' ') j++;
+      const group = bracedAt(tex, j);
+      if (group) {
+        args.push(group.inner);
+        j = group.end;
+        continue;
+      }
+      const token = /^\\[A-Za-z]+|^\\.|^[^\s{}]/.exec(tex.slice(j));
+      if (!token) {
+        ok = false;
+        break;
+      }
+      args.push(token[0]);
+      j += token[0].length;
+    }
+    if (!ok) continue;
+    const body = macro.body.replace(/#(\d)/g, (w, d) => args[Number(d) - 1] ?? '');
+    out += `${tex.slice(i, m.index)}{${body}}`;
+    i = j;
+    re.lastIndex = j;
+  }
+  return i === 0 ? tex : out + tex.slice(i);
 }
 
 const NUMBERED = new Set([
@@ -2184,7 +2687,10 @@ function extractMath(source, macros) {
   let appendix = false;
   let counter = 0;
   const sectionLabel = () => (appendix ? String.fromCharCode(64 + section) : String(section));
+  // Inside subequations, one number is taken and lettered: (12a), (12b).
+  let sub = null;
   const next = () => {
+    if (sub) return `${sub.parent}${String.fromCharCode(97 + sub.count++)}`;
     counter++;
     return perSection ? `${sectionLabel()}.${counter}` : String(counter);
   };
@@ -2246,6 +2752,8 @@ function extractMath(source, macros) {
       if (/^\\section\s*[[{]/.test(rest)) {
         section++;
         if (perSection) counter = 0;
+      } else if (/^\\end\s*\{subequations\}/.test(rest)) {
+        sub = null;
       } else if (/^\\appendix\b/.test(rest)) {
         appendix = true;
         section = 0;
@@ -2273,6 +2781,7 @@ function extractMath(source, macros) {
           const inner = text.slice(i + m[0].length, close.index);
           if (env === 'subequations') {
             // Its contents are read as they come; only the wrapper is skipped.
+            sub = { parent: next(), count: 0 };
             i += m[0].length - 1;
             continue;
           }
@@ -2346,7 +2855,17 @@ function splitRows(body) {
 function parseSource(files) {
   const { body, macroText } = assemble(files);
   const macros = collectMacros(macroText);
-  return extractMath(body, macros);
+  return extractMath(expandEnvironmentMacros(body, macros), macros);
+}
+
+/** Shorthands for opening and closing a display, `\be` for
+ * `\begin{equation}`, written out so the displays can be found. */
+function expandEnvironmentMacros(body, macros) {
+  const env = new Map(
+    [...macros].filter(([, b]) => /^\\(begin|end)\s*\{[A-Za-z]+\*?\}$/.test(b.trim()))
+  );
+  if (env.size === 0) return body;
+  return body.replace(/\\([A-Za-z]+)(?![A-Za-z])/g, (whole, name) => env.get(name) ?? whole);
 }
 
 // ---------- matching a selection against source ----------
@@ -2410,6 +2929,7 @@ const LATEX_TO_CHAR = (() => {
     '\\leqslant': '⩽',
     '\\geqslant': '⩾',
     '\\bigstar': '★',
+    '\\parallel': '‖',
     '\\backslash': '\\',
   };
   for (const [k, v] of Object.entries(aliases)) map.set(k, v);
@@ -2478,6 +2998,7 @@ const STYLE_COMMANDS = {
   textsf: '',
   texttt: '',
   operatorname: '',
+  mathop: '',
   mbox: '',
   hbox: '',
   mathnormal: '',
@@ -3441,6 +3962,11 @@ async function copyMath(request) {
     }
   }
 
+  // The region of a numbered display can clip the edge of its number.
+  if (glyphs && request.kind === 'equation' && request.number) {
+    glyphs = dropNumber(glyphs, request.number);
+  }
+
   // A scan is refused before anything else: there is nothing in it to read.
   if (glyphs && looksLikeScan(glyphs)) return refuseScan();
   const fonts = glyphs && glyphs.length > 0 ? reconstruct(glyphs) : null;
@@ -3495,6 +4021,26 @@ async function copyMath(request) {
       ? 'No equation there: hover a display equation and click Copy LaTeX.'
       : 'Select some math first.'
   );
+}
+
+/** Glyphs without the equation's own number: "(12)", or the start of it
+ * where the region clipped it, set last on its baseline. */
+function dropNumber(glyphs, number) {
+  const label = `(${number})`;
+  const chars = glyphs.filter((g) => g.font !== '__rule' && typeof g.text === 'string');
+  const drop = new Set();
+  for (const open of chars) {
+    if (open.text !== '(') continue;
+    const size = num(open.size) || 10;
+    const line = chars
+      .filter((g) => Math.abs(g.baseline - open.baseline) < 0.2 * size && g.x >= open.x - 0.01)
+      .sort((a, b) => a.x - b.x);
+    const text = line.map((g) => g.text).join('');
+    if (text.length > 0 && label.startsWith(text) && line[0] === open) {
+      for (const g of line) drop.add(g);
+    }
+  }
+  return drop.size > 0 ? glyphs.filter((g) => !drop.has(g)) : glyphs;
 }
 
 function refuseScan() {

@@ -17,10 +17,12 @@
 //! over plain data, tested without a PDF.
 
 use crate::engine::layout_text::{char_matrix, font_info, is_bold_font_name};
+use crate::engine::render::{apply, compose, Matrix, FPDF_PAGEOBJ_FORM, IDENTITY, MAX_FORM_DEPTH};
 use crate::engine::tagged::{chars_by_mcid, element_type, utf16_string};
 use crate::engine::text::{is_math_font, DispMapper};
 use pdfium_render::prelude::{
-    PdfiumLibraryBindings, FPDF_PAGE, FPDF_STRUCTELEMENT, FPDF_TEXTPAGE, FS_RECTF,
+    PdfiumLibraryBindings, FPDF_PAGE, FPDF_PAGEOBJECT, FPDF_STRUCTELEMENT, FPDF_TEXTPAGE,
+    FS_MATRIX, FS_RECTF,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -34,8 +36,12 @@ const ITALIC_FLAG: c_int = 1 << 6;
 const FORCE_BOLD_FLAG: c_int = 1 << 18;
 /// `FPDF_PAGEOBJ_PATH`.
 const PAGEOBJ_PATH: c_int = 2;
-/// A path thinner than this, in points, can be a rule.
-const RULE_MAX_THICKNESS: f32 = 1.0;
+/// `FPDF_PAGEOBJ_IMAGE`.
+const PAGEOBJ_IMAGE: c_int = 3;
+/// A path thinner than this, in points, can be a rule. A stroked bar's
+/// bounds take in its line width on both sides: Acrobat Distiller's
+/// fraction bars (0.53 pt lines) come out 1.05 pt thick.
+const RULE_MAX_THICKNESS: f32 = 1.5;
 /// Page objects examined for rules, as a backstop on a page drawn as
 /// hundreds of thousands of paths (a plot).
 const MAX_PAGE_OBJECTS: i32 = 50_000;
@@ -65,6 +71,12 @@ pub struct GlyphDto {
     pub baseline: f32,
     pub bold: bool,
     pub italic: bool,
+    /// The glyph's ink box `[x, y, w, h]` (top-left origin), when PDFium
+    /// can say; `null` for a rule. The loose box is the font's ascent and
+    /// descent, the same for every glyph of a font: only this says how tall
+    /// a delimiter or a big operator is, or where a TeX extension-font
+    /// glyph, hanging far below its origin, is drawn.
+    pub ink: Option<[f32; 4]>,
 }
 
 impl GlyphDto {
@@ -152,12 +164,24 @@ fn char_glyphs(
     let mut out = Vec::with_capacity(count as usize);
     // Font names repeat for every glyph of a run; judge each name once.
     let mut fonts: HashMap<String, (String, bool, bool)> = HashMap::new();
+    let mut low_half: Option<i32> = None;
     for index in 0..count {
-        if b.FPDFText_IsGenerated(tp, index) == 1 {
+        if low_half == Some(index) || b.FPDFText_IsGenerated(tp, index) == 1 {
             continue;
         }
-        let value = b.FPDFText_GetUnicode(tp, index);
+        let mut value = b.FPDFText_GetUnicode(tp, index);
         let unmapped = b.FPDFText_HasUnicodeMapError(tp, index) == 1;
+        // PDFium hands a character outside the Basic Multilingual Plane (the
+        // Mathematical Alphanumeric Symbols an OpenType math font sets, 𝑌)
+        // as two characters, the halves of its UTF-16 surrogate pair, each
+        // with the glyph's box. They are one glyph.
+        if (0xD800..0xDC00).contains(&value) && index + 1 < count {
+            let low = b.FPDFText_GetUnicode(tp, index + 1);
+            if (0xDC00..0xE000).contains(&low) {
+                value = surrogate_pair(value, low);
+                low_half = Some(index + 1);
+            }
+        }
         let ch = char::from_u32(value);
         if matches!(ch, Some('\n' | '\r')) && !unmapped {
             continue;
@@ -189,6 +213,16 @@ fn char_glyphs(
             continue;
         };
         let top = page_h - (y_up + h);
+        let ink = {
+            let (mut l, mut r, mut bo, mut t) = (0f64, 0f64, 0f64, 0f64);
+            (b.FPDFText_GetCharBox(tp, index, &mut l, &mut r, &mut bo, &mut t) != 0
+                && r > l
+                && t > bo)
+                .then(|| {
+                    let (ix, iy, iw, ih) = mapper.map_box(l, r, bo, t);
+                    [ix, page_h - (iy + ih), iw, ih]
+                })
+        };
 
         let scale = char_matrix(b, tp, index).map_or(1.0, |m| (m.c * m.c + m.d * m.d).sqrt());
         let mut size = b.FPDFText_GetFontSize(tp, index) as f32 * scale;
@@ -214,7 +248,9 @@ fn char_glyphs(
             .clone();
 
         out.push(GlyphDto {
-            text: if unmapped {
+            // A control character is no text either: PDFium reports some
+            // unmapped codes (cmex's 0) as U+0000.
+            text: if unmapped || ch.is_some_and(char::is_control) {
                 String::new()
             } else {
                 ch.map(String::from).unwrap_or_default()
@@ -229,12 +265,20 @@ fn char_glyphs(
             baseline,
             bold: weight >= 600 || named_bold || flags & FORCE_BOLD_FLAG != 0,
             italic: named_italic || flags & ITALIC_FLAG != 0,
+            ink,
         });
     }
     out
 }
 
-/// Thin horizontal paths at the top level of the page, as rule glyphs.
+/// The code point a UTF-16 surrogate pair stands for.
+pub fn surrogate_pair(high: u32, low: u32) -> u32 {
+    0x10000 + ((high - 0xD800) << 10) + (low - 0xDC00)
+}
+
+/// Thin horizontal paths (and images) on the page, as rule glyphs. Paths inside form
+/// XObjects count too: a page re-saved by a PDF tool is often one form
+/// holding everything, the fraction bars included.
 fn page_rules(
     b: &dyn PdfiumLibraryBindings,
     page: FPDF_PAGE,
@@ -242,22 +286,74 @@ fn page_rules(
     page_h: f32,
 ) -> Vec<GlyphDto> {
     let mut out = Vec::new();
+    // (object, its parent form's transform to page space, depth)
+    let mut stack: Vec<(FPDF_PAGEOBJECT, Matrix, u8)> = Vec::new();
     let count = b.FPDFPage_CountObjects(page).clamp(0, MAX_PAGE_OBJECTS);
-    for index in 0..count {
-        let object = b.FPDFPage_GetObject(page, index);
-        if object.is_null() || b.FPDFPageObj_GetType(object) != PAGEOBJ_PATH {
+    for index in (0..count).rev() {
+        stack.push((b.FPDFPage_GetObject(page, index), IDENTITY, 0));
+    }
+    let mut seen = 0;
+    while let Some((object, to_page, depth)) = stack.pop() {
+        seen += 1;
+        if object.is_null() || seen > MAX_PAGE_OBJECTS {
             continue;
         }
-        // A path neither filled nor stroked is a clip, and draws nothing.
-        let mut fill: c_int = 0;
-        let mut stroke = 0;
-        if b.FPDFPath_GetDrawMode(object, &mut fill, &mut stroke) != 0 && fill == 0 && stroke == 0 {
-            continue;
+        match b.FPDFPageObj_GetType(object) {
+            PAGEOBJ_PATH => {
+                // A path neither filled nor stroked is a clip, and draws nothing.
+                let mut fill: c_int = 0;
+                let mut stroke = 0;
+                if b.FPDFPath_GetDrawMode(object, &mut fill, &mut stroke) != 0
+                    && fill == 0
+                    && stroke == 0
+                {
+                    continue;
+                }
+            }
+            // Ghostscript draws a TeX rule as a one-pixel image mask
+            // stretched to the rule's size.
+            PAGEOBJ_IMAGE => {}
+            FPDF_PAGEOBJ_FORM if depth < MAX_FORM_DEPTH => {
+                let mut m = FS_MATRIX {
+                    a: 1.0,
+                    b: 0.0,
+                    c: 0.0,
+                    d: 1.0,
+                    e: 0.0,
+                    f: 0.0,
+                };
+                let inner = if b.FPDFPageObj_GetMatrix(object, &mut m) != 0 {
+                    [m.a, m.b, m.c, m.d, m.e, m.f]
+                } else {
+                    IDENTITY
+                };
+                let child_to_page = compose(&to_page, &inner);
+                let children = b.FPDFFormObj_CountObjects(object).max(0);
+                for i in (0..children).rev() {
+                    stack.push((
+                        b.FPDFFormObj_GetObject(object, i as std::os::raw::c_ulong),
+                        child_to_page,
+                        depth + 1,
+                    ));
+                }
+                continue;
+            }
+            _ => continue,
         }
         let (mut l, mut bo, mut r, mut t) = (0f32, 0f32, 0f32, 0f32);
         if b.FPDFPageObj_GetBounds(object, &mut l, &mut bo, &mut r, &mut t) == 0 {
             continue;
         }
+        // Into page space; a rule is axis-aligned, so its corners suffice.
+        let corners = [apply(&to_page, l, bo), apply(&to_page, r, t)];
+        let (l, r) = (
+            corners[0].0.min(corners[1].0),
+            corners[0].0.max(corners[1].0),
+        );
+        let (bo, t) = (
+            corners[0].1.min(corners[1].1),
+            corners[0].1.max(corners[1].1),
+        );
         let (x, y_up, w, h) = mapper.map_box(l as f64, r as f64, bo as f64, t as f64);
         if let Some(rule) = rule_glyph(x, page_h - (y_up + h), w, h) {
             out.push(rule);
@@ -270,7 +366,7 @@ fn page_rules(
 /// enough to be a fraction bar or an overbar.
 pub fn rule_glyph(x: f32, y: f32, w: f32, h: f32) -> Option<GlyphDto> {
     let h = h.max(0.0);
-    (h < RULE_MAX_THICKNESS && w > (h * 5.0).max(1.0)).then(|| GlyphDto {
+    (h < RULE_MAX_THICKNESS && w > (h * 3.0).max(1.0)).then(|| GlyphDto {
         text: String::new(),
         code: 0,
         font: RULE_FONT.to_string(),
@@ -282,7 +378,22 @@ pub fn rule_glyph(x: f32, y: f32, w: f32, h: f32) -> Option<GlyphDto> {
         baseline: y + h / 2.0,
         bold: false,
         italic: false,
+        ink: None,
     })
+}
+
+/// Where a character is, for picking it out of a region: the middle of its
+/// ink when that is known and lies off its loose box's middle by more than
+/// a third of its size (an extension-font glyph hanging below its origin),
+/// else the middle of its loose box.
+fn centre(g: &GlyphDto) -> (f32, f32) {
+    let loose = (g.x + g.w / 2.0, g.y + g.h / 2.0);
+    match g.ink {
+        Some([x, y, w, h]) if ((y + h / 2.0) - loose.1).abs() > g.size.max(1.0) / 3.0 => {
+            (x + w / 2.0, y + h / 2.0)
+        }
+        _ => loose,
+    }
 }
 
 /// The glyphs inside any of `rects` (`[x, y, w, h]`, top-left origin): a
@@ -299,7 +410,7 @@ pub fn select_in_rects(glyphs: &[GlyphDto], rects: &[[f32; 4]]) -> Vec<GlyphDto>
                 if g.is_rule() {
                     g.x <= rx + rw && g.x + g.w >= rx && g.y <= ry + rh && g.y + g.h >= ry
                 } else {
-                    let (cx, cy) = (g.x + g.w / 2.0, g.y + g.h / 2.0);
+                    let (cx, cy) = centre(g);
                     cx >= rx && cx <= rx + rw && cy >= ry && cy <= ry + rh
                 }
             })
@@ -592,8 +703,8 @@ pub fn is_math_font_name(name: &str) -> bool {
         ]
         .iter()
         .any(|family| upper.starts_with(family))
-        || upper == "SYMBOL"
-        || upper.starts_with("SYMBOL,")
+        // Symbol, SymbolMT (Word), MTSymbol (MathType).
+        || (upper.contains("SYMBOL") && !upper.contains("APPLE"))
 }
 
 fn is_big_operator(g: &GlyphDto) -> bool {
@@ -605,6 +716,9 @@ fn is_big_operator(g: &GlyphDto) -> bool {
 /// baseline to about its cap height, from its size rather than its box,
 /// since a math font's stated ascent and descent can be anything.
 fn core(g: &GlyphDto) -> (f32, f32) {
+    if let (Some([_, y, _, h]), true) = (g.ink, is_big_operator(g)) {
+        return (y, y + h);
+    }
     let size = g.size.max(1.0);
     (g.baseline - 0.75 * size, g.baseline + 0.25 * size)
 }
@@ -674,7 +788,15 @@ fn classify(segment: &Segment, rules: &[&GlyphDto]) -> Kind {
             && r.baseline >= segment.top - 0.5 * segment.em
             && r.baseline <= segment.bottom + 0.5 * segment.em
     });
+    // "0 =" set in the text font: no letters, and an operator.
+    let operator = letters == 0.0
+        && segment.glyphs.iter().any(|g| {
+            g.text
+                .chars()
+                .any(|c| "=+<>\u{2212}\u{2264}\u{2265}".contains(c))
+        });
     let mathy = big
+        || operator
         || (bar && letters / n <= 0.5)
         || math / n >= 0.5
         || (math >= 1.0 && letters / n <= 0.5);
@@ -693,34 +815,122 @@ fn median(mut values: Vec<f32>) -> f32 {
     values[values.len() / 2]
 }
 
-/// Group characters into rows: a character joins the row whose largest
+/// Group characters into rows: a character joins a row whose largest
 /// character's core it overlaps by half of the smaller core, so scripts
 /// stay on their line and a fraction's numerator and denominator get rows
-/// of their own.
+/// of their own. Larger characters are placed first, so a line exists
+/// before its scripts come to it; a script that could join two rows (the
+/// columns of a two-column page are rarely level) joins the one with a
+/// character nearest it.
 fn rows(chars: &[&GlyphDto]) -> Vec<Vec<usize>> {
     let mut order: Vec<usize> = (0..chars.len()).collect();
-    order.sort_by(|&a, &b| chars[a].baseline.total_cmp(&chars[b].baseline));
-    // (reference core, members)
+    // Tall delimiters and operators last: a row is a line of text, and one
+    // started by a tall glyph would take in every line it spans.
+    let tall = |g: &GlyphDto| {
+        let (top, bottom) = core(g);
+        bottom - top > 1.5 * g.size.max(1.0)
+    };
+    order.sort_by(|&a, &b| {
+        tall(chars[a])
+            .cmp(&tall(chars[b]))
+            .then(chars[b].size.total_cmp(&chars[a].size))
+            .then(chars[a].baseline.total_cmp(&chars[b].baseline))
+    });
+    // (reference core, members), kept sorted by the reference's top.
     let mut rows: Vec<((f32, f32), Vec<usize>)> = Vec::new();
     for index in order {
-        let (top, bottom) = core(chars[index]);
-        let found = rows.iter_mut().rev().take(8).find(|((rt, rb), _)| {
+        let g = chars[index];
+        let (top, bottom) = core(g);
+        let reach = 2.0 * (bottom - top);
+        // Rows are sorted by top; only those whose core can overlap this one.
+        let from = rows.partition_point(|((rt, _), _)| *rt < top - reach);
+        let em = g.size.max(1.0);
+        let mut best: Option<(usize, (bool, f32))> = None;
+        for (at, ((rt, rb), members)) in rows.iter().enumerate().skip(from) {
+            if *rt > bottom {
+                break;
+            }
             let overlap = bottom.min(*rb) - top.max(*rt);
             let smaller = (bottom - top).min(rb - rt);
-            overlap >= 0.5 * smaller
-        });
-        match found {
-            Some((reference, members)) => {
-                let largest = members
-                    .iter()
-                    .map(|&m| chars[m].size)
-                    .fold(0.0f32, f32::max);
-                if chars[index].size > largest + 0.5 {
-                    *reference = (top, bottom);
-                }
-                members.push(index);
+            if overlap < 0.5 * smaller {
+                continue;
             }
-            None => rows.push(((top, bottom), vec![index])),
+            let gap = members
+                .iter()
+                .map(|&m| {
+                    let o = chars[m];
+                    (o.x - (g.x + g.w)).max(g.x - (o.x + o.w)).max(0.0)
+                })
+                .fold(f32::MAX, f32::min);
+            let near = gap < 4.0 * em;
+            // A row with a character on this very baseline is this line.
+            let exact = members
+                .iter()
+                .any(|&m| (chars[m].baseline - g.baseline).abs() < 0.1 * em);
+            let level = near && exact;
+            // A character as large as the row's that is level with it only
+            // in part belongs to another line: the columns of a two-column
+            // page are seldom level, and their gutter is narrow. A smaller
+            // one is a script, raised or lowered, of a line near it; far off
+            // (a label under a brace, level with the other column's text)
+            // it is not.
+            let row_size = members.iter().map(|&m| chars[m].size).fold(0.0, f32::max);
+            let script = g.size < 0.85 * row_size;
+            let fits = tall(g)
+                || (near && (exact || overlap > 0.8 * smaller || script))
+                || (!near && !script && (exact || overlap > 0.8 * smaller));
+            if !fits {
+                continue;
+            }
+            // A tall glyph is centred on its line's axis: among the rows
+            // near it, the one whose middle is nearest its middle.
+            let key = if tall(g) {
+                (near, -((rt + rb) / 2.0 - (top + bottom) / 2.0).abs())
+            } else {
+                (level, -gap)
+            };
+            if best.is_none_or(|(_, b_key)| key > b_key) {
+                best = Some((at, key));
+            }
+        }
+        match best {
+            Some((at, ..)) => rows[at].1.push(index),
+            None => {
+                let at = rows.partition_point(|((rt, _), _)| *rt < top);
+                rows.insert(at, ((top, bottom), vec![index]));
+            }
+        }
+    }
+    // A row of nothing but bare extension-font glyphs (a \Big( and its
+    // \Big) set before the line they belong to existed) joins that line.
+    let mut at = 0;
+    while at < rows.len() {
+        let bare_row = rows[at].1.iter().all(|&m| chars[m].text.is_empty());
+        let ((rt, rb), _) = rows[at];
+        let target = bare_row
+            .then(|| {
+                (0..rows.len()).find(|&other| {
+                    let ((ot, ob), members) = &rows[other];
+                    other != at
+                        && !members.iter().all(|&m| chars[m].text.is_empty())
+                        && rb.min(*ob) - rt.max(*ot) >= 0.5 * (rb - rt).min(ob - ot)
+                        && rows[at].1.iter().any(|&b| {
+                            let g = chars[b];
+                            members.iter().any(|&m| {
+                                let o = chars[m];
+                                (o.x - (g.x + g.w)).max(g.x - (o.x + o.w)) < 4.0 * g.size.max(1.0)
+                            })
+                        })
+                })
+            })
+            .flatten();
+        match target {
+            Some(other) => {
+                let moved = std::mem::take(&mut rows[at].1);
+                rows[other].1.extend(moved);
+                rows.remove(at);
+            }
+            None => at += 1,
         }
     }
     rows.into_iter().map(|(_, members)| members).collect()
@@ -751,19 +961,79 @@ fn segments<'a>(chars: &[&'a GlyphDto], row: &[usize]) -> Vec<Segment<'a>> {
             }),
         }
     }
-    out
+    out.into_iter().flat_map(split_number).collect()
 }
 
-/// A glyph's box for an equation's outline: its loose box, held to a band
-/// around its baseline, since a math font's loose box can reach far past
-/// the ink. Big operators keep theirs whole.
+/// A segment ending in an equation number set a little apart, "… x(27)",
+/// as two: the equation and its number.
+fn split_number<'a>(segment: Segment<'a>) -> Vec<Segment<'a>> {
+    let glyphs = &segment.glyphs;
+    let at = glyphs.iter().rposition(|g| g.text == "(");
+    let Some(at) = at.filter(|&at| at > 0) else {
+        return vec![segment];
+    };
+    let tail: String = glyphs[at..].iter().map(|g| g.text.as_str()).collect();
+    let before = glyphs[at - 1];
+    if equation_number(&tail).is_none() || glyphs[at].x - (before.x + before.w) < 0.8 * segment.em {
+        return vec![segment];
+    }
+    let part = |members: &[&'a GlyphDto]| -> Option<Segment<'a>> {
+        let first = members.first()?;
+        let mut out = Segment {
+            glyphs: vec![first],
+            left: first.x,
+            right: first.x + first.w,
+            top: core(first).0,
+            bottom: core(first).1,
+            em: segment.em,
+        };
+        for g in &members[1..] {
+            let (top, bottom) = core(g);
+            out.glyphs.push(g);
+            out.right = out.right.max(g.x + g.w);
+            out.top = out.top.min(top);
+            out.bottom = out.bottom.max(bottom);
+        }
+        Some(out)
+    };
+    let (head, number) = glyphs.split_at(at);
+    [part(head), part(number)].into_iter().flatten().collect()
+}
+
+fn bare(segment: &Segment) -> usize {
+    segment
+        .glyphs
+        .iter()
+        .filter(|g| g.text.is_empty() && is_big_operator(g))
+        .count()
+}
+
+fn largest(segment: &Segment) -> f32 {
+    segment.glyphs.iter().map(|g| g.size).fold(0.0, f32::max)
+}
+
+/// Letters and digits in a segment: a block of nothing but marks (a column
+/// of footnote asterisks) is no equation.
+fn alnum(segment: &Segment) -> usize {
+    segment
+        .glyphs
+        .iter()
+        .filter(|g| g.text.chars().any(char::is_alphanumeric))
+        .count()
+}
+
+/// A glyph's box for an equation's outline: its loose box, held to the band
+/// from about its cap height to its descenders, since a math font's loose
+/// box can reach far past the ink, and an outline reaching up into the line
+/// of text above would take that line's characters into the equation. Big
+/// operators and delimiters keep their ink whole.
 fn outline_box(g: &GlyphDto) -> [f32; 4] {
     if is_big_operator(g) {
-        return [g.x, g.y, g.w, g.h];
+        return g.ink.unwrap_or([g.x, g.y, g.w, g.h]);
     }
     let size = g.size.max(1.0);
-    let top = g.y.max(g.baseline - 1.2 * size);
-    let bottom = (g.y + g.h).min(g.baseline + 0.5 * size).max(top);
+    let top = g.y.max(g.baseline - 0.8 * size);
+    let bottom = (g.y + g.h).min(g.baseline + 0.3 * size).max(top);
     [g.x, top, g.w, bottom - top]
 }
 
@@ -776,6 +1046,14 @@ struct Candidate {
     boxes: Vec<[f32; 4]>,
     /// Characters in it; a block of nothing but a rule is an underline.
     chars: usize,
+    /// Of those, TeX extension-font glyphs with no text (a row of nothing
+    /// but wide hats over running text is no display).
+    bare: usize,
+    /// Of those, letters and digits.
+    alnum: usize,
+    /// The largest character in it: a block of nothing but script-size
+    /// characters is a stray superscript, not a display.
+    largest: f32,
     number: Option<String>,
 }
 
@@ -799,21 +1077,40 @@ impl Candidate {
         self.em = self.em.max(other.em);
         self.boxes.extend(other.boxes);
         self.chars += other.chars;
+        self.bare += other.bare;
+        self.alnum += other.alnum;
+        self.largest = self.largest.max(other.largest);
         if self.number.is_none() {
             self.number = other.number;
         }
     }
 }
 
+/// A line of running text between two candidates keeps them apart: two
+/// displays a sentence apart are two equations.
+type Barrier = (f32, f32, f32, f32);
+
+fn separated(a: &Candidate, b: &Candidate, barriers: &[Barrier]) -> bool {
+    let (upper, lower) = if a.top <= b.top { (a, b) } else { (b, a) };
+    barriers.iter().any(|&(left, right, top, bottom)| {
+        let middle = (top + bottom) / 2.0;
+        middle > upper.bottom
+            && middle < lower.top
+            && left < upper.right.min(lower.right)
+            && right > upper.left.max(lower.left)
+    })
+}
+
 /// Merge candidates until no two join.
-fn merge_candidates(mut pending: Vec<Candidate>) -> Vec<Candidate> {
+fn merge_candidates(mut pending: Vec<Candidate>, barriers: &[Barrier]) -> Vec<Candidate> {
+    let joins = |a: &Candidate, b: &Candidate| a.joins(b) && !separated(a, b, barriers);
     let mut out: Vec<Candidate> = Vec::new();
     while let Some(mut current) = pending.pop() {
-        while let Some(at) = pending.iter().position(|other| current.joins(other)) {
+        while let Some(at) = pending.iter().position(|other| joins(&current, other)) {
             current.absorb(pending.swap_remove(at));
         }
         // Something merged earlier may now reach this one.
-        match out.iter().position(|done| done.joins(&current)) {
+        match out.iter().position(|done| joins(done, &current)) {
             Some(at) => pending.push(out.swap_remove(at).merged_with(current)),
             None => out.push(current),
         }
@@ -840,7 +1137,9 @@ impl Candidate {
 pub fn equation_blocks(glyphs: &[GlyphDto], page_w: f32, _page_h: f32) -> Vec<EquationBlockDto> {
     let chars: Vec<&GlyphDto> = glyphs
         .iter()
-        .filter(|g| !g.is_rule() && g.w > 0.0 && !g.text.trim().is_empty())
+        // A glyph with no Unicode (`text` empty) is still ink: a TeX
+        // extension-font delimiter or operator usually has none.
+        .filter(|g| !g.is_rule() && g.w > 0.0 && (g.text.is_empty() || !g.text.trim().is_empty()))
         .collect();
     let rules: Vec<&GlyphDto> = glyphs
         .iter()
@@ -895,7 +1194,73 @@ pub fn equation_blocks(glyphs: &[GlyphDto], page_w: f32, _page_h: f32) -> Vec<Eq
     let mut loose: Vec<&Segment> = Vec::new();
     let mut numbers: Vec<&Segment> = Vec::new();
     for row in &all {
-        let kinds: Vec<Kind> = row.iter().map(|s| classify(s, &rules)).collect();
+        // A line that is mostly words is running text, however much inline
+        // mathematics it holds; so is one with some words that starts flush
+        // against its column's left edge, or runs from a paragraph indent to
+        // the right margin: displays are centred or indented, and their
+        // words are few ("for all", "and").
+        let cols: Vec<(f32, f32)> = row
+            .iter()
+            .map(|s| column((s.left + s.right) / 2.0))
+            .collect();
+        let kinds: Vec<Kind> = row
+            .iter()
+            .zip(&cols)
+            .map(|(s, &col)| {
+                let kind = classify(s, &rules);
+                if kind != Kind::Math {
+                    return kind;
+                }
+                let line: Vec<&Segment> = row
+                    .iter()
+                    .zip(&cols)
+                    .filter(|(o, c)| **c == col && equation_number(&o.text()).is_none())
+                    .map(|(o, _)| o)
+                    .collect();
+                let left = line.iter().map(|o| o.left).fold(f32::MAX, f32::min);
+                let last = line.iter().max_by(|a, b| a.right.total_cmp(&b.right));
+                let right = last.map_or(s.right, |o| o.right);
+                let numbered = last.is_some_and(|o| {
+                    let text = o.text();
+                    text.trim_end()
+                        .rfind('(')
+                        .is_some_and(|at| equation_number(&text[at..]).is_some())
+                });
+                let glyphs = line.iter().flat_map(|o| o.glyphs.iter());
+                let (n, words) = glyphs.fold((0usize, 0usize), |(n, w), g| {
+                    let word =
+                        !is_math_font_name(&g.font) && g.text.chars().any(char::is_alphabetic);
+                    (n + 1, w + usize::from(word))
+                });
+                let wordy = words as f32 / n.max(1) as f32;
+                // A line running on past its column belongs to none: an
+                // equation set across both columns of a two-column page.
+                let within = right <= col.1 + 0.5 * s.em;
+                // A numbered line is a display even flush left (`fleqn`), its
+                // few words ("ex" in E_ex) set in the text font.
+                let has_number = numbered
+                    || row
+                        .iter()
+                        .zip(&cols)
+                        .any(|(o, c)| *c == col && equation_number(&o.text()).is_some());
+                let flush = within && left - col.0 < 0.3 * s.em && !has_number;
+                let justified =
+                    within && left - col.0 < 2.0 * s.em && col.1 - right < 0.5 * s.em && !numbered;
+                // A line ending in a colon introduces what follows: the end
+                // of a sentence, "(writing L_λ = L_0):", not a display.
+                let colon = last.is_some_and(|o| o.text().trim_end().ends_with(':'));
+                // Indented from both margins, a line can be a display with
+                // operator names in it ("err_P(f) = Ω(d/n)"); only all but
+                // wholly prose is text there.
+                let inset = left - col.0 > 2.0 * s.em && col.1 - right > 2.0 * s.em;
+                let prose = if inset { wordy > 0.8 } else { wordy > 0.5 };
+                if prose || ((flush || justified) && wordy > 0.15) || colon {
+                    Kind::Text
+                } else {
+                    kind
+                }
+            })
+            .collect();
         let mut current: Option<Candidate> = None;
         let mut row_candidates: Vec<Candidate> = Vec::new();
         for (segment, kind) in row.iter().zip(&kinds) {
@@ -910,6 +1275,9 @@ pub fn equation_blocks(glyphs: &[GlyphDto], page_w: f32, _page_h: f32) -> Vec<Eq
                             c.bottom = c.bottom.max(segment.bottom);
                             c.boxes.extend(boxes);
                             c.chars += segment.glyphs.len();
+                            c.bare += bare(segment);
+                            c.alnum += alnum(segment);
+                            c.largest = c.largest.max(largest(segment));
                         }
                         _ => {
                             if let Some(c) = current.take() {
@@ -923,6 +1291,9 @@ pub fn equation_blocks(glyphs: &[GlyphDto], page_w: f32, _page_h: f32) -> Vec<Eq
                                 em: segment.em,
                                 boxes,
                                 chars: segment.glyphs.len(),
+                                bare: bare(segment),
+                                alnum: alnum(segment),
+                                largest: largest(segment),
                                 number: None,
                             });
                         }
@@ -959,7 +1330,14 @@ pub fn equation_blocks(glyphs: &[GlyphDto], page_w: f32, _page_h: f32) -> Vec<Eq
                 near && centre >= rule.x - 1.0 && centre <= rule.x + rule.w + 1.0
             })
         };
-        if stacked(true) && stacked(false) {
+        // A bar level with a line of running text is an inline fraction.
+        let inline = loose.iter().any(|t| {
+            t.top - 0.3 * t.em <= rule.baseline
+                && rule.baseline <= t.bottom + 0.3 * t.em
+                && t.left - t.em <= rule.x + rule.w
+                && t.right + t.em >= rule.x
+        });
+        if !inline && stacked(true) && stacked(false) {
             candidates.push(Candidate {
                 left: rule.x,
                 right: rule.x + rule.w,
@@ -968,6 +1346,9 @@ pub fn equation_blocks(glyphs: &[GlyphDto], page_w: f32, _page_h: f32) -> Vec<Eq
                 em: page_em,
                 boxes: vec![[rule.x, rule.y, rule.w, rule.h]],
                 chars: 0,
+                bare: 0,
+                alnum: 0,
+                largest: 0.0,
                 number: None,
             });
         }
@@ -975,12 +1356,26 @@ pub fn equation_blocks(glyphs: &[GlyphDto], page_w: f32, _page_h: f32) -> Vec<Eq
     if candidates.is_empty() {
         return Vec::new();
     }
-    let mut merged = merge_candidates(candidates);
+    let barriers: Vec<Barrier> = loose
+        .iter()
+        .filter(|s| s.width() >= 6.0 * s.em)
+        .map(|s| (s.left, s.right, s.top, s.bottom))
+        .collect();
+    let mut merged = merge_candidates(candidates, &barriers);
 
     // A short text segment hugging a candidate from above or below and
     // lying within its width is part of it: a fraction's "1" over "2".
     let mut absorbed = false;
     for segment in loose {
+        // A numerator set in the text font is a few symbols, not prose:
+        // "ratios:" ending the line above a display is not part of it.
+        let words = segment
+            .glyphs
+            .iter()
+            .filter(|g| g.text.chars().any(char::is_alphabetic))
+            .count();
+        let prose = segment.em >= 0.9 * page_em
+            && (words >= 3 || segment.text().trim_end().ends_with([':', ',', ';']));
         let fits = |c: &Candidate| {
             let gap = (segment.top - c.bottom).max(c.top - segment.bottom);
             gap <= 0.6 * c.em
@@ -988,27 +1383,39 @@ pub fn equation_blocks(glyphs: &[GlyphDto], page_w: f32, _page_h: f32) -> Vec<Eq
                 && segment.right <= c.right + c.em
                 && segment.width() < 0.8 * (c.right - c.left).max(c.em)
         };
-        if let Some(c) = merged.iter_mut().find(|c| fits(c)) {
+        if let Some(c) = merged.iter_mut().find(|c| !prose && fits(c)) {
             c.top = c.top.min(segment.top);
             c.bottom = c.bottom.max(segment.bottom);
             c.chars += segment.glyphs.len();
+            c.bare += bare(segment);
+            c.alnum += alnum(segment);
+            c.largest = c.largest.max(largest(segment));
             c.boxes
                 .extend(segment.glyphs.iter().map(|g| outline_box(g)));
             absorbed = true;
         }
     }
     if absorbed {
-        merged = merge_candidates(merged);
+        merged = merge_candidates(merged, &barriers);
     }
-    // A number belongs to the block it sits level with, to its right.
+    // A number belongs to the nearest block it sits level with, to its
+    // left (on a two-column page the left column's display is level with
+    // the right one's number too).
     for segment in numbers {
         let middle = (segment.top + segment.bottom) / 2.0;
-        if let Some(c) = merged.iter_mut().find(|c| {
-            c.number.is_none()
-                && middle >= c.top - 0.5 * c.em
-                && middle <= c.bottom + 0.5 * c.em
-                && segment.left > c.right
-        }) {
+        let owner = merged
+            .iter_mut()
+            .filter(|c| {
+                c.number.is_none()
+                    && middle >= c.top - 0.5 * c.em
+                    && middle <= c.bottom + 0.5 * c.em
+                    // Right of it, or of most of it: a number centred on
+                    // two lines may sit beside the shorter one.
+                    && segment.right > c.right
+                    && segment.left > (c.left + c.right) / 2.0
+            })
+            .max_by(|a, b| a.right.total_cmp(&b.right));
+        if let Some(c) = owner {
             c.number = equation_number(&segment.text());
         }
     }
@@ -1030,7 +1437,7 @@ pub fn equation_blocks(glyphs: &[GlyphDto], page_w: f32, _page_h: f32) -> Vec<Eq
     merged
         .into_iter()
         .filter_map(|c| {
-            if c.chars < 2 {
+            if c.chars - c.bare < 2 || c.alnum == 0 || c.largest < 0.8 * page_em {
                 return None;
             }
             let [x, y, w, h] = union(c.boxes.iter().copied())?;
@@ -1038,9 +1445,23 @@ pub fn equation_blocks(glyphs: &[GlyphDto], page_w: f32, _page_h: f32) -> Vec<Eq
             let col_width = (col_right - col_left).max(1.0);
             let centre_offset = ((x + w / 2.0) - (col_left + col_right) / 2.0).abs();
             let centred = centre_offset <= 0.15 * col_width
-                && w < 0.9 * col_width
-                && x > col_left + 0.03 * col_width;
-            centred.then_some(EquationBlockDto {
+                && w < 0.96 * col_width
+                && x > col_left + 0.02 * col_width;
+            // Some journals (Elsevier's, `fleqn`) set displays flush left;
+            // its lines are already known to be mathematics, not prose.
+            // Unnumbered, it must stand apart from the text above it: a
+            // paragraph's last line, all mathematics, sits one line under the
+            // text before it, a display further.
+            let set_apart = c.number.is_some()
+                || !barriers.iter().any(|&(left, right, _, bottom)| {
+                    bottom <= c.top + 0.1 * c.em
+                        && c.top - bottom < 0.5 * c.em
+                        && left < c.right
+                        && right > c.left
+                });
+            let flush_left =
+                (x - col_left).abs() < 0.05 * col_width && w < 0.9 * col_width && set_apart;
+            (centred || flush_left).then_some(EquationBlockDto {
                 bbox: [x, y, w, h],
                 number: c.number,
             })
@@ -1066,6 +1487,7 @@ mod tests {
             baseline,
             bold: false,
             italic: false,
+            ink: None,
         }
     }
 
@@ -1123,11 +1545,15 @@ mod tests {
             "CambriaMath",
             "STIXTwoMath-Regular",
             "XITSMath",
+            "SymbolMT",
+            "MTSymbol",
+            "MathematicalPi-Six",
         ] {
             assert!(is_math_font_name(name), "{name}");
         }
         assert!(!is_math_font_name("CMR10"));
         assert!(!is_math_font_name("Times-Roman"));
+        assert!(!is_math_font_name("AppleSymbols"));
     }
 
     #[test]
@@ -1139,6 +1565,8 @@ mod tests {
         assert!((bar.baseline - 200.2).abs() < 1e-4);
         // A hairline with no height at all is still a rule.
         assert!(rule_glyph(0.0, 0.0, 10.0, 0.0).is_some());
+        // A stroked bar's bounds include its line width twice over.
+        assert!(rule_glyph(63.5, 385.4, 5.04, 1.05).is_some());
         // Too thick, too short, or a dot.
         assert!(rule_glyph(0.0, 0.0, 30.0, 2.0).is_none());
         assert!(rule_glyph(0.0, 0.0, 2.0, 0.8).is_none());
@@ -1307,12 +1735,131 @@ mod tests {
 
     #[test]
     fn a_left_aligned_math_line_is_not_a_display() {
+        // A paragraph's last line, all mathematics, one line under the text.
         let mut glyphs = Vec::new();
         for i in 0..4 {
             glyphs.extend(body_line(100.0 + 12.0 * i as f32));
         }
-        glyphs.extend(set("x=y+z", "CMMI10", 72.0, 180.0));
+        glyphs.extend(set("x=y+z", "CMMI10", 72.0, 148.0));
         assert!(equation_blocks(&glyphs, 612.0, 792.0).is_empty());
+        // Set apart from the text, flush left, numbered: a `fleqn` display,
+        // the way Elsevier sets them.
+        let mut glyphs = Vec::new();
+        for i in 0..4 {
+            glyphs.extend(body_line(100.0 + 12.0 * i as f32));
+        }
+        glyphs.extend(set("x=y+z", "CMMI10", 72.0, 168.0));
+        glyphs.extend(set("(4)", "CMR10", 525.0, 168.0));
+        glyphs.extend(body_line(190.0));
+        let blocks = equation_blocks(&glyphs, 612.0, 792.0);
+        assert_eq!(blocks.len(), 1, "{blocks:?}");
+        assert_eq!(blocks[0].number.as_deref(), Some("4"));
+    }
+
+    /// Words from `x0` to about `x1`, the way a justified column sets them.
+    fn text_line(x0: f32, x1: f32, baseline: f32) -> Vec<GlyphDto> {
+        let words = "the quick brown fox jumps over the lazy dog and keeps running far ".repeat(3);
+        let mut line = set(&words, "Times-Roman", x0, baseline);
+        line.retain(|g| g.x + g.w <= x1);
+        line
+    }
+
+    #[test]
+    fn two_columns_level_only_in_part_stay_apart() {
+        // A two-column page whose right column's baselines sit 5 pt under
+        // the left's: half a line, which a page-wide row would join.
+        let mut glyphs = Vec::new();
+        for i in 0..12 {
+            glyphs.extend(text_line(54.0, 290.0, 100.0 + 12.0 * i as f32));
+        }
+        for i in 0..4 {
+            glyphs.extend(text_line(320.0, 560.0, 105.0 + 12.0 * i as f32));
+        }
+        // A display in the right column, with a superscript level with
+        // nothing in the left column, and its number.
+        glyphs.extend(set("y=x", "CMMI10", 410.0, 168.0));
+        let mut sup = glyph("2", "CMR7", 7.0, 425.0, 164.0);
+        sup.w = 3.5;
+        glyphs.push(sup);
+        glyphs.extend(set("(5)", "CMR10", 540.0, 168.0));
+        for i in 0..3 {
+            glyphs.extend(text_line(320.0, 560.0, 189.0 + 12.0 * i as f32));
+        }
+        let blocks = equation_blocks(&glyphs, 612.0, 792.0);
+        assert_eq!(blocks.len(), 1, "{blocks:?}");
+        assert_eq!(blocks[0].number.as_deref(), Some("5"));
+        let [x, y, w, h] = blocks[0].bbox;
+        assert!(x >= 409.0 && x + w < 440.0, "{x} {w}");
+        assert!(y > 155.0 && y + h < 175.0, "{y} {h}");
+    }
+
+    #[test]
+    fn a_line_ending_in_a_colon_introduces_a_display_and_is_not_part_of_it() {
+        let mut glyphs = Vec::new();
+        for i in 0..4 {
+            glyphs.extend(body_line(100.0 + 12.0 * i as f32));
+        }
+        // "... (writing L = M):" as the paragraph's last, mathematical line.
+        glyphs.extend(set("(L=M):", "CMMI10", 72.0, 148.0));
+        glyphs.extend(set("x=y+z", "CMMI10", 280.0, 166.0));
+        glyphs.extend(set("(2)", "CMR10", 525.0, 166.0));
+        glyphs.extend(body_line(186.0));
+        let blocks = equation_blocks(&glyphs, 612.0, 792.0);
+        assert_eq!(blocks.len(), 1, "{blocks:?}");
+        let [x, y, ..] = blocks[0].bbox;
+        assert!(x >= 279.0 && y > 155.0, "{:?}", blocks[0].bbox);
+    }
+
+    #[test]
+    fn digits_and_an_operator_in_the_text_font_are_mathematics() {
+        let mut glyphs = Vec::new();
+        for i in 0..4 {
+            glyphs.extend(body_line(100.0 + 12.0 * i as f32));
+        }
+        // "0 = a - b", the "0 =" and "-" in the roman font.
+        glyphs.extend(set("0=", "CMR10", 270.0, 170.0));
+        glyphs.extend(set("a", "CMMI10", 285.0, 170.0));
+        glyphs.extend(set("+", "CMR10", 300.0, 170.0));
+        glyphs.extend(set("b", "CMMI10", 315.0, 170.0));
+        glyphs.extend(body_line(190.0));
+        let blocks = equation_blocks(&glyphs, 612.0, 792.0);
+        assert_eq!(blocks.len(), 1, "{blocks:?}");
+        assert!(
+            (blocks[0].bbox[0] - 270.0).abs() < 0.5,
+            "{:?}",
+            blocks[0].bbox
+        );
+    }
+
+    #[test]
+    fn a_centred_line_of_operator_names_is_still_a_display() {
+        let mut glyphs = Vec::new();
+        for i in 0..4 {
+            glyphs.extend(body_line(100.0 + 12.0 * i as f32));
+        }
+        // "err\Big(f\Big) = Omega", most of its symbols letters of the text
+        // font, the big parentheses from the extension font, unmapped.
+        let big = |x: f32| {
+            let mut g = glyph("", "CMEX10", 10.0, x, 161.0);
+            g.w = 5.0;
+            g.ink = Some([x, 160.5, 5.0, 13.0]);
+            g
+        };
+        glyphs.extend(set("err", "CMR10", 260.0, 170.0));
+        glyphs.push(big(275.0));
+        glyphs.extend(set("f", "CMMI10", 280.0, 170.0));
+        glyphs.push(big(285.0));
+        glyphs.extend(set("=Omega", "CMR10", 292.0, 170.0));
+        glyphs.extend(body_line(190.0));
+        let blocks = equation_blocks(&glyphs, 612.0, 792.0);
+        assert_eq!(blocks.len(), 1, "{blocks:?}");
+    }
+
+    #[test]
+    fn surrogate_halves_make_one_character() {
+        // U+1D44C MATHEMATICAL ITALIC CAPITAL Y, as PDFium reports it.
+        assert_eq!(surrogate_pair(0xD835, 0xDC4C), 0x1D44C);
+        assert_eq!(char::from_u32(surrogate_pair(0xD835, 0xDF00)), Some('𝜀'));
     }
 
     #[test]
@@ -1367,6 +1914,70 @@ mod tests {
         bytes
     }
 
+    /// A page drawn the way a PDF re-saved by a PDF tool draws it, inside
+    /// one form XObject, with a fraction bar in it; and a rule Ghostscript
+    /// style, a one-pixel image mask stretched to the bar.
+    fn wrapped_rules_pdf() -> Vec<u8> {
+        let form = "298 708 12 0.5 re f";
+        let content = "q 1 0 0 1 10 -20 cm /Fm1 Do Q \
+                       q 30 0 0 0.6 100 600 cm BI /IM true /W 1 /H 1 /BPC 1 ID \x00 EI Q";
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /Fm1 5 0 R >> >> /Contents 4 0 R >>".to_string(),
+            format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+            format!(
+                "<< /Type /XObject /Subtype /Form /BBox [0 0 612 792] /Length {} >>\nstream\n{form}\nendstream",
+                form.len()
+            ),
+        ];
+        let mut bytes = b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n".to_vec();
+        let mut offsets = Vec::new();
+        for (index, object) in objects.iter().enumerate() {
+            offsets.push(bytes.len());
+            writeln!(&mut bytes, "{} 0 obj\n{}\nendobj", index + 1, object).unwrap();
+        }
+        let xref = bytes.len();
+        writeln!(&mut bytes, "xref\n0 {}", objects.len() + 1).unwrap();
+        writeln!(&mut bytes, "0000000000 65535 f ").unwrap();
+        for offset in offsets {
+            writeln!(&mut bytes, "{offset:010} 00000 n ").unwrap();
+        }
+        writeln!(
+            &mut bytes,
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF",
+            objects.len() + 1
+        )
+        .unwrap();
+        bytes
+    }
+
+    #[test]
+    fn finds_rules_inside_forms_and_drawn_as_image_masks() {
+        let _guard = pdfium_init::test_guard();
+        let pdfium = Pdfium::new(pdfium_init::init_bindings(&[]).expect("bundled PDFium"));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wrapped.pdf");
+        std::fs::write(&path, wrapped_rules_pdf()).unwrap();
+        let b = pdfium.bindings();
+        let document = render::open_document(b, path.to_str().unwrap(), None).expect("open");
+        let page = b.FPDF_LoadPage(document, 0);
+        let [w, h] = render::page_display_size(b, document, 0).unwrap();
+        let glyphs = extract_page_glyphs(b, page, w, h);
+        b.FPDF_ClosePage(page);
+        b.FPDF_CloseDocument(document);
+
+        let mut rules: Vec<&GlyphDto> = glyphs.iter().filter(|g| g.is_rule()).collect();
+        rules.sort_by(|a, b| a.x.total_cmp(&b.x));
+        assert_eq!(rules.len(), 2, "{rules:?}");
+        // The image mask: 30 wide at x = 100, 0.6 high at y = 600 up.
+        assert!((rules[0].x - 100.0).abs() < 0.1 && (rules[0].w - 30.0).abs() < 0.1);
+        assert!((rules[0].y - (792.0 - 600.6)).abs() < 0.1, "{}", rules[0].y);
+        // The form's bar, moved by the form's placement (10 right, 20 down).
+        assert!((rules[1].x - 308.0).abs() < 0.1 && (rules[1].w - 12.0).abs() < 0.1);
+        assert!((rules[1].y - (792.0 - 688.5)).abs() < 0.1, "{}", rules[1].y);
+    }
+
     #[test]
     fn extracts_glyph_fields_and_the_fraction_bar_from_a_pdf() {
         let _guard = pdfium_init::test_guard();
@@ -1395,6 +2006,14 @@ mod tests {
         assert!((a.baseline - 80.0).abs() < 0.1, "{}", a.baseline);
         assert!(a.y < a.baseline && a.y + a.h > a.baseline);
         assert!((a.x - 300.0).abs() < 1.0, "{}", a.x);
+        // The ink box: the letter's own, inside its loose one.
+        let [ix, iy, iw, ih] = a.ink.expect("an ink box");
+        assert!(ix >= a.x - 0.5 && ix + iw <= a.x + a.w + 0.5, "{:?}", a.ink);
+        assert!(
+            iy >= a.y - 0.5 && iy + ih <= a.baseline + 0.5 && ih < a.h,
+            "{:?}",
+            a.ink
+        );
 
         let one = glyphs.iter().find(|g| g.text == "1").expect("the number");
         assert_eq!(one.font, "Times-Roman");

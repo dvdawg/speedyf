@@ -21,12 +21,12 @@ const RENDER_TO_BE_CONTINUED: i32 = 1;
 const RENDER_DONE: i32 = 2;
 
 const FPDF_PAGEOBJ_IMAGE: i32 = 3;
-const FPDF_PAGEOBJ_FORM: i32 = 5;
+pub(crate) const FPDF_PAGEOBJ_FORM: i32 = 5;
 /// How deep a nest of form XObjects is followed looking for images. Figures
 /// arrive wrapped in one or two of these depending on the toolchain that
 /// placed them; the limit is here so a pathological document cannot walk
 /// forever, not because four levels is a meaningful boundary.
-const MAX_FORM_DEPTH: u8 = 4;
+pub(crate) const MAX_FORM_DEPTH: u8 = 4;
 /// Ceiling on objects inspected per render. Reached only by pages with tens of
 /// thousands of objects, which are vector-heavy CAD sheets — exactly the pages
 /// with no photographs to find.
@@ -104,16 +104,16 @@ pub struct RenderOutput {
 }
 
 /// A PDF affine, row-vector convention: `[x y 1] · [[a b 0] [c d 0] [e f 1]]`.
-type Matrix = [f32; 6];
+pub(crate) type Matrix = [f32; 6];
 
-const IDENTITY: Matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+pub(crate) const IDENTITY: Matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
 
-fn apply(m: &Matrix, x: f32, y: f32) -> (f32, f32) {
+pub(crate) fn apply(m: &Matrix, x: f32, y: f32) -> (f32, f32) {
     (m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5])
 }
 
 /// `outer ∘ inner`: the transform that applies `inner` first.
-fn compose(outer: &Matrix, inner: &Matrix) -> Matrix {
+pub(crate) fn compose(outer: &Matrix, inner: &Matrix) -> Matrix {
     [
         inner[0] * outer[0] + inner[1] * outer[2],
         inner[0] * outer[1] + inner[1] * outer[3],

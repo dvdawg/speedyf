@@ -246,7 +246,8 @@ describe('structure from glyph geometry', () => {
   });
 
   it('reads a square root: \\sqrt{x}', () => {
-    const radical = { ...g('CMSY10', 112, 100, 200), y: 192.5, h: 10, w: 8.3 };
+    // The radical sign hangs from its origin, which TeX sets at the bar.
+    const radical = { ...g('CMSY10', 112, 100, 192.9), y: 192.5, h: 10, w: 8.3 };
     const r = ext.reconstruct([radical, rule(108.3, 192.5, 6.5), mi('x', 108.6, 200)]);
     expect(r.latex).toBe('\\sqrt{x}');
   });
@@ -276,8 +277,9 @@ describe('structure from glyph geometry', () => {
   });
 
   it('reads a matrix inside tall parentheses as pmatrix', () => {
-    const open = { ...g('CMEX10', 0x20, 100, 212), y: 188, h: 24, w: 6 };
-    const close = { ...g('CMEX10', 0x21, 132, 212), y: 188, h: 24, w: 6 };
+    // Extension-font delimiters hang from their origin, at their top.
+    const open = { ...g('CMEX10', 0x20, 100, 188.4), y: 188, h: 24, w: 6 };
+    const close = { ...g('CMEX10', 0x21, 132, 188.4), y: 188, h: 24, w: 6 };
     const r = ext.reconstruct([
       open,
       mi('a', 108, 196),

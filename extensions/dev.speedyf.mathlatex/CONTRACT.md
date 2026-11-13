@@ -58,8 +58,16 @@ this, the extension consumes exactly this.
   baseline: number; // baseline y, page points
   bold: boolean;
   italic: boolean;
+  ink: [x, y, w, h] | null; // the glyph's own ink box, when PDFium can say
 }
 ```
+
+The loose box is the font's ascent and descent: the same for every glyph of
+a font, so it says nothing about how tall a delimiter or big operator is.
+`ink` does. PDFium exposes no raw codes for a font that has a Unicode
+mapping: `code` is the raw code only when `text` is empty, and otherwise the
+Unicode scalar. A character outside the Basic Multilingual Plane (𝑌 from an
+OpenType math font) is one glyph, its `text` the full character.
 
 Rules lines/rects that form fraction bars and radicals are returned as
 glyphs with `font: '__rule'`, `text: ''`, `code: 0` (thin horizontal boxes).

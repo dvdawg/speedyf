@@ -239,6 +239,10 @@ export interface ApiGlyph {
   baseline: number;
   bold: boolean;
   italic: boolean;
+  /** The glyph's ink box `[x, y, w, h]`, when known; null otherwise (and
+   * for a rule). The loose box is the font's ascent and descent, the same
+   * for every glyph of a font; this is the glyph's own extent. */
+  ink: [number, number, number, number] | null;
 }
 
 export interface ApiGlyphs {
@@ -515,6 +519,7 @@ export function toGlyphs(
     baseline: number;
     bold: boolean;
     italic: boolean;
+    ink?: readonly [number, number, number, number] | null;
   }[]
 ): ApiGlyphs {
   return {
@@ -531,6 +536,7 @@ export function toGlyphs(
       baseline: g.baseline,
       bold: g.bold,
       italic: g.italic,
+      ink: g.ink ? [g.ink[0], g.ink[1], g.ink[2], g.ink[3]] : null,
     })),
   };
 }

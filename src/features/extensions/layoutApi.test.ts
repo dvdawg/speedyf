@@ -96,6 +96,7 @@ describe('mapping', () => {
       baseline: 5,
       bold: false,
       italic: true,
+      ink: [1, 2.5, 3, 2] as const,
       internal: 'leak',
     };
     const out = toGlyphs(3, [engineGlyph]);
@@ -112,7 +113,10 @@ describe('mapping', () => {
       baseline: 5,
       bold: false,
       italic: true,
+      ink: [1, 2.5, 3, 2],
     });
+    // A rule, or a glyph PDFium cannot measure, has none.
+    expect(toGlyphs(0, [{ ...engineGlyph, ink: null }]).glyphs[0]?.ink).toBeNull();
   });
 
   it('fills absent math tag fields with null', () => {

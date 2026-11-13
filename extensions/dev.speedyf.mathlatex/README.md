@@ -34,16 +34,19 @@ that answers wins.
    Central). If it does, the article's JATS XML is fetched and its formulas
    read: the publisher's own TeX when it includes some, otherwise its MathML,
    converted.
-4. **The fonts.** Reading the glyphs on the page. TeX's math fonts say
-   exactly which symbol each glyph is — the code of a glyph in CMMI, CMSY,
-   CMEX, MSAM or MSBM is a table lookup — and the layout says how they fit
-   together: smaller and raised is a superscript, a rule with symbols above
-   and below is a fraction, a radical sign with a rule over its contents is a
-   square root, rows inside tall parentheses are a matrix. Other fonts are
-   read through their Unicode, including the Mathematical Alphanumeric
-   Symbols (𝐱, ℝ, 𝔤). This is a reconstruction: it is marked **high**
-   confidence only when every glyph was identified and the layout was
-   unambiguous.
+4. **The fonts.** Reading the glyphs on the page. A glyph's Unicode text,
+   when the PDF has one, says what it is; its font says how it is styled
+   (CMSY's capitals are calligraphic, MSBM's blackboard, EUFM's fraktur) and,
+   for TeX's extension font, how tall a delimiter is. A glyph with no
+   Unicode is read by its code through the TeX encodings (CMMI, CMSY, CMEX,
+   MSAM, MSBM). A Symbol font whose text came out as Mac Roman (Â for ∑) is
+   read back through the Symbol encoding. The layout, from baselines and
+   sizes, says how they fit together: smaller and raised is a superscript, a
+   rule with symbols above and below is a fraction, a radical sign with a
+   rule over its contents is a square root, rows inside tall parentheses are
+   a matrix, brace tips with a label under them an `\underbrace`. This is a
+   reconstruction: it is marked **high** confidence only when every glyph
+   was identified and the layout was unambiguous.
 
 Matching a selection against source compares the symbols in it, in order,
 without structure: `\frac{a+b}{c}`, the glyphs on the page and the selected
