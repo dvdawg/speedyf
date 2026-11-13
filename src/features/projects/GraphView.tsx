@@ -124,8 +124,13 @@ const HIT_RADIUS = 12;
  * a citation running both ways bows further so the pair separates. */
 const BOW = 0.06;
 const BOW_MUTUAL = 0.22;
-/** The arrowhead's length, so an emphasised edge ends at the rim. */
+/** The arrowhead's length. An emphasised edge stops at the head's base and
+ * the head runs on to just short of the rim, so the line never shows past
+ * the narrowing tip or through a translucent head. */
 const ARROW = 6;
+/** The head sits this far (px) ahead of where its line stops, clear of the
+ * line's round cap. */
+const ARROW_GAP = 1;
 /** Labels at rest in a large graph: the most cited this many. */
 const TOP_LABELS = 8;
 /** Up to this many connected items, every label is a candidate at rest:
@@ -657,7 +662,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
       return { x: from.x + (tx / t) * r, y: from.y + (ty / t) * r };
     };
     const start = toward(a, radius(e.from) + 1);
-    const end = toward(b, radius(e.to) + (arrow ? ARROW + 1 : 1.5));
+    const end = toward(b, radius(e.to) + (arrow ? ARROW + ARROW_GAP + 1 : 1.5));
     return `M${start.x} ${start.y}Q${cx} ${cy} ${end.x} ${end.y}`;
   };
 
@@ -1283,7 +1288,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
                 id={outArrow}
                 class="graph-arrow is-out"
                 viewBox="0 0 10 10"
-                refX="10"
+                refX={(-10 * ARROW_GAP) / ARROW}
                 refY="5"
                 markerWidth={ARROW}
                 markerHeight={ARROW}
@@ -1296,7 +1301,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
                 id={inArrow}
                 class="graph-arrow is-in"
                 viewBox="0 0 10 10"
-                refX="10"
+                refX={(-10 * ARROW_GAP) / ARROW}
                 refY="5"
                 markerWidth={ARROW}
                 markerHeight={ARROW}
