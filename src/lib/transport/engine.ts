@@ -31,6 +31,8 @@ import type {
   CitationLinks,
   DuplicateGroup,
   Graph,
+  BibtexOptions,
+  LibraryBackup,
   LibraryCounts,
   LibraryDataInfo,
   LookupBatch,
@@ -237,6 +239,13 @@ export interface EngineApi {
   libraryNotDuplicates(paperIds: string[]): Promise<void>;
   libraryDataDir(): Promise<LibraryDataInfo>;
   libraryMoveData(dir: string): Promise<LibraryDataInfo>;
+  /** Backups of library.json, newest first. */
+  libraryBackups(): Promise<LibraryBackup[]>;
+  /** Restores a backup by file name, after backing up the current state. */
+  libraryRestoreBackup(file: string): Promise<void>;
+  libraryBibtexOptions(): Promise<BibtexOptions>;
+  /** Saves the options; synced .bib files are rewritten with them. */
+  librarySetBibtexOptions(options: BibtexOptions): Promise<BibtexOptions>;
   /** Fires after any write to papers or projects, in every window. */
   onLibraryChanged(cb: () => void): Promise<() => void>;
   /** Fires when an online metadata lookup starts (`true`) and when the last
@@ -335,6 +344,10 @@ export const engine: EngineApi = {
   libraryNotDuplicates: (paperIds) => invoke('library_not_duplicates', { paperIds }),
   libraryDataDir: () => invoke('library_data_dir'),
   libraryMoveData: (dir) => invoke('library_move_data', { dir }),
+  libraryBackups: () => invoke('library_backups'),
+  libraryRestoreBackup: (file) => invoke('library_restore_backup', { file }),
+  libraryBibtexOptions: () => invoke('library_bibtex_options'),
+  librarySetBibtexOptions: (options) => invoke('library_set_bibtex_options', { options }),
   onLibraryChanged: async (cb) => listen('library:changed', () => cb()),
   onLookupActivity: async (cb) =>
     listen<LookupActivity>('library:lookup', (e) =>

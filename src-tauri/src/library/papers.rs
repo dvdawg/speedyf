@@ -15,13 +15,13 @@
 use super::chain::{ChainKind, PARK_LIMIT};
 use super::lookup::NetworkEdges;
 use super::references::{DocRefs, StoredRef, TitleIndex};
-use super::store::{now_rfc3339, parse_rfc3339, PaperStore};
+use super::store::{format_rfc3339, now_rfc3339, parse_rfc3339, PaperStore};
 use super::types::{
     Author, CitationLinksDto, GraphDto, GraphEdgeDto, LibraryCountsDto, LookupCandidateDto,
     MetaField, MetaPatchDto, MetaSource, PaperDto, PaperFile, PaperFilterDto, PaperListDto,
     PaperMeta, PaperRowDto, PapernessVerdict,
 };
-use super::{bibtex, citekey, identifiers, titlematch};
+use super::{bibtex, citekey, identifiers, mainfile, titlematch};
 use super::{normalize_isbn, plausible_info_title, LibraryEntry};
 use crate::engine::citation::parse_citation_id;
 use crate::engine::types::CitationIdDto;
@@ -159,6 +159,35 @@ pub struct MergeTrace {
     /// records are not the same work.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub auto: bool,
+}
+
+/// How long every file of an item must have been missing before the item
+/// is removed (`PaperStore::remove_long_missing`).
+pub const MISSING_GRACE: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
+
+/// Start or stop a file's missing clock to match its `missing` flag.
+/// Returns whether it changed.
+fn stamp_missing_since(file: &mut PaperFile, now: &str) -> bool {
+    match (file.missing, file.missing_since.is_some()) {
+        (true, false) => {
+            file.missing_since = Some(now.to_owned());
+            true
+        }
+        (false, true) => {
+            file.missing_since = None;
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Whether `path` is on a volume under `/Volumes` that is not mounted now.
+fn on_unmounted_volume(path: &str) -> bool {
+    let Some(rest) = path.strip_prefix("/Volumes/") else {
+        return false;
+    };
+    let volume = rest.split('/').next().unwrap_or_default();
+    !volume.is_empty() && !Path::new("/Volumes").join(volume).is_dir()
 }
 
 /// How long a lookup stands before a batch asks about the paper again.
@@ -631,6 +660,7 @@ impl PaperRecord {
                 return false;
             }
             *existing = file;
+            self.order_files();
             return true;
         }
         // A missing row with the same bytes is this file, renamed or moved:
@@ -655,21 +685,34 @@ impl PaperRecord {
             }
             None => self.files.push(file),
         }
-        self.keep_primary_first();
+        self.order_files();
         true
     }
 
-    /// The file the user made the main one stays first, wherever a rescan
-    /// put it back.
-    fn keep_primary_first(&mut self) {
-        let Some(primary) = self.primary_path.as_deref() else {
-            return;
+    /// Put the main file first: the one the user made the main one,
+    /// wherever a rescan put it back, else the one `mainfile` chooses.
+    /// Returns whether the main file changed.
+    pub(super) fn order_files(&mut self) -> bool {
+        let chosen = match self.primary_path.as_deref() {
+            Some(primary) if self.files.iter().any(|file| file.path == primary) => {
+                self.files.iter().position(|file| file.path == primary)
+            }
+            _ => {
+                let journal = self
+                    .ids
+                    .doi
+                    .as_deref()
+                    .filter(|doi| !doi.starts_with("10.48550/"));
+                mainfile::main_index(&self.files, journal)
+            }
         };
-        if let Some(at) = self.files.iter().position(|file| file.path == primary) {
-            if at > 0 {
+        match chosen {
+            Some(at) if at > 0 => {
                 let file = self.files.remove(at);
                 self.files.insert(0, file);
+                true
             }
+            _ => false,
         }
     }
 
@@ -1126,6 +1169,9 @@ impl PaperStore {
             mtime_ms: entry.mtime_ms,
             fingerprint: entry.fingerprint.clone(),
             missing: false,
+            missing_since: None,
+            traits: mainfile::traits_of(entry),
+            duplicate_of: None,
         };
 
         let strong_doi = if xmp_only {
@@ -1275,6 +1321,7 @@ impl PaperStore {
         if !self.writable() {
             return false;
         }
+        let now = now_rfc3339();
         let mut changed = false;
         for paper in &mut self.papers {
             let mut touched = false;
@@ -1284,12 +1331,93 @@ impl PaperStore {
                     file.missing = missing;
                     touched = true;
                 }
+                touched |= stamp_missing_since(file, &now);
             }
             if touched {
+                paper.order_files();
                 paper.touch();
                 changed = true;
             }
         }
+        changed |= self.remove_long_missing(parse_rfc3339(&now).unwrap_or(0));
+        if changed {
+            self.mark_dirty();
+        }
+        changed
+    }
+
+    /// Remove every item all of whose files have been missing for at least
+    /// [`MISSING_GRACE`] at `now` (unix seconds), unless dropping it would
+    /// lose something: it is in a project, has the user's edits or a
+    /// pinned key, carries merged records or aliases, or has candidates
+    /// parked for the user. A file on a volume that is not mounted is not
+    /// counted as gone: an external drive away for a week is not a
+    /// deletion. Returns whether anything was removed.
+    pub fn remove_long_missing(&mut self, now: u64) -> bool {
+        if !self.writable() {
+            return false;
+        }
+        let filed: HashSet<String> = self
+            .projects
+            .iter()
+            .flat_map(|project| project.paper_ids.iter().cloned())
+            .collect();
+        let before = self.papers.len();
+        self.papers.retain(|paper| {
+            let gone_long = !paper.files.is_empty()
+                && paper.files.iter().all(|file| {
+                    file.missing
+                        && !on_unmounted_volume(&file.path)
+                        && file
+                            .missing_since
+                            .as_deref()
+                            .and_then(parse_rfc3339)
+                            .is_some_and(|since| {
+                                now.saturating_sub(since) >= MISSING_GRACE.as_secs()
+                            })
+                });
+            let keep = !gone_long
+                || filed.contains(&paper.id)
+                || has_user_edit(paper)
+                || !paper.alias_ids.is_empty()
+                || !paper.candidates.is_empty();
+            if !keep {
+                log::info!(
+                    "removed library item {} ({}): its files have been missing for a week",
+                    paper.id,
+                    paper.display_title()
+                );
+            }
+            keep
+        });
+        let removed = self.papers.len() != before;
+        if removed {
+            self.mark_dirty();
+        }
+        removed
+    }
+
+    /// What a load does once before anything else reads the records:
+    /// start the missing clock on files missing from before it was kept,
+    /// choose every item's main file again, and remove the items that have
+    /// been gone for a week. Returns whether anything changed.
+    pub fn load_sweep(&mut self, now: u64) -> bool {
+        if !self.writable() {
+            return false;
+        }
+        let stamp = format_rfc3339(now);
+        let mut changed = false;
+        for paper in &mut self.papers {
+            let mut touched = false;
+            for file in &mut paper.files {
+                touched |= stamp_missing_since(file, &stamp);
+            }
+            touched |= paper.order_files();
+            if touched {
+                changed = true;
+            }
+        }
+        changed |= self.remove_long_missing(now);
         if changed {
             self.mark_dirty();
         }
@@ -1302,9 +1430,13 @@ impl PaperStore {
     }
 
     pub(super) fn dto_for(&self, paper: &PaperRecord) -> PaperDto {
+        let mut files = paper.files.clone();
+        for (file, copy) in files.iter_mut().zip(mainfile::duplicate_of(&paper.files)) {
+            file.duplicate_of = copy;
+        }
         PaperDto {
             id: paper.id.clone(),
-            files: paper.files.clone(),
+            files,
             doi: paper.ids.doi.clone(),
             arxiv: paper.ids.arxiv.clone(),
             isbn: paper.ids.isbn.clone(),
@@ -1440,12 +1572,7 @@ impl PaperStore {
             incomplete_count: paper.incomplete().len() as u32,
             is_paper: paper.is_paper(),
             candidate_count: paper.candidates.len().min(u32::MAX as usize) as u32,
-            file_count: paper
-                .files
-                .iter()
-                .filter(|file| !file.missing)
-                .count()
-                .min(u32::MAX as usize) as u32,
+            file_count: mainfile::distinct_present(&paper.files).min(u32::MAX as usize) as u32,
         }
     }
 
@@ -2055,7 +2182,7 @@ impl PaperStore {
             .iter()
             .map(|id| self.paper_dto(id))
             .collect::<AppResult<Vec<_>>>()?;
-        let text = bibtex::render(&dtos, false);
+        let text = bibtex::render(&dtos, false, &self.bibtex_options);
         let frozen = self.freeze_keys(ids);
         Ok((text, frozen))
     }
@@ -3300,6 +3427,7 @@ mod tests {
             mtime_ms: 1,
             fingerprint: None,
             missing: false,
+            ..Default::default()
         });
         // Never looked up: by title, since the file name is a title to try.
         assert_eq!(paper.batch_chain(now), Some(ChainKind::Title));
@@ -5205,6 +5333,10 @@ mod tests {
         assert_eq!(store.papers[0].ids.doi.as_deref(), Some("10.1/crossref"));
         e.doi = Some("10.1/page".into());
         e.doi_source = Some(MetaSource::FirstPage);
+        // The file's own DOI is noted on the file (its traits for choosing
+        // the main file), and nothing else changes.
+        assert!(store.reconcile_file(&e));
+        assert_eq!(store.papers[0].files[0].traits.dois, ["10.1/page"]);
         assert!(!store.reconcile_file(&e));
         assert_eq!(
             store.papers[0].ids.doi.as_deref(),
@@ -5325,5 +5457,311 @@ mod tests {
         store.reconcile_file(&b);
         assert_eq!(store.papers.len(), 1);
         assert_eq!(store.papers[0].files.len(), 2);
+    }
+
+    /// A file on disk in `dir`, so the copies of one PDF are told from a
+    /// rename (`attach_file` asks the disk), scanned as `fingerprint`.
+    fn on_disk(
+        dir: &Path,
+        name: &str,
+        fingerprint: &str,
+        mtime_ms: u64,
+        authors: bool,
+        arxiv: Option<&str>,
+    ) -> LibraryEntry {
+        let path = dir.join(name);
+        std::fs::write(&path, fingerprint).unwrap();
+        let mut e = entry(path.to_str().unwrap(), Some(fingerprint));
+        e.mtime_ms = mtime_ms;
+        e.arxiv = arxiv.map(str::to_owned);
+        e.arxiv_source = arxiv.map(|_| MetaSource::FirstPage);
+        if authors {
+            e.first_page_authors = vec![Author {
+                given: "Ada".into(),
+                family: "Lovelace".into(),
+            }];
+        }
+        e
+    }
+
+    fn names(store: &PaperStore, index: usize) -> Vec<String> {
+        store.papers[index]
+            .files
+            .iter()
+            .map(|file| file.name.clone())
+            .collect()
+    }
+
+    /// The case that asked for the rules. One work, five files:
+    /// - `2606.13614v1.pdf` and `2606.13614v1 (1).pdf`: the same bytes, the
+    ///   arXiv v1 (version from the name), authors on the first page,
+    ///   downloaded first (mtime 90 and 100);
+    /// - `mot.pdf` and `mot (1).pdf`: the same bytes, a later version with
+    ///   the arXiv stamp (its version is not in the name, so unknown) and
+    ///   authors (mtime 200 and 300);
+    /// - `mot_tmlr.pdf`: the TMLR review copy, anonymous, no stamp, newest
+    ///   (mtime 400), filed as its own record and merged in by hand.
+    ///
+    /// Nothing is published (rule 1). v1 is the newest known version, and
+    /// the unknown versions stay in (rule 2). The anonymous TMLR copy goes
+    /// (rule 3), then the browser duplicates (rule 4); of `2606.13614v1.pdf`
+    /// and `mot.pdf` the newer wins (rule 5): **`mot.pdf`**.
+    #[test]
+    fn the_main_file_of_the_real_case_is_the_later_version_with_authors() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let mut store = new_store();
+        let arxiv = Some("2606.13614");
+        for e in [
+            on_disk(d, "2606.13614v1 (1).pdf", "fp-v1", 100, true, arxiv),
+            on_disk(d, "2606.13614v1.pdf", "fp-v1", 90, true, arxiv),
+            on_disk(d, "mot (1).pdf", "fp-mot", 300, true, arxiv),
+            on_disk(d, "mot.pdf", "fp-mot", 200, true, arxiv),
+        ] {
+            store.reconcile_file(&e);
+        }
+        store.reconcile_file(&on_disk(d, "mot_tmlr.pdf", "fp-tmlr", 400, false, None));
+        assert_eq!(store.papers.len(), 2);
+        assert_eq!(names(&store, 0)[0], "mot.pdf", "chosen as the files attach");
+        let keep = store.papers[0].id.clone();
+        let tmlr = store.papers[1].id.clone();
+        let dto = store.merge_papers(&keep, &[tmlr]).unwrap();
+        assert_eq!(dto.files.len(), 5, "every file stays");
+        assert_eq!(dto.files[0].name, "mot.pdf");
+
+        // Two byte-identical pairs: each shows as one row.
+        let copy_of = |name: &str| {
+            dto.files
+                .iter()
+                .find(|file| file.name == name)
+                .and_then(|file| file.duplicate_of.clone())
+        };
+        let path = |name: &str| Some(d.join(name).to_string_lossy().into_owned());
+        assert_eq!(copy_of("mot (1).pdf"), path("mot.pdf"));
+        assert_eq!(copy_of("2606.13614v1 (1).pdf"), path("2606.13614v1.pdf"));
+        assert_eq!(copy_of("mot.pdf"), None);
+        assert_eq!(copy_of("2606.13614v1.pdf"), None);
+        assert_eq!(copy_of("mot_tmlr.pdf"), None);
+        let rows = store.paper_rows(&PaperFilterDto::default()).rows;
+        assert_eq!(rows[0].file_count, 3, "distinct contents");
+        // The DTO's grouping is never stored.
+        assert!(store.papers[0]
+            .files
+            .iter()
+            .all(|f| f.duplicate_of.is_none()));
+    }
+
+    #[test]
+    fn the_published_version_becomes_main_when_it_attaches() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let mut store = new_store();
+        let mut pre = on_disk(d, "2401.00001v3.pdf", "fp-pre", 900, true, None);
+        pre.doi = Some("10.1103/physrevlett.1.1".into());
+        pre.doi_source = Some(MetaSource::Filename);
+        store.reconcile_file(&pre);
+        // An older file whose page names its publisher.
+        let mut journal = on_disk(d, "prl.pdf", "fp-prl", 10, false, None);
+        journal.doi = Some("10.1103/physrevlett.1.1".into());
+        journal.doi_source = Some(MetaSource::FirstPage);
+        store.reconcile_file(&journal);
+        assert_eq!(store.papers.len(), 1);
+        assert_eq!(names(&store, 0), ["prl.pdf", "2401.00001v3.pdf"]);
+        assert!(
+            store.papers[0].files[1].traits.dois.is_empty(),
+            "the name's DOI is not the file's own"
+        );
+
+        // The classifier naming a publisher does it too, without a DOI.
+        let mut store = new_store();
+        let mut v2 = on_disk(d, "a_v2.pdf", "fp-a2", 900, true, Some("2401.00002"));
+        v2.paper_reason = Some("arXiv:2401.00002 on the first page".into());
+        store.reconcile_file(&v2);
+        let mut published = on_disk(d, "a.pdf", "fp-a", 10, false, Some("2401.00002"));
+        published.arxiv_source = Some(MetaSource::Filename);
+        published.paper_reason = Some("an APS journal on the first page".into());
+        store.reconcile_file(&published);
+        assert_eq!(names(&store, 0), ["a.pdf", "a_v2.pdf"]);
+    }
+
+    #[test]
+    fn the_users_main_file_is_never_overridden() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let mut store = new_store();
+        let arxiv = Some("2401.00003");
+        store.reconcile_file(&on_disk(d, "b_v1.pdf", "fp-1", 1, true, arxiv));
+        store.reconcile_file(&on_disk(d, "b_v2.pdf", "fp-2", 2, true, arxiv));
+        assert_eq!(names(&store, 0), ["b_v2.pdf", "b_v1.pdf"]);
+        let id = store.papers[0].id.clone();
+        let v1 = d.join("b_v1.pdf").to_string_lossy().into_owned();
+        store.set_primary_file(&id, &v1).unwrap();
+        // A later version arrives, a rescan runs, the load sweep runs, the
+        // record takes part in a merge: the user's choice stands.
+        store.reconcile_file(&on_disk(d, "b_v3.pdf", "fp-3", 3, true, arxiv));
+        store.reconcile_file(&on_disk(d, "b_v2.pdf", "fp-2", 2, true, arxiv));
+        store.load_sweep(1_800_000_000);
+        let other = store.reconcile_file(&on_disk(d, "c.pdf", "fp-c", 9, true, None));
+        assert!(other);
+        let c = store.papers[1].id.clone();
+        store.merge_papers(&id, &[c]).unwrap();
+        assert_eq!(names(&store, 0)[0], "b_v1.pdf");
+
+        // Merged into a record without a choice, the choice comes along.
+        let mut store = new_store();
+        store.reconcile_file(&on_disk(d, "b_v1.pdf", "fp-1", 1, true, arxiv));
+        store.reconcile_file(&on_disk(d, "c.pdf", "fp-c", 9, true, None));
+        let (b, c) = (store.papers[0].id.clone(), store.papers[1].id.clone());
+        store.set_primary_file(&b, &v1).unwrap();
+        let dto = store.merge_papers(&c, &[b]).unwrap();
+        assert_eq!(dto.files[0].name, "b_v1.pdf");
+        // Split back, the record it went into chooses by the rules again.
+        let back = store.unmerge(&c).unwrap();
+        let survivor = back.iter().find(|p| p.id == c).unwrap();
+        assert_eq!(survivor.files.len(), 1);
+        assert_eq!(store.papers[store.index_of(&c).unwrap()].primary_path, None);
+    }
+
+    #[test]
+    fn the_load_sweep_chooses_the_main_file_of_records_without_a_choice() {
+        let mut store = new_store();
+        let mut paper = PaperRecord::new();
+        let mut old = PaperFile {
+            path: "/l/x (1).pdf".into(),
+            name: "x (1).pdf".into(),
+            mtime_ms: 5,
+            fingerprint: Some("x".into()),
+            ..Default::default()
+        };
+        old.traits.authors = true;
+        let mut good = old.clone();
+        good.path = "/l/x.pdf".into();
+        good.name = "x.pdf".into();
+        good.fingerprint = Some("y".into());
+        paper.files = vec![old, good];
+        paper.cite_key = "x".into();
+        store.papers.push(paper);
+        assert!(store.load_sweep(1_800_000_000));
+        assert_eq!(names(&store, 0), ["x.pdf", "x (1).pdf"]);
+        assert!(!store.load_sweep(1_800_000_000), "settled");
+    }
+
+    fn missing_store(now: u64, days_ago: u64) -> PaperStore {
+        let mut store = new_store();
+        let mut paper = PaperRecord::new();
+        paper.files.push(PaperFile {
+            path: "/l/gone.pdf".into(),
+            name: "gone.pdf".into(),
+            missing: true,
+            missing_since: Some(format_rfc3339(now - days_ago * 24 * 60 * 60)),
+            ..Default::default()
+        });
+        paper.cite_key = "gone".into();
+        store.papers.push(paper);
+        store
+    }
+
+    #[test]
+    fn the_missing_clock_starts_when_a_file_goes_and_stops_when_it_is_back() {
+        let mut store = new_store();
+        store.reconcile_file(&entry("/l/a.pdf", Some("fp-a")));
+        assert!(store.mark_missing(&HashSet::new()));
+        let since = store.papers[0].files[0].missing_since.clone();
+        assert!(since.is_some());
+        // Still gone: the clock keeps its start.
+        store.mark_missing(&HashSet::new());
+        assert_eq!(store.papers[0].files[0].missing_since, since);
+        // Back: cleared, and so on a reattach.
+        let present: HashSet<PathBuf> = [PathBuf::from("/l/a.pdf")].into();
+        assert!(store.mark_missing(&present));
+        assert_eq!(store.papers[0].files[0].missing_since, None);
+        store.mark_missing(&HashSet::new());
+        store.reconcile_file(&entry("/l/a.pdf", Some("fp-a")));
+        assert!(!store.papers[0].files[0].missing);
+        assert_eq!(store.papers[0].files[0].missing_since, None);
+        // A file missing from before the clock was kept starts it at load.
+        store.papers[0].files[0].missing = true;
+        assert!(store.load_sweep(1_800_000_000));
+        assert_eq!(
+            store.papers[0].files[0].missing_since.as_deref(),
+            Some(format_rfc3339(1_800_000_000).as_str())
+        );
+    }
+
+    #[test]
+    fn an_item_gone_for_a_week_is_removed_unless_the_user_has_a_stake() {
+        let now = 1_800_000_000;
+        // Six days: kept. Seven: removed, by the sweep or after a scan.
+        assert!(!missing_store(now, 6).remove_long_missing(now));
+        let mut store = missing_store(now, 7);
+        assert!(store.remove_long_missing(now));
+        assert!(store.papers.is_empty());
+        let mut store = missing_store(now, 30);
+        assert!(store.load_sweep(now));
+        assert!(store.papers.is_empty());
+        let mut store = missing_store(now, 0);
+        store.papers[0].files[0].missing_since =
+            Some(format_rfc3339(now_secs_for_tests() - 8 * 24 * 60 * 60));
+        assert!(store.mark_missing(&HashSet::new()));
+        assert!(store.papers.is_empty(), "the scan's sweep removes it too");
+
+        // One file still on disk keeps the item.
+        let mut store = missing_store(now, 30);
+        store.papers[0].files.push(PaperFile {
+            path: "/l/here.pdf".into(),
+            name: "here.pdf".into(),
+            ..Default::default()
+        });
+        assert!(!store.remove_long_missing(now));
+
+        // Every stake the user can have keeps it.
+        type Stake = fn(&mut PaperStore);
+        let stakes: [(&str, Stake); 7] = [
+            ("in a project", |store| {
+                let id = store.papers[0].id.clone();
+                let project = store.create_project("P").unwrap().id;
+                store.set_membership(&id, &project, true).unwrap();
+            }),
+            ("a user edit", |store| {
+                store.papers[0].meta.title = Some(MetaField {
+                    value: "Mine".into(),
+                    source: MetaSource::User,
+                });
+            }),
+            ("a pinned key", |store| {
+                store.papers[0].cite_key_pinned = true
+            }),
+            ("an alias", |store| {
+                store.papers[0]
+                    .alias_ids
+                    .push(CitationIdDto::ArXiv("2401.00001".into()));
+            }),
+            ("a merged record", |store| {
+                let snapshot = PaperRecord::new();
+                store.papers[0].merged_from.push(snapshot);
+            }),
+            ("parked candidates", |store| {
+                let found = candidate(MetaSource::Crossref, "T", &[("A", "B")], Some(2020));
+                store.papers[0].candidates.push(found);
+            }),
+            ("a file on an unmounted volume", |store| {
+                store.papers[0].files[0].path = "/Volumes/speedyf-not-mounted-x/gone.pdf".into();
+            }),
+        ];
+        for (what, stake) in stakes {
+            let mut store = missing_store(now, 30);
+            stake(&mut store);
+            assert!(!store.remove_long_missing(now), "{what}");
+            assert_eq!(store.papers.len(), 1, "{what}");
+        }
+
+        // A read-only store removes nothing.
+        let mut store = missing_store(now, 30);
+        store.block_writes_for_tests();
+        assert!(!store.remove_long_missing(now));
+    }
+
+    fn now_secs_for_tests() -> u64 {
+        parse_rfc3339(&now_rfc3339()).unwrap()
     }
 }

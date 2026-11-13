@@ -313,6 +313,7 @@ mod tests {
             mtime_ms: 1,
             fingerprint: Some(path.to_owned()),
             missing: false,
+            ..Default::default()
         }
     }
 

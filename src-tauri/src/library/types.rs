@@ -110,7 +110,7 @@ pub struct PaperMeta {
     pub kind: Option<MetaField<PaperKind>>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PaperFile {
     pub path: String,
@@ -123,6 +123,47 @@ pub struct PaperFile {
     pub fingerprint: Option<String>,
     #[serde(default)]
     pub missing: bool,
+    /// When the file was first found missing (RFC 3339); cleared when it
+    /// is back. An item whose files have all been gone for a week is
+    /// removed (`PaperStore::remove_long_missing`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub missing_since: Option<String>,
+    /// What the scan read about this file that ranks it for the item's
+    /// main file (`mainfile`). Filled on every reconcile.
+    #[serde(default, skip_serializing_if = "FileTraits::is_empty")]
+    pub traits: FileTraits,
+    /// Wire only, never stored: the path of the byte-identical copy that
+    /// stands for this file in the UI, when this one is not it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duplicate_of: Option<String>,
+}
+
+/// The scan's evidence about one file of an item, kept beside it so the
+/// main file can be chosen again on a merge or at load, when the index
+/// entry is not at hand.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileTraits {
+    /// The DOIs the file states as its own: off its first page and out of
+    /// its XMP packet, normalized.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dois: Vec<String>,
+    /// The classifier's reason names a publisher ("Elsevier on the first
+    /// page", "made by IEEE").
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub publisher: bool,
+    /// The arXiv version the file name gives (`2606.13614v2.pdf`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u32>,
+    /// Authors were read off the first page: not an anonymous review copy.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub authors: bool,
+}
+
+impl FileTraits {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// The full record, for the detail column and the Paper panel.

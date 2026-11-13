@@ -220,6 +220,7 @@ mod tests {
             mtime_ms: 1,
             fingerprint: Some(name.to_owned()),
             missing: false,
+            ..Default::default()
         });
         paper.cite_key = name.to_owned();
         let id = paper.id.clone();

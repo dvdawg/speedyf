@@ -10,6 +10,89 @@
 //! clock, no randomness, field order fixed.
 
 use super::types::{Author, MetaField, PaperDto, PaperKind};
+use serde::{Deserialize, Serialize};
+
+/// How entries are written, the same for the clipboard, an export and the
+/// synced `.bib` files. Kept in `library.json` (`bibtexOptions`), so a
+/// synced file reads the same on every machine. The default is what the
+/// serializer wrote before there were options.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct BibtexOptions {
+    /// An `abstract` field.
+    pub include_abstract: bool,
+    /// A `url` field: the doi.org link, else the arXiv abstract page.
+    pub include_url: bool,
+    /// A `file` field: the path of the item's main file.
+    pub include_file: bool,
+    /// Double braces around the title, so styles keep its capitals.
+    pub protect_title: bool,
+    /// `Phys. Rev. Lett.` for `Physical Review Letters`, for the journals
+    /// in [`JOURNAL_ABBREVIATIONS`]; any other name is left as it is.
+    pub abbreviate_journals: bool,
+}
+
+impl Default for BibtexOptions {
+    fn default() -> Self {
+        Self {
+            include_abstract: false,
+            include_url: false,
+            include_file: false,
+            protect_title: true,
+            abbreviate_journals: false,
+        }
+    }
+}
+
+/// Full journal names, lower-case and without a leading "the", and their
+/// ISO 4 abbreviations: common physics, mathematics and CS venues.
+pub const JOURNAL_ABBREVIATIONS: &[(&str, &str)] = &[
+    ("physical review letters", "Phys. Rev. Lett."),
+    ("physical review e", "Phys. Rev. E"),
+    ("reviews of modern physics", "Rev. Mod. Phys."),
+    ("journal of statistical physics", "J. Stat. Phys."),
+    ("journal of chemical physics", "J. Chem. Phys."),
+    ("annals of statistics", "Ann. Statist."),
+    (
+        "journal of machine learning research",
+        "J. Mach. Learn. Res.",
+    ),
+    (
+        "communications in mathematical physics",
+        "Commun. Math. Phys.",
+    ),
+    (
+        "ieee transactions on information theory",
+        "IEEE Trans. Inf. Theory",
+    ),
+    (
+        "proceedings of the national academy of sciences",
+        "Proc. Natl. Acad. Sci. USA",
+    ),
+    (
+        "proceedings of the national academy of sciences of the united states of america",
+        "Proc. Natl. Acad. Sci. USA",
+    ),
+    (
+        "proceedings of the national academy of sciences usa",
+        "Proc. Natl. Acad. Sci. USA",
+    ),
+];
+
+/// The abbreviation of a journal name in the table, matched without
+/// regard to case, spacing or a leading "The"; `None` for any other.
+pub fn abbreviate_journal(name: &str) -> Option<&'static str> {
+    let folded = name
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    let folded = folded.strip_prefix("the ").unwrap_or(&folded);
+    JOURNAL_ABBREVIATIONS
+        .iter()
+        .find(|(full, _)| *full == folded)
+        .map(|(_, short)| *short)
+}
 
 /// First line of a synced file. It tells the user, in the file itself, that
 /// hand edits do not survive.
@@ -18,7 +101,7 @@ const HEADER: &str = "% Written by SpeedyF. Edits here are overwritten on the ne
 /// Every entry for `papers`, in the given order, one blank line between
 /// entries, trailing newline. With `header`, the SpeedyF comment line and a
 /// blank line come first.
-pub fn render(papers: &[PaperDto], header: bool) -> String {
+pub fn render(papers: &[PaperDto], header: bool, options: &BibtexOptions) -> String {
     let mut out = String::new();
     if header {
         out.push_str(HEADER);
@@ -29,7 +112,10 @@ pub fn render(papers: &[PaperDto], header: bool) -> String {
     }
     // Each entry ends with exactly one newline, so joining on a newline is
     // exactly one blank line between entries and none after the last.
-    let entries: Vec<String> = papers.iter().map(render_one).collect();
+    let entries: Vec<String> = papers
+        .iter()
+        .map(|paper| render_one(paper, options))
+        .collect();
     out.push_str(&entries.join("\n"));
     out
 }
@@ -37,7 +123,7 @@ pub fn render(papers: &[PaperDto], header: bool) -> String {
 /// One entry: the `% incomplete:` comment line when the paper has gaps, then
 /// `@type{key,` the fields and the closing brace. Ends with a single newline
 /// (no blank line) so it pastes cleanly and `render` can stack entries.
-pub fn render_one(paper: &PaperDto) -> String {
+pub fn render_one(paper: &PaperDto, options: &BibtexOptions) -> String {
     let meta = &paper.meta;
     let kind = entry_type(paper);
     let mut out = String::new();
@@ -65,7 +151,12 @@ pub fn render_one(paper: &PaperDto) -> String {
     }
     if let Some(title) = text(&meta.title) {
         // Double braces: BibTeX styles lower-case titles unless protected.
-        fields.push(("title", format!("{{{}}}", escape(title))));
+        let title = if options.protect_title {
+            format!("{{{}}}", escape(title))
+        } else {
+            escape(title)
+        };
+        fields.push(("title", title));
     }
     if let Some(venue) = text(&meta.venue) {
         // `journal` and `booktitle` are what the standard styles print for
@@ -76,6 +167,10 @@ pub fn render_one(paper: &PaperDto) -> String {
             "article" => "journal",
             "inproceedings" => "booktitle",
             _ => "howpublished",
+        };
+        let venue = match (name, options.abbreviate_journals) {
+            ("journal", true) => abbreviate_journal(venue).unwrap_or(venue),
+            _ => venue,
         };
         fields.push((name, escape(venue)));
     }
@@ -109,6 +204,27 @@ pub fn render_one(paper: &PaperDto) -> String {
         let id = present(&paper.arxiv).unwrap_or_default();
         fields.push(("eprint", identifier(id)));
         fields.push(("archivePrefix", "arXiv".to_string()));
+    }
+    if options.include_url {
+        let url = match (present(&paper.doi), present(&paper.arxiv)) {
+            (Some(doi), _) => Some(format!("https://doi.org/{doi}")),
+            (None, Some(arxiv)) => Some(format!("https://arxiv.org/abs/{arxiv}")),
+            (None, None) => None,
+        };
+        if let Some(url) = url {
+            fields.push(("url", identifier(&url)));
+        }
+    }
+    if options.include_abstract {
+        if let Some(abstract_) = text(&meta.abstract_) {
+            fields.push(("abstract", escape(abstract_)));
+        }
+    }
+    if options.include_file {
+        // The main file, as written: a path is read raw like an identifier.
+        if let Some(file) = paper.files.iter().find(|file| !file.missing) {
+            fields.push(("file", identifier(&file.path)));
+        }
     }
     if !paper.incomplete.is_empty() {
         // Name the file so the user can find the paper in the list and look
@@ -283,6 +399,15 @@ mod tests {
     use super::*;
     use crate::library::types::{MetaSource, PaperFile, PaperMeta};
 
+    /// The default options, as every test before there were options.
+    fn render_one(paper: &PaperDto) -> String {
+        super::render_one(paper, &BibtexOptions::default())
+    }
+
+    fn render(papers: &[PaperDto], header: bool) -> String {
+        super::render(papers, header, &BibtexOptions::default())
+    }
+
     fn field<T>(value: T) -> Option<MetaField<T>> {
         Some(MetaField {
             value,
@@ -305,6 +430,7 @@ mod tests {
             mtime_ms: 0,
             fingerprint: None,
             missing: false,
+            ..Default::default()
         }
     }
 
@@ -668,5 +794,113 @@ mod tests {
 
         // Same input, same bytes.
         assert_eq!(render(&papers, true), render(&papers, true));
+    }
+
+    #[test]
+    fn each_option_changes_only_its_own_field() {
+        let base = render_one(&jarzynski());
+        let with = |change: fn(&mut BibtexOptions)| {
+            let mut options = BibtexOptions::default();
+            change(&mut options);
+            super::render_one(&jarzynski(), &options)
+        };
+        // The default is the output from before there were options.
+        assert_eq!(
+            super::render_one(&jarzynski(), &BibtexOptions::default()),
+            base
+        );
+
+        let abstract_ = with(|o| o.include_abstract = true);
+        assert_eq!(
+            abstract_,
+            base.replace(
+                "  doi = {10.1103/PhysRevLett.78.2690}\n}\n",
+                "  doi = {10.1103/PhysRevLett.78.2690},\n  abstract = {An equality is derived.}\n}\n"
+            )
+        );
+
+        let url = with(|o| o.include_url = true);
+        assert!(url.ends_with(
+            "  doi = {10.1103/PhysRevLett.78.2690},\n  url = {https://doi.org/10.1103/PhysRevLett.78.2690}\n}\n"
+        ));
+        let options = BibtexOptions {
+            include_url: true,
+            ..BibtexOptions::default()
+        };
+        assert!(super::render_one(&maldacena(), &options)
+            .contains("  url = {https://arxiv.org/abs/hep-th/9711200}\n"));
+        let mut bare = paper("bare");
+        bare.meta.title = field("T".to_string());
+        assert!(!super::render_one(&bare, &options).contains("url"));
+
+        let mut filed = jarzynski();
+        let mut missing = file("gone_1.pdf");
+        missing.missing = true;
+        filed.files = vec![missing, file("main_1.pdf")];
+        let options = BibtexOptions {
+            include_file: true,
+            ..BibtexOptions::default()
+        };
+        assert!(super::render_one(&filed, &options).ends_with("  file = {/papers/main_1.pdf}\n}\n"));
+        assert_eq!(
+            super::render_one(&filed, &BibtexOptions::default()),
+            base,
+            "no file field by default"
+        );
+
+        let single = with(|o| o.protect_title = false);
+        assert_eq!(
+            single,
+            base.replace(
+                "{{Nonequilibrium Equality for Free Energy Differences}}",
+                "{Nonequilibrium Equality for Free Energy Differences}"
+            )
+        );
+
+        let short = with(|o| o.abbreviate_journals = true);
+        assert_eq!(
+            short,
+            base.replace(
+                "journal = {Physical Review Letters}",
+                "journal = {Phys. Rev. Lett.}"
+            )
+        );
+    }
+
+    #[test]
+    fn journal_names_abbreviate_from_the_table_only() {
+        assert_eq!(
+            abbreviate_journal("PHYSICAL  REVIEW letters"),
+            Some("Phys. Rev. Lett.")
+        );
+        assert_eq!(
+            abbreviate_journal("The Annals of Statistics"),
+            Some("Ann. Statist.")
+        );
+        assert_eq!(
+            abbreviate_journal("The Journal of Chemical Physics"),
+            Some("J. Chem. Phys.")
+        );
+        assert_eq!(
+            abbreviate_journal(
+                "Proceedings of the National Academy of Sciences of the United States of America"
+            ),
+            Some("Proc. Natl. Acad. Sci. USA")
+        );
+        assert_eq!(abbreviate_journal("Physical Review"), None);
+        assert_eq!(abbreviate_journal("Nature"), None);
+        // An inproceedings venue is a booktitle, never abbreviated.
+        let mut p = jarzynski();
+        p.meta.kind = field(PaperKind::Inproceedings);
+        let options = BibtexOptions {
+            abbreviate_journals: true,
+            ..BibtexOptions::default()
+        };
+        assert!(super::render_one(&p, &options).contains("booktitle = {Physical Review Letters}"));
+        // The options round-trip in camelCase, and a missing key is its default.
+        let json = serde_json::to_string(&options).unwrap();
+        assert!(json.contains("\"abbreviateJournals\":true"), "{json}");
+        let partial: BibtexOptions = serde_json::from_str("{\"includeUrl\":true}").unwrap();
+        assert!(partial.include_url && partial.protect_title);
     }
 }

@@ -14,6 +14,8 @@ use super::EngineState;
 use crate::engine::types::{DocId, Priority, ResolvedCitationDto};
 use crate::engine::{EngineHandle, Work};
 use crate::errors::{AppError, AppResult};
+use crate::library::backup::LibraryBackupDto;
+use crate::library::bibtex::BibtexOptions;
 use crate::library::chain::{
     apply_title_candidates, drive_batch, without_declined, BatchTurns, Chain, ChainKind, EdgeJob,
     TitleOutcome, Turn, PARK_LIMIT,
@@ -290,6 +292,26 @@ pub async fn library_data_dir(
     read_store(state.0.clone(), |store| Ok(store.data_info())).await
 }
 
+/* ---- Backups of library.json (projects.md §3) ---- */
+
+/// The backups of `library.json`, newest first.
+#[tauri::command]
+pub async fn library_backups(
+    state: tauri::State<'_, EngineState>,
+) -> AppResult<Vec<LibraryBackupDto>> {
+    read_store(state.0.clone(), |store| Ok(store.backups())).await
+}
+
+/// Put the library back as a backup holds it, after backing up the
+/// current state (`PaperStore::restore_backup`).
+#[tauri::command]
+pub async fn library_restore_backup(
+    state: tauri::State<'_, EngineState>,
+    file: String,
+) -> AppResult<()> {
+    write_store(state.0.clone(), move |store| store.restore_backup(&file)).await
+}
+
 /// Switch the data folder. Adopts a `library.json` already there, otherwise
 /// copies the current one; either way the windows reload afterwards.
 #[tauri::command]
@@ -319,6 +341,26 @@ pub async fn library_bibtex(
     paper_ids: Vec<String>,
 ) -> AppResult<String> {
     write_store_if_changed(state.0.clone(), move |store| store.bibtex_for(&paper_ids)).await
+}
+
+/// How BibTeX is written (projects.md §7).
+#[tauri::command]
+pub async fn library_bibtex_options(
+    state: tauri::State<'_, EngineState>,
+) -> AppResult<BibtexOptions> {
+    read_store(state.0.clone(), |store| Ok(store.bibtex_options())).await
+}
+
+/// Change how BibTeX is written; the save rewrites the synced `.bib` files.
+#[tauri::command]
+pub async fn library_set_bibtex_options(
+    state: tauri::State<'_, EngineState>,
+    options: BibtexOptions,
+) -> AppResult<BibtexOptions> {
+    write_store(state.0.clone(), move |store| {
+        store.set_bibtex_options(options)
+    })
+    .await
 }
 
 /// Pin these papers' keys without rendering anything: the keys were just

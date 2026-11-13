@@ -273,7 +273,7 @@ impl PaperStore {
         let members = self.project_members(project_id)?;
         let ids = members.iter().map(|paper| paper.id.clone()).collect();
         let dtos: Vec<PaperDto> = members.iter().map(|paper| self.dto_for(paper)).collect();
-        Ok((bibtex::render(&dtos, true), ids))
+        Ok((bibtex::render(&dtos, true, &self.bibtex_options), ids))
     }
 
     /// Export .bib…: the project's entries written to `path` once. The
@@ -599,6 +599,7 @@ mod tests {
             mtime_ms: 1,
             fingerprint: None,
             missing,
+            ..Default::default()
         };
         let index =
             |store: &PaperStore, id: &str| store.papers.iter().position(|p| p.id == id).unwrap();

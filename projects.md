@@ -105,6 +105,36 @@ All of an item's files stay visible: the detail column lists them, and any
 can be opened or made the main one (`files[0]`: the one Open, previews and
 the scan's fields use), which a rescan keeps.
 
+**The main file** (`library/mainfile.rs`). The user's choice (`primaryPath`,
+set by Make main) is never overridden. Without one, the main file is chosen
+again when a file attaches, on a merge, after a scan marks files missing,
+and in the load sweep, by narrowing the files rule by rule (a rule applies
+only when some file passes it): on disk; the published version (the file's
+own first-page or XMP DOI is the item's journal DOI, not a 10.48550 one, or
+its classifier reason names a publisher); the highest arXiv version (from
+the file name, `2606.13614v2.pdf`, `paper_v3.pdf`: the index entry keeps no
+stamp version, so a file whose version is unknown is not ruled out); authors
+on the first page (an anonymous review copy loses); not a browser duplicate
+(`name (1).pdf`, `Copy of`, `name copy.pdf`); the newest mtime; a tie keeps
+the order. The evidence is kept on each file (`traits`), refreshed by every
+reconcile, so a merge or a load can rank files without the index.
+
+**Byte-identical copies.** Files of one item with the same fingerprint, both
+on disk, are one PDF in the UI: the DTO marks each copy with `duplicateOf`
+(the path of the copy shown: the main file when it is in the group, else
+one that is not a browser duplicate, else the oldest), the detail column
+shows one row "name, 2 copies" with every path in its tooltip, Open and
+Make main act on that copy, and the list's "N PDFs" counts distinct
+contents. The records keep every file; nothing is deleted.
+
+**Items gone for a week.** A file's `missingSince` is stamped when a scan
+first finds it missing and cleared when it is back. An item all of whose
+files have been missing for seven days is removed, by the scan's
+`mark_missing` and by the load sweep (saved, and `library:changed`, once),
+unless it is in a project, has user edits or a pinned key, carries merged
+records or aliases, or has parked candidates. A file under `/Volumes/X`
+while X is not mounted does not count as gone.
+
 ### Metadata with provenance
 
 Each field carries where it came from:
@@ -149,6 +179,7 @@ in every project's `.bib`.
 ```
 <library data dir>/
   library.json          # papers, projects, memberships — the user's work
+  backups/              # library-YYYYMMDD-HHMMSS.json.gz, gzip'd snapshots
 <app data dir>/
   library-index.json    # the scan cache, as today — disposable
   library-root.json     # the folders, as today
@@ -165,6 +196,20 @@ data folder** moves it, copying the file and then reading from the new place.
 Written atomically: serialize to a temp file in the same directory, then
 rename over the old one. The existing index is written with a plain
 `fs::write`, which is acceptable for a cache and not for this file.
+
+**Backups** (`library/backup.rs`). Full snapshots, gzip-compressed (a
+thousand items is tens of kilobytes), not diffs, so each restores on its
+own. A save writes one at most once an hour, and only when the content
+differs from the last backup (an FNV-1a hash, primed from the newest file
+at the first save). Rotation keeps every backup of the last 24 hours, the
+newest of each day for 14 days and of each week for 8 weeks, and deletes
+the rest. A failed backup never fails the save. `library_backups` lists
+them (when, size, items, projects; unreadable ones are left out) and
+`library_restore_backup { file }` takes only a backup's file name, refuses
+one that does not parse or was written by a newer build, backs up the
+current state first, then replaces the records in memory and on disk.
+Settings shows "Last backup ..." and a Restore... list with an in-place
+confirm.
 
 `library.json`, version 1:
 
@@ -285,15 +330,24 @@ point, on the engine thread, at no extra I/O:
   are clean and whose first is not a scan is never rendered. Every reading
   is cached per page beside the sidecar (`text/<hash>.ocr.json`), keyed by
   the content fingerprint, so no page is read twice across rescans.
-  Cost: ~0.4 s a page on Apple silicon, on the engine thread — so only from
-  the idle-priority library jobs, never from a scan the user is waiting for
-  (an inbox copy reads the cache only and is scanned again at idle,
-  `ocr_deferred`). The first Vision call of a session loads its model and
-  can take tens of seconds. Elsewhere it compiles to nothing: Windows and
-  Linux keep the text layer. Follow-up: feed the OCR text to
-  `document:contributeText` so search in an open scan finds it too (an OCR
-  page's offsets are not PDFium character indices, so its hits need their
-  own highlighting).
+  Cost: ~0.4 s a page on Apple silicon, and the first Vision call of a
+  session loads its model and can take tens of seconds — so it runs on its
+  own thread (`engine::ocr_thread`, utility QoS), never on the PDFium
+  worker: the worker renders the page (PDFium stays there), hands the PNG
+  over a bounded channel, one page in flight per document, and goes on
+  with its queue. The OCR thread writes the reading to the cache at once
+  (so a quit loses nothing already read) and sends it back as an idle
+  `OcrDone` job, which resumes whatever waited: the scan scans that file
+  again with the page cached; the text pass picks its document up where it
+  stopped — pages already extracted, the six-page budget as spent. Only
+  the idle library jobs ask, never a scan the user is waiting for (an
+  inbox copy reads the cache only and is scanned again at idle,
+  `ocr_deferred`). Elsewhere it compiles to nothing: Windows and Linux keep
+  the text layer. Search in an open document uses the cache too, never
+  running OCR itself: a page whose layer needs OCR and has a cached
+  reading is indexed from it, its hits highlighted from Vision's line boxes
+  (a hit's share of its line), since its offsets are not PDFium
+  characters.
 
 The first-line title heuristic and the filename patterns stay as the floor.
 
@@ -509,6 +563,17 @@ share one serializer.
 Authors are written `Family, Given and Family, Given`. Titles are wrapped
 `{{…}}` to protect case. The characters `& % $ # _ { } ~ ^ \` are escaped;
 everything else is written as UTF-8, which every modern TeX reads.
+
+**Options** (Settings, Advanced, BibTeX; closed by default). Kept in
+`library.json` as `bibtexOptions` (absent: the defaults, which write
+exactly the output above), so the clipboard, exports and synced files use
+them on every machine; changing one saves, which rewrites every synced
+`.bib` whose bytes change. Include abstract (off); include URL (off: the
+doi.org link, else `https://arxiv.org/abs/<id>`); include file path (off:
+the main file on disk); title case protection (on: `{{…}}`, off: `{…}`);
+abbreviate journal names (off: a built-in table of common physics, math
+and CS journals, matched ignoring case, spacing and a leading "The"; only
+the `journal` field, unknown names left alone).
 
 **Export .bib…** opens a save dialog and writes the project's entries once.
 **Sync to a .bib…** records a path on the project; from then on every change

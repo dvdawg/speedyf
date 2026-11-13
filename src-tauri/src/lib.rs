@@ -454,6 +454,10 @@ pub fn run() {
             commands::library::library_refs_provider,
             commands::library::library_refs_pending,
             commands::library::library_refs_store,
+            commands::library::library_backups,
+            commands::library::library_restore_backup,
+            commands::library::library_bibtex_options,
+            commands::library::library_set_bibtex_options,
         ])
         .build(tauri::generate_context!())
         .expect("error while building SpeedyF")

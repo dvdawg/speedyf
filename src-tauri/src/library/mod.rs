@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
 pub mod automerge;
+pub mod backup;
 pub mod bibtex;
 pub mod chain;
 pub mod citekey;
@@ -22,6 +23,7 @@ pub mod filing;
 pub mod firstpage;
 pub mod identifiers;
 pub mod lookup;
+pub mod mainfile;
 pub mod merge;
 pub mod missing;
 pub mod ocrtext;

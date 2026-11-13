@@ -281,6 +281,11 @@ export interface PaperFile {
   mtimeMs: number;
   fingerprint: string | null;
   missing: boolean;
+  /** When the file was first found missing (RFC 3339). */
+  missingSince?: string | null;
+  /** Set when this file is a byte-identical copy of another file of the
+   * item: the path of the copy that stands for both in the list. */
+  duplicateOf?: string | null;
 }
 
 /** The full record, for the detail column and the Paper panel. */
@@ -421,6 +426,30 @@ export interface CitationLinks {
 export interface LibraryDataInfo {
   dir: string;
   isDefault: boolean;
+}
+
+/** One backup of library.json, newest first in a listing. */
+export interface LibraryBackup {
+  /** The file name in the backups folder; what a restore takes. */
+  file: string;
+  /** When it was written, RFC 3339 UTC. */
+  at: string;
+  /** Size on disk, compressed. */
+  bytes: number;
+  papers: number;
+  projects: number;
+}
+
+/** How BibTeX is written: the clipboard, exports and synced .bib files. */
+export interface BibtexOptions {
+  includeAbstract: boolean;
+  /** doi.org link, else the arXiv abstract page */
+  includeUrl: boolean;
+  /** the main file's path */
+  includeFile: boolean;
+  /** double braces around titles */
+  protectTitle: boolean;
+  abbreviateJournals: boolean;
 }
 
 /** Counts for the two fixed rows of the projects column. */

@@ -8,6 +8,8 @@
 //! aside under a new name first, and a file from a newer build is left alone
 //! while this build runs read-only against an empty library.
 
+use super::backup::{self, BackupState, LibraryBackupDto};
+use super::bibtex::BibtexOptions;
 use super::papers::PaperRecord;
 use super::projects::ProjectRecord;
 use super::types::LibraryDataInfoDto;
@@ -31,19 +33,26 @@ const FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 /// The records. The version is read on its own first (see
 /// `read_library_file`), so it is not repeated here.
 #[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 struct LibraryFile {
     #[serde(default)]
     papers: Vec<PaperRecord>,
     #[serde(default)]
     projects: Vec<ProjectRecord>,
+    /// How BibTeX is written (projects.md §7). Absent before there were
+    /// options: the defaults, which write what was written then.
+    #[serde(default)]
+    bibtex_options: BibtexOptions,
 }
 
 /// The same shape, borrowed, so a save never clones every record.
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct LibraryFileRef<'a> {
     version: u32,
     papers: &'a [PaperRecord],
     projects: &'a [ProjectRecord],
+    bibtex_options: &'a BibtexOptions,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -64,6 +73,9 @@ pub struct PaperStore {
     data_dir: PathBuf,
     pub(super) papers: Vec<PaperRecord>,
     pub(super) projects: Vec<ProjectRecord>,
+    pub(super) bibtex_options: BibtexOptions,
+    /// The last backup a save wrote (`backup`).
+    backup: BackupState,
     /// Why nothing may be written, when the file on disk is one this build
     /// must not replace: written by a newer build, or unreadable and not
     /// movable out of the way. Nothing was loaded either.
@@ -92,6 +104,8 @@ impl PaperStore {
             data_dir,
             papers: Vec::new(),
             projects: Vec::new(),
+            bibtex_options: BibtexOptions::default(),
+            backup: BackupState::default(),
             write_block: None,
             dirty: false,
             bib_errors: Vec::new(),
@@ -118,9 +132,14 @@ impl PaperStore {
             Loaded::Ok(file) => {
                 store.papers = file.papers;
                 store.projects = file.projects;
+                store.bibtex_options = file.bibtex_options;
                 // Duplicates from before automatic merging, or from another
-                // machine's edits, are merged once here.
-                if store.auto_merge_all() {
+                // machine's edits, are merged once here; then every item's
+                // main file is chosen again and the items gone for a week
+                // are removed.
+                let merged = store.auto_merge_all();
+                let swept = store.load_sweep(now_unix_secs());
+                if merged || swept {
                     if let Err(error) = store.save() {
                         log::warn!("cannot save the library after merging duplicates: {error}");
                         store.mark_dirty();
@@ -221,14 +240,103 @@ impl PaperStore {
                 .collect();
         }
         let path = self.file_path();
-        let file = LibraryFileRef {
+        let bytes = self.serialized()?;
+        write_atomically(&path, &bytes)?;
+        self.dirty = false;
+        self.last_flush = Instant::now();
+        // A backup is a convenience: one that cannot be written never fails
+        // the save that asked for it.
+        let dir = backup::dir_of(&self.data_dir);
+        if let Err(error) = self
+            .backup
+            .maybe_write(&dir, &bytes, now_unix_secs(), false)
+        {
+            log::warn!("cannot back up the library: {error}");
+        }
+        Ok(())
+    }
+
+    /// `library.json` as a save writes it.
+    fn serialized(&self) -> AppResult<Vec<u8>> {
+        serde_json::to_vec_pretty(&LibraryFileRef {
             version: FORMAT_VERSION,
             papers: &self.papers,
             projects: &self.projects,
+            bibtex_options: &self.bibtex_options,
+        })
+        .map_err(|error| AppError::Internal(format!("cannot serialize the library: {error}")))
+    }
+
+    pub fn bibtex_options(&self) -> BibtexOptions {
+        self.bibtex_options.clone()
+    }
+
+    /// Change how BibTeX is written. The caller saves, which rewrites every
+    /// synced `.bib` whose bytes the change alters.
+    pub fn set_bibtex_options(&mut self, options: BibtexOptions) -> AppResult<BibtexOptions> {
+        self.ensure_writable()?;
+        if self.bibtex_options != options {
+            self.bibtex_options = options;
+            self.mark_dirty();
+        }
+        Ok(self.bibtex_options.clone())
+    }
+
+    /// The backups of `library.json`, newest first, with what each holds.
+    /// One that cannot be read is left out: it could not be restored.
+    pub fn backups(&self) -> Vec<LibraryBackupDto> {
+        let dir = backup::dir_of(&self.data_dir);
+        backup::backups_in(&dir)
+            .into_iter()
+            .filter_map(|(file, at)| {
+                let path = dir.join(&file);
+                let bytes = fs::metadata(&path).ok()?.len();
+                let content = backup::read(&path).ok()?;
+                let counts = serde_json::from_slice::<BackupCounts>(&content).ok()?;
+                let cap = |n: usize| n.min(u32::MAX as usize) as u32;
+                Some(LibraryBackupDto {
+                    file,
+                    at: format_rfc3339(at),
+                    bytes,
+                    papers: cap(counts.papers.len()),
+                    projects: cap(counts.projects.len()),
+                })
+            })
+            .collect()
+    }
+
+    /// Put the library back as the backup `file` holds it. Refused for a
+    /// name that is not a backup's, a backup that does not parse, and one
+    /// written by a newer build. The current state is backed up first, so
+    /// a restore can itself be undone; then the records are replaced in
+    /// memory and the caller's save writes them to disk.
+    pub fn restore_backup(&mut self, file: &str) -> AppResult<()> {
+        self.ensure_writable()?;
+        if backup::parse_name(file).is_none() {
+            return Err(AppError::Internal(format!(
+                "{file} is not a library backup"
+            )));
+        }
+        let dir = backup::dir_of(&self.data_dir);
+        let bytes = backup::read(&dir.join(file))?;
+        let restored = match read_library_bytes(&bytes) {
+            Loaded::Ok(restored) => restored,
+            Loaded::Newer(version) => {
+                return Err(AppError::Unsupported(format!(
+                    "that backup was written by a newer SpeedyF (version {version}); update the app to restore it"
+                )));
+            }
+            Loaded::Missing | Loaded::Corrupt(_) | Loaded::Unreadable(_) => {
+                return Err(AppError::Io(format!("the backup {file} cannot be read")));
+            }
         };
-        write_atomically(&path, &file)?;
-        self.dirty = false;
-        self.last_flush = Instant::now();
+        let current = self.serialized()?;
+        self.backup
+            .maybe_write(&dir, &current, now_unix_secs(), true)?;
+        self.papers = restored.papers;
+        self.projects = restored.projects;
+        self.bibtex_options = restored.bibtex_options;
+        self.mark_dirty();
         Ok(())
     }
 
@@ -282,7 +390,9 @@ impl PaperStore {
         // contents over the old one.
         let mut adopted = None;
         match read_library_file(&target) {
-            Loaded::Ok(file) => adopted = Some((file.papers, file.projects)),
+            Loaded::Ok(file) => {
+                adopted = Some((file.papers, file.projects, file.bibtex_options));
+            }
             Loaded::Missing => {
                 let current = self.file_path();
                 if current.is_file() {
@@ -300,14 +410,7 @@ impl PaperStore {
                     // nothing was ever saved. What is in memory is then
                     // empty or this session's own work, and writing it to a
                     // fresh folder destroys nothing.
-                    write_atomically(
-                        &target,
-                        &LibraryFileRef {
-                            version: FORMAT_VERSION,
-                            papers: &self.papers,
-                            projects: &self.projects,
-                        },
-                    )?;
+                    write_atomically(&target, &self.serialized()?)?;
                 }
             }
             Loaded::Newer(version) => {
@@ -324,21 +427,35 @@ impl PaperStore {
         write_pointer(&self.app_data_dir, &dir)?;
         self.data_dir = dir;
         self.write_block = None;
-        if let Some((papers, projects)) = adopted {
+        self.backup.reset();
+        if let Some((papers, projects, bibtex_options)) = adopted {
             self.papers = papers;
             self.projects = projects;
+            self.bibtex_options = bibtex_options;
             self.dirty = false;
         }
         Ok(self.data_info())
     }
 }
 
+/// How many records a backup holds, without parsing them.
+#[derive(Deserialize)]
+struct BackupCounts {
+    #[serde(default)]
+    papers: Vec<serde::de::IgnoredAny>,
+    #[serde(default)]
+    projects: Vec<serde::de::IgnoredAny>,
+}
+
 fn read_library_file(path: &Path) -> Loaded {
-    let bytes = match fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Loaded::Missing,
-        Err(error) => return Loaded::Unreadable(error.to_string()),
-    };
+    match fs::read(path) {
+        Ok(bytes) => read_library_bytes(&bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Loaded::Missing,
+        Err(error) => Loaded::Unreadable(error.to_string()),
+    }
+}
+
+fn read_library_bytes(bytes: &[u8]) -> Loaded {
     // The version first, on its own, so a file whose records this build
     // cannot parse is still recognized as newer rather than as corrupt.
     #[derive(Deserialize)]
@@ -346,33 +463,31 @@ fn read_library_file(path: &Path) -> Loaded {
         #[serde(default)]
         version: u32,
     }
-    match serde_json::from_slice::<Envelope>(&bytes) {
+    match serde_json::from_slice::<Envelope>(bytes) {
         Ok(envelope) if envelope.version > FORMAT_VERSION => {
             return Loaded::Newer(envelope.version);
         }
         Ok(_) => {}
         Err(error) => return Loaded::Corrupt(error.to_string()),
     }
-    match serde_json::from_slice::<LibraryFile>(&bytes) {
+    match serde_json::from_slice::<LibraryFile>(bytes) {
         Ok(file) => Loaded::Ok(file),
         Err(error) => Loaded::Corrupt(error.to_string()),
     }
 }
 
-fn write_atomically(path: &Path, file: &LibraryFileRef<'_>) -> AppResult<()> {
+fn write_atomically(path: &Path, bytes: &[u8]) -> AppResult<()> {
     let dir = path
         .parent()
         .ok_or_else(|| AppError::Io(format!("{} has no parent folder", path.display())))?;
     fs::create_dir_all(dir)
         .map_err(|error| AppError::Io(format!("cannot create {}: {error}", dir.display())))?;
-    let bytes = serde_json::to_vec_pretty(file)
-        .map_err(|error| AppError::Internal(format!("cannot serialize the library: {error}")))?;
     let mut temp = tempfile::Builder::new()
         .prefix(LIBRARY_FILE)
         .suffix(".tmp")
         .tempfile_in(dir)
         .map_err(|error| AppError::Io(format!("cannot write in {}: {error}", dir.display())))?;
-    temp.write_all(&bytes)
+    temp.write_all(bytes)
         .and_then(|()| temp.as_file().sync_all())
         .map_err(|error| AppError::Io(format!("cannot write {}: {error}", path.display())))?;
     temp.persist(path).map_err(|error| {
@@ -430,6 +545,13 @@ fn write_pointer(app_data_dir: &Path, data_dir: &Path) -> AppResult<()> {
     .map_err(|error| AppError::Internal(format!("cannot serialize {POINTER_FILE}: {error}")))?;
     fs::write(&path, bytes)
         .map_err(|error| AppError::Io(format!("cannot write {}: {error}", path.display())))
+}
+
+fn now_unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 fn now_unix_ms() -> u128 {
@@ -826,5 +948,142 @@ mod tests {
         ] {
             assert_eq!(parse_rfc3339(bad), None, "{bad:?}");
         }
+    }
+
+    fn backup_names(data: &Path) -> Vec<String> {
+        backup::backups_in(&backup::dir_of(data))
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect()
+    }
+
+    #[test]
+    fn a_save_backs_up_and_a_backup_restores_after_backing_up_the_present() {
+        let app_data = tempfile::tempdir().expect("app data");
+        let mut store = store_with_one_paper(app_data.path());
+        store.save().expect("save");
+        let first = backup_names(app_data.path());
+        assert_eq!(first.len(), 1, "the first save backs up");
+        // Within the hour, changed: no second backup.
+        store.create_project("Second").unwrap();
+        store.save().unwrap();
+        assert_eq!(backup_names(app_data.path()), first);
+
+        let listed = store.backups();
+        assert_eq!(listed.len(), 1);
+        assert_eq!((listed[0].papers, listed[0].projects), (1, 1));
+        assert_eq!(listed[0].file, first[0]);
+        assert!(listed[0].bytes > 0 && listed[0].at.ends_with('Z'));
+
+        // Restore: the present (two projects) is backed up first, then the
+        // backup's one project is what memory and disk hold.
+        store.restore_backup(&first[0]).expect("restore");
+        store.save().unwrap();
+        assert_eq!(store.projects.len(), 1);
+        let after = store.backups();
+        assert_eq!(after.len(), 2, "{after:?}");
+        assert_eq!(after[0].projects, 2, "the state before the restore");
+        let reloaded = PaperStore::load(app_data.path().to_path_buf());
+        assert_eq!(reloaded.projects.len(), 1);
+        assert_eq!(reloaded.papers.len(), 1);
+        // And that backup restores the two projects back.
+        store.restore_backup(&after[0].file).unwrap();
+        store.save().unwrap();
+        assert_eq!(store.projects.len(), 2);
+    }
+
+    #[test]
+    fn a_corrupt_newer_or_foreign_backup_is_refused_and_nothing_changes() {
+        let app_data = tempfile::tempdir().expect("app data");
+        let mut store = store_with_one_paper(app_data.path());
+        store.save().unwrap();
+        let dir = backup::dir_of(app_data.path());
+        let now = 1_700_000_000;
+        let corrupt = backup::write(&dir, now, b"{not json").unwrap();
+        let newer = backup::write(
+            &dir,
+            now + 10,
+            serde_json::json!({ "version": 99, "papers": [] })
+                .to_string()
+                .as_bytes(),
+        )
+        .unwrap();
+        fs::write(dir.join("library-20260101-000000.json.gz"), b"not gzip").unwrap();
+        let before = fs::read(app_data.path().join(LIBRARY_FILE)).unwrap();
+        let count = backup_names(app_data.path()).len();
+
+        let error = store.restore_backup(&newer).unwrap_err();
+        assert!(error.to_string().contains("newer"), "{error}");
+        assert!(store.restore_backup(&corrupt).is_err());
+        assert!(store
+            .restore_backup("library-20260101-000000.json.gz")
+            .is_err());
+        assert!(store.restore_backup("../library.json").is_err());
+        assert!(store
+            .restore_backup("library-20250101-000000.json.gz")
+            .is_err());
+        assert_eq!(store.papers.len(), 1);
+        assert_eq!(
+            fs::read(app_data.path().join(LIBRARY_FILE)).unwrap(),
+            before
+        );
+        assert_eq!(
+            backup_names(app_data.path()).len(),
+            count,
+            "no backup of a refusal"
+        );
+        // The unreadable ones are not offered.
+        let offered: Vec<String> = store.backups().into_iter().map(|b| b.file).collect();
+        assert!(!offered.contains(&corrupt));
+        assert!(
+            offered.contains(&newer),
+            "listed; restoring it says why not"
+        );
+        assert!(!offered
+            .iter()
+            .any(|f| f == "library-20260101-000000.json.gz"));
+    }
+
+    #[test]
+    fn bibtex_options_persist_and_rewrite_the_synced_bib() {
+        let app_data = tempfile::tempdir().expect("app data");
+        let mut store = store_with_one_paper(app_data.path());
+        let paper_id = store.papers[0].id.clone();
+        let project_id = store.projects[0].id.clone();
+        store.set_membership(&paper_id, &project_id, true).unwrap();
+        let bib = app_data.path().join("refs.bib");
+        store
+            .set_project_bib(&project_id, Some(bib.to_string_lossy().into_owned()))
+            .unwrap();
+        store.save().unwrap();
+        assert!(fs::read_to_string(&bib)
+            .unwrap()
+            .contains("title = {{A Title}}"));
+
+        let options = BibtexOptions {
+            protect_title: false,
+            ..BibtexOptions::default()
+        };
+        store.set_bibtex_options(options.clone()).unwrap();
+        store.save().unwrap();
+        assert!(fs::read_to_string(&bib)
+            .unwrap()
+            .contains("title = {A Title}"));
+        let text = fs::read_to_string(app_data.path().join(LIBRARY_FILE)).unwrap();
+        assert!(text.contains("\"bibtexOptions\""), "{text}");
+        assert!(text.contains("\"protectTitle\": false"), "{text}");
+        let reloaded = PaperStore::load(app_data.path().to_path_buf());
+        assert_eq!(reloaded.bibtex_options(), options);
+
+        // A file from before there were options loads with the defaults.
+        let old = tempfile::tempdir().unwrap();
+        fs::write(
+            old.path().join(LIBRARY_FILE),
+            serde_json::json!({ "version": FORMAT_VERSION, "papers": [], "projects": [] })
+                .to_string(),
+        )
+        .unwrap();
+        let store = PaperStore::load(old.path().to_path_buf());
+        assert_eq!(store.bibtex_options(), BibtexOptions::default());
     }
 }

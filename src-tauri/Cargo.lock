@@ -3684,6 +3684,7 @@ dependencies = [
  "base64 0.22.1",
  "crossbeam-channel",
  "env_logger",
+ "flate2",
  "futures-util",
  "image",
  "libc",

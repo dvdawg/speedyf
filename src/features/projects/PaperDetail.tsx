@@ -37,6 +37,7 @@ import { MissingWorkPanel } from './MissingWorks';
 import { openPaper } from './openPaper';
 import { openInNewTabOrFocus } from '../document/tabsController';
 import { formatSize } from '../home/format';
+import { fileRows, type FileRow } from './fileRows';
 import {
   authorsLine,
   formatAuthors,
@@ -569,10 +570,12 @@ function folderOf(path: string): string {
 
 /** Every file of the item, the main one first: each can be opened, and any
  * other made the main one (the one Open, previews and the scan's fields
- * use). */
+ * use). Byte-identical copies show as one row ("name, 2 copies") whose
+ * tooltip lists every path; Open and Make main act on the copy shown. */
 function FilesSection(props: { paper: Paper }) {
   const store = projectsStore;
   const [busy, setBusy] = createSignal(false);
+  const rows = () => fileRows(props.paper.files);
   const makeMain = async (path: string) => {
     setBusy(true);
     await store.setPrimaryFile(props.paper.id, path);
@@ -585,30 +588,36 @@ function FilesSection(props: { paper: Paper }) {
       store.reportError(error);
     }
   };
+  const label = (row: FileRow) =>
+    row.copies.length > 0 ? `${row.file.name}, ${row.copies.length + 1} copies` : row.file.name;
+  const tooltip = (row: FileRow) =>
+    row.copies.length > 0
+      ? [row.file, ...row.copies].map((file) => file.path).join('\n')
+      : folderOf(row.file.path);
   return (
     <div class="paper-section">
       <span class="paper-field-label">Files</span>
       <ul class="paper-files">
-        <For each={props.paper.files}>
-          {(file, index) => (
-            <li class="paper-file" classList={{ 'is-missing': file.missing }}>
-              <span class="paper-file-name" title={folderOf(file.path)}>
-                {file.name}
+        <For each={rows()}>
+          {(row, index) => (
+            <li class="paper-file" classList={{ 'is-missing': row.file.missing }}>
+              <span class="paper-file-name" title={tooltip(row)}>
+                {label(row)}
               </span>
-              <span class="paper-file-size">{formatSize(file.size)}</span>
-              <Show when={index() === 0 && props.paper.files.length > 1}>
+              <span class="paper-file-size">{formatSize(row.file.size)}</span>
+              <Show when={index() === 0 && rows().length > 1}>
                 <span class="paper-field-source">main</span>
               </Show>
-              <Show when={file.missing}>
+              <Show when={row.file.missing}>
                 <span class="paper-badge">missing</span>
               </Show>
               <span class="paper-file-actions">
                 <button
                   type="button"
                   class="paper-mini-btn"
-                  disabled={file.missing}
-                  aria-label={`Open ${file.name}`}
-                  onClick={() => void open(file.path)}
+                  disabled={row.file.missing}
+                  aria-label={`Open ${row.file.name}`}
+                  onClick={() => void open(row.file.path)}
                 >
                   Open
                 </button>
@@ -618,8 +627,8 @@ function FilesSection(props: { paper: Paper }) {
                     class="paper-mini-btn"
                     disabled={busy()}
                     title="Open, preview and read this file for the item"
-                    aria-label={`Make ${file.name} the main file`}
-                    onClick={() => void makeMain(file.path)}
+                    aria-label={`Make ${row.file.name} the main file`}
+                    onClick={() => void makeMain(row.file.path)}
                   >
                     Make main
                   </button>

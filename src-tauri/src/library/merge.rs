@@ -455,6 +455,12 @@ impl PaperStore {
                 keep.files.push(file);
             }
         }
+        // The user's main file, from either side, keep's first; else the
+        // rules choose among all of them (`mainfile`).
+        if keep.primary_path.is_none() {
+            keep.primary_path = gone.primary_path;
+        }
+        keep.order_files();
         let base_before = citekey::base_key(&keep.meta);
         merge_meta(&mut keep.meta, &gone.meta);
 
@@ -635,6 +641,14 @@ impl PaperStore {
             if let Ok(target) = self.index_of(&trace.into) {
                 let paper = &mut self.papers[target];
                 paper.files.retain(|file| !paths.contains(&file.path));
+                if paper
+                    .primary_path
+                    .as_ref()
+                    .is_some_and(|primary| paths.contains(primary))
+                {
+                    paper.primary_path = None;
+                }
+                paper.order_files();
                 paper.updated_at = now_rfc3339();
             }
             for project in &mut self.projects {
@@ -724,6 +738,7 @@ mod tests {
             mtime_ms: 1,
             fingerprint: Some(fingerprint.to_owned()),
             missing: false,
+            ..Default::default()
         }
     }
 
