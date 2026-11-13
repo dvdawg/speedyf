@@ -1,4 +1,4 @@
-// Math to LaTeX — select math in a PDF, or click "Copy LaTeX" on a display
+// Math to LaTeX - select math in a PDF, or click "Copy LaTeX" on a display
 // equation, and get LaTeX for it.
 //
 // There is no single good way to read math back out of a PDF, so this tries
@@ -39,7 +39,7 @@ const SCAN_MESSAGE = "This looks like a scan; math can't be read from it.";
 
 let nextRequestId = 1;
 const pending = new Map();
-/** arXiv id+version, or DOI → Promise of parsed snippets (or null). */
+/** arXiv id+version, or DOI -> Promise of parsed snippets (or null). */
 const sources = new Map();
 
 self.onmessage = (event) => {
@@ -272,7 +272,7 @@ const OMS = [
 ];
 
 /** OMX: cmex, LM math extension, txex/pxex. Each slot is `[tex, kind, size]`:
- * size is the TeX size step of a delimiter (1 \big … 4 \Bigg), and pieces of
+ * size is the TeX size step of a delimiter (1 \big ... 4 \Bigg), and pieces of
  * extensible delimiters carry which side they belong to. */
 const OMX = (() => {
   const t = [];
@@ -284,7 +284,7 @@ const OMX = (() => {
   delims(['\\langle', '\\rangle', '/', '\\backslash'], 3);
   delims(['(', ')', '[', ']', '\\lfloor', '\\rfloor', '\\lceil', '\\rceil', '\\{', '\\}'], 4);
   delims(['\\langle', '\\rangle', '/', '\\backslash', '/', '\\backslash'], 4);
-  // 0x30–0x3F: tops, bottoms, middles and extenders of tall delimiters.
+  // 0x30-0x3F: tops, bottoms, middles and extenders of tall delimiters.
   t.push(['(', 'piece', 'L'], [')', 'piece', 'R'], ['[', 'piece', 'L'], [']', 'piece', 'R']);
   t.push(['[', 'piece', 'L'], [']', 'piece', 'R'], ['[', 'piece', 'L'], [']', 'piece', 'R']);
   t.push(
@@ -295,22 +295,22 @@ const OMX = (() => {
   );
   t.push(['\\{', 'piece', 'L'], ['\\}', 'piece', 'R'], ['brace', 'piece', '?']);
   t.push(['\\updownarrow', 'piece', '?']);
-  // 0x40–0x45
+  // 0x40-0x45
   t.push(['(', 'piece', 'L'], [')', 'piece', 'R'], ['(', 'piece', 'L'], [')', 'piece', 'R']);
   delims(['\\langle', '\\rangle'], 4);
-  // 0x46–0x61: big operators, text size then display size.
+  // 0x46-0x61: big operators, text size then display size.
   const ops = (list) => list.forEach((o) => t.push([o, 'bigop', 0]));
   ops(['\\bigsqcup', '\\bigsqcup', '\\oint', '\\oint', '\\bigodot', '\\bigodot']);
   ops(['\\bigoplus', '\\bigoplus', '\\bigotimes', '\\bigotimes']);
   ops(['\\sum', '\\prod', '\\int', '\\bigcup', '\\bigcap', '\\biguplus', '\\bigwedge', '\\bigvee']);
   ops(['\\sum', '\\prod', '\\int', '\\bigcup', '\\bigcap', '\\biguplus', '\\bigwedge', '\\bigvee']);
   ops(['\\coprod', '\\coprod']);
-  // 0x62–0x67: wide accents.
+  // 0x62-0x67: wide accents.
   for (let i = 0; i < 3; i++) t.push(['\\widehat', 'accent', 0]);
   for (let i = 0; i < 3; i++) t.push(['\\widetilde', 'accent', 0]);
-  // 0x68–0x6F
+  // 0x68-0x6F
   delims(['[', ']', '\\lfloor', '\\rfloor', '\\lceil', '\\rceil', '\\{', '\\}'], 2);
-  // 0x70–0x7F: radicals, radical pieces, arrow pieces, brace tips.
+  // 0x70-0x7F: radicals, radical pieces, arrow pieces, brace tips.
   for (let i = 0; i < 4; i++) t.push(['\\sqrt', 'radical', i + 1]);
   t.push(['\\sqrt', 'radical', 5], ['\\sqrt', 'piece', 'V'], ['\\sqrt', 'piece', 'V']);
   t.push(['\\|', 'piece', '?'], ['\\uparrow', 'piece', '?'], ['\\downarrow', 'piece', '?']);
@@ -319,9 +319,10 @@ const OMX = (() => {
   return t;
 })();
 
+// ascii-guard: data begin - TeX font encodings
 /** OT1: cmr, cmbx, cmti, cmsl, cmss, cmtt. In math this is where upright
  * capital Greek, digits, upright punctuation, function names and the
- * ordinary accents (\hat, \tilde, \bar, …) come from. */
+ * ordinary accents (\hat, \tilde, \bar, ...) come from. */
 const OT1 = [
   '\\Gamma',
   '\\Delta',
@@ -393,6 +394,7 @@ const OT1 = [
   'accent:\\tilde',
   'accent:\\ddot',
 ];
+// ascii-guard: data end
 
 /** AMS symbols A (msam). */
 const MSAM = [
@@ -635,7 +637,8 @@ const MSBM = [
 
 // ---------- Unicode ----------
 
-/** Unicode → LaTeX for everything that is not a plain letter or digit. One
+// ascii-guard: data begin - Unicode to LaTeX
+/** Unicode -> LaTeX for everything that is not a plain letter or digit. One
  * pair per line-ish: the character, a space, the command. */
 const UNICODE_PAIRS = `
 α \\alpha|β \\beta|γ \\gamma|δ \\delta|ε \\varepsilon|ϵ \\epsilon|ζ \\zeta|η \\eta|θ \\theta
@@ -718,8 +721,9 @@ const UNICODE = (() => {
   map.set('|', '|');
   return map;
 })();
+// ascii-guard: data end
 
-/** Mathematical Alphanumeric Symbols, U+1D400–1D7FF: style → [start of A,
+/** Mathematical Alphanumeric Symbols, U+1D400-1D7FF: style -> [start of A,
  * start of a] (the lowercase block follows the uppercase one). Italic is the
  * default for a math letter and so writes as the plain letter. */
 const ALPHA_STYLES = [
@@ -747,8 +751,10 @@ const GREEK_STYLES = [
   ['\\boldsymbol', 0x1d756],
   ['\\boldsymbol', 0x1d790],
 ];
+// ascii-guard: data begin - Greek alphabets of the math blocks
 const GREEK_CAPS = 'ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΘΣΤΥΦΧΨΩ∇'.split('');
 const GREEK_SMALL = 'αβγδεζηθικλμνξοπρςστυφχψω∂ϵϑϰϕϱϖ'.split('');
+// ascii-guard: data end
 const DIGIT_STYLES = [
   ['\\mathbf', 0x1d7ce],
   ['\\mathbb', 0x1d7d8],
@@ -757,7 +763,8 @@ const DIGIT_STYLES = [
   ['\\mathtt', 0x1d7f6],
 ];
 
-/** A code point in the Mathematical Alphanumeric block → { style, base }, or
+// ascii-guard: data begin - Unicode math alphanumerics
+/** A code point in the Mathematical Alphanumeric block -> { style, base }, or
  * null. `base` is the plain letter, digit or Greek character. */
 function mathAlpha(cp) {
   if (cp < 0x1d400 || cp > 0x1d7ff) return null;
@@ -783,15 +790,18 @@ function mathAlpha(cp) {
   }
   return null;
 }
+// ascii-guard: data end
 
 /** The reverse direction, for the signature of TeX source: a style command
- * and a base letter → the styled code point (or the letter itself). */
+ * and a base letter -> the styled code point (or the letter itself). */
 function styledChar(style, base) {
+  // ascii-guard: data begin - Unicode math alphanumerics
   const letterlike = {
     '\\mathbb': { C: 'ℂ', H: 'ℍ', N: 'ℕ', P: 'ℙ', Q: 'ℚ', R: 'ℝ', Z: 'ℤ' },
     '\\mathcal': { B: 'ℬ', E: 'ℰ', F: 'ℱ', H: 'ℋ', I: 'ℐ', L: 'ℒ', M: 'ℳ', R: 'ℛ' },
     '\\mathfrak': { C: 'ℭ', H: 'ℌ', I: 'ℑ', R: 'ℜ', Z: 'ℨ' },
   };
+  // ascii-guard: data end
   const hole = letterlike[style]?.[base];
   if (hole) return hole;
   const start = { '\\mathbf': 0x1d400, '\\mathcal': 0x1d49c, '\\mathfrak': 0x1d504 }[style];
@@ -954,7 +964,7 @@ function fromEntry(entry) {
   return { tex: entry, kind: classOf(entry) };
 }
 
-/** Unicode text of a glyph → atom identity, or `{ tex, kind, ok: false }`
+/** Unicode text of a glyph -> atom identity, or `{ tex, kind, ok: false }`
  * when the character is not one this knows. */
 function fromUnicode(text) {
   const chars = Array.from(text);
@@ -1026,7 +1036,7 @@ function omxExtent(code) {
   return [0, 0.6];
 }
 
-/** The delimiter size step (1 \big … 4 \Bigg) of a glyph `extent` ems tall. */
+/** The delimiter size step (1 \big ... 4 \Bigg) of a glyph `extent` ems tall. */
 function delimStep(extent) {
   if (extent < 1.5) return 1;
   if (extent < 2.1) return 2;
@@ -1034,7 +1044,7 @@ function delimStep(extent) {
   return 4;
 }
 
-/** One glyph → an atom: its identity plus its geometry. `ok` is false when
+/** One glyph -> an atom: its identity plus its geometry. `ok` is false when
  * nothing could say what the glyph is.
  *
  * The glyph's Unicode text, when it has one, says what it is: PDFium gives
@@ -1122,7 +1132,7 @@ function decodeGlyph(g) {
   } else {
     id = fromUnicode(text);
     // MSBM's \varkappa (code 0x7B) is mapped to plain κ.
-    if (font.enc === 'MSBM' && text === 'κ') id = { tex: '\\varkappa', kind: 'ord' };
+    if (font.enc === 'MSBM' && text === '\u03ba') id = { tex: '\\varkappa', kind: 'ord' };
     const letter = /^[A-Za-z]$/.test(text);
     if (id && letter) {
       const styled = {
@@ -1148,7 +1158,7 @@ function decodeGlyph(g) {
       }
     } else if (sized && font.enc === 'OMX') {
       // Without ink, sized by the box, which may be loose: a guess, and
-      // \left…\right pairs do not care.
+      // \left...\right pairs do not care.
       const extent = num(g.h) / size;
       id = { ...id, tall: true, delimSize: id.kind === 'bigop' ? undefined : delimStep(extent) };
       top = num(g.y);
@@ -1189,14 +1199,16 @@ function decodeGlyph(g) {
 // α ('a') "a". When a Symbol font's text has such characters, every glyph of
 // it is read back to its code and through the Symbol encoding.
 
-/** Adobe Symbol encoding, codes 0x20–0x7E then 0xA0–0xFE ('' unused). */
+// ascii-guard: data begin - Symbol and Mac Roman encodings
+/** Adobe Symbol encoding, codes 0x20-0x7E then 0xA0-0xFE ('' unused). */
 const SYMBOL_LOW =
   ' !∀#∃%&∋()∗+,−./0123456789:;<=>?≅ΑΒΧΔΕΦΓΗΙϑΚΛΜΝΟΠΘΡΣΤΥςΩΞΨΖ[∴]⊥_\u203Eαβχδεφγηιϕκλμνοπθρστυϖωξψζ{|}∼';
 const SYMBOL_HIGH =
   '€ϒ′≤⁄∞ƒ♣♦♥♠↔←↑→↓°±″≥×∝∂•÷≠≡≈…⏐⎯↵ℵℑℜ℘⊗⊕∅∩∪⊃⊇⊄⊂⊆∈∉∠∇®©™∏√⋅¬∧∨⇔⇐⇑⇒⇓◊〈®©™∑⎛⎜⎝⎡⎢⎣⎧⎨⎩⎪\uF8FF〉∫⌠⎮⌡⎞⎟⎠⎤⎥⎦⎫⎬⎭';
-/** Mac Roman, codes 0x80–0xFF. */
+/** Mac Roman, codes 0x80-0xFF. */
 const MAC_ROMAN =
   'ÄÅÇÉÑÖÜáàâäãåçéèêëíìîïñóòôöõúùûü†°¢£§•¶ß®©™´¨≠ÆØ∞±≤≥¥µ∂∑∏π∫ªºΩæø¿¡¬√ƒ≈∆«»…\u00A0ÀÃÕŒœ–—“”‘’÷◊ÿŸ⁄€‹›ﬁﬂ‡·‚„‰ÂÊÁËÈÍÎÏÌÓÔ\uF8FFÒÚÛÙıˆ˜¯˘˙˚¸˝˛ˇ';
+// ascii-guard: data end
 
 /** A code's character in the Symbol encoding, or null. */
 function symbolChar(code) {
@@ -1212,7 +1224,12 @@ function fixSymbolFonts(glyphs) {
   for (const g of glyphs) {
     if (!isSymbolFont(g.font) || typeof g.text !== 'string' || g.text.length !== 1) continue;
     // Letters and Latin accented letters are never what a Symbol glyph is.
-    if (/[A-Za-z\u00C0-\u00FF\u0152\u0153¢£§•¶®©™´¨]/.test(g.text)) misread.add(g.font);
+    if (
+      /[A-Za-z\u00C0-\u00FF\u0152\u0153\u00a2\u00a3\u00a7\u2022\u00b6\u00ae\u00a9\u2122\u00b4\u00a8]/.test(
+        g.text
+      )
+    )
+      misread.add(g.font);
   }
   if (misread.size === 0) return glyphs;
   return glyphs.map((g) => {
@@ -1247,9 +1264,9 @@ function looksLikeScan(glyphs) {
 // innermost first, each step replacing what it recognised with one composite
 // atom so the next step sees a simpler picture:
 //
-//   1. pieces of tall delimiters (top, extender, bottom) → one delimiter;
-//   2. accents → the accented symbol;
-//   3. rules, narrowest first → fractions, radicals, over/underlines;
+//   1. pieces of tall delimiters (top, extender, bottom) -> one delimiter;
+//   2. accents -> the accented symbol;
+//   3. rules, narrowest first -> fractions, radicals, over/underlines;
 //   4. rows: one baseline is a line of math; several are a matrix (when a
 //      tall delimiter spans them), cases (a lone tall brace) or aligned rows;
 //   5. within a row: words of upright letters, big operators and their
@@ -1322,8 +1339,8 @@ function reconstruct(glyphs, layout = null) {
   return { latex, confidence, rows: ctx.rows, decoded, undecoded: flags.undecoded };
 }
 
-/** Whether LaTeX has a group that should not be empty: \frac{}{…}, x_{},
- * \sqrt{}, or a fraction part that is a lone operator (\frac{-}{…}). */
+/** Whether LaTeX has a group that should not be empty: \frac{}{...}, x_{},
+ * \sqrt{}, or a fraction part that is a lone operator (\frac{-}{...}). */
 function hasEmptyGroup(tex) {
   return (
     /\\(?:frac|sqrt|overline|underline|underbrace|overbrace)(?:\[[^\]]*\])?\{\s*\}/.test(tex) ||
@@ -1711,7 +1728,7 @@ function gatherSide(atoms, rule, above, S, blockers, inX) {
 
 const isTall = (a) => Boolean(a.tall);
 
-/** A block of atoms → LaTeX. `depth` is 0 at the top and inside fractions,
+/** A block of atoms -> LaTeX. `depth` is 0 at the top and inside fractions,
  * more inside scripts (where spacing is dropped). */
 function layoutBlock(items, depth, ctx, top = false) {
   if (items.length === 0) return '';
@@ -1860,7 +1877,7 @@ function findGrid(items, clusters, B, depth, ctx) {
   return null;
 }
 
-/** Rows of a grid → cells: each row is cut where the gap is wide (a column
+/** Rows of a grid -> cells: each row is cut where the gap is wide (a column
  * separator, not a space), and cells are put in the column whose position
  * they share. For cases, at most two columns: value and condition. */
 function gridCells(rows, B, depth, ctx, maxColumns) {
@@ -1946,7 +1963,7 @@ function alignedRows(segRows, B, depth) {
 
 // ---------- one row ----------
 
-/** A row → segments `{ tex, kind, x, right }` in reading order: each base
+/** A row -> segments `{ tex, kind, x, right }` in reading order: each base
  * symbol with its limits and scripts attached. */
 function rowSegments(items, baseline, B, depth, ctx) {
   const flags = ctx.flags;
@@ -2229,7 +2246,7 @@ const TEXT_WORDS = new Set(
   ).split(' ')
 );
 
-/** "sin" → ['sin'], "sincos" → ['sin', 'cos'], "sinx" → null. */
+/** "sin" -> ['sin'], "sincos" -> ['sin', 'cos'], "sinx" -> null. */
 function functionWords(letters) {
   if (FUNCTIONS.has(letters)) return [letters];
   const best = new Array(letters.length + 1).fill(null);
@@ -2323,7 +2340,7 @@ function fixSequences(segments, baseline, B) {
   return out;
 }
 
-/** Delimiters from the extension font are sized: a pair becomes \left …
+/** Delimiters from the extension font are sized: a pair becomes \left ...
  * \right, a lone one \big, \Big, \bigg or \Bigg. */
 function pairDelimiters(segments, flags) {
   const stack = [];
@@ -2352,7 +2369,7 @@ function pairDelimiters(segments, flags) {
     pairs.set(i, j);
   });
   const paired = (i) => {
-    // A middle bar is \middle only when its brackets are a \left…\right pair.
+    // A middle bar is \middle only when its brackets are a \left...\right pair.
     for (const [open, close] of pairs) if (open < i && close > i) return true;
     return false;
   };
@@ -2378,7 +2395,7 @@ function pairDelimiters(segments, flags) {
   });
 }
 
-/** Segments → LaTeX. Relations and binary operators get a space either
+/** Segments -> LaTeX. Relations and binary operators get a space either
  * side at the top level; inside scripts everything is packed. */
 function segmentsToTex(segments, depth) {
   let out = '';
@@ -2434,7 +2451,7 @@ function tidy(tex) {
 
 // ---------- archives ----------
 
-/** gzip → bytes, with the platform's own inflater (workers have it). */
+/** gzip -> bytes, with the platform's own inflater (workers have it). */
 async function gunzip(bytes) {
   const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
   return new Uint8Array(await new Response(stream).arrayBuffer());
@@ -2475,7 +2492,7 @@ function isTar(bytes) {
   return bytes.length >= 512 && tarHeaderValid(bytes.subarray(0, 512));
 }
 
-/** A tar archive → its regular files, `{ name, data }`. Understands ustar
+/** A tar archive -> its regular files, `{ name, data }`. Understands ustar
  * prefixes, GNU long names and pax path records. */
 function untar(bytes) {
   const files = [];
@@ -2511,7 +2528,7 @@ function untar(bytes) {
   return files;
 }
 
-/** An arXiv e-print → its TeX files `{ name, text }`, or null when it is not
+/** An arXiv e-print -> its TeX files `{ name, text }`, or null when it is not
  * TeX (a PDF-only submission, or something unrecognisable). */
 async function readEprint(bytes) {
   let data = bytes;
@@ -2629,7 +2646,7 @@ function collectMacros(text) {
   return macros;
 }
 
-/** A `{…}` group starting at `i`: its contents and where it ends. */
+/** A `{...}` group starting at `i`: its contents and where it ends. */
 function bracedAt(text, i) {
   if (text[i] !== '{') return null;
   let depth = 0;
@@ -2669,7 +2686,7 @@ function expandMacros(tex, macros) {
 }
 
 /** One pass of the macros that take arguments: each use with its arguments
- * read (braced groups, or one token) and put in place of #1…#n. */
+ * read (braced groups, or one token) and put in place of #1...#n. */
 function expandWithArgs(tex, withArgs) {
   let out = '';
   let i = 0;
@@ -2905,7 +2922,7 @@ function splitRows(body) {
   return rows.filter((r) => r.trim().length > 0);
 }
 
-/** TeX files → the document's math, ready to match. */
+/** TeX files -> the document's math, ready to match. */
 function parseSource(files) {
   const { body, macroText } = assemble(files);
   const macros = collectMacros(macroText);
@@ -2926,7 +2943,7 @@ function expandEnvironmentMacros(body, macros) {
 //
 // The selection and every candidate are reduced to the same thing: the
 // sequence of symbols they contain, in reading order, without structure.
-// `\frac{a+b}{c}`, the glyphs a + b — c, and the text "a+b c" all become
+// `\frac{a+b}{c}`, the glyphs a + b - c, and the text "a+b c" all become
 // a + b c. Greek and macros map to their Unicode characters, styles to the
 // styled letter (ℝ), and function names to their letters.
 
@@ -2935,6 +2952,7 @@ const LATEX_TO_CHAR = (() => {
   for (const [ch, tex] of UNICODE) {
     if (/^\\[A-Za-z]+$/.test(tex) && !map.has(tex)) map.set(tex, ch);
   }
+  // ascii-guard: data begin - LaTeX to Unicode
   const aliases = {
     '\\le': '≤',
     '\\ge': '≥',
@@ -2986,6 +3004,7 @@ const LATEX_TO_CHAR = (() => {
     '\\parallel': '‖',
     '\\backslash': '\\',
   };
+  // ascii-guard: data end
   for (const [k, v] of Object.entries(aliases)) map.set(k, v);
   for (const g of 'Gamma Delta Theta Lambda Xi Pi Sigma Upsilon Phi Psi Omega'.split(' ')) {
     map.set(`\\var${g}`, map.get(`\\${g}`));
@@ -2993,6 +3012,7 @@ const LATEX_TO_CHAR = (() => {
   return map;
 })();
 
+// ascii-guard: data begin - Unicode normalised for matching
 const NORMAL = {
   '−': '-',
   '∗': '*',
@@ -3010,6 +3030,7 @@ const NORMAL = {
   '∕': '/',
   '…': '…',
 };
+// ascii-guard: data end
 const SKIP_COMMANDS = new Set(
   (
     'frac dfrac tfrac cfrac sqrt left right middle big Big bigg Bigg bigl bigr Bigl Bigr biggl ' +
@@ -3075,7 +3096,7 @@ function normChar(ch) {
   return ch;
 }
 
-/** LaTeX → `[{ t, start, end }]`: its symbols, with where each came from. */
+/** LaTeX -> `[{ t, start, end }]`: its symbols, with where each came from. */
 function texTokens(tex) {
   const out = [];
   const walk = (s, offset, style, span) => {
@@ -3092,7 +3113,7 @@ function texTokens(tex) {
           const nx = s[i + 1];
           if (nx === '{' || nx === '}' || nx === '|')
             out.push({
-              t: nx === '|' ? '‖' : nx,
+              t: nx === '|' ? '\u2016' : nx,
               start: at[0],
               end: span ? at[1] : offset + i + 2,
             });
@@ -3148,7 +3169,7 @@ function texTokens(tex) {
   return out;
 }
 
-/** Plain text (a selection's own text) → symbols. */
+/** Plain text (a selection's own text) -> symbols. */
 function textTokens(text) {
   const out = [];
   for (const ch of Array.from(text ?? '')) {
@@ -3277,7 +3298,7 @@ function cutSpan(snippet, [from, to]) {
   const start = tokens[from].start;
   let end = tokens[to - 1].end;
   const tex = snippet.tex;
-  // Close any group the last symbol is inside (x_{ij → x_{ij}).
+  // Close any group the last symbol is inside (x_{ij -> x_{ij}).
   let depth = 0;
   for (let i = start; i < end; i++) {
     if (tex[i] === '\\') {
@@ -3303,6 +3324,7 @@ function cutSpan(snippet, [from, to]) {
 // elements, attributes, text, CDATA and entities. Namespace prefixes are
 // dropped (mml:mi is mi).
 
+// ascii-guard: data begin - XML entities
 const ENTITIES = {
   amp: '&',
   lt: '<',
@@ -3429,6 +3451,7 @@ ENTITIES.epsiv = 'ϵ';
 ENTITIES.varepsilon = 'ε';
 ENTITIES.phiv = 'ϕ';
 ENTITIES.thetav = 'ϑ';
+// ascii-guard: data end
 
 function decodeEntities(s) {
   return s.replace(/&(#x[0-9a-fA-F]+|#\d+|[A-Za-z][A-Za-z0-9]*);/g, (whole, e) => {
@@ -3492,7 +3515,7 @@ function textOf(node) {
   return (node.children ?? []).map(textOf).join('');
 }
 
-// ---------- MathML → LaTeX ----------
+// ---------- MathML -> LaTeX ----------
 
 const VARIANTS = {
   normal: '\\mathrm',
@@ -3509,6 +3532,7 @@ const VARIANTS = {
   monospace: '\\mathtt',
   italic: '',
 };
+// ascii-guard: data begin - MathML accent characters
 const OVER_ACCENTS = {
   '^': '\\hat',
   ˆ: '\\hat',
@@ -3546,6 +3570,7 @@ const UNDER_ACCENTS = {
   '⏟': '\\underbrace',
   '︸': '\\underbrace',
 };
+// ascii-guard: data end
 const WIDE = {
   '\\hat': '\\widehat',
   '\\tilde': '\\widetilde',
@@ -3560,7 +3585,7 @@ const MATRIX_ENVS = {
   '\\|': 'Vmatrix',
 };
 
-/** Presentation MathML (a string, or a parsed node) → LaTeX. */
+/** Presentation MathML (a string, or a parsed node) -> LaTeX. */
 function mathmlToLatex(input) {
   const tree = typeof input === 'string' ? parseXml(input) : input;
   const math = findElement(tree, 'math') ?? tree;
@@ -3569,8 +3594,8 @@ function mathmlToLatex(input) {
 
 const elements = (n) => (n.children ?? []).filter((c) => c.name);
 
-/** A node → `{ tex, kind }`: kind is the class of an operator (rel, bin,
- * open, close, bigop, …) so a row can space and pair them. */
+/** A node -> `{ tex, kind }`: kind is the class of an operator (rel, bin,
+ * open, close, bigop, ...) so a row can space and pair them. */
 function mml(n, depth) {
   const kids = elements(n);
   const t = (tex, kind = 'ord') => ({ tex, kind });
@@ -3738,7 +3763,7 @@ function moTex(text) {
     return { tex: p.tex, kind: p.kind === 'letter' ? 'ord' : p.kind };
   }
   const tex = parts.map((p) => p.tex).join('');
-  if (text === ':=' || text === '≔') return { tex: ':=', kind: 'rel' };
+  if (text === ':=' || text === '\u2254') return { tex: ':=', kind: 'rel' };
   return { tex, kind: parts.some((p) => p.kind === 'rel') ? 'rel' : parts[0].kind };
 }
 
@@ -3855,7 +3880,7 @@ function fenceMatches(open, close) {
   return { '(': ')', '[': ']', '\\{': '\\}', '|': '|', '\\|': '\\|' }[open] === close;
 }
 
-/** A row of MathML children → LaTeX, spacing relations, and turning
+/** A row of MathML children -> LaTeX, spacing relations, and turning
  * `( mtable )` into a matrix environment. */
 function row(kids, depth) {
   const segs = [];
@@ -3942,6 +3967,91 @@ function texFromTexMath(raw) {
     .replace(/\\label\{[^}]*\}/g, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+// ---------- what is shown ----------
+
+// ascii-guard: data begin - typographic punctuation in source and glyph text
+/** Typographic punctuation in LaTeX that came from the source or the page. */
+const LATEX_PLAIN = {
+  '‘': "'",
+  '’': "'",
+  '‚': "'",
+  '“': "''",
+  '”': "''",
+  '„': "''",
+  '‐': '-',
+  '‑': '-',
+  '‒': '-',
+  '–': '-',
+  '—': '-',
+};
+// ascii-guard: data end
+
+/** LaTeX as the popover shows it and the clipboard gets it: ASCII. A
+ * character the source or the glyphs left as Unicode goes through the Unicode
+ * table (`\alpha`, `\leq`, `\infty`), super- and subscripts become `^{2}` and
+ * `_{0}`, a combining accent goes onto the letter before it, and typographic
+ * punctuation becomes its ASCII spelling. A letter with an accent stays as it
+ * is: KaTeX and LaTeX both read it, and a name is spelled the way its owner
+ * spells it. */
+function asciiLatex(latex) {
+  let out = '';
+  /** Whether `out` ends in a command this function wrote, which a letter
+   * after it must be spaced from. */
+  let command = false;
+  const add = (tex) => {
+    if (!tex) return;
+    if (command && /^[A-Za-z]/.test(tex)) out += ' ';
+    out += tex;
+    command = /\\[A-Za-z]+$/.test(tex);
+  };
+  const chars = Array.from(String(latex ?? '').normalize('NFC'));
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i];
+    if (ch.codePointAt(0) < 0x80) {
+      add(ch);
+      command = false;
+      continue;
+    }
+    if (SUPERSCRIPT[ch] !== undefined || SUBSCRIPT[ch] !== undefined) {
+      const table = SUPERSCRIPT[ch] !== undefined ? SUPERSCRIPT : SUBSCRIPT;
+      let run = '';
+      while (i < chars.length && table[chars[i]] !== undefined) run += table[chars[i++]];
+      i--;
+      out += `${table === SUPERSCRIPT ? '^' : '_'}{${run}}`;
+      command = false;
+      continue;
+    }
+    if (LATEX_PLAIN[ch] !== undefined) {
+      add(LATEX_PLAIN[ch]);
+      continue;
+    }
+    const id = fromUnicode(ch);
+    if (id && id.kind === 'accent') {
+      const base = /[A-Za-z]$/.exec(out);
+      if (base) {
+        out = `${out.slice(0, -1)}${id.tex}{${base[0]}}`;
+        command = false;
+      }
+      continue;
+    }
+    if (id && id.kind === 'radical') {
+      add('\\surd');
+      continue;
+    }
+    if (id && id.tex && id.ok !== false && /^[\x20-\x7e]+$/.test(id.tex)) {
+      add(id.tex);
+      continue;
+    }
+    const plain = ch.normalize('NFKC');
+    if (/^[\x20-\x7e]+$/.test(plain)) add(plain);
+    else if (/^[\p{L}\p{M}]+$/u.test(ch)) {
+      out += ch;
+      command = false;
+    }
+  }
+  return out;
 }
 
 // ---------- commands ----------
@@ -4032,7 +4142,12 @@ async function copyMath(request) {
   const display =
     request.kind === 'equation' || (fonts ? fonts.rows > 1 : /\n/.test(request.text.trim()));
   const show = (latex, source, confidence) =>
-    call('ui.showMath', { latex, display: display || /\\\\/.test(latex), source, confidence });
+    call('ui.showMath', {
+      latex: asciiLatex(latex),
+      display: display || /\\\\/.test(latex),
+      source,
+      confidence,
+    });
 
   // 1. The document's own tags.
   if (page !== null && bbox) {
@@ -4302,12 +4417,14 @@ async function store(key, snippets) {
 
 // ---------- text only ----------
 
+// ascii-guard: data begin - Unicode super- and subscripts
 const SUPERSCRIPT = Object.fromEntries(
   Array.from('⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱ').map((c, i) => [c, '0123456789+-=()ni'[i]])
 );
 const SUBSCRIPT = Object.fromEntries(
   Array.from('₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₒₓₕₖₗₘₙₚₛₜᵢⱼ').map((c, i) => [c, '0123456789+-=()aeoxhklmnpstij'[i]])
 );
+// ascii-guard: data end
 
 /** No glyphs, only the selected text: each character through the Unicode
  * table, Unicode super- and subscripts as scripts. Structure is otherwise

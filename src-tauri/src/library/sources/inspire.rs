@@ -1,8 +1,8 @@
-//! INSPIRE-HEP `api/literature` (projects.md §4). INSPIRE curates
+//! INSPIRE-HEP `api/literature` (projects.md sec. 4). INSPIRE curates
 //! high-energy physics by hand and has the best record for a paper it
 //! knows: journal, volume and pages, with the arXiv id and DOI together.
-//! What leaves the machine is the query — an arXiv id (`q=arxiv:…`), a DOI
-//! (`q=doi:…`), or for a title search the title's words (`q=t "…"`) — and
+//! What leaves the machine is the query - an arXiv id (`q=arxiv:...`), a DOI
+//! (`q=doi:...`), or for a title search the title's words (`q=t "..."`) - and
 //! the list of fields wanted. No key, no contact.
 
 use crate::errors::AppResult;
@@ -86,7 +86,7 @@ async fn search(
 }
 
 /// Parses a `literature` search response: one candidate per titled record
-/// in `hits.hits[].metadata`, in API order. Not JSON, or no hits → empty.
+/// in `hits.hits[].metadata`, in API order. Not JSON, or no hits -> empty.
 pub fn parse_search(json: &str) -> Vec<LookupCandidateDto> {
     let Ok(root) = serde_json::from_str::<Value>(json) else {
         return Vec::new();
@@ -168,7 +168,7 @@ fn record(metadata: &Value) -> Option<LookupCandidateDto> {
 }
 
 // ---------------------------------------------------------------------------
-// Tests — no network. The fixture is trimmed from INSPIRE's documented
+// Tests - no network. The fixture is trimmed from INSPIRE's documented
 // literature record shape.
 // ---------------------------------------------------------------------------
 

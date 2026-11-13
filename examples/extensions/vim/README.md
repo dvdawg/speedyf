@@ -1,4 +1,4 @@
-# Vim Keys — SpeedyF v2 reference extension
+# Vim Keys - SpeedyF v2 reference extension
 
 Vim-style navigation, and the extension the v1 plan named but could not
 support. It needs two things v1 did not have:
@@ -6,7 +6,7 @@ support. It needs two things v1 did not have:
 - `contributes.keybindings`, to claim `j`, `k`, `/` and the rest
 - the `commands:run` permission, to drive SpeedyF once a key fires
 
-Load it from **Home → Extensions → Load folder…**.
+Load it from **Home -> Extensions -> Load folder...**.
 
 | Key       | Does                 |
 | --------- | -------------------- |
@@ -26,7 +26,7 @@ permission gate. A manifest entry alone can never move the document.
 
 Only command groups that change **what you are looking at**: View, Navigate,
 Panels, Search. Anything that changes the document, the file on disk, or your
-settings — File, Edit, Page, Tools, Settings — is refused however it is asked
+settings - File, Edit, Page, Tools, Settings - is refused however it is asked
 for.
 
 Run **Vim: Try To Undo (refused on purpose)** from the command palette to see
@@ -36,6 +36,6 @@ up in this extension's log as an ordinary rejected call rather than a crash.
 ## Keys SpeedyF has already claimed
 
 A binding for a chord SpeedyF uses itself is refused at resolve time and
-reported in the panel — built-ins always win, so an extension can never take
-⌘S. Two extensions wanting the same key is resolved first-come, and the loser
+reported in the panel - built-ins always win, so an extension can never take
+Cmd+S. Two extensions wanting the same key is resolved first-come, and the loser
 is told which extension holds it.

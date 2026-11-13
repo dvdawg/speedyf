@@ -1,4 +1,4 @@
-//! BibTeX serialization for papers (projects.md §7).
+//! BibTeX serialization for papers (projects.md sec. 7).
 //!
 //! Rendered in Rust, not in the webview, so the one-off export, the synced
 //! `.bib` and the clipboard copy are the same bytes from the same serializer:
@@ -140,7 +140,7 @@ pub fn render_one(paper: &PaperDto, options: &BibtexOptions) -> String {
     }
 
     // (name, value already escaped and braced as it should appear inside the
-    // outer `{…}`). Order is the spec's; absent fields are simply not pushed.
+    // outer `{...}`). Order is the spec's; absent fields are simply not pushed.
     let mut fields: Vec<(&str, String)> = Vec::new();
 
     if let Some(authors) = &meta.authors {
@@ -311,7 +311,7 @@ pub fn format_authors(authors: &[Author]) -> String {
 }
 
 /// The entry type, without the `@`. An explicit kind wins. Without one, a
-/// venue makes it an article and nothing else makes it `misc` — including
+/// venue makes it an article and nothing else makes it `misc` - including
 /// the arXiv-only paper, which by definition has no venue.
 pub fn entry_type(paper: &PaperDto) -> &'static str {
     match paper.meta.kind.as_ref().map(|k| k.value) {
@@ -333,7 +333,7 @@ fn arxiv_only(paper: &PaperDto) -> bool {
         && text(&paper.meta.venue).is_none()
 }
 
-/// `2690-2693` and `2690–2693` become `2690--2693`, the en dash TeX typesets
+/// `2690-2693` and `2690-2693` become `2690--2693`, the en dash TeX typesets
 /// for a range. Anything that is not exactly two page labels around one dash
 /// (`e1234`, `S12`, an already-correct `2690--2693`) is left as given. A label
 /// is alphanumeric with at least one digit, so `e1234-e1240` is a range too.

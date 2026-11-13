@@ -1,12 +1,12 @@
 //! A paper's reference list, as the reference provider extension read it
-//! (projects.md §8, EXTENSIONS.md "referenceProvider").
+//! (projects.md sec. 8, EXTENSIONS.md "referenceProvider").
 //!
 //! Most physics references print neither a DOI nor an arXiv id, so the
 //! identifiers alone miss most of a bibliography. Cutting a reference list
 //! into entries is parsing, and parsing lives in an extension on the
 //! permissioned API: the built-in References extension is handed each
 //! library document's stored text (never its path) at idle and answers with
-//! its entries — label, text, year. What the engine keeps, per entry, is
+//! its entries - label, text, year. What the engine keeps, per entry, is
 //! what a citation can be resolved by without a network: the identifiers
 //! printed in it, the DOI an APS journal reference spells out mechanically
 //! (an identifier rule, not parsing, so it also runs over the whole text
@@ -134,8 +134,8 @@ fn display_text(text: &str) -> String {
     if collapsed.chars().count() <= MAX_STORED_TEXT_CHARS {
         return collapsed;
     }
-    let mut cut: String = collapsed.chars().take(MAX_STORED_TEXT_CHARS - 1).collect();
-    cut.push('…');
+    let mut cut: String = collapsed.chars().take(MAX_STORED_TEXT_CHARS - 3).collect();
+    cut.push_str("...");
     cut
 }
 
@@ -193,7 +193,7 @@ pub fn journal_doi(text: &str) -> Option<String> {
 pub fn journal_dois(text: &str) -> Vec<String> {
     // Lower-case, periods as spaces, whitespace collapsed: "Phys. Rev.
     // Lett. 133, 057102" is "phys rev lett 133, 057102". A period between
-    // digits stays, so "105, 10.1103/…" is not read as article 10.
+    // digits stays, so "105, 10.1103/..." is not read as article 10.
     let mut flat = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     let mut previous = ' ';
@@ -716,8 +716,8 @@ pub struct TitleIndex {
 
 impl TitleIndex {
     /// From `(paper index, title, year)`. Each title is indexed whole and,
-    /// when it has a subtitle, by its main title before the colon too — a
-    /// reference may drop or shorten the subtitle — each only if it is long
+    /// when it has a subtitle, by its main title before the colon too - a
+    /// reference may drop or shorten the subtitle - each only if it is long
     /// enough to be specific (24 characters, 4 words).
     pub fn new<'a>(papers: impl IntoIterator<Item = (usize, &'a str, Option<i32>)>) -> Self {
         let mut titles = Vec::new();
@@ -1291,6 +1291,6 @@ mod text_tests {
             "A. Zhong and M. DeWeese, Beyond linear response (2024)."
         );
         assert_eq!(stored[1].text.chars().count(), MAX_STORED_TEXT_CHARS);
-        assert!(stored[1].text.ends_with('…'));
+        assert!(stored[1].text.ends_with("..."));
     }
 }

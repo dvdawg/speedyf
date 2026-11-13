@@ -2,7 +2,7 @@
 //! heavy its type is, and where it stands. The library reads a paper's
 //! title and authors off its first page from these (`library::firstpage`),
 //! because the printed page says which line is the title only through
-//! layout — it is the largest type near the top — and which lines are
+//! layout - it is the largest type near the top - and which lines are
 //! names only through position: the ones right under it.
 //!
 //! One pass over the page's characters, a handful of FFI calls each, for
@@ -67,8 +67,8 @@ pub(crate) struct LayoutGlyph {
 ///
 /// Measured between *loose* glyph boxes, which span each glyph's advance
 /// rather than its ink: letters within a word then sit flush (or kern a
-/// little), and an interword space — never under about 0.2 em, even in a
-/// tightly justified line — stands well clear of the threshold. Ink boxes,
+/// little), and an interword space - never under about 0.2 em, even in a
+/// tightly justified line - stands well clear of the threshold. Ink boxes,
 /// which `library::lines_from_chars` measures, open false gaps beside
 /// narrow-inked glyphs: "Maj ority", "I ntroduction", "20 16".
 const WORD_GAP_EMS: f32 = 0.12;
@@ -206,7 +206,7 @@ pub(crate) fn char_matrix(
 }
 
 /// Whether a glyph set with `matrix` runs left to right on the displayed
-/// page: its x axis, mapped, points right and no more than about 11° off
+/// page: its x axis, mapped, points right and no more than about 11 degrees off
 /// level. The arXiv stamp up the margin, and rotated figure and table
 /// labels, do not.
 pub(crate) fn runs_left_to_right(mapper: &DispMapper, matrix: &FS_MATRIX) -> bool {
@@ -221,7 +221,7 @@ pub struct SpacingGlyphs {
     /// One char per PDFium index, as `text::extract_page` keeps it.
     pub raw: String,
     /// Display-space `[x, y_bottom, w, h]`, y-up, the same form as
-    /// `ExtractedPage::boxes` — but from each glyph's *loose* box, spanning
+    /// `ExtractedPage::boxes` - but from each glyph's *loose* box, spanning
     /// its advance rather than its ink, so letters within a word sit flush
     /// and narrow-inked glyphs open no false gaps ("Maj ority", "20 16").
     /// The loose box is stood on the glyph's baseline: its bottom is the
@@ -234,7 +234,7 @@ pub struct SpacingGlyphs {
 }
 
 /// Read a page's characters for the word-spacing repair: four FFI calls a
-/// character — its code point, loose box, origin and matrix — and none of
+/// character - its code point, loose box, origin and matrix - and none of
 /// the font queries `extract_page` and `extract_lines` make.
 pub fn extract_spacing_glyphs(
     b: &dyn PdfiumLibraryBindings,
@@ -442,7 +442,7 @@ fn build_line(glyphs: &[&LayoutGlyph]) -> Option<TextLine> {
 
     // Letter-spaced type ("S T U D Y  O F") sets every letter apart; a word
     // gap there is the letter spacing plus a space. Even the narrower gaps
-    // between neighbours — the lower quartile — are that spacing, where
+    // between neighbours - the lower quartile - are that spacing, where
     // in ordinary type, and in a formula's spaced operators ("L = RL"),
     // they are about zero.
     let mut gaps: Vec<f32> = inked
@@ -511,6 +511,7 @@ fn median(mut values: Vec<f32>) -> Option<f32> {
     Some(values[values.len() / 2])
 }
 
+// ascii-guard: data begin - the document's own raised characters, written as Unicode superscripts in extracted page text
 /// The superscript form of a raised character: digits and letters get
 /// their Unicode superscript or modifier letter; marks that are already
 /// footnote symbols (*, †, ‡) and punctuation stay as they are.
@@ -535,6 +536,7 @@ pub fn is_superscript_char(ch: char) -> bool {
         || ('\u{1D2C}'..='\u{1D6A}').contains(&ch)
         || ('\u{1D9B}'..='\u{1DBF}').contains(&ch)
         || ch == '𐞥'
+    // ascii-guard: data end
 }
 
 #[cfg(test)]

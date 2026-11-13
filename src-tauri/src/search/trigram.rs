@@ -10,7 +10,7 @@
 //!
 //! It is a filter, not an index: a false positive costs one wasted read, which
 //! the ordinary scan then rejects. A false negative would be a wrong answer,
-//! so the construction never has one — anything the mapping cannot represent
+//! so the construction never has one - anything the mapping cannot represent
 //! makes the filter answer "maybe" instead of "no".
 //!
 //! Deliberately not a trie. Tries index token prefixes and would answer a
@@ -33,7 +33,7 @@ const OTHER: u8 = 28;
 /// Fold a character into the alphabet.
 ///
 /// Collapsing digits together and everything unusual into one symbol keeps the
-/// bitmap small. It costs precision — "x1" and "x2" look alike — which makes
+/// bitmap small. It costs precision - "x1" and "x2" look alike - which makes
 /// the filter admit documents it need not; it never makes it reject one.
 fn symbol(ch: char) -> u8 {
     match ch {
@@ -101,7 +101,7 @@ impl Filter {
     /// Whether this document could contain `query`.
     ///
     /// A query shorter than a trigram carries no information here, so it is
-    /// admitted rather than guessed at — the scan behind this will settle it.
+    /// admitted rather than guessed at - the scan behind this will settle it.
     pub fn might_contain(&self, query: &str) -> bool {
         if query.chars().count() < 3 {
             return true;
@@ -156,7 +156,7 @@ mod tests {
     #[test]
     fn never_rejects_something_present_however_odd() {
         // A false negative is a wrong answer, so every one of these must be
-        // admitted — punctuation, maths, mixed scripts and all.
+        // admitted - punctuation, maths, mixed scripts and all.
         let text = "σ² ≤ ∇_M log q(x) — see §4.1 (Eq. 12), naïve ﬁle";
         let filter = Filter::from_text(text);
         for query in ["σ² ≤", "∇_M log", "§4.1", "(Eq. 12)", "naïve", "ﬁle"] {

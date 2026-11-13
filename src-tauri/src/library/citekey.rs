@@ -3,7 +3,7 @@
 //! Generation is a pure function of the metadata so the same paper gets the
 //! same key on every machine. Uniqueness is the caller's: it passes a `taken`
 //! predicate and gets a suffixed key back when the base collides. When a key
-//! is *frozen* is a store rule (projects.md §2), not this module's.
+//! is *frozen* is a store rule (projects.md sec. 2), not this module's.
 
 use super::types::{Author, PaperMeta};
 
@@ -22,6 +22,7 @@ const STOP_WORDS: &[&str] = &[
 fn fold(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     for ch in input.chars() {
+        // ascii-guard: data begin - accented letters folded to ASCII for the key
         let folded: Option<char> = match ch {
             'a'..='z' | '0'..='9' => Some(ch),
             'A'..='Z' => Some(ch.to_ascii_lowercase()),
@@ -48,6 +49,7 @@ fn fold(input: &str) -> String {
             'ť' | 'Ť' => Some('t'),
             _ => None,
         };
+        // ascii-guard: data end
         if let Some(c) = folded {
             out.push(c);
         }
@@ -117,7 +119,7 @@ pub fn base_key(meta: &PaperMeta) -> String {
     )
 }
 
-/// `base` if free, else `basea`, `baseb`, … `basez`, `baseaa`, … — the
+/// `base` if free, else `basea`, `baseb`, ... `basez`, `baseaa`, ... - the
 /// first one `taken` does not claim.
 pub fn unique(base: &str, taken: impl Fn(&str) -> bool) -> String {
     if !taken(base) {
@@ -132,7 +134,7 @@ pub fn unique(base: &str, taken: impl Fn(&str) -> bool) -> String {
     unreachable!("the suffix sequence is infinite")
 }
 
-/// 0 → "a", 25 → "z", 26 → "aa", 27 → "ab", …
+/// 0 -> "a", 25 -> "z", 26 -> "aa", 27 -> "ab", ...
 fn suffix(mut n: usize) -> String {
     let mut out = Vec::new();
     loop {

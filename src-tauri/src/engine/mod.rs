@@ -48,7 +48,7 @@ use std::sync::Arc;
 use types::*;
 
 /// Whether online metadata lookup may run, and whom to identify as to the
-/// polite pools (projects.md §4). Set from the frontend's settings at startup
+/// polite pools (projects.md sec. 4). Set from the frontend's settings at startup
 /// and on every change, like low memory; off until the user turns it on.
 pub use crate::library::lookup::LookupSettings;
 
@@ -69,7 +69,7 @@ pub struct LookupProgress {
 /// Fired with `active: true` when the first online lookup starts, with each
 /// step of a batch, and with `active: false` when the last one ends: the
 /// status bar's indicator that something is leaving the machine
-/// (projects.md §4).
+/// (projects.md sec. 4).
 pub type LookupActivityCallback = Box<dyn Fn(LookupProgress) + Send + Sync>;
 
 pub enum Work {
@@ -187,7 +187,7 @@ pub enum Work {
     /// a page the reader is looking at.
     LibraryTextNext,
     /// Read the identifiers one already-indexed document cites back out of
-    /// its sidecar (projects.md §8). Only for entries indexed before cites
+    /// its sidecar (projects.md sec. 8). Only for entries indexed before cites
     /// were extracted alongside the text; no PDFium, one entry per job.
     LibraryCitesNext,
     /// A page the OCR thread has read (`ocr_thread`), back on the worker:
@@ -332,7 +332,7 @@ pub struct EngineShared {
     pub progress: Mutex<Option<ProgressCallback>>,
     pub last_metrics: Mutex<EngineMetricsDto>,
     /// The inverted gram index over the library, once it has been built for
-    /// the current set of documents. Absent means "search by scanning" — a
+    /// the current set of documents. Absent means "search by scanning" - a
     /// slower answer, never a wrong one.
     pub gram_index: Mutex<Option<Arc<GramIndex>>>,
     /// Whether a rebuild is already under way, so a burst of queries against a
@@ -461,7 +461,7 @@ impl Drop for LookupActivity<'_> {
 }
 
 /// The same, owning its engine handle, for a lookup that outlives the
-/// command that started it — the citation edges fetched in the background
+/// command that started it - the citation edges fetched in the background
 /// after a lookup has answered. See `EngineHandle::hold_lookup`.
 pub struct OwnedLookupActivity {
     engine: EngineHandle,
@@ -568,7 +568,7 @@ impl EngineHandle {
 
     /// Invalidate every outstanding URL for `doc` and flag its cached rasters
     /// as first-choice eviction victims. Reserved for changes that make the
-    /// cached pixels themselves wrong — it forces the webview to re-fetch and
+    /// cached pixels themselves wrong - it forces the webview to re-fetch and
     /// re-decode every mounted image, so it is far from free. To merely
     /// abandon queued work, use `cancel_renders`.
     pub fn bump_generation(&self, doc: DocId) -> u64 {
@@ -734,7 +734,7 @@ impl EngineHandle {
     /// Search every indexed document in the library, or, with `project_id`,
     /// only the files of that project's papers (`search_scope`).
     ///
-    /// Off the engine thread entirely — it reads sidecars, never PDFium — so a
+    /// Off the engine thread entirely - it reads sidecars, never PDFium - so a
     /// query cannot stall rendering however large the library is.
     pub fn library_search(
         &self,
@@ -785,8 +785,8 @@ impl EngineHandle {
     /// The gram index for this exact set of documents, if one is ready.
     ///
     /// A stale or missing index is rebuilt in the background rather than
-    /// waited for: the query in hand is answered by scanning — the same answer,
-    /// just slower — and the one after it gets the index. Building blocks on
+    /// waited for: the query in hand is answered by scanning - the same answer,
+    /// just slower - and the one after it gets the index. Building blocks on
     /// reading the library's whole folded text, which is not something a
     /// keystroke should wait on.
     fn gram_index_for(
@@ -910,8 +910,8 @@ impl EngineHandle {
 }
 
 /// The files a library search may read: `None` for the whole library, or
-/// the files on disk of the project's papers. An unknown project — deleted
-/// while its scope was still selected — scopes to nothing rather than
+/// the files on disk of the project's papers. An unknown project - deleted
+/// while its scope was still selected - scopes to nothing rather than
 /// widening to everything.
 fn search_scope(
     papers: &PaperStore,

@@ -1,10 +1,10 @@
-//! `library.json`: papers, projects and memberships — the one file that holds
+//! `library.json`: papers, projects and memberships - the one file that holds
 //! something the user did and cannot be rebuilt from the folders.
 //!
 //! It lives in the library data dir, which defaults to app data and can be
 //! moved so a sync service carries it. Three rules keep it safe (projects.md
-//! §3, §12): it is written atomically, it carries a version from day one, and
-//! it is never written over when it cannot be read — a corrupt file is set
+//! sec. 3, sec. 12): it is written atomically, it carries a version from day one, and
+//! it is never written over when it cannot be read - a corrupt file is set
 //! aside under a new name first, and a file from a newer build is left alone
 //! while this build runs read-only against an empty library.
 
@@ -39,7 +39,7 @@ struct LibraryFile {
     papers: Vec<PaperRecord>,
     #[serde(default)]
     projects: Vec<ProjectRecord>,
-    /// How BibTeX is written (projects.md §7). Absent before there were
+    /// How BibTeX is written (projects.md sec. 7). Absent before there were
     /// options: the defaults, which write what was written then.
     #[serde(default)]
     bibtex_options: BibtexOptions,
@@ -370,8 +370,8 @@ impl PaperStore {
     }
 
     /// Point the library at another folder. A folder that already holds a
-    /// `library.json` is adopted as it is — that is how a second machine joins
-    /// a synced folder — and nothing is copied over it. An empty folder gets a
+    /// `library.json` is adopted as it is - that is how a second machine joins
+    /// a synced folder - and nothing is copied over it. An empty folder gets a
     /// copy of the current file. The pointer is written last, so a failure
     /// part-way leaves the old location in force.
     pub fn move_data(&mut self, dir: PathBuf) -> AppResult<LibraryDataInfoDto> {
@@ -737,7 +737,7 @@ mod tests {
         assert_eq!(reloaded.projects.len(), 1);
         assert_eq!(reloaded.projects[0].paper_ids, vec![paper_id]);
 
-        // The on-disk field names are the ones projects.md §3 fixes.
+        // The on-disk field names are the ones projects.md sec. 3 fixes.
         let text = fs::read_to_string(app_data.path().join(LIBRARY_FILE)).unwrap();
         for key in [
             "\"version\": 1",

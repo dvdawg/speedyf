@@ -2,12 +2,12 @@
 
 Select math in a PDF and pick **Copy as LaTeX**, or hover a display equation
 and click **Copy LaTeX**. A popover shows the LaTeX rendered, with buttons to
-copy it raw, as Markdown (`$…$` / `$$…$$`), or as an `align` block when it
+copy it raw, as Markdown (`$...$` / `$$...$$`), or as an `align` block when it
 has several lines. A dim note says where the LaTeX came from and how sure it
 is.
 
-It ships **disabled**. Turning it on in **Home → Extensions** is the consent
-to the network use described below; with **Prefer → fonts only (offline)**
+It ships **disabled**. Turning it on in **Home -> Extensions** is the consent
+to the network use described below; with **Prefer -> fonts only (offline)**
 nothing ever leaves the machine.
 
 ## Where the LaTeX comes from
@@ -22,8 +22,8 @@ that answers wins.
    The e-print for that exact version is fetched once, unpacked here (gzip,
    then tar; a single-file submission is just gzipped TeX; a PDF-only
    submission is noted and skipped), `\input` and `\include` are followed,
-   and every piece of math in it — `$…$`, `\(…\)`, `\[…\]`, `$$…$$`,
-   `equation`, `align`, `gather`, `multline`, `eqnarray`, starred or not — is
+   and every piece of math in it - `$...$`, `\(...\)`, `\[...\]`, `$$...$$`,
+   `equation`, `align`, `gather`, `multline`, `eqnarray`, starred or not - is
    matched against what you selected. Argument-free macros
    (`\newcommand{\R}{\mathbb{R}}`, `\def\eps{\varepsilon}`,
    `\DeclareMathOperator`) are expanded so the result renders; `\label`,
@@ -39,7 +39,8 @@ that answers wins.
    (CMSY's capitals are calligraphic, MSBM's blackboard, EUFM's fraktur) and,
    for TeX's extension font, how tall a delimiter is. A glyph with no
    Unicode is read by its code through the TeX encodings (CMMI, CMSY, CMEX,
-   MSAM, MSBM). A Symbol font whose text came out as Mac Roman (Â for ∑) is
+   MSAM, MSBM). A Symbol font whose text came out as Mac Roman (A-circumflex for
+   $\sum$) is
    read back through the Symbol encoding. The layout, from baselines and
    sizes, says how they fit together: smaller and raised is a superscript, a
    rule with symbols above and below is a fraction, a radical sign with a
@@ -72,9 +73,9 @@ app will let it reach.
 
 ## Settings
 
-- **Use the arXiv source** — step 2 on or off.
-- **Use open-access journal versions** — step 3 on or off.
-- **Prefer** — "most exact" uses every step; "fonts only (offline)" uses the
+- **Use the arXiv source** - step 2 on or off.
+- **Use open-access journal versions** - step 3 on or off.
+- **Prefer** - "most exact" uses every step; "fonts only (offline)" uses the
   document's tags and its glyphs and never the network.
 
 ## What it cannot do

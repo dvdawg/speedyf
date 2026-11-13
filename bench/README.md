@@ -69,7 +69,7 @@ For each valid category, the report contains:
 - compact search-index page coverage, truncation state, and retained bytes;
 - time and page count to the first real indexed search result;
 - cache-hit count/rate from exact render replays plus encoded cache occupancy;
-- for `text-1000p`, a 160-page 2× forward sweep followed by a reverse
+- for `text-1000p`, a 160-page 2x forward sweep followed by a reverse
   scroll-back pass, with actual hit count/rate;
 - for `text-1000p`, structured-link enumeration time per page (up to 20 pages)
   and end-to-end synthetic destination crop plus preview-render latency;

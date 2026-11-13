@@ -984,7 +984,7 @@ fn segments<'a>(chars: &[&'a GlyphDto], row: &[usize]) -> Vec<Segment<'a>> {
     out.into_iter().flat_map(split_number).collect()
 }
 
-/// A segment ending in an equation number set a little apart, "… x(27)",
+/// A segment ending in an equation number set a little apart, "... x(27)",
 /// as two: the equation and its number.
 fn split_number<'a>(segment: Segment<'a>) -> Vec<Segment<'a>> {
     let glyphs = &segment.glyphs;
@@ -1149,8 +1149,8 @@ impl Candidate {
 /// Display equations on a page, found from its glyphs.
 ///
 /// Conservative by design: a block is reported only for a run of rows that
-/// reads as mathematics — mostly math fonts, a big operator, or a fraction
-/// bar, without much running text — and sits centred in its text column
+/// reads as mathematics - mostly math fonts, a big operator, or a fraction
+/// bar, without much running text - and sits centred in its text column
 /// without spanning it. A right-hand `(n)` is taken as its number. Rows a
 /// little apart (the lines of an `align`, a fraction's numerator and
 /// denominator) merge into one block.

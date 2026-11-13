@@ -1,7 +1,7 @@
 //! Paper records: one per work, with its files, identifiers, metadata with
 //! per-field provenance, and a cite key.
 //!
-//! Three rules live here and nowhere else (projects.md §2, §12):
+//! Three rules live here and nowhere else (projects.md sec. 2, sec. 12):
 //!
 //! - **Identity.** A scanned file finds its paper by identifier, then by
 //!   content fingerprint, then by path. No match makes a new paper. A paper
@@ -46,7 +46,7 @@ pub struct PaperIds {
     /// `Filename`, `Identifier`, `Xmp`), a lookup's, or the user's. The
     /// scan's are the primary file's to re-derive on every rescan; a
     /// lookup's or the user's persist (`offer_identifier`). `None` on a
-    /// record written before the sources were kept — unknown, and read as
+    /// record written before the sources were kept - unknown, and read as
     /// the scan's, so a rescan can put it right.
     #[serde(default)]
     pub doi_source: Option<MetaSource>,
@@ -57,7 +57,7 @@ pub struct PaperIds {
 }
 
 /// The on-disk and in-memory record. Field names are those of projects.md
-/// §3; the DTOs in `types.rs` are built from it, never serialized from it.
+/// sec. 3; the DTOs in `types.rs` are built from it, never serialized from it.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct PaperRecord {
@@ -229,7 +229,7 @@ pub fn offer<T: PartialEq>(field: &mut Option<MetaField<T>>, value: T, source: M
 }
 
 /// Whether an identifier with this source is the scan's to re-derive:
-/// read off the file — the page, the file name, a PII, the XMP packet —
+/// read off the file - the page, the file name, a PII, the XMP packet -
 /// or of unknown origin, a record from before sources were kept, which is
 /// read as the scan's so a rescan can correct it. A lookup's or the
 /// user's is not.
@@ -242,7 +242,7 @@ fn scan_owned(source: Option<MetaSource>) -> bool {
 /// is re-derived from the primary file only, and only when it is the
 /// scan's own: replaced when the file now says something else, cleared
 /// when the file no longer carries one and is the record's only present
-/// file (`lone`) — the journal version beside the preprint may be what
+/// file (`lone`) - the journal version beside the preprint may be what
 /// supplied it. A lookup's or the user's identifier is never touched by a
 /// scan. Returns whether the record changed.
 fn offer_identifier(
@@ -379,7 +379,7 @@ fn is_initials(piece: &str) -> bool {
     })
 }
 
-/// "Given Family" → family is the last word. Good for the two forms Info
+/// "Given Family" -> family is the last word. Good for the two forms Info
 /// strings actually use; "van der Waals" becomes family "Waals", which the
 /// cite key would have reduced to anyway.
 fn author_from_name(name: &str) -> Option<Author> {
@@ -406,7 +406,7 @@ pub fn parse_xmp_creators(creators: &[String]) -> Vec<Author> {
             continue;
         }
         match creator.split_once(',') {
-            // "Family, Given" — unless the comma separates two people,
+            // "Family, Given" - unless the comma separates two people,
             // which is the Info string's problem to sort out.
             Some((family, given)) if !given.contains(',') => {
                 let (family, given) = (family.trim(), given.trim());
@@ -508,7 +508,7 @@ impl PaperRecord {
         }
     }
 
-    /// Every file gone — or no file at all, which the UI treats the same.
+    /// Every file gone - or no file at all, which the UI treats the same.
     pub fn is_missing(&self) -> bool {
         self.files.iter().all(|file| file.missing)
     }
@@ -550,7 +550,7 @@ impl PaperRecord {
     }
 
     /// "Jarzynski", "Evans & Cohen", "Evans, Cohen & Morriss",
-    /// "Marchetti et al." — or "".
+    /// "Marchetti et al." - or "".
     pub fn authors_display(&self) -> String {
         let families: Vec<&str> = self
             .authors()
@@ -587,7 +587,7 @@ impl PaperRecord {
     }
 
     /// Whether an identifier lookup has something to add: an author or a
-    /// year missing, or a title no lookup has confirmed — one a heuristic
+    /// year missing, or a title no lookup has confirmed - one a heuristic
     /// guessed, which is what a running header looks like. A paper a lookup
     /// already filled is left alone by a project-wide one, so the batch
     /// costs what the gaps cost.
@@ -785,7 +785,7 @@ impl PaperRecord {
         );
         // The category off the stamp belongs to the arXiv id: filled from
         // any file when the record has none, and re-derived with a
-        // scan-owned id from the primary file under the same guard — a
+        // scan-owned id from the primary file under the same guard - a
         // stale one would send the lookup chain to the wrong services.
         let category = entry.arxiv_category.clone();
         let rederive = primary && scan_owned(self.ids.arxiv_source) && (category.is_some() || lone);
@@ -793,8 +793,8 @@ impl PaperRecord {
             self.arxiv_category = category;
             changed = true;
         }
-        // Everything below is the primary file's say. A second file — the
-        // journal version beside the preprint, a supplement — contributes
+        // Everything below is the primary file's say. A second file - the
+        // journal version beside the preprint, a supplement - contributes
         // identifiers above and nothing else, so the record is a function
         // of one file and a rescan of the other cannot flip its fields.
         if !primary {
@@ -895,8 +895,8 @@ impl PaperRecord {
                 changed = true;
             }
         }
-        // The kind the classifier saw beside the verdict — a thesis's title
-        // page, a book's ISBN — is offered at first-page rank, where any
+        // The kind the classifier saw beside the verdict - a thesis's title
+        // page, a book's ISBN - is offered at first-page rank, where any
         // lookup and the user outrank it, and taken back by a classified
         // rescan that no longer sees it.
         changed |= retract(
@@ -1121,11 +1121,11 @@ impl PaperStore {
             return false;
         }
         // The DOI from the file name or the first page (a PII the scan
-        // converted included), else the one the XMP packet carries — or
+        // converted included), else the one the XMP packet carries - or
         // stands for, when it holds a checked PII instead: the publisher
         // wrote it, and it is the same DOI by any route. But a packet's DOI
-        // is a weaker identity than the page's — a supplement and the
-        // issue's front matter carry the article's DOI in their packets —
+        // is a weaker identity than the page's - a supplement and the
+        // issue's front matter carry the article's DOI in their packets -
         // so it resolves a file to a paper only when the file is not
         // already known by its bytes or its path.
         // Each identifier carries where the scan read it, for the record to
@@ -1281,7 +1281,7 @@ impl PaperStore {
     }
 
     /// A path belongs to one paper. When a file is re-identified as another
-    /// paper's — its DOI matched after a user set one, say — the old row goes;
+    /// paper's - its DOI matched after a user set one, say - the old row goes;
     /// a paper left with no files, no memberships and no user edits was only
     /// ever a placeholder for that file and goes with it.
     ///
@@ -1315,7 +1315,7 @@ impl PaperStore {
     }
 
     /// After a scan: every file not in `present` is missing, every file in
-    /// it is not. Never deletes a paper — it keeps its projects and the next
+    /// it is not. Never deletes a paper - it keeps its projects and the next
     /// matching file reattaches.
     pub fn mark_missing(&mut self, present: &HashSet<PathBuf>) -> bool {
         if !self.writable() {
@@ -1577,7 +1577,7 @@ impl PaperStore {
     }
 
     /// Rows in list order, however the papers were picked, so every list
-    /// the screen shows — a project, a search, a paper's citations — reads
+    /// the screen shows - a project, a search, a paper's citations - reads
     /// the same way.
     pub(super) fn rows_in_list_order(&self, papers: Vec<&PaperRecord>) -> Vec<PaperRowDto> {
         let memberships = self.membership_map();
@@ -1587,7 +1587,7 @@ impl PaperStore {
             .collect()
     }
 
-    /// First author's family, then year, then title — the order of the list.
+    /// First author's family, then year, then title - the order of the list.
     pub(super) fn in_list_order<'a>(
         &self,
         mut papers: Vec<&'a PaperRecord>,
@@ -1596,7 +1596,7 @@ impl PaperStore {
         papers
     }
 
-    /// The identifier → paper and path → paper tables citation resolution
+    /// The identifier -> paper and path -> paper tables citation resolution
     /// goes through, and the title index for references that print no
     /// identifier, built once per call over every paper.
     pub(super) fn citation_tables(&self) -> CitationTables<'_> {
@@ -1638,11 +1638,11 @@ impl PaperStore {
     }
 
     /// Which library papers this one cites and which cite it, and how many
-    /// of its citations name no paper here (projects.md §8). Three sources
+    /// of its citations name no paper here (projects.md sec. 8). Three sources
     /// of edges, unioned: the identifiers the text pass read out of each
     /// file (`entries[].cites`), each file's reference list entry by entry
     /// (`refs`, the refs sidecars: an entry resolves by the identifiers in
-    /// it, else by the library title it contains — `resolve_reference`),
+    /// it, else by the library title it contains - `resolve_reference`),
     /// and what the lookup services said (`network`: what each paper cites
     /// and is cited by, from the cache). _Cites_ is all three for this
     /// paper; _cited by_ is every paper whose cites, reference entries or
@@ -1769,13 +1769,13 @@ impl PaperStore {
         (cites, cited_by, unresolved)
     }
 
-    /// The citation graph over a set of papers (projects.md §8): every
+    /// The citation graph over a set of papers (projects.md sec. 8): every
     /// item in the library (`is_paper`), or every member of one project,
     /// paper or not, in list order. Edges come from the sources
-    /// `citation_links` reads — the identifiers the text pass read out of
+    /// `citation_links` reads - the identifiers the text pass read out of
     /// each file (`entries`), each file's reference entries (`refs`,
     /// resolved by identifier, else by title), and the lookup cache's
-    /// network (`network`) in both its directions — resolved through
+    /// network (`network`) in both its directions - resolved through
     /// tables built once for the whole library, so a citation of a paper
     /// outside the set is told from one of nothing and a title is matched
     /// against every paper. An edge is drawn only between two nodes, once,
@@ -1804,7 +1804,7 @@ impl PaperStore {
 
     /// The graph around one paper: it and every item (`is_paper`) within
     /// `depth` citation steps of it, either direction, across the whole
-    /// library — `depth` clamped to 1..=2 — with the edges among them and
+    /// library - `depth` clamped to 1..=2 - with the edges among them and
     /// `external` / `unindexed` relative to that set, as `citation_graph`
     /// counts them for a project.
     pub fn focus_graph(
@@ -1879,7 +1879,7 @@ impl PaperStore {
         refs: &DocRefs,
         network: &NetworkEdges,
     ) -> (GraphDto, Vec<(usize, usize)>) {
-        // Paper index → node position.
+        // Paper index -> node position.
         let node_by_id: HashMap<&str, usize> = nodes
             .iter()
             .enumerate()
@@ -1893,8 +1893,8 @@ impl PaperStore {
         let tables = self.citation_tables();
         let node_for = |id: &CitationIdDto| tables.by_id.get(id).and_then(|&index| node_of[index]);
 
-        // Every citation by identifier a node makes — (node, cited
-        // identifier) — from the sidecars and from the network's
+        // Every citation by identifier a node makes - (node, cited
+        // identifier) - from the sidecars and from the network's
         // references, resolved in one pass below. The network's other
         // direction, a paper the cache says cites a node, is an edge when
         // that paper is a node too and nothing to count when it is not.
@@ -1998,7 +1998,7 @@ impl PaperStore {
         plan_lookup(self.in_list_order(self.papers.iter().collect()), now)
     }
 
-    /// Everything a chain found, applied in turn — each candidate at its
+    /// Everything a chain found, applied in turn - each candidate at its
     /// own source's rank, so the best source wins field by field.
     pub fn apply_candidates(
         &mut self,
@@ -2023,7 +2023,7 @@ impl PaperStore {
     }
 
     /// Park what a title search found but could not apply, for the user to
-    /// pick from — at most [`PARK_LIMIT`], replacing anything parked
+    /// pick from - at most [`PARK_LIMIT`], replacing anything parked
     /// before. Returns how many were parked.
     pub fn park_candidates(
         &mut self,
@@ -2155,9 +2155,9 @@ impl PaperStore {
 
     /// Pin the keys of these papers: they were just written to a `.bib`, or
     /// copied to be pasted into one, and a key that changes under a
-    /// manuscript breaks every `\cite` in it (projects.md §2). Returns
+    /// manuscript breaks every `\cite` in it (projects.md sec. 2). Returns
     /// whether any key was not pinned before. Nothing happens on a store
-    /// that cannot be written — a pin that cannot be saved is not a pin.
+    /// that cannot be written - a pin that cannot be saved is not a pin.
     pub fn freeze_keys(&mut self, ids: &[String]) -> bool {
         if !self.writable() {
             return false;
@@ -3822,8 +3822,8 @@ mod tests {
     }
 
     /// With the reference provider off, a document's refs sidecar is not
-    /// read: the edges its identifiers make — DOI, arXiv, and the DOIs APS
-    /// journal references stand for — are all drawn, and one only its
+    /// read: the edges its identifiers make - DOI, arXiv, and the DOIs APS
+    /// journal references stand for - are all drawn, and one only its
     /// title could make is not.
     #[test]
     fn with_no_provider_identifier_edges_stay_and_title_edges_go() {
@@ -3942,8 +3942,8 @@ mod tests {
         };
         let no_network = NetworkEdges::default();
 
-        // The sidecars: A → B (and a stranger, and itself), B → C, C → A
-        // twice, D nothing — but read.
+        // The sidecars: A -> B (and a stranger, and itself), B -> C, C -> A
+        // twice, D nothing - but read.
         let mut entries = vec![a.clone(), b.clone(), c.clone(), d.clone()];
         entries[0].cites = Some(vec![
             ArXiv("2401.00002".into()),
@@ -4757,7 +4757,7 @@ mod tests {
         );
         assert_eq!(store.papers[0].ids.isbn_source, Some(MetaSource::FirstPage));
         // The page no longer prints one: the primary file's rescan takes
-        // the packet's instead — what the file says is re-derived.
+        // the packet's instead - what the file says is re-derived.
         let mut again = e.clone();
         again.isbn = None;
         assert!(store.reconcile_file(&again));
@@ -4772,7 +4772,7 @@ mod tests {
         store.reconcile_file(&only_packet);
         assert_eq!(store.papers[1].ids.isbn.as_deref(), Some("9780306406157"));
 
-        // Patched: normalized, validated, cleared — and the user's outlives
+        // Patched: normalized, validated, cleared - and the user's outlives
         // any rescan.
         let dto = store
             .apply_patch(
@@ -4930,7 +4930,7 @@ mod tests {
         assert_eq!(store.papers.len(), 2);
         assert_eq!(store.papers[1].ids.doi, None);
 
-        // A placeholder — not filed, not edited — does move to the paper
+        // A placeholder - not filed, not edited - does move to the paper
         // whose DOI its packet carries, and goes.
         let mut store = new_store();
         store.reconcile_file(&article);
@@ -4941,7 +4941,7 @@ mod tests {
         assert_eq!(store.papers[0].files.len(), 2);
 
         // A brand-new file known by nothing but its packet's DOI joins the
-        // paper that holds it — a renamed, re-saved copy is the same paper.
+        // paper that holds it - a renamed, re-saved copy is the same paper.
         let mut copy = xmp_entry("/l/copy.pdf", "copy");
         copy.xmp.as_mut().unwrap().doi = Some("10.1/a".into());
         store.reconcile_file(&copy);
@@ -5043,8 +5043,8 @@ mod tests {
             year_of(&store.papers[0]),
             Some((2020, MetaSource::Identifier))
         );
-        // One of an unknown family — the page now reads differently, so
-        // it replaces the other — says nothing, and the Info year returns.
+        // One of an unknown family - the page now reads differently, so
+        // it replaces the other - says nothing, and the Info year returns.
         e.doi = Some("10.1103/PhysRevLett.78.2690".into());
         store.reconcile_file(&e);
         assert_eq!(
@@ -5278,8 +5278,8 @@ mod tests {
             .unwrap();
         assert_eq!(links.unresolved, 1, "the preprint is cited, not self");
 
-        // A record the old scan built — the cited id as its own, the id's
-        // year over the Info dictionary's, no sources kept — is put right
+        // A record the old scan built - the cited id as its own, the id's
+        // year over the Info dictionary's, no sources kept - is put right
         // by the first rescan.
         let mut store = new_store();
         let mut wrong = e.clone();

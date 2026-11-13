@@ -57,7 +57,7 @@ pub struct LibraryEntry {
     pub title: Option<String>,
     /// Whether this file's full text has been extracted to a sidecar for
     /// library-wide search. Defaulted so an index written before search
-    /// existed still loads — it simply reports nothing indexed yet.
+    /// existed still loads - it simply reports nothing indexed yet.
     #[serde(default)]
     pub text_indexed: bool,
     /// Size plus a hash of the first and last 64 KiB: how a paper record
@@ -75,7 +75,7 @@ pub struct LibraryEntry {
     #[serde(default)]
     pub info_year: Option<i32>,
     /// Every DOI and arXiv id the full text cites, less the file's own
-    /// (projects.md §8). `None` until extracted — the text pass fills it in,
+    /// (projects.md sec. 8). `None` until extracted - the text pass fills it in,
     /// and a backfill job reads it out of the sidecar for entries indexed
     /// before it existed.
     #[serde(default)]
@@ -87,8 +87,8 @@ pub struct LibraryEntry {
     pub paper_verdict: Option<types::PapernessVerdict>,
     #[serde(default)]
     pub paper_reason: Option<String>,
-    /// What kind of item the classifier took it for — a thesis, a book, an
-    /// article — when it could tell. Offered to the record's `kind` at
+    /// What kind of item the classifier took it for - a thesis, a book, an
+    /// article - when it could tell. Offered to the record's `kind` at
     /// first-page rank.
     #[serde(default)]
     pub paper_kind: Option<types::PaperKind>,
@@ -135,8 +135,8 @@ pub struct LibraryEntry {
     /// a scanned image. The text pass OCRs such a file's pages.
     #[serde(default)]
     pub ocr_wanted: bool,
-    /// The scan wanted OCR it was not allowed to run — a file scanned on
-    /// demand (the inbox), outside the idle jobs — so its first-page
+    /// The scan wanted OCR it was not allowed to run - a file scanned on
+    /// demand (the inbox), outside the idle jobs - so its first-page
     /// reading is the text layer's. The idle text pass scans it again
     /// with OCR before extracting its text.
     #[serde(default)]
@@ -177,7 +177,7 @@ pub struct LibraryEntry {
 /// v11: the word-spacing repair works. It read PDFium's `[x, y, w, h]`
 /// character boxes as `[l, b, r, t]`, measured no advance and silently
 /// did nothing, so a LaTeX paper's first-page text and full text ran its
-/// words together ("Privateandpolynomialtime…"); it now reads loose boxes
+/// words together ("Privateandpolynomialtime..."); it now reads loose boxes
 /// in the right form and leaves rotated glyphs (the arXiv stamp) whole.
 /// Rescanned once (the scan's identifiers, ISBN and classification come
 /// from the repaired first pages) and every document's text extracted
@@ -185,7 +185,7 @@ pub struct LibraryEntry {
 /// text as each finishes, and its refs sidecar dropped so the reference
 /// provider is handed the new text (`do_library_text_next`).
 /// v12: scanned papers are OCR'd (`ocrtext`, macOS Vision). Rescanned
-/// once — metadata only — so a scan's first page is read by OCR for its
+/// once - metadata only - so a scan's first page is read by OCR for its
 /// title, authors and identifiers. Text is extracted again only for the
 /// files that rescan finds worth OCR (`ocr_wanted`, see
 /// `keep_text_state`); every other sidecar stands.
@@ -235,7 +235,7 @@ pub struct LibraryState {
     app_data_dir: PathBuf,
     roots: Vec<PathBuf>,
     /// Keyed by path. Was a `Vec` with a linear containment check per scanned
-    /// file, which is O(n²) across a scan — tolerable for one folder, not for
+    /// file, which is O(n²) across a scan - tolerable for one folder, not for
     /// several.
     entries: HashMap<PathBuf, LibraryEntry>,
     pending: VecDeque<PathBuf>,
@@ -508,7 +508,7 @@ impl LibraryState {
         self.all_entries().into_iter().find(|e| !e.text_indexed)
     }
 
-    /// Record that a document's text is now on disk — or that extracting it
+    /// Record that a document's text is now on disk - or that extracting it
     /// failed, which is also final: a file that cannot be read will not start
     /// reading, and retrying it forever would stall every document behind it.
     /// `cites` is what the same text cited, so the backfill never has to
@@ -607,7 +607,7 @@ impl CitationResolver for LocalLibraryResolver {
     }
 }
 
-/// A rescan of the same bytes keeps the text pass's work — unless this
+/// A rescan of the same bytes keeps the text pass's work - unless this
 /// scan is the first to find the file worth OCR, whose text is then
 /// extracted again with it (the v12 upgrade's one text pass, limited to
 /// scanned papers).
@@ -713,12 +713,12 @@ pub fn edges_from_rect([x, y, w, h]: [f32; 4]) -> [f32; 4] {
 }
 
 /// The separator before each character, or `None` when the page has too
-/// little geometry to measure — the caller then keeps the file's own
+/// little geometry to measure - the caller then keeps the file's own
 /// lines. `boxes` are `[l, b, r, t]`; `upright` says which characters run
 /// left to right (missing entries do).
 ///
-/// Characters that do not run left to right — the arXiv stamp up the
-/// margin, a rotated axis label — take no part in the geometry. Each run
+/// Characters that do not run left to right - the arXiv stamp up the
+/// margin, a rotated axis label - take no part in the geometry. Each run
 /// of them is its own line, its text as the file spells it: measured, a
 /// stamp's characters stack vertically and every one would read as a new
 /// line, one fragment per character. Nor do they count toward the median
@@ -730,7 +730,7 @@ fn separators(
 ) -> Option<Vec<Option<Separator>>> {
     let turned = |index: usize| upright.get(index) == Some(&false);
     // Geometry may be absent or shorter than the text. Characters past it are
-    // still emitted — losing text to recover spacing would be a bad trade.
+    // still emitted - losing text to recover spacing would be a bad trade.
     let measured = chars.len().min(boxes.len());
     let level: Vec<[f32; 4]> = (0..measured)
         .filter(|&index| !turned(index))
@@ -800,7 +800,7 @@ fn separators(
 /// `upright`, which therefore line up by construction. An earlier version
 /// indexed `boxes` by `run.start + offset` instead, which silently read the
 /// wrong glyph's geometry for every character after the run builder skipped
-/// one — and produced no spaces at all on the files that needed them.
+/// one - and produced no spaces at all on the files that needed them.
 ///
 /// Many PDFs, LaTeX output above all, encode word gaps as position rather than
 /// as space characters; those files yield titles like
@@ -878,7 +878,7 @@ pub fn text_from_page(raw: &str, rects: &[[f32; 4]], upright: &[bool]) -> String
 }
 
 /// The character indices before which the geometry puts a word space or a
-/// line break, ascending — for the library's search sidecar, which keeps
+/// line break, ascending - for the library's search sidecar, which keeps
 /// the raw stream (its offsets are how a hit is highlighted) and inserts
 /// these as whitespace that maps back to the index it precedes
 /// (`librarytext::write_spaced_sidecar`). Empty when the page has no usable
@@ -981,7 +981,7 @@ fn is_reference_heading(line: &str) -> bool {
     REFERENCE_HEADINGS.contains(&heading.as_str())
 }
 
-/// "6", "6.", "6.1", "VI.", "(6)" — what a numbered heading starts with.
+/// "6", "6.", "6.1", "VI.", "(6)" - what a numbered heading starts with.
 fn is_section_number(word: &str) -> bool {
     let core = word.trim_matches(|c: char| matches!(c, '.' | ')' | '('));
     !core.is_empty()
@@ -1003,8 +1003,8 @@ fn is_section_number(word: &str) -> bool {
 /// stamp arXiv prints down the margin (`identifiers::arxiv_stamp`): a bare
 /// `arXiv:ID` in running text is a citation, wherever it stands. The stamp
 /// is looked for on the whole page, since arXiv lays it over the page
-/// after the body and PDFium reads it out last — below a reference list,
-/// when the page has one — and its bracketed category makes it
+/// after the body and PDFium reads it out last - below a reference list,
+/// when the page has one - and its bracketed category makes it
 /// unmistakable anyway.
 pub fn entry_from_first_page(candidate: &ScanCandidate, text: &str) -> LibraryEntry {
     entry_from_page(candidate, text, None)
@@ -1070,10 +1070,10 @@ pub fn entry_from_page(
     }
 }
 
-/// What the file's identifiers say on their own (projects.md §4), once the
-/// file name and the pages have had their say. An Elsevier PII — printed
+/// What the file's identifiers say on their own (projects.md sec. 4), once the
+/// file name and the pages have had their say. An Elsevier PII - printed
 /// in the head of the page, or left in an Info Title the scan rejected as
-/// a title ("PII: 0022-0000(88)90028-1") — becomes the article's DOI when
+/// a title ("PII: 0022-0000(88)90028-1") - becomes the article's DOI when
 /// there is no other, but only when its ISSN checks out: a PII is as good
 /// an identity as a printed DOI, and a mis-OCR'd one would merge two
 /// articles. The arXiv stamp's category is kept for the lookup chain when
@@ -1154,8 +1154,8 @@ fn isbn_checksum_ok(digits: &str) -> bool {
     }
 }
 
-/// An ISBN as written — `978-0-306-40615-7`, `0 306 40615 2`,
-/// `0306406152`, with a trailing `x` — normalized to its digits (and a
+/// An ISBN as written - `978-0-306-40615-7`, `0 306 40615 2`,
+/// `0306406152`, with a trailing `x` - normalized to its digits (and a
 /// trailing `X`), or `None` when it is not 10 or 13 long or its checksum
 /// fails.
 pub fn normalize_isbn(raw: &str) -> Option<String> {
@@ -1170,7 +1170,7 @@ pub fn normalize_isbn(raw: &str) -> Option<String> {
 
 /// The first valid ISBN announced as one in `text`: "ISBN" (with or
 /// without "-10" / "-13" and a colon), then the number, hyphenated or
-/// spaced or neither. A copyright page lists several — hardcover, eBook —
+/// spaced or neither. A copyright page lists several - hardcover, eBook -
 /// and the first that checks out is the one.
 pub fn find_isbn(text: &str) -> Option<String> {
     let lower = text.to_ascii_lowercase();
@@ -1194,8 +1194,8 @@ pub fn find_isbn(text: &str) -> Option<String> {
 }
 
 /// The number following an "ISBN" label, tried with the "-13"/"-10" form
-/// marker stripped first and as written second, so "ISBN-13: 978…" and
-/// "ISBN 1056…" both read right.
+/// marker stripped first and as written second, so "ISBN-13: 978..." and
+/// "ISBN 1056..." both read right.
 fn isbn_after_label(rest: &str) -> Option<String> {
     fn skip_leading(s: &str) -> &str {
         s.trim_start_matches(|c: char| is_isbn_separator(c) || c == ':')
@@ -1251,7 +1251,7 @@ fn isbn_at_start(s: &str) -> Option<String> {
 /// The identifiers a document's full text cites, in first-seen order,
 /// without repeats and without the document's own: an arXiv paper carries
 /// its id in every page header, and a journal article prints its DOI on the
-/// first page. arXiv DOIs (`10.48550/arXiv.…`) are folded to the arXiv id,
+/// first page. arXiv DOIs (`10.48550/arXiv....`) are folded to the arXiv id,
 /// as citation resolution does, so a reference list that cites the same
 /// preprint both ways yields one edge.
 pub fn cited_identifiers(
@@ -1279,7 +1279,7 @@ pub fn cited_identifiers(
 /// What a document's text cites: every explicit DOI and arXiv id in it
 /// (`cited_identifiers`) plus the DOIs its APS journal references stand
 /// for, wherever they are printed (`references::journal_dois`), the
-/// document's own left out — for `LibraryEntry::cites`. Identifiers only:
+/// document's own left out - for `LibraryEntry::cites`. Identifiers only:
 /// cutting the reference list into entries is the reference provider
 /// extension's job (`references`), and with no provider these are all the
 /// edges there are. `text` is the sidecar's form
@@ -1409,9 +1409,9 @@ const FINGERPRINT_EDGE: u64 = 64 * 1024;
 
 /// `{size:x}-{hash:016x}`: the size and an FNV-1a 64 hash of the first and
 /// last 64 KiB (the whole file when it is no longer than both). Stable across
-/// renames and moves, different the moment the file is re-saved — cheap
+/// renames and moves, different the moment the file is re-saved - cheap
 /// enough to compute during the scan, which is why it is the identity a
-/// paper record falls back on when there is no identifier (projects.md §2).
+/// paper record falls back on when there is no identifier (projects.md sec. 2).
 pub fn content_fingerprint(path: &Path) -> Option<String> {
     let mut file = fs::File::open(path).ok()?;
     let size = file.metadata().ok()?.len();
@@ -1655,7 +1655,7 @@ mod tests {
     }
 
     /// The user's old Elsevier scans: no DOI anywhere, an Info Title of
-    /// "PII: …" that is no title, and nothing to look up with — until the
+    /// "PII: ..." that is no title, and nothing to look up with - until the
     /// PII is read as the DOI it stands for.
     #[test]
     fn a_pii_stands_in_for_a_missing_doi_once_its_issn_checks_out() {
@@ -1712,7 +1712,7 @@ mod tests {
         derive_from_identifiers(&mut entry, page, None);
         assert!(entry.arxiv_category.is_none());
 
-        // No stamp, no category — and a rescan takes it back.
+        // No stamp, no category - and a rescan takes it back.
         let mut entry = entry_from_first_page(&candidate("/lib/b.pdf"), "A title only");
         entry.arxiv_category = Some("stale".into());
         derive_from_identifiers(&mut entry, "A title only", None);
@@ -1821,7 +1821,7 @@ mod tests {
 
     /// The re-derivation an upgrade relies on: an index older than v9 has
     /// its cites cleared, and the backfill rebuilds them from the text
-    /// sidecar alone, without PDFium — explicit identifiers and APS journal
+    /// sidecar alone, without PDFium - explicit identifiers and APS journal
     /// references wherever they are printed, and no refs sidecar, which is
     /// the reference provider's to write.
     #[test]
@@ -2107,7 +2107,7 @@ mod tests {
         let mut y = 250.0f32;
         for ch in stamp.chars() {
             raw.push(ch);
-            // Rotated 90°: the glyph's advance runs up the page.
+            // Rotated 90 degrees: the glyph's advance runs up the page.
             let advance = em_width(ch) * 20.0;
             rects.push(if ch == ' ' {
                 [0.0; 4]
@@ -2234,7 +2234,7 @@ mod tests {
             "and it is cited, not self"
         );
 
-        // A bare arXiv id anywhere — even in the head — is a citation; the
+        // A bare arXiv id anywhere - even in the head - is a citation; the
         // stamp, wherever PDFium puts it, is the file's own.
         let cited_in_head = "A Title Long Enough\nWe build on arXiv:1706.03762 here.\nAbstract";
         assert_eq!(
@@ -2617,7 +2617,7 @@ mod tests {
         let root = tempfile::tempdir().expect("library root");
         let pdf = root.path().join("paper.pdf");
         fs::write(&pdf, b"fixture").unwrap();
-        // Stored entries are always canonical — `collect_pdfs` re-validates
+        // Stored entries are always canonical - `collect_pdfs` re-validates
         // every hit through `contained_canonical_path`. On macOS a tempdir is
         // /var/... which canonicalizes to /private/var/..., so a fixture that
         // skipped this would look like a file that had moved away.

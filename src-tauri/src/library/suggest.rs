@@ -1,5 +1,5 @@
 //! Projects an item might be filed in, read off the citation graph
-//! (projects.md §6): for each project the item is not in, how many members
+//! (projects.md sec. 6): for each project the item is not in, how many members
 //! it cites, how many cite it, and how many works it and the members both
 //! cite.
 //!

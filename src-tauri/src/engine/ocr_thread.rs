@@ -5,8 +5,8 @@
 //! every render behind it. Now the worker only renders the page (PDFium
 //! must stay on the worker) and hands the PNG here, through a bounded
 //! channel, then goes on with its queue. The result is written to the
-//! document's OCR cache at once — so a reading finished just before the app
-//! quits is not lost — and handed back through `on_done`, which the engine
+//! document's OCR cache at once - so a reading finished just before the app
+//! quits is not lost - and handed back through `on_done`, which the engine
 //! turns into an idle `Work::OcrDone` that resumes the library job waiting
 //! for it (`worker::do_ocr_done`).
 //!

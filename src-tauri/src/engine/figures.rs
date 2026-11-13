@@ -3,7 +3,7 @@
 //! Captions are read out of the page text, not from hyperref anchors. That was
 //! the first design and it was wrong: hyperref only emits a destination for a
 //! float carrying a `\label`, so a paper can have anchors for every section
-//! and theorem and none at all for its figures — which is what real arXiv
+//! and theorem and none at all for its figures - which is what real arXiv
 //! papers turn out to look like. Page text is always there.
 //!
 //! The artwork itself is unlabelled in any PDF; it is just whatever occupies
@@ -33,7 +33,7 @@ const PADDING_PT: f32 = 4.0;
 pub struct FigureCropInput<'a> {
     pub page_w_pt: f32,
     pub page_h_pt: f32,
-    /// Caption anchor in display space, y-up — where hyperref points.
+    /// Caption anchor in display space, y-up - where hyperref points.
     pub caption_y: f32,
     /// Caption anchor x, when the destination carried one. Decides which
     /// column the figure sits in on a two-column page.
@@ -42,7 +42,7 @@ pub struct FigureCropInput<'a> {
 }
 
 /// Crop covering the artwork above a caption, as `[x, y, w, h]` in display
-/// space (y-up). The caption itself is excluded — the panel prints its label
+/// space (y-up). The caption itself is excluded - the panel prints its label
 /// alongside, so spending thumbnail pixels on it would only shrink the figure.
 pub fn figure_crop_rect(input: &FigureCropInput<'_>) -> [f32; 4] {
     let page_w = input.page_w_pt.max(1.0);
@@ -127,7 +127,7 @@ pub struct Caption {
     pub title: String,
     /// baseline of the caption's first line, display space y-up
     pub y: f32,
-    /// left edge of that line — decides which column the figure sits in
+    /// left edge of that line - decides which column the figure sits in
     pub x: f32,
 }
 

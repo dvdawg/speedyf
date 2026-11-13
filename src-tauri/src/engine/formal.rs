@@ -1,4 +1,4 @@
-/// Recovering formal environments — theorems, lemmas, definitions, figures —
+/// Recovering formal environments - theorems, lemmas, definitions, figures -
 /// from a LaTeX-compiled PDF.
 ///
 /// hyperref anchors every stepped counter with a named destination, so a paper
@@ -8,7 +8,7 @@
 ///
 /// What it does NOT give is the name to show. A destination carries the LaTeX
 /// *counter*, and the near-universal `\newtheorem{lemma}[theorem]{Lemma}`
-/// idiom shares one counter across lemmas, corollaries and propositions — so
+/// idiom shares one counter across lemmas, corollaries and propositions - so
 /// all three anchor as `theorem.N`. Trusting the destination name would label
 /// every corollary in the document "Theorem".
 ///
@@ -40,7 +40,7 @@ const STRUCTURAL_PREFIXES: &[&str] = &[
     "Hfootnote.",
     "footnote.",
     // Anchor text for an equation is the equation itself, so it can never pass
-    // the name check — and a list of every numbered equation is noise anyway.
+    // the name check - and a list of every numbered equation is noise anyway.
     "equation.",
 ];
 
@@ -171,7 +171,7 @@ pub fn parse_heading(text: &str) -> Option<Heading> {
 }
 
 /// Pair a destination with the text found at it. Returns None unless the two
-/// agree on the number — that agreement is the whole verification story.
+/// agree on the number - that agreement is the whole verification story.
 pub fn reconcile(dest_name: &str, anchor_text: &str) -> Option<Heading> {
     if is_structural_destination(dest_name) {
         return None;
@@ -182,8 +182,8 @@ pub fn reconcile(dest_name: &str, anchor_text: &str) -> Option<Heading> {
 /// The heading somewhere in the text after an anchor, if its number is the one
 /// the destination names.
 ///
-/// hyperref fires an anchor as the counter steps — before the environment's
-/// own vertical space and heading — so it routinely lands on the last line of
+/// hyperref fires an anchor as the counter steps - before the environment's
+/// own vertical space and heading - so it routinely lands on the last line of
 /// the *preceding* paragraph, leaving the heading a line or two further down:
 ///
 ///   "as follows.  Definition 1.2 (Gaussian Mixtures). The ..."
@@ -233,7 +233,7 @@ pub fn enumerate_anchors(
     page_count: u32,
 ) -> Vec<Anchor> {
     // FPDF_DWORD is c_ulong: 64-bit on Unix, 32-bit on Windows. Clippy only
-    // ever sees the target it runs on, so on Unix it reads as a no-op cast —
+    // ever sees the target it runs on, so on Unix it reads as a no-op cast -
     // but dropping it fails to compile on Windows, where it is a real widening.
     #[allow(clippy::unnecessary_cast)]
     let total = (b.FPDF_CountNamedDests(raw) as u64).min(MAX_NAMED_DESTS);
@@ -316,7 +316,7 @@ pub fn anchor_start(boxes: &[[f32; 4]], anchor_x: Option<f32>, anchor_y: f32) ->
 /// box (display space is y-up), so we compare against each run's top edge.
 ///
 /// The subtlety is that PDFium hands back one run per *word*, and a word's box
-/// top varies by a point or so with its ascenders — so the run closest to the
+/// top varies by a point or so with its ascenders - so the run closest to the
 /// anchor is whichever word happens to sit lowest, not the first one. Taking it
 /// would start the text mid-line: for `Theorem 1.1 (Main).` the nearest run is
 /// `(Main).`, which loses the very name we came for. So: find the nearest line,
@@ -329,14 +329,14 @@ pub fn anchor_start(boxes: &[[f32; 4]], anchor_x: Option<f32>, anchor_y: f32) ->
 /// matched rather than runs because a run's box top varies by a point or so
 /// with its ascenders: the *nearest* thing to the anchor is whichever glyph
 /// happens to sit lowest, not the first one. For `Theorem 1.1 (Main).` that is
-/// the paren — starting there would lose the very name we came for. So: find
+/// the paren - starting there would lose the very name we came for. So: find
 /// the nearest line, then take the first character on it.
 fn anchored_line(boxes: &[[f32; 4]], anchor_x: Option<f32>, anchor_y: f32) -> Option<(usize, f32)> {
     // Characters left of the destination's own x are not its text. This is
     // what keeps the arXiv stamp out: it runs rotated down the margin at
     // x≈13 while the text block starts at x≈134, its glyphs span the whole
     // page height so one of them sits at almost any anchor's y, and being
-    // background content it is drawn *first* — so it holds the lowest
+    // background content it is drawn *first* - so it holds the lowest
     // character indices and won every "first match on this line" search.
     // It cost the panel a theorem per collision and, when the stamp happened
     // to start with the right digit, produced a section named after the paper.
@@ -368,7 +368,7 @@ fn take_chars(raw: &str, start: usize, limit: usize) -> String {
 /// characters to cover a name or caption.
 ///
 /// Reads the raw character stream rather than the text runs. The run builder
-/// strips inter-word spaces — a caption arrives as `Aplaceholderfigure.` —
+/// strips inter-word spaces - a caption arrives as `Aplaceholderfigure.` -
 /// while the stream PDFium hands back still has them, and its indices line up
 /// with the character boxes one-for-one.
 pub fn anchor_text(
@@ -391,7 +391,7 @@ pub fn anchor_text(
 /// that way prints the opening sentence of every section.
 ///
 /// The line is tracked by glyph *bottoms*, not tops. Tops vary enormously
-/// within one line — in "4. Canonicality" the period's box is 2pt tall
+/// within one line - in "4. Canonicality" the period's box is 2pt tall
 /// against the digit's 8.2pt, so its top sits 6pt lower and a top-based
 /// comparison ends the heading at the period, leaving a table of contents
 /// that reads "4", "5", "6". Bottoms sit on the shared baseline, varying only
@@ -415,7 +415,7 @@ pub fn anchor_line_text(
 /// Not the newline PDFium emits, which does not mean what it looks like: a
 /// superscript is a separate text object, so "4.1. L2 Optimality" arrives as
 /// `4.1. L` `\r\n` `2 Optimality`, and breaking there truncates the title to
-/// "4.1. L". Baselines are unambiguous — that superscript sits 3.6pt above its
+/// "4.1. L". Baselines are unambiguous - that superscript sits 3.6pt above its
 /// line while the next line is 18.6pt below it. Wider than `LINE_GROUPING_PT`
 /// to clear scripts, still well inside normal leading.
 const HEADING_LINE_BAND_PT: f32 = 8.0;
@@ -483,7 +483,7 @@ pub struct GlyphMeta<'a> {
 }
 
 impl<'a> GlyphMeta<'a> {
-    /// No font facts available — script detection falls back to glyph boxes.
+    /// No font facts available - script detection falls back to glyph boxes.
     pub const NONE: GlyphMeta<'static> = GlyphMeta {
         sizes: &[],
         math: &[],
@@ -550,7 +550,7 @@ fn dominant_size(glyphs: &[(char, [f32; 4], f32, bool, bool)]) -> f32 {
 /// A PDF has no `^`: "L^2 Optimality" is drawn as an "L" and a smaller "2"
 /// sitting 3.6pt higher, and a plain concatenation flattens the two into "L2".
 /// The notation is what the author wrote and what a reader of a maths paper
-/// expects to see, so it is what gets rebuilt — braced when the script runs to
+/// expects to see, so it is what gets rebuilt - braced when the script runs to
 /// more than one character, exactly as LaTeX requires.
 fn push_script(run: &str, kind: Script, out: &mut String) {
     if run.is_empty() {
@@ -585,7 +585,7 @@ enum Script {
 /// where the next line begins.
 ///
 /// Lines are cut on baseline changes rather than on the newlines PDFium
-/// emits — see `HEADING_LINE_BAND_PT` for why those cannot be trusted. The
+/// emits - see `HEADING_LINE_BAND_PT` for why those cannot be trusted. The
 /// same baselines that delimit the line also reveal its super- and subscripts,
 /// which are restored rather than flattened.
 fn line_at(
@@ -609,7 +609,7 @@ fn line_at(
     while cursor < chars.len() {
         // A tagged document already said what this is. Take its markup
         // verbatim and step over the glyphs it covers, rather than deriving
-        // the same thing again — worse — from their positions. The pieces go
+        // the same thing again - worse - from their positions. The pieces go
         // in with no geometry of their own, so they read as ordinary text and
         // never look like scripts to the code below.
         if let Some(span) = meta.span_at(cursor) {
@@ -673,7 +673,7 @@ fn line_at(
     for (ch, b, size, is_math, after_boundary) in &glyphs {
         // A script is a glyph set at a smaller font size and shifted off the
         // baseline. Measuring the *size* rather than the glyph box is what
-        // keeps a period or a hyphen — short at any size — from reading as a
+        // keeps a period or a hyphen - short at any size - from reading as a
         // raised script. Math fonts are allowed non-alphanumeric scripts,
         // since "x^{-1}" and "x^+" are real; text fonts are not, because a
         // hyphen there is punctuation.
@@ -699,7 +699,7 @@ fn line_at(
         // Ordinary spaces are in the stream already. The one place a space
         // goes missing is a text-object boundary, where PDFium emits a newline
         // instead: "S^2 under" arrives as "S", a raised "2", then "under".
-        // Only there is the gap on the page worth consulting — a word space
+        // Only there is the gap on the page worth consulting - a word space
         // measures about 0.4 of the line height, letter spacing under 0.15.
         if *after_boundary && b[2] > 0.0 && !ch.is_whitespace() {
             let gapped =
@@ -726,7 +726,7 @@ fn line_at(
 
     // PDFium reports a glyph it cannot map to Unicode as a control character,
     // and in these papers that is nearly always the hyphen a word was broken
-    // across lines with — "corrup-" then "tion". Rendered as-is it is a hollow
+    // across lines with - "corrup-" then "tion". Rendered as-is it is a hollow
     // box mid-title, so it is dropped; at the line end it becomes the hyphen
     // it was, which is the only thing that lets a caller rejoin the word.
     let mut cleaned = String::with_capacity(text.len());
@@ -776,7 +776,7 @@ pub struct PageLine {
 /// Sorting by height instead splices the columns into each other.
 ///
 /// Shared with the figure panel, which needs captions read exactly the way
-/// headings are — same line grouping, same script handling.
+/// headings are - same line grouping, same script handling.
 pub fn page_lines(raw: &str, boxes: &[[f32; 4]], meta: GlyphMeta<'_>) -> Vec<PageLine> {
     let chars: Vec<char> = raw.chars().collect();
     let mut out = Vec::new();
@@ -797,14 +797,14 @@ pub fn page_lines(raw: &str, boxes: &[[f32; 4]], meta: GlyphMeta<'_>) -> Vec<Pag
 /// hyperref does not reliably anchor a section *on* its heading. The anchor
 /// for "1. Introduction" in a two-column paper landed between the abstract's
 /// last line and the heading, close enough to the line above that reading the
-/// anchored line gave ", we work under the ambient Gaussian corrup" — and the
+/// anchored line gave ", we work under the ambient Gaussian corrup" - and the
 /// anchored line is not even guaranteed to be in the right column, because the
 /// column filter only excludes what lies to the *left* of the anchor.
 ///
 /// So the page is searched instead of the anchor trusted. The destination name
 /// carries the counter ("section.4" -> "4") and the printed heading opens with
 /// it; among the lines that do, and that start at the anchor's own column, the
-/// one nearest the anchor wins. Nothing matching means nothing is returned —
+/// one nearest the anchor wins. Nothing matching means nothing is returned -
 /// a dropped entry beats a sentence fragment posing as a section title.
 pub fn heading_line(
     raw: &str,
@@ -844,7 +844,7 @@ pub fn heading_line(
 /// too: one destination lands inside a display formula, another on the page
 /// number, and reading from there finds nothing to reconcile. The counter in
 /// the destination name is checkable, so the page is searched for a line that
-/// *opens* with a matching environment — opening matters, because a passing
+/// *opens* with a matching environment - opening matters, because a passing
 /// reference to "Theorem 3.1" appears mid-sentence while its statement starts
 /// a line. Nearest to the anchor wins.
 pub fn environment_line(
@@ -875,8 +875,8 @@ pub fn environment_line(
 
 /// Interleaves headings and environments into the list the panel renders.
 ///
-/// A heading is emitted only once something lands under it — a section with no
-/// environments is noise in a list that exists to find environments — and an
+/// A heading is emitted only once something lands under it - a section with no
+/// environments is noise in a list that exists to find environments - and an
 /// environment indents to however many heading levels are currently standing.
 /// Both inputs must be in document order.
 pub fn merge_structure(
@@ -1045,7 +1045,7 @@ mod tests {
         // An arXiv stamp runs rotated down the margin: it is drawn first, so
         // it holds the lowest character indices, and its glyphs span the page
         // height so one sits at almost any anchor's y. Only its x gives it
-        // away — the text block starts far to its right.
+        // away - the text block starts far to its right.
         let mut raw = String::new();
         let mut boxes: Vec<[f32; 4]> = Vec::new();
         for ch in "2211.11320v3 [stat.ML]".chars() {
@@ -1117,7 +1117,7 @@ mod tests {
         // ended the title at the period and produced a contents list of bare
         // numbers.
         let raw = "4. Canonical".to_string();
-        // Every glyph here is 9pt — including the period, whose *box* is tiny.
+        // Every glyph here is 9pt - including the period, whose *box* is tiny.
         let sizes = sizes_for(&raw, 9.0);
         let mut boxes = Vec::new();
         let mut x = 307.0f32;
@@ -1323,7 +1323,7 @@ mod tests {
     #[test]
     fn a_superscript_is_restored_rather_than_flattened() {
         // "4.1. L2 Optimality" on the page is an L and a smaller 2 sitting
-        // 3.6pt higher — the LaTeX was L^2.
+        // 3.6pt higher - the LaTeX was L^2.
         let (raw, boxes, sizes) = scripted(&[
             ('4', 426.7, 6.8, 9.0),
             ('.', 426.6, 1.7, 9.0),
@@ -1361,7 +1361,7 @@ mod tests {
             ('L', 400.0, 6.8, 9.0),
             ('e', 400.0, 4.7, 9.0),
             // the hyphen: a short bar, but set at the body size like its
-            // neighbours — which is exactly why size settles it and the box
+            // neighbours - which is exactly why size settles it and the box
             // never could
             ('-', 402.6, 0.7, 9.0),
             ('O', 400.0, 7.1, 9.0),

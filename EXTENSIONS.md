@@ -1,16 +1,16 @@
 # Writing a SpeedyF extension
 
 Everything an extension can do, and how. For _why_ it works this way, see
-`extension_api.md` — this file is the reference.
+`extension_api.md` - this file is the reference.
 
 SpeedyF ships with References, Notation and Math to LaTeX already installed;
 their source is in `extensions/`, and a built-in is an ordinary extension that
-happens to live in the app bundle — see that folder's README for the three ways
+happens to live in the app bundle - see that folder's README for the three ways
 it differs. Math to LaTeX uses the internet, so it ships **disabled**; switching
 it on is the consent (see [Network](#network)).
 
 Working examples live in `examples/extensions/`. Load any of them from
-**Home → Extensions → Load folder…**.
+**Home -> Extensions -> Load folder...**.
 
 ---
 
@@ -47,7 +47,7 @@ Two consequences worth knowing before you write anything:
 - **Your entry file must be self-contained.** It is loaded through a blob URL,
   so relative `importScripts` cannot resolve. Ship a bundle if you need
   dependencies.
-- **Your worker cannot reach the network.** Not a policy — the worker inherits
+- **Your worker cannot reach the network.** Not a policy - the worker inherits
   a Content Security Policy that permits no outbound connections at all. An
   extension that needs a web service declares the hosts and asks SpeedyF to
   fetch for it (`net.fetch`, under the `network` permission); the request is
@@ -114,17 +114,17 @@ rather than a silently ignored setting.
 | `name`        | yes      | Shown in the Extensions panel.                                                                                                                                                                                       |
 | `version`     | yes      | Your version, any string.                                                                                                                                                                                            |
 | `entry`       | yes      | Relative path to your worker, inside the extension.                                                                                                                                                                  |
-| `icon`        | no       | Relative `.png`, `.svg`, `.jpg`. Drawn as a mask in the current text colour, so design it as a **single-colour silhouette** — only the shape survives. Without one, SpeedyF draws a generic mark with your initials. |
+| `icon`        | no       | Relative `.png`, `.svg`, `.jpg`. Drawn as a mask in the current text colour, so design it as a **single-colour silhouette** - only the shape survives. Without one, SpeedyF draws a generic mark with your initials. |
 | `permissions` | no       | See below. Anything not requested is refused at the API boundary.                                                                                                                                                    |
 | `network`     | no       | Hosts `net.fetch` may reach, with the `network` permission (and only with it). See [Network](#network).                                                                                                              |
 | `contributes` | no       | Where you appear. See below.                                                                                                                                                                                         |
 
-Command and panel ids must be non-empty and contain no `/` — that character
+Command and panel ids must be non-empty and contain no `/` - that character
 separates them from your extension id. Every `keybindings`, `selectionActions`,
 `citationActions`, `documentTasks` and `equationActions` entry, and
 `referenceProvider`, must name a command you declared; `referenceProvider` also needs the
 `library:contributeReferences` permission. (The example above lists every
-field — a real extension would not make one command all of these.)
+field - a real extension would not make one command all of these.)
 
 ---
 
@@ -134,15 +134,15 @@ Declared in the manifest, refused if not declared. Absent = refused.
 
 | Permission                     | Grants                                                                                                                                                                                                 |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `document:read`                | The open document's text, outline and figures. Note this is the **whole document's text** — page text in a loop is everything it says.                                                                 |
+| `document:read`                | The open document's text, outline and figures. Note this is the **whole document's text** - page text in a loop is everything it says.                                                                 |
 | `citations:read`               | Citations found in the document, and resolving them against your library.                                                                                                                              |
 | `library:read`                 | Searching the library, and reading its items and projects: titles, authors, years, cite keys and which project holds what. Never a file path.                                                          |
-| `commands:run`                 | Running SpeedyF's own commands — **View, Navigate, Panels and Search only**. Never File, Edit, Page, Tools or Settings, so an extension cannot delete a page or overwrite a file.                      |
+| `commands:run`                 | Running SpeedyF's own commands - **View, Navigate, Panels and Search only**. Never File, Edit, Page, Tools or Settings, so an extension cannot delete a page or overwrite a file.                      |
 | `clipboard:write`              | Writing text to the clipboard.                                                                                                                                                                         |
 | `storage`                      | A private key/value store, namespaced to you.                                                                                                                                                          |
 | `render:read`                  | Page rasters as PNG bytes.                                                                                                                                                                             |
 | `document:contributeText`      | Writing a text layer for a document, stored in a sidecar.                                                                                                                                              |
-| `library:contributeReferences` | Being handed the stored text of library documents during idle indexing — never their paths — and returning their reference entries. Only with `referenceProvider`.                                     |
+| `library:contributeReferences` | Being handed the stored text of library documents during idle indexing - never their paths - and returning their reference entries. Only with `referenceProvider`.                                     |
 | `document:layout`              | The open document's typeset characters with their fonts, sizes and boxes, the thin rules between them, and its tagged-PDF Formula elements (`selection.glyphs`, `region.glyphs`, `document.mathTags`). |
 | `network`                      | `net.fetch` to the hosts in your manifest's `network` list, and nowhere else. Needs a non-empty list; a list needs it.                                                                                 |
 
@@ -159,11 +159,11 @@ on. An extension may, under four rules:
   (`export.arxiv.org`), or `*.example.org` for every subdomain of
   `example.org` (not `example.org` itself). No schemes, ports, paths, IP
   addresses or other wildcards; at most 20 entries. A request to anything
-  else — including a redirect to anything else — is refused.
-- **Enabling is the consent.** The extension's card in **Home → Extensions**
+  else - including a redirect to anything else - is refused.
+- **Enabling is the consent.** The extension's card in **Home -> Extensions**
   carries a tag, _Uses the internet: <hosts>_, whether it is on or off. An
-  extension that declares `network` arrives **disabled** — a built-in ships
-  that way, and an installed one is installed that way — and switching it on
+  extension that declares `network` arrives **disabled** - a built-in ships
+  that way, and an installed one is installed that way - and switching it on
   is the user agreeing to its traffic. There is no further prompt.
 - **The core makes the request.** `net.fetch` is answered by SpeedyF, not by
   your worker, whose CSP still allows no connections. It is `https://` only, on
@@ -177,13 +177,13 @@ on. An extension may, under four rules:
   _<your name> is using the internet..._.
 
 **What `library:contributeReferences` grants.** The full text of every
-document in the user's library, one at a time, in the background — more than
+document in the user's library, one at a time, in the background - more than
 `document:read`, which only ever sees the document on screen. What it does not
 grant is any way to tell which file a text came from (a document is an opaque
 token) or to write anything but reference entries for the document it was
 just handed. Ask for it only to be a reference provider.
 
-Selection and citation actions need **no permission at all** — you are handed
+Selection and citation actions need **no permission at all** - you are handed
 exactly what the user picked and nothing else. Prefer them over `document:read`
 whenever they suffice.
 
@@ -191,21 +191,21 @@ whenever they suffice.
 
 ## Contribution points
 
-| Point               | What it does                                                                           |
-| ------------------- | -------------------------------------------------------------------------------------- |
-| `commands`          | Entries in the command palette (⌘⇧P).                                                  |
-| `keybindings`       | A key chord that invokes one of your commands.                                         |
-| `panels`            | A tab in the sidebar, drawn from a description you send.                               |
-| `selectionActions`  | Offered in the palette when text is selected; your command receives the selected text. |
-| `citationActions`   | A button on the citation hover popover; your command receives `doi:…` or `arxiv:…`.    |
-| `documentTasks`     | A batch job over a whole document, offered in the palette.                             |
-| `settings`          | Fields rendered in the Extensions panel; `type` is `text`, `checkbox` or `select`.     |
-| `referenceProvider` | `{ "command": "<id>" }`: reads library documents' reference lists at idle (below).     |
-| `equationActions`   | A button on each display equation SpeedyF detects; your command receives the block.    |
+| Point               | What it does                                                                            |
+| ------------------- | --------------------------------------------------------------------------------------- |
+| `commands`          | Entries in the command palette (Cmd+Shift+P).                                           |
+| `keybindings`       | A key chord that invokes one of your commands.                                          |
+| `panels`            | A tab in the sidebar, drawn from a description you send.                                |
+| `selectionActions`  | Offered in the palette when text is selected; your command receives the selected text.  |
+| `citationActions`   | A button on the citation hover popover; your command receives `doi:...` or `arxiv:...`. |
+| `documentTasks`     | A batch job over a whole document, offered in the palette.                              |
+| `settings`          | Fields rendered in the Extensions panel; `type` is `text`, `checkbox` or `select`.      |
+| `referenceProvider` | `{ "command": "<id>" }`: reads library documents' reference lists at idle (below).      |
+| `equationActions`   | A button on each display equation SpeedyF detects; your command receives the block.     |
 
 ### `equationActions`
 
-SpeedyF looks for display equations on each page you read — lines set mostly
+SpeedyF looks for display equations on each page you read - lines set mostly
 in math fonts (Computer Modern math, the AMS fonts, OpenType math fonts) or
 holding big operators or fraction bars, roughly centred, with an optional
 right-aligned number like `(3)`, merged with their neighbours into one block.
@@ -214,7 +214,7 @@ it only runs at all while an enabled extension contributes an equation action.
 
 Hovering a block shows a small button at its top-right corner, titled with your
 action's `title`. A click invokes your command with
-`value: { page, bbox: [x, y, w, h], number }` — the reader's zero-based page,
+`value: { page, bbox: [x, y, w, h], number }` - the reader's zero-based page,
 the block in page points from the displayed page's top-left corner, and the
 printed number (`"3"`, `"2.4"`) or `null`. Read the block's characters with
 `region.glyphs { page, bbox }`, and answer with `ui.showMath`.
@@ -222,17 +222,17 @@ printed number (`"3"`, `"2.4"`) or `null`. Read the block's characters with
 ### `referenceProvider`
 
 SpeedyF links library papers by the references in them. Identifiers it finds
-itself — DOIs, arXiv ids, and the DOI an APS journal reference ("Phys. Rev.
+itself - DOIs, arXiv ids, and the DOI an APS journal reference ("Phys. Rev.
 Lett. 133, 057102") stands for. A reference that prints none of those is
 matched by the library title it contains, and for that its reference list has
 to be cut into entries: that is the provider's job.
 
 - **Only one provider is active**: the first enabled extension that declares
   one. In practice that is the built-in References. Disable it and no
-  reference lists are read or used — title matching is off, identifier
+  reference lists are read or used - title matching is off, identifier
   matching is not.
 - During idle indexing SpeedyF invokes your command, one document at a time,
-  with `value: { document, text }` — `document` an opaque token, `text` the
+  with `value: { document, text }` - `document` an opaque token, `text` the
   document's stored full text (pages joined by newlines, whitespace
   collapsed; the last 2 MB of a longer one). Never a path, a name or an id
   that means anything outside this exchange.
@@ -240,8 +240,8 @@ to be cut into entries: that is the provider's job.
   `done`. `entries` is `[{ label?, text, year? }]` in list order: `label` as
   printed (`"12"`, `"AB99"`), `text` the entry with its lines joined, `year`
   an integer. Finishing without contributing means "no reference list".
-- SpeedyF computes everything it matches on from your `text` — identifiers,
-  journal DOIs, a compact form for title matching — and keeps the `year` you
+- SpeedyF computes everything it matches on from your `text` - identifiers,
+  journal DOIs, a compact form for title matching - and keeps the `year` you
   give (it does not guess one).
 - Results are stored per document and per provider version: a new `version`
   in your manifest reads the library again, and a changed file is read again.
@@ -249,9 +249,9 @@ to be cut into entries: that is the provider's job.
   next session.
 - A provider command does not appear in the palette.
 
-**Key chords** use `mod` (⌘ on macOS, Ctrl elsewhere), `shift`, `alt`, then the
+**Key chords** use `mod` (Cmd on macOS, Ctrl elsewhere), `shift`, `alt`, then the
 key: `j`, `mod+k`, `shift+g`, `alt+ArrowDown`. Chords SpeedyF already uses are
-refused and reported in the Extensions panel — built-ins always win. If two
+refused and reported in the Extensions panel - built-ins always win. If two
 extensions want the same chord, the first installed keeps it.
 
 A keybinding on a command that is _also_ a selection action receives the current
@@ -263,7 +263,7 @@ selection, exactly as the palette does.
 
 Asynchronous request/response with correlation ids, both directions.
 
-### SpeedyF → you
+### SpeedyF -> you
 
 ```js
 { type: 'activate', id, apiVersion, permissions }   // once, before anything else
@@ -276,7 +276,7 @@ number }` for an equation action, and `{ document, text }` for a
 `referenceProvider` command. `reason` is
 `'panel'` when your panel was opened rather than a command being run.
 
-### You → SpeedyF
+### You -> SpeedyF
 
 ```js
 { type: 'call', requestId, api, args }   // ask SpeedyF to do something
@@ -288,8 +288,8 @@ number }` for an equation action, and `{ document, text }` for a
 do not within **5 seconds** (**20 seconds** for a `referenceProvider`
 document, **60 seconds** for an extension holding `network`), SpeedyF stops
 waiting and reports a timeout against
-your extension. It does not kill your worker — a slow command is not a broken
-extension — but nothing in the UI ever blocks on you.
+your extension. It does not kill your worker - a slow command is not a broken
+extension - but nothing in the UI ever blocks on you.
 
 Anything that is not one of these three shapes is dropped and logged.
 
@@ -338,36 +338,36 @@ cannot reach a tab the user is not looking at. Pages are zero-based.
 
 | API                        | Args                                     | Returns                                                                                                                        | Needs                          |
 | -------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------ |
-| `document.info`            | —                                        | `{ name, pageCount, currentPage }`                                                                                             | `document:read`                |
+| `document.info`            | -                                        | `{ name, pageCount, currentPage }`                                                                                             | `document:read`                |
 | `document.pageText`        | `{ page }`                               | `string`                                                                                                                       | `document:read`                |
-| `document.outline`         | —                                        | `[{ title, page, children }]`                                                                                                  | `document:read`                |
-| `document.figures`         | —                                        | `[{ label, caption, page }]`                                                                                                   | `document:read`                |
+| `document.outline`         | -                                        | `[{ title, page, children }]`                                                                                                  | `document:read`                |
+| `document.figures`         | -                                        | `[{ label, caption, page }]`                                                                                                   | `document:read`                |
 | `citations.list`           | `{ page }`                               | `[{ kind, value, page }]`                                                                                                      | `citations:read`               |
 | `citations.resolve`        | `{ kind, value }`                        | `{ inLibrary, title, fileName, pageCount, citeKey }`                                                                           | `citations:read`               |
 | `library.search`           | `{ query }`                              | `[{ name, title, matches }]`                                                                                                   | `library:read`                 |
-| `library.papers`           | —                                        | `{ papers: [{ id, title, authors, year, venue, citeKey, projectIds, isPaper }] }`                                              | `library:read`                 |
-| `library.projects`         | —                                        | `[{ id, name, paperCount }]`                                                                                                   | `library:read`                 |
+| `library.papers`           | -                                        | `{ papers: [{ id, title, authors, year, venue, citeKey, projectIds, isPaper }] }`                                              | `library:read`                 |
+| `library.projects`         | -                                        | `[{ id, name, paperCount }]`                                                                                                   | `library:read`                 |
 | `library.paper`            | `{ id }`                                 | the record: `meta` with a `source` per field, `doi`, `arxiv`, `citeKey`, `projectIds`, `isPaper`, `files: [{ name, missing }]` | `library:read`                 |
 | `commands.run`             | `{ id }`                                 | `{ ran }`                                                                                                                      | `commands:run`                 |
-| `render.page`              | `{ page, scaleMilli? }`                  | `number[]` — PNG bytes                                                                                                         | `render:read`                  |
+| `render.page`              | `{ page, scaleMilli? }`                  | `number[]` - PNG bytes                                                                                                         | `render:read`                  |
 | `document.contributeText`  | `{ page, text }`                         | `{ stored }`                                                                                                                   | `document:contributeText`      |
-| `document.contributedText` | —                                        | `{ extensionId, pages } \| null`                                                                                               | `document:contributeText`      |
-| `references.contribute`    | `{ document, entries }`                  | `{ stored }` — only for the document you are being invoked with                                                                | `library:contributeReferences` |
+| `document.contributedText` | -                                        | `{ extensionId, pages } \| null`                                                                                               | `document:contributeText`      |
+| `references.contribute`    | `{ document, entries }`                  | `{ stored }` - only for the document you are being invoked with                                                                | `library:contributeReferences` |
 | `clipboard.write`          | `{ text }`                               | `{ written }`                                                                                                                  | `clipboard:write`              |
 | `storage.get`              | `{ key }`                                | `string \| null`                                                                                                               | `storage`                      |
 | `storage.set`              | `{ key, value }`                         | `{ stored }`                                                                                                                   | `storage`                      |
 | `storage.remove`           | `{ key }`                                | `{ removed }`                                                                                                                  | `storage`                      |
-| `settings.get`             | `{ key }`                                | `string`                                                                                                                       | —                              |
-| `ui.render`                | `{ panel, ui }`                          | `{ rendered }`                                                                                                                 | —                              |
-| `selection.glyphs`         | —                                        | `{ page, glyphs: Glyph[] } \| null` — the current text selection                                                               | `document:layout`              |
+| `settings.get`             | `{ key }`                                | `string`                                                                                                                       | -                              |
+| `ui.render`                | `{ panel, ui }`                          | `{ rendered }`                                                                                                                 | -                              |
+| `selection.glyphs`         | -                                        | `{ page, glyphs: Glyph[] } \| null` - the current text selection                                                               | `document:layout`              |
 | `region.glyphs`            | `{ page, bbox }`                         | `{ page, glyphs: Glyph[] }`                                                                                                    | `document:layout`              |
-| `document.mathTags`        | `{ page }`                               | `[{ bbox, alt, actualText, mathml }]` — tagged-PDF Formula elements                                                            | `document:layout`              |
-| `document.identifiers`     | —                                        | `{ doi, arxiv, arxivVersion }`, each `null` when unknown                                                                       | `document:read`                |
-| `net.fetch`                | `{ url, as?, maxBytes? }`                | `{ status, contentType, body }` — `body` a string for `as: 'text'` (the default), `number[]` for `as: 'bytes'`                 | `network` (host listed)        |
-| `ui.showMath`              | `{ latex, display, source, confidence }` | `{ shown: true }`                                                                                                              | —                              |
+| `document.mathTags`        | `{ page }`                               | `[{ bbox, alt, actualText, mathml }]` - tagged-PDF Formula elements                                                            | `document:layout`              |
+| `document.identifiers`     | -                                        | `{ doi, arxiv, arxivVersion }`, each `null` when unknown                                                                       | `document:read`                |
+| `net.fetch`                | `{ url, as?, maxBytes? }`                | `{ status, contentType, body }` - `body` a string for `as: 'text'` (the default), `number[]` for `as: 'bytes'`                 | `network` (host listed)        |
+| `ui.showMath`              | `{ latex, display, source, confidence }` | `{ shown: true }`                                                                                                              | -                              |
 
 `kind` is `'doi'` or `'arxiv'`. `document.links` reports **every** outbound
-link, including the many references cited by URL alone — a JMLR paper, a book on
+link, including the many references cited by URL alone - a JMLR paper, a book on
 Google Books, a Semantic Scholar entry. Its `citation` is filled in only for the
 two schemes SpeedyF can resolve against your library, which is a statement about
 what can be matched rather than about what counts as a reference. `citations.resolve`
@@ -378,7 +378,7 @@ The `library.*` calls work with no document open; everything else rejects with
 "no document is open". `library.papers` is every item in the library, in the
 order the Projects screen lists them; an item's `projectIds` are the ids
 `library.projects` reports. The scan takes some PDFs in a library folder for
-something other than an item — a manual, a form, a slide deck — and leaves
+something other than an item - a manual, a form, a slide deck - and leaves
 those out of `library.papers`; a record reached by id may still be one, and
 `isPaper` says so. Each record's metadata carries where it came from (`user`,
 `crossref`, `inspire`, `datacite`, `arxiv`, `semantic-scholar`, `dblp`,
@@ -406,8 +406,8 @@ draws them, each as:
 }
 ```
 
-followed by the thin horizontal rules that touch the area — fraction bars,
-radical overbars — as glyphs with `font: '__rule'`, `text: ''`, `code: 0`.
+followed by the thin horizontal rules that touch the area - fraction bars,
+radical overbars - as glyphs with `font: '__rule'`, `text: ''`, `code: 0`.
 Coordinates here are top-left, y down, on the page as displayed; every other
 API's `ApiBox` stays y-up. PDFium exposes no raw character codes for text it
 can map to Unicode, which is why `code` falls back to the scalar there.
@@ -437,8 +437,8 @@ action (or a selection action of an extension with `document:layout`) starts;
 if the command fails, its error is shown in the same popover. Escape or a
 click elsewhere closes it.
 
-`render.page` defaults to `scaleMilli: 2000` (roughly 2×), clamped to
-200–4000. Rasters render at idle priority, so a long job never competes with
+`render.page` defaults to `scaleMilli: 2000` (roughly 2x), clamped to
+200-4000. Rasters render at idle priority, so a long job never competes with
 the reader's own scrolling.
 
 **Clipboard timing.** The platform only permits a clipboard write while the user
@@ -450,7 +450,7 @@ spends part of that window. Write first, do slow work after.
 ## Describing UI
 
 You do not render. You send a description and SpeedyF draws it with its own
-components — which is why a contributed panel matches the app and follows every
+components - which is why a contributed panel matches the app and follows every
 restyle, including dark mode.
 
 ```js
@@ -464,7 +464,7 @@ await call('ui.render', {
           {
             id: 'a',
             title: 'Attention Is All You Need',
-            subtitle: 'cited 3× · p. 4',
+            subtitle: 'cited 3x - p. 4',
             badge: 'in library',
             action: { command: 'open', value: '1706.03762' },
           },
@@ -480,7 +480,7 @@ await call('ui.render', {
 - `error` is shown above everything, in the house error style.
 - A row's `action.command` must be one of _your_ commands; it is invoked with
   `value` as the invoke's `value`.
-- A row with no `action` is inert — not focusable, not clickable.
+- A row with no `action` is inert - not focusable, not clickable.
 - A row's `title` and `subtitle` may carry TeX between `$...$` (or `\(...\)`),
   typeset with KaTeX the way paper titles are elsewhere in SpeedyF:
   `{ title: '$\\lambda$', subtitle: 'the control parameter' }`. Everything
@@ -517,7 +517,7 @@ anything unreadable is ignored rather than costing you the whole panel.
 | `ui.showMath` LaTeX                       | 20 000 characters                                                                         |
 
 Storage and settings are namespaced to your extension and removed when it is
-uninstalled. Contributed text sidecars deliberately **survive** uninstall —
+uninstalled. Contributed text sidecars deliberately **survive** uninstall -
 losing a scanned document's text months later would be surprising. The user can
 discard them with **Forget Text Contributed By Extensions**.
 
@@ -525,18 +525,18 @@ discard them with **Forget Text Contributed By Extensions**.
 
 ## Installing and iterating
 
-**Home → Extensions**:
+**Home -> Extensions**:
 
-- **Load folder…** — point at your extension directory.
-- **Install** — paste a git URL in the field beside it, optionally pinned:
-  `https://…/repo#v1.2.0`.
+- **Load folder...** - point at your extension directory.
+- **Install** - paste a git URL in the field beside it, optionally pinned:
+  `https://.../repo#v1.2.0`.
   `https://` and `http://` only. Requires `git` on the machine.
-- **Reload** — restarts your worker with the current files.
-- **Remove** — deletes files, storage and settings.
+- **Reload** - restarts your worker with the current files.
+- **Remove** - deletes files, storage and settings.
 
 Reinstalling stops the running worker, so your new code takes effect. Errors,
 timeouts, refused permissions and your own `log` messages all appear in the
-extension's row — there is no console.
+extension's row - there is no console.
 
 ---
 
@@ -550,11 +550,11 @@ three files in.
   behalf, and nothing else.
 - **Draw arbitrary UI.** Only the vocabulary above. No canvas, no custom layout.
 - **Read or write files.** No filesystem access, and no path to the open
-  document — `document.info` reports a name, never a path.
+  document - `document.info` reports a name, never a path.
 - **Get the PDF bytes.** There is no `document.bytes`.
 - **Edit the document.** No annotations, no page operations, no saving.
 - **Run SpeedyF's File, Edit, Page, Tools or Settings commands.**
-- **Reach another document.** Only the active one — except a reference
+- **Reach another document.** Only the active one - except a reference
   provider, which is handed library documents' text, anonymously, and can
   only answer with their reference entries.
 - **Have contributed text used by SpeedyF itself.** You can store an OCR text

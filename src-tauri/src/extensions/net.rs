@@ -1,7 +1,7 @@
 //! `net.fetch`: the one way an extension reaches the internet.
 //!
 //! SpeedyF itself makes no request without a setting the user turned on, and
-//! an extension's worker cannot connect anywhere at all — its CSP is
+//! an extension's worker cannot connect anywhere at all - its CSP is
 //! `connect-src ipc:`. An extension with the `network` permission asks the
 //! core instead, and the core:
 //!

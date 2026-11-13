@@ -1,4 +1,4 @@
-//! The lookup chain (projects.md §4): which services a paper is asked
+//! The lookup chain (projects.md sec. 4): which services a paper is asked
 //! about, in what order, and what becomes of the answers.
 //!
 //! Nothing here is asked that cannot help. A DOI goes to Crossref, and to
@@ -6,9 +6,9 @@
 //! non-Crossref DOIs live there); Semantic Scholar is asked for the abstract
 //! and the citation edges; INSPIRE only when the paper looks like physics;
 //! OpenAlex only when venue, pages or volume is still missing after all
-//! that. An arXiv id without a DOI goes to arXiv first — its record may
+//! that. An arXiv id without a DOI goes to arXiv first - its record may
 //! carry the journal DOI, in which case the chain continues down the DOI
-//! branch — then INSPIRE when physics, Semantic Scholar, and OpenAlex only
+//! branch - then INSPIRE when physics, Semantic Scholar, and OpenAlex only
 //! when the venue is still missing. An ISBN goes to Open Library. The plan
 //! is data ([`plan_identifier_sources`]), so the choice is tested without a
 //! network; [`Chain::lookup_by_identifiers`] follows it one request at a
@@ -22,11 +22,11 @@
 //! the paper for the user ([`apply_title_candidates`]). A title too short
 //! to be sure of ("Introduction", a file stem) is never applied unasked.
 //!
-//! The citation edges (projects.md §8) are fetched afterwards, in the
+//! The citation edges (projects.md sec. 8) are fetched afterwards, in the
 //! background ([`Chain::fetch_edges`]): Semantic Scholar's references for
 //! every paper it answered for, its citations only when an API key is set
 //! (without one every request costs three seconds, and citations are the
-//! half the sidecars cannot supply anyway — one call per paper, not two),
+//! half the sidecars cannot supply anyway - one call per paper, not two),
 //! and OpenAlex's `referenced_works` when it answered. A paper's edges are
 //! fetched once: a `refs:`/`cites:` key already in the cache, or a job
 //! already in flight from an earlier batch, is not queued again.
@@ -36,8 +36,8 @@
 //! written at most every [`CACHE_SAVE_INTERVAL`] while a chain runs and
 //! once more when its phase ends ([`Chain::flush`]), serialized outside
 //! the lock. A host whose hold has grown past [`HOST_GIVE_UP`] is left
-//! alone for the rest of the chain's life — a batch does not wait two
-//! minutes per paper on a service that keeps refusing — and a paper that
+//! alone for the rest of the chain's life - a batch does not wait two
+//! minutes per paper on a service that keeps refusing - and a paper that
 //! met such a host is not stamped as looked up, so the next batch asks
 //! again. Turning lookup off stops every chain and the edge task at their
 //! next request: the settings are read live, never from a copy.
@@ -120,7 +120,7 @@ impl Source {
         }
     }
 
-    /// The cache's name for the service in a `<service>:doi:…` key.
+    /// The cache's name for the service in a `<service>:doi:...` key.
     fn cache_name(self) -> &'static str {
         match self {
             Source::Crossref => "crossref",
@@ -188,8 +188,8 @@ pub enum ChainKind {
 // Source selection
 // ---------------------------------------------------------------------------
 
-/// The archive of an old-style arXiv id: `hep-th/9901001` → `hep-th`,
-/// `math.GT/0309136` → `math.gt`. `None` for a new-style id, which says
+/// The archive of an old-style arXiv id: `hep-th/9901001` -> `hep-th`,
+/// `math.GT/0309136` -> `math.gt`. `None` for a new-style id, which says
 /// nothing about its subject.
 pub fn legacy_arxiv_archive(id: &str) -> Option<String> {
     let id = id.trim();
@@ -287,7 +287,7 @@ fn target_is_cs(target: &LookupTarget, category: Option<&str>) -> bool {
 /// what is known before anything is fetched. A DOI: Crossref, DataCite on
 /// a miss, Semantic Scholar, INSPIRE when physics, OpenAlex when the
 /// bibliography is still incomplete. An arXiv id alone: arXiv, INSPIRE when
-/// physics, Semantic Scholar, OpenAlex when the venue is still missing —
+/// physics, Semantic Scholar, OpenAlex when the venue is still missing -
 /// and should arXiv supply a journal DOI, the DOI steps follow, less the
 /// services already asked. An ISBN alone: Open Library. Nothing: nothing.
 pub fn plan_identifier_sources(target: &LookupTarget) -> Vec<Step> {
@@ -376,7 +376,7 @@ pub fn title_is_sure_enough(title: &str) -> bool {
 
 /// The user's rule applied to a merged candidate list: the first exact
 /// match is applied; failing that the first match that still
-/// [`MatchQuality::applies`] — near, with the same year (the list is in
+/// [`MatchQuality::applies`] - near, with the same year (the list is in
 /// source rank order, so first is best); failing that the list is parked,
 /// likeliest title first. A paper whose title is too short to be sure of
 /// ([`title_is_sure_enough`]) has everything parked. Declined candidates
@@ -424,7 +424,7 @@ pub fn apply_title_candidates(
 #[allow(clippy::large_enum_variant)]
 enum Consulted {
     Found(LookupCandidateDto),
-    /// No record — from the cache or live; cached either way.
+    /// No record - from the cache or live; cached either way.
     Missing,
     /// Not asked: the identifier it needs is unknown, or the step's
     /// condition did not hold.
@@ -568,7 +568,7 @@ impl Chain {
 
     /// The identifier chain for one paper: the plan, followed one request
     /// at a time, re-planned when arXiv supplies a DOI or a category. Never
-    /// fails as a whole — a service that fails is logged and counted in
+    /// fails as a whole - a service that fails is logged and counted in
     /// `errors`, and the rest are still asked.
     pub async fn lookup_by_identifiers(&self, target: &LookupTarget) -> ChainOutcome {
         let mut outcome = ChainOutcome {
@@ -835,7 +835,7 @@ impl Chain {
         }
     }
 
-    /// The cache first — a hit or a standing miss costs nothing — then the
+    /// The cache first - a hit or a standing miss costs nothing - then the
     /// fetch, unless the host is given up on; the answer is cached either
     /// way.
     async fn consult<F, Fut>(&self, key: String, source: Source, fetch: F) -> Consulted
@@ -1171,7 +1171,7 @@ impl Chain {
     }
 }
 
-/// `10.48550/arxiv.…`: the DOI DataCite registers for a preprint, which
+/// `10.48550/arxiv....`: the DOI DataCite registers for a preprint, which
 /// names no journal and sends the chain nowhere new.
 fn is_arxiv_doi(doi: &str) -> bool {
     doi.to_ascii_lowercase().starts_with("10.48550/arxiv.")
@@ -1235,7 +1235,7 @@ pub async fn drive_batch<T: BatchTurns + Send>(plan: LookupPlan, host: &mut T) -
 }
 
 // ---------------------------------------------------------------------------
-// Tests — no network: the plan, the helpers and the judgement are data, and
+// Tests - no network: the plan, the helpers and the judgement are data, and
 // the chain is driven against a cache or hosts given up on.
 // ---------------------------------------------------------------------------
 
@@ -1461,7 +1461,7 @@ mod tests {
             sources(&plan_identifier_sources(&legacy)).contains(&(Source::Inspire, When::Always))
         );
         // A new-style id says nothing, but the stamp's category the scan
-        // kept on the record does — and what arXiv says this run wins.
+        // kept on the record does - and what arXiv says this run wins.
         let mut stamped = target(Some("10.1/x"), Some("2401.12345"), None);
         assert!(!target_is_physics(&stamped, None));
         stamped.arxiv_category = Some("hep-th".into());

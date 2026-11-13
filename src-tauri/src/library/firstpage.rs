@@ -75,7 +75,7 @@ pub fn extract(lines: &[TextLine], page_width: f32, page_height: f32) -> FirstPa
         return none;
     };
     let portrait = page_width <= page_height * 1.05;
-    // Clearly the largest type — or, in the AMS style, bold capitals at
+    // Clearly the largest type - or, in the AMS style, bold capitals at
     // the body's own size, which nothing else in the top tier is.
     let distinct = title.size >= CLEAR_TITLE * body || (title.bold && title.size >= body - 0.25);
     let title_high = title.top_tier
@@ -126,7 +126,7 @@ fn body_size(lines: &[TextLine]) -> f32 {
 // ---------------------------------------------------------------------------
 
 /// The span, top to top, of an Elsevier masthead: from "Contents lists
-/// available at ScienceDirect" to "journal homepage: …", which frame the
+/// available at ScienceDirect" to "journal homepage: ...", which frame the
 /// journal's name in type as large as a title.
 fn elsevier_masthead(lines: &[TextLine]) -> Option<(f32, f32)> {
     let find = |phrase: &str| {
@@ -195,7 +195,7 @@ const BOILERPLATE: &[&str] = &[
     "doi.org",
     "issn",
     "isbn",
-    "©",
+    "\u{a9}",
     "(c) ",
     "copyright",
     "all rights reserved",
@@ -249,7 +249,7 @@ const DATE_PREFIXES: &[&str] = &[
 
 /// Whether a line is a running head, footer, or boilerplate rather than
 /// content: the arXiv stamp, a journal banner ("PHYSICAL REVIEW LETTERS
-/// 133, 057102 (2024)", "152 Nuclear Instruments and Methods…"), "Vol.
+/// 133, 057102 (2024)", "152 Nuclear Instruments and Methods..."), "Vol.
 /// 12, No. 3", a DOI, ISSN or copyright line, received/accepted dates,
 /// "Preprint", "Under review", a URL or email, a page number.
 pub fn is_running_text(text: &str) -> bool {
@@ -281,7 +281,7 @@ pub fn is_running_text(text: &str) -> bool {
     // A page number alone, arabic or roman: "137", "xii", "- 3 -".
     let core: String = lower
         .chars()
-        .filter(|c| !c.is_whitespace() && !matches!(c, '-' | '–' | '—'))
+        .filter(|c| !c.is_whitespace() && !matches!(c, '-' | '\u{2013}' | '\u{2014}'))
         .collect();
     if core.chars().all(|c| c.is_ascii_digit())
         || (core.len() <= 6
@@ -456,7 +456,9 @@ fn title_text(lines: &[&TextLine]) -> Option<String> {
 }
 
 fn is_marker(c: char) -> bool {
+    // ascii-guard: data begin - characters matched in page text
     matches!(c, '*' | '∗' | '†' | '‡' | '§' | '¶' | '⋆' | '♯' | '♭' | '‖') || is_superscript_char(c)
+    // ascii-guard: data end
 }
 
 /// Whitespace collapsed, trailing footnote markers removed, an
@@ -495,7 +497,7 @@ fn title_case(text: &str) -> String {
         .join(" ")
 }
 
-/// "JEAN-PIERRE" → "Jean-Pierre", "O'NEIL" → "O'neil"; a word with a
+/// "JEAN-PIERRE" -> "Jean-Pierre", "O'NEIL" -> "O'neil"; a word with a
 /// digit ("3D", "SU(2)") is left alone.
 fn capitalize_word(word: &str) -> String {
     if word.chars().any(|c| c.is_ascii_digit()) {
@@ -510,7 +512,7 @@ fn capitalize_word(word: &str) -> String {
         } else {
             out.extend(c.to_lowercase());
         }
-        if matches!(c, '-' | '–') {
+        if matches!(c, '-' | '\u{2013}') {
             start = true;
         }
     }
@@ -521,6 +523,7 @@ fn capitalize_word(word: &str) -> String {
 // Authors
 // ---------------------------------------------------------------------------
 
+// ascii-guard: data begin - words matched in page text
 /// Words that mark an affiliation or address; a name never contains one.
 const AFFILIATION_WORDS: &[&str] = &[
     "university",
@@ -627,6 +630,7 @@ const AFFILIATION_WORDS: &[&str] = &[
     "riken",
     "anonymous",
 ];
+// ascii-guard: data end
 
 /// Capitalized words a title, heading or role has and a name does not.
 const NON_NAME_WORDS: &[&str] = &[
@@ -853,7 +857,7 @@ fn rows_below<'a>(kept: &[&'a TextLine], title: &Title, page_height: f32) -> Vec
 /// The author block: rows directly under the title, before the first
 /// affiliation, email, section heading, or paragraph. When the names are
 /// set in a style the affiliations are not (bold, or a different size),
-/// rows in the names' style after an affiliation are read too — the grid
+/// rows in the names' style after an affiliation are read too - the grid
 /// a NeurIPS or ICML title page lays its authors out in.
 ///
 /// Older papers stack one author at a time: a name, its affiliation lines,
@@ -935,7 +939,7 @@ fn find_authors(
             if !same_style || past_names {
                 // Not the names' style, or past the first affiliation: an
                 // affiliation, address or note row, or the next row of a
-                // grid — which only a distinct name style can tell.
+                // grid - which only a distinct name style can tell.
                 let distinct = row.bold != bold || (row.size - size).abs() >= 0.5;
                 if !same_style {
                     past_names = true;
@@ -1028,7 +1032,7 @@ fn is_heading(text: &str) -> bool {
 }
 
 /// A sentence, not a name line: long, or mostly lowercase words. "A
-/// dissertation submitted in partial satisfaction…" ends a thesis's
+/// dissertation submitted in partial satisfaction..." ends a thesis's
 /// author block the way an abstract ends a paper's.
 fn looks_like_prose(text: &str) -> bool {
     let words: Vec<&str> = text.split_whitespace().collect();
@@ -1078,7 +1082,7 @@ fn parse_names(text: &str) -> ParsedRow {
     let marked = mark_separators(text);
     let marked = marked.strip_prefix("by ").unwrap_or(&marked).to_string();
 
-    // "Family, G." throughout, or "Given Family" — decided per line.
+    // "Family, G." throughout, or "Given Family" - decided per line.
     let mut parts: Vec<String> = Vec::new();
     for chunk in marked.split(['|', ';']) {
         let pieces: Vec<String> = chunk
@@ -1207,7 +1211,7 @@ fn is_particle(word: &str) -> bool {
     PARTICLES.contains(&word)
 }
 
-/// "G.", "J.-P.", "J.K.", "R" — a given name reduced to letters.
+/// "G.", "J.-P.", "J.K.", "R" - a given name reduced to letters.
 fn is_initial(word: &str) -> bool {
     let core = word.trim_end_matches(',');
     !core.is_empty()
@@ -1231,12 +1235,12 @@ fn is_name_word(word: &str) -> bool {
         && word.chars().count() <= 25
         && word
             .chars()
-            .all(|c| c.is_alphabetic() || matches!(c, '-' | '\'' | '’' | '.'))
+            .all(|c| c.is_alphabetic() || matches!(c, '-' | '\'' | '\u{2019}' | '.'))
         && !NON_NAME_WORDS.contains(&word.to_lowercase().as_str())
 }
 
 /// One name, "Given Middle Family" with particles kept in the family
-/// ("Johannes van der Waals" → van der Waals, Johannes), or `None` when
+/// ("Johannes van der Waals" -> van der Waals, Johannes), or `None` when
 /// the part is not name-shaped.
 fn parse_name(part: &str) -> Option<Author> {
     // A period set apart from its initial ("Philip M . Long") rejoins it.

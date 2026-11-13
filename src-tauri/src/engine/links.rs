@@ -34,7 +34,7 @@ const TRAILING_PUNCTUATION: &[char] = &['.', ',', ';', ':', ')', ']', '}', '"', 
 ///
 /// PDFium's detector stops at characters it does not treat as part of a URL, so
 /// a single address containing, say, a parenthesis or a comma comes back as two
-/// or three separate links — each hoverable, each opening a fragment. Spans
+/// or three separate links - each hoverable, each opening a fragment. Spans
 /// that are adjacent in the character stream with no whitespace between them
 /// were never two URLs: nothing in real prose puts two addresses flush against
 /// each other.
@@ -62,7 +62,7 @@ pub fn merge_adjacent_web_links(mut spans: Vec<WebLinkSpan>, raw: &[char]) -> Ve
             && span.start <= previous_end
             && !between.iter().any(|ch| ch.is_whitespace());
         // A URL printed in a bibliography wraps across lines, and PDFium reads
-        // each line as its own link — "https://arxiv.org/" then "abs/1312.6120".
+        // each line as its own link - "https://arxiv.org/" then "abs/1312.6120".
         // The break between them is whitespace, so the contiguous rule alone
         // leaves both halves, and neither resolves to anything. Joining across
         // a break is only allowed when the first half is visibly unfinished and
@@ -95,13 +95,13 @@ fn is_url_char(ch: char) -> bool {
 ///
 /// PDFium's scanner ends a link where the printed address wraps or hits a
 /// character it does not accept, and the remainder is usually not a URL in its
-/// own right — "abs/1312.6120" has no scheme — so there is no second link to
+/// own right - "abs/1312.6120" has no scheme - so there is no second link to
 /// join it to. Merging spans cannot help; the tail has to be read out of the
 /// page text.
 ///
 /// The extension is kept only when it yields a *better citation* than the
-/// fragment did. Reading forward through arbitrary text is a blunt instrument —
-/// the next line of a reference list is another reference — so a result that
+/// fragment did. Reading forward through arbitrary text is a blunt instrument -
+/// the next line of a reference list is another reference - so a result that
 /// does not resolve to a DOI or arXiv id is discarded and the original stands.
 fn extend_truncated_span(span: &mut WebLinkSpan, raw: &[char]) {
     if !ends_mid_url(&span.uri) {
@@ -144,7 +144,7 @@ fn extend_truncated_span(span: &mut WebLinkSpan, raw: &[char]) {
 /// Whether a URL looks cut off rather than finished.
 ///
 /// A wrap lands on a separator far more often than not, because that is where
-/// typesetting prefers to break a long address — and an address ending in one
+/// typesetting prefers to break a long address - and an address ending in one
 /// is not an address anybody meant to publish.
 fn ends_mid_url(uri: &str) -> bool {
     let Some(rest) = uri
@@ -176,8 +176,8 @@ fn starts_a_url(raw: &[char], start: u32, len: u32) -> bool {
 /// The page text under a span, with trailing sentence punctuation removed.
 ///
 /// A closing bracket is only punctuation when nothing opened it. URLs
-/// legitimately end in one — a Wikipedia article with a disambiguator is the
-/// standard example — so stripping every trailing `)` would break exactly the
+/// legitimately end in one - a Wikipedia article with a disambiguator is the
+/// standard example - so stripping every trailing `)` would break exactly the
 /// addresses this merge exists to reassemble.
 fn text_of(raw: &[char], start: u32, len: u32) -> Option<String> {
     let slice = raw.get(start as usize..(start + len) as usize)?;
@@ -462,7 +462,7 @@ fn push_deduplicated(links: &mut Vec<LinkDto>, link: LinkDto) {
             // Or: this one sits inside a link already found. Annotation links
             // are pushed first and carry the URL the author encoded; PDFium's
             // text scanner then reads the *printed* URL and, where it wraps or
-            // hits punctuation, stops early — yielding "https://arxiv.org/"
+            // hits punctuation, stops early - yielding "https://arxiv.org/"
             // over the first part of an address already covered in full.
             // Those fragments overlap the real link far too little for an
             // intersection-over-union test to catch, because they are a small
@@ -1014,7 +1014,7 @@ mod weblink_tests {
     }
 
     /// A URL ending a sentence must not swallow the full stop.
-    /// A URL ending a sentence must not swallow the full stop — but must keep
+    /// A URL ending a sentence must not swallow the full stop - but must keep
     /// a bracket that closes one it opened.
     #[test]
     fn drops_trailing_sentence_punctuation_but_keeps_balanced_brackets() {
@@ -1204,7 +1204,7 @@ mod weblink_tests {
 
     /// The case from the References panel: a truncated DOI listed beside the
     /// full one as if they were two different works. There is no second link
-    /// to merge with — the remainder is not a URL — so the tail has to be read
+    /// to merge with - the remainder is not a URL - so the tail has to be read
     /// out of the page text.
     #[test]
     fn extends_a_doi_cut_off_mid_suffix() {

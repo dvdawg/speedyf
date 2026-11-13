@@ -512,7 +512,7 @@ fn do_open(
     let id = state.next_id;
     state.next_id += 1;
 
-    // Opening a document has no effect on the citation/library subsystem —
+    // Opening a document has no effect on the citation/library subsystem -
     // becoming the foreground ("active") document for hover bookkeeping is a
     // separate, explicit step (see `set_active_document`), so opening a
     // background tab never tears down another tab's library hover session.
@@ -781,7 +781,7 @@ fn do_text_layout(
 /// Every drawn bubble/checkbox on one page.
 ///
 /// Reads straight out of the cached text layout, because that is where
-/// detection already happened — the first request for a page pays for the
+/// detection already happened - the first request for a page pays for the
 /// extraction it would have paid for on selection or search anyway.
 fn do_page_bubbles(
     state: &mut WorkerState,
@@ -1044,7 +1044,7 @@ fn do_index_next(
 
 /// Extract one library document's full text to its sidecar.
 ///
-/// One document per job, then back to the queue — the same yielding shape as
+/// One document per job, then back to the queue - the same yielding shape as
 /// `do_library_scan_next`, and the reason a library indexing pass does not
 /// make the app feel slow: anything visible outranks `Idle`.
 ///
@@ -1128,14 +1128,14 @@ fn finish_library_text(
     }
     // A reference list read from the old text describes text that is
     // gone: drop it, so the provider is handed the new text. Its stamp
-    // alone would not say so — a re-extraction of the same bytes (after
+    // alone would not say so - a re-extraction of the same bytes (after
     // an upgrade that changes the text) keeps the stamp.
     crate::search::librarytext::remove_refs(app_data_dir, &entry.path);
     // The cited identifiers come from the same text while it is in
     // hand, in the form the sidecar stores it so the backfill would read
     // the same ones. The reference list is the reference provider's to
     // read, from the sidecar, at idle. A document that yielded no text
-    // cites nothing, finally — as for the sidecar, it will not start
+    // cites nothing, finally - as for the sidecar, it will not start
     // being readable.
     let cites = match pages {
         Some(pages) => {
@@ -1158,8 +1158,8 @@ fn finish_library_text(
 /// A page the OCR thread has read, back on this thread. It is cached
 /// already (the OCR thread writes through); here the library jobs that
 /// waited for it go on: the scan's file is scanned again, the text pass's
-/// document picks up where it stopped — its pages extracted, its budget
-/// as spent — or a deferred rescan is tried again.
+/// document picks up where it stopped - its pages extracted, its budget
+/// as spent - or a deferred rescan is tried again.
 fn do_ocr_done(state: &mut WorkerState, shared: &EngineShared, done: OcrDone) {
     state.ocr_in_flight.remove(&done.path);
     if let Some(candidate) = state.scan_waiting.take() {
@@ -1263,8 +1263,8 @@ struct TextJob {
 /// implies (`library::word_breaks`). The stream stays raw because a hit's
 /// offsets are PDFium character indices, which is how it is highlighted
 /// once the document is open; the breaks become whitespace in the sidecar's
-/// normalized text, so a LaTeX paper's words are searchable — and handed to
-/// the cites pass and the reference provider — as words. Four FFI calls a
+/// normalized text, so a LaTeX paper's words are searchable - and handed to
+/// the cites pass and the reference provider - as words. Four FFI calls a
 /// character (`layout_text::extract_spacing_glyphs`) where the raw stream
 /// alone costs one, at idle priority, once per document; no font queries.
 ///
@@ -1356,7 +1356,7 @@ fn extract_library_text(
 
 /// The OCR half of a text job, from wherever it stopped: the first page
 /// that needs OCR and is not cached goes to the OCR thread, and the job
-/// waits for it — one page in flight per document, the budget spent per
+/// waits for it - one page in flight per document, the budget spent per
 /// page sent. With every page it needs cached, the OCR text takes the text
 /// layer's place (`ocrtext::ocr_pages`, `ocrtext::substitute`) exactly as
 /// it did when the job read them itself.
@@ -1431,7 +1431,7 @@ struct OcrAsk<'a> {
 }
 
 impl OcrAsk<'_> {
-    /// Render page `index` here — PDFium stays on this thread — and hand
+    /// Render page `index` here - PDFium stays on this thread - and hand
     /// the image to the OCR thread, unless this document already has a page
     /// there.
     fn page(&mut self, b: &dyn PdfiumLibraryBindings, doc: FPDF_DOCUMENT, index: u32) -> Requested {
@@ -1572,7 +1572,7 @@ struct PageRead {
 
 /// One page's text with its word spaces repaired, uncapped; empty for a
 /// page that cannot be loaded. Character geometry, not the raw character
-/// stream alone: many PDFs — LaTeX output above all — encode word gaps as
+/// stream alone: many PDFs - LaTeX output above all - encode word gaps as
 /// position rather than as space characters, so the raw stream yields
 /// titles like "PrivateandpolynomialtimealgorithmsforlearningGaussians".
 /// `library::text_from_page` puts the spaces back from each glyph's loose
@@ -1629,7 +1629,7 @@ fn repaired_page_text(
 }
 
 /// OCR as the library scan uses it: for the first pages it reads, from the
-/// cache or from the OCR thread. The OCR thread only with `ask` — the idle
+/// cache or from the OCR thread. The OCR thread only with `ask` - the idle
 /// scan, which then waits for the reading and scans the file again; a scan
 /// on demand reads the cache alone and records what it went without.
 struct ScanOcr<'a> {
@@ -1677,7 +1677,7 @@ impl ScanOcr<'_> {
     /// page whose layer is unusable, and the printed title and authors of a
     /// scanned first page. A scan's capture layer often has everything but
     /// the title, which was set too large or too decorated for the capture
-    /// tool and stays a picture — the JCSS 1988 scan's layer reads "hh"
+    /// tool and stays a picture - the JCSS 1988 scan's layer reads "hh"
     /// where the first title line is, and its layout reader then takes the
     /// second line for the whole title, confidently.
     fn apply(&mut self, b: &dyn PdfiumLibraryBindings, raw: FPDF_DOCUMENT, page: &mut PageRead) {
@@ -1708,7 +1708,7 @@ impl ScanOcr<'_> {
 }
 
 /// Whether OCR's reading of a first page should replace the text layer's:
-/// it found a title, and the layer's is unusable, absent or unsure — or
+/// it found a title, and the layer's is unusable, absent or unsure - or
 /// both are sure and OCR's title holds the layer's whole and more (the
 /// part the capture tool left a picture).
 fn ocr_reading_is_better(
@@ -1739,7 +1739,7 @@ fn ocr_reading_is_better(
 }
 
 /// The text the classifier reads: the first page and, when that says
-/// little — a sparse cover, or nothing the classifier recognizes — the
+/// little - a sparse cover, or nothing the classifier recognizes - the
 /// next `EXTRA_CLASSIFY_PAGES` pages after it, joined in order. The scan
 /// reads its identifiers and ISBN from the same text, so a book's ISBN is
 /// found on its copyright page. This costs the character boxes for one
@@ -1922,7 +1922,7 @@ fn do_library_scan_next(state: &mut WorkerState, shared: &EngineShared) {
     scan_step(state, shared, candidate);
 }
 
-/// Scan one candidate (if any) and queue the next — or, when a page of it
+/// Scan one candidate (if any) and queue the next - or, when a page of it
 /// went to the OCR thread, park it until the reading is back
 /// (`do_ocr_done`), which scans it again with the page cached.
 fn scan_step(
@@ -1973,7 +1973,7 @@ fn scan_step(
     requeue_library_text(shared);
 }
 
-/// Scan one file outside the idle scan — just copied into the inbox — put
+/// Scan one file outside the idle scan - just copied into the inbox - put
 /// it in the index and the paper records, and answer with its paper.
 fn do_library_scan_file(
     state: &mut WorkerState,
@@ -1989,7 +1989,7 @@ fn do_library_scan_file(
         epoch: 0,
         unchanged: false,
     };
-    // On demand — the user is waiting for this paper — so no OCR: the
+    // On demand - the user is waiting for this paper - so no OCR: the
     // idle text pass reads it again with OCR if it wants it.
     let app_data_dir = shared.library.lock().app_data_dir();
     let (entry, _) = scan_library_candidate(state, &candidate, &app_data_dir, false);
@@ -2085,7 +2085,7 @@ fn open_library_document(
 ///
 /// Extracted directly rather than through `ensure_text_layout`, because that
 /// caches runs and boxes but not the character stream they index, and the two
-/// are only meaningful together — which is the same coupling that produced
+/// are only meaningful together - which is the same coupling that produced
 /// run-derived titles with no spaces in them.
 fn page_text_and_title(state: &mut WorkerState, doc: DocId) -> AppResult<(String, Option<String>)> {
     let [w_pt, h_pt] = state.display_size(doc, 0)?;
@@ -2234,7 +2234,7 @@ fn do_match_rects(
 /// printing.
 ///
 /// The same page assembly, rotation, annotation and form work `do_save`
-/// performs — this is what puts unsaved edits on paper — but without the
+/// performs - this is what puts unsaved edits on paper - but without the
 /// atomic-replace machinery around it. That exists to protect a destination
 /// worth protecting; here the destination is a temp file nobody has yet seen,
 /// so the rename dance and the reopen-verify pass would be pure cost. And
@@ -2377,7 +2377,7 @@ fn do_save(
 const PDFACTION_GOTO: std::os::raw::c_ulong = 1;
 
 /// The page a bookmark lands on, plus the y of its destination when the
-/// destination carries one — which lets the table of contents land on the
+/// destination carries one - which lets the table of contents land on the
 /// heading itself rather than the top of its page.
 fn resolve_bookmark_target(
     bindings: &dyn PdfiumLibraryBindings,
@@ -2575,7 +2575,7 @@ fn nest_headings(flat: Vec<(u8, FormalEntryDto)>) -> Vec<OutlineNodeDto> {
     roots
 }
 
-/// Every annotation SpeedyF owns, read out of the file on disk — and hidden in
+/// Every annotation SpeedyF owns, read out of the file on disk - and hidden in
 /// the render document on the way out.
 ///
 /// The two halves are one job on purpose. Renders include annotations
@@ -2660,7 +2660,7 @@ fn do_outline(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<OutlineNodeD
     Ok(nest_headings(headings_from_destinations(state, doc)))
 }
 
-/// Formal environments (theorems, figures, …) recovered from hyperref's named
+/// Formal environments (theorems, figures, ...) recovered from hyperref's named
 /// destinations, cross-checked against the text printed at each anchor. See
 /// engine::formal for why both halves are needed.
 fn do_formal_envs(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<FormalEntryDto>> {
@@ -2681,7 +2681,7 @@ fn do_formal_envs(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<FormalEn
     // given environment falls under is simply the last one seen before it.
     // Sections and environments interleave in one ordered pass, so a section
     // heading is simply emitted before the rows that follow it. A heading is
-    // held back until something actually lands under it — a section with no
+    // held back until something actually lands under it - a section with no
     // environments is noise in a list that exists to find environments.
     // Headings come from the bookmark tree, not from the page text. hyperref
     // writes the same titles there, already numbered and already nested, and
@@ -2719,7 +2719,7 @@ fn do_formal_envs(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<FormalEn
     // No bookmark tree: recover the same headings from the section
     // destinations, so the panel still groups by section instead of showing a
     // flat list of theorems. Already in document order, and deliberately not
-    // re-sorted here — that sort is y-only, which reverses two-column pages.
+    // re-sorted here - that sort is y-only, which reverses two-column pages.
     if headings.is_empty() {
         headings = headings_from_destinations(state, doc)
             .into_iter()
@@ -2752,7 +2752,7 @@ fn do_formal_envs(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<FormalEn
         let anchored = crate::engine::formal::anchor_text(&extracted.raw, &extracted.boxes, x, y)
             .and_then(|text| crate::engine::formal::reconcile(&name, &text))
             .map(|heading| (heading, y));
-        // Otherwise search the page for the statement the counter names — the
+        // Otherwise search the page for the statement the counter names - the
         // anchor may have landed in a formula, or on the page number.
         let found = anchored.or_else(|| {
             let counter = crate::engine::formal::destination_number(&name)?;
@@ -2786,7 +2786,7 @@ fn do_formal_envs(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<FormalEn
 
 /// Extract a page's text along with any mathematics its structure tree tags.
 ///
-/// Tagging is rare — most papers carry no structure tree — so the extra text
+/// Tagging is rare - most papers carry no structure tree - so the extra text
 /// page is only opened when one exists, and the span list is empty otherwise.
 fn extract_with_tags(
     state: &mut WorkerState,
@@ -2814,7 +2814,7 @@ fn extract_with_tags(
 /// artwork sitting above it.
 ///
 /// Captions come from page text rather than hyperref anchors, so this works on
-/// papers whose figures carry no `\label` — which is most of them. The cost is
+/// papers whose figures carry no `\label` - which is most of them. The cost is
 /// one text extraction per page, paid when the panel is opened.
 fn do_figures(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<FigureDto>> {
     use crate::engine::figures::{
@@ -2985,7 +2985,7 @@ fn do_form_fields(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<FormFiel
 }
 
 /// One widget's rectangle, in display space, or `None` when PDFium reports
-/// none or reports a degenerate one — a control with no area cannot be aimed
+/// none or reports a degenerate one - a control with no area cannot be aimed
 /// at, so offering it to the UI would only produce an invisible hit target.
 fn widget_rect(
     b: &dyn PdfiumLibraryBindings,

@@ -9,8 +9,8 @@
 //! The one thing a built-in needs to persist is whether it has been switched
 //! off, which cannot live in the read-only bundle. That goes in a small file
 //! beside the registry. Absence means the built-in's default: enabled, except
-//! for one that asks for the network, which ships off — enabling it is the
-//! user's consent to its traffic — and is recorded once switched on. A
+//! for one that asks for the network, which ships off - enabling it is the
+//! user's consent to its traffic - and is recorded once switched on. A
 //! built-in removed from a later release leaves nothing behind but a harmless
 //! stale id.
 //!
@@ -53,7 +53,7 @@ pub fn candidate_roots(resource_dir: Option<&Path>) -> Vec<PathBuf> {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             dirs.push(dir.join(BUILTIN_DIR));
-            // macOS bundle: Contents/MacOS/<exe> → Contents/Resources/extensions
+            // macOS bundle: Contents/MacOS/<exe> -> Contents/Resources/extensions
             dirs.push(dir.join("../Resources").join(BUILTIN_DIR));
         }
     }
@@ -73,8 +73,8 @@ pub fn root(resource_dir: Option<&Path>) -> Option<PathBuf> {
 /// Ids of the built-ins present in `root`, sorted.
 ///
 /// A directory counts when its name is a usable id and it carries a manifest
-/// claiming that same id. The directory name *is* the id everywhere else —
-/// `resolve_asset` builds `<root>/<id>/…` and installs land in `<root>/<id>` —
+/// claiming that same id. The directory name *is* the id everywhere else -
+/// `resolve_asset` builds `<root>/<id>/...` and installs land in `<root>/<id>` -
 /// so a folder named for the extension rather than for its id resolves to
 /// nothing at all.
 ///
@@ -82,7 +82,7 @@ pub fn root(resource_dir: Option<&Path>) -> Option<PathBuf> {
 /// `extensions/references/` for an extension whose id is
 /// `dev.speedyf.references`, and because ids without a dot are rejected the
 /// result was zero built-ins and not one word about it. A stray file or a
-/// `.DS_Store` is still ignored silently — that is noise, not a mistake.
+/// `.DS_Store` is still ignored silently - that is noise, not a mistake.
 pub fn ids(root: &Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(root) else {
         return Vec::new();
@@ -97,7 +97,7 @@ pub fn ids(root: &Path) -> Vec<String> {
             }
             if !is_valid_id(&name) {
                 log::error!(
-                    "built-in at {} is ignored: \"{name}\" is not a usable extension id — \
+                    "built-in at {} is ignored: \"{name}\" is not a usable extension id - \
                      the directory must be named for the manifest's id",
                     dir.display()
                 );
@@ -107,7 +107,7 @@ pub fn ids(root: &Path) -> Vec<String> {
                 if declared != name {
                     log::error!(
                         "built-in at {} is ignored: it declares id \"{declared}\" but sits in \
-                         \"{name}\" — the two must match",
+                         \"{name}\" - the two must match",
                         dir.display()
                     );
                     return None;
@@ -167,14 +167,14 @@ impl State {
             Ok(state) if state.version == STATE_VERSION => state,
             Ok(state) => {
                 log::warn!(
-                    "built-in extension state is version {}, this build reads {} — ignoring it",
+                    "built-in extension state is version {}, this build reads {} - ignoring it",
                     state.version,
                     STATE_VERSION
                 );
                 State::default()
             }
             Err(e) => {
-                log::warn!("built-in extension state unreadable ({e}) — ignoring it");
+                log::warn!("built-in extension state unreadable ({e}) - ignoring it");
                 State::default()
             }
         }
@@ -214,7 +214,7 @@ impl State {
 }
 
 /// Whether the built-in `id` under `root` starts out enabled: its manifest
-/// says, and an unreadable manifest counts as the ordinary default (on) —
+/// says, and an unreadable manifest counts as the ordinary default (on) -
 /// it cannot run anyway, and the panel reports why.
 pub fn enabled_by_default(root: &Path, id: &str) -> bool {
     std::fs::read_to_string(root.join(id).join(MANIFEST_FILE))
@@ -233,7 +233,7 @@ pub fn set_enabled(user_root: &Path, id: &str, enabled: bool) -> AppResult<()> {
 /// Delete user installs that a built-in has taken over.
 ///
 /// Only reachable for someone who hand-installed an extension that a later
-/// release began shipping — which is exactly how References arrived. Both
+/// release began shipping - which is exactly how References arrived. Both
 /// copies would otherwise be listed under one id, and the id is what commands,
 /// storage and asset URLs are keyed by, so two rows claiming it is not a state
 /// worth supporting. The built-in wins because it is at least as new, and

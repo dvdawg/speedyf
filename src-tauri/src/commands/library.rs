@@ -1,11 +1,11 @@
-//! Commands for papers and projects (projects.md §9). Every one goes through
+//! Commands for papers and projects (projects.md sec. 9). Every one goes through
 //! the engine's single paper store, and every one that writes saves on the
 //! spot and then tells every window through `library:changed`.
 //!
 //! Store work runs on a blocking thread, like `change_library_root`: it is
 //! file I/O, and the native IPC callback must never wait on it. The two
-//! commands that need PDFium — a first-page preview and the scan of a newly
-//! filed PDF — go through the engine thread like any other document work.
+//! commands that need PDFium - a first-page preview and the scan of a newly
+//! filed PDF - go through the engine thread like any other document work.
 //! The online lookups await their requests here, on the async runtime, each
 //! through the engine's per-host limiter (`library::ratelimit`), and
 //! take the store lock only to apply what came back.
@@ -117,7 +117,7 @@ pub async fn library_paper(
 }
 
 /// The paper whose file is at `path`, or none when the path is not in the
-/// library — which is how the reader's Paper panel decides between showing
+/// library - which is how the reader's Paper panel decides between showing
 /// the paper and offering to add it.
 #[tauri::command]
 pub async fn library_paper_for_path(
@@ -249,7 +249,7 @@ pub async fn library_file_into_inbox(
         .await
 }
 
-/// Sync to a .bib…: record the path, and write the file now — the save
+/// Sync to a .bib...: record the path, and write the file now - the save
 /// behind `write_store` is what writes every synced `.bib`. With no path
 /// the project just stops syncing; the file it wrote stays as it is.
 #[tauri::command]
@@ -264,8 +264,8 @@ pub async fn library_set_project_bib(
         store.set_project_bib(&project_id, path)
     })
     .await?;
-    // The save wrote the file, or tried to. A path that cannot be written —
-    // a folder that does not exist, an unmounted volume — is the one thing
+    // The save wrote the file, or tried to. A path that cannot be written -
+    // a folder that does not exist, an unmounted volume - is the one thing
     // the user needs to hear about now, not in the log.
     if let Some(error) = read_store(engine, move |store| Ok(store.bib_error_for(&id))).await? {
         return Err(AppError::Io(format!(
@@ -293,7 +293,7 @@ pub async fn library_data_dir(
     read_store(state.0.clone(), |store| Ok(store.data_info())).await
 }
 
-/* ---- Backups of library.json (projects.md §3) ---- */
+/* ---- Backups of library.json (projects.md sec. 3) ---- */
 
 /// The backups of `library.json`, newest first.
 #[tauri::command]
@@ -331,11 +331,11 @@ pub async fn library_move_data(
     Ok(info)
 }
 
-/* ---- BibTeX (projects.md §7) ---- */
+/* ---- BibTeX (projects.md sec. 7) ---- */
 
 /// BibTeX for these papers, in this order, for the clipboard. It freezes
 /// their keys: the text is about to be pasted into a `.bib`, and a key is
-/// frozen the first time it is written to any (projects.md §2).
+/// frozen the first time it is written to any (projects.md sec. 2).
 #[tauri::command]
 pub async fn library_bibtex(
     state: tauri::State<'_, EngineState>,
@@ -344,7 +344,7 @@ pub async fn library_bibtex(
     write_store_if_changed(state.0.clone(), move |store| store.bibtex_for(&paper_ids)).await
 }
 
-/// How BibTeX is written (projects.md §7).
+/// How BibTeX is written (projects.md sec. 7).
 #[tauri::command]
 pub async fn library_bibtex_options(
     state: tauri::State<'_, EngineState>,
@@ -366,7 +366,7 @@ pub async fn library_set_bibtex_options(
 
 /// Pin these papers' keys without rendering anything: the keys were just
 /// copied as a `\cite{}` to be pasted into a manuscript, where a key that
-/// changes later breaks the citation (projects.md §2). Ids that name no
+/// changes later breaks the citation (projects.md sec. 2). Ids that name no
 /// paper are skipped; saves and notifies only when a key was not pinned.
 #[tauri::command]
 pub async fn library_pin_keys(
@@ -379,7 +379,7 @@ pub async fn library_pin_keys(
     .await
 }
 
-/// Export .bib…: the project's entries, written once to `path`.
+/// Export .bib...: the project's entries, written once to `path`.
 #[tauri::command]
 pub async fn library_export_bib(
     state: tauri::State<'_, EngineState>,
@@ -392,8 +392,8 @@ pub async fn library_export_bib(
     .await
 }
 
-/// Export bundle (.zip)…: the project's `.bib` and each item's main PDF,
-/// written to `path` (projects.md §5). The plan is read under the store
+/// Export bundle (.zip)...: the project's `.bib` and each item's main PDF,
+/// written to `path` (projects.md sec. 5). The plan is read under the store
 /// lock; the PDFs are copied without it, so a large bundle never holds up
 /// the library; the keys are pinned once the zip is in place, as an
 /// Export .bib pins them.
@@ -418,7 +418,7 @@ pub async fn library_export_bundle(
     Ok(report)
 }
 
-/* ---- Online lookup (projects.md §4) ---- */
+/* ---- Online lookup (projects.md sec. 4) ---- */
 
 /// A chain over the engine's client, limiter, cache and live settings. One
 /// per lookup or batch.
@@ -443,8 +443,8 @@ async fn save_store<T: Send + 'static>(
 }
 
 /// Run `f` against the store for one paper of a batch. The change is
-/// marked and reaches the disk through the scan's throttled flush — at
-/// most once a second, without the `.bib` sync — and the windows hear of
+/// marked and reaches the disk through the scan's throttled flush - at
+/// most once a second, without the `.bib` sync - and the windows hear of
 /// it then, so a long batch fills the list in as it goes without a save, a
 /// bib comparison and a broadcast per paper. `flush_store` ends the batch.
 async fn write_store_throttled<T: Send + 'static>(
@@ -476,7 +476,7 @@ async fn flush_store(engine: EngineHandle) -> AppResult<bool> {
 }
 
 /// The lookup phase is over: its unsaved answers are written now, and the
-/// citation edges it asked for are fetched in the background — the
+/// citation edges it asked for are fetched in the background - the
 /// lookup has answered, and the status bar stays lit until these land in
 /// the cache. Nothing waits on them.
 fn fetch_edges_later(engine: &EngineHandle, chain: Chain, jobs: Vec<EdgeJob>) {
@@ -499,10 +499,10 @@ fn lookup_error(errors: &[String]) -> AppError {
 /// DataCite, Semantic Scholar, INSPIRE, OpenAlex, arXiv, Open Library, as
 /// the paper's identifiers and subject warrant), every answer applied at
 /// its source's rank. `Title`: every title search at once, merged, less
-/// what the user declined before, for the user to pick from — and parked
+/// what the user declined before, for the user to pick from - and parked
 /// on the paper meanwhile; applied by `library_apply_candidate`. Refuses
 /// when lookup is off; a request that fails with nothing found is an
-/// error; nothing found — or nothing to look up with — is `Nothing`. The
+/// error; nothing found - or nothing to look up with - is `Nothing`. The
 /// paper is stamped as looked up only when every service was asked and
 /// answered.
 #[tauri::command]
@@ -796,7 +796,7 @@ fn unix_now() -> u64 {
         .unwrap_or(0)
 }
 
-/* ---- Citation graph (projects.md §8) ---- */
+/* ---- Citation graph (projects.md sec. 8) ---- */
 
 /// Which library papers this one cites and which cite it, through the
 /// identifiers the text pass found in each file and the edges the lookup
@@ -844,11 +844,11 @@ fn citation_inputs(
 }
 
 /// The citation graph of one project's members, or with no project of
-/// every item in the library (projects.md §8): the nodes in list order,
+/// every item in the library (projects.md sec. 8): the nodes in list order,
 /// the edges between them, and how many citations point outside the set
-/// or are not known yet. With `focus`, the graph around that paper instead
-/// — it and every item within `depth` (1 or 2) citation steps across the
-/// whole library — and `project_id` is ignored. Read-only, against the
+/// or are not known yet. With `focus`, the graph around that paper instead -
+/// it and every item within `depth` (1 or 2) citation steps across the
+/// whole library - and `project_id` is ignored. Read-only, against the
 /// same snapshots of the index and the lookup cache that
 /// `library_citation_links` resolves against.
 #[tauri::command]
@@ -920,7 +920,7 @@ pub async fn library_suggest_projects(
     .map_err(|error| AppError::Internal(format!("library task failed: {error}")))?
 }
 
-/* ---- Duplicates and merging (projects.md §2) ---- */
+/* ---- Duplicates and merging (projects.md sec. 2) ---- */
 
 /// Groups of items that look like one work. The lookup cache supplies
 /// what arXiv said each preprint was published as.

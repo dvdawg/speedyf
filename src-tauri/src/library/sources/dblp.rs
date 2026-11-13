@@ -1,6 +1,6 @@
-//! dblp `search/publ/api` (projects.md §4). dblp is computer science's
+//! dblp `search/publ/api` (projects.md sec. 4). dblp is computer science's
 //! bibliography, and the one service here that knows a workshop paper by
-//! its title. What leaves the machine is the title, for a title search —
+//! its title. What leaves the machine is the title, for a title search -
 //! dblp has no lookup by identifier. No key, no contact.
 
 use crate::errors::AppResult;
@@ -40,7 +40,7 @@ pub async fn search_by_title(
 
 /// Parses a dblp search response: one candidate per titled
 /// `result.hits.hit[].info`, in API order. No hits (dblp then omits `hit`
-/// altogether), not JSON → empty.
+/// altogether), not JSON -> empty.
 pub fn parse_search(json: &str) -> Vec<LookupCandidateDto> {
     let Ok(root) = serde_json::from_str::<Value>(json) else {
         return Vec::new();
@@ -100,7 +100,7 @@ fn info(info: &Value) -> Option<LookupCandidateDto> {
     })
 }
 
-/// `{"text": "Given Family", "@pid": …}` or a bare string. dblp tells
+/// `{"text": "Given Family", "@pid": ...}` or a bare string. dblp tells
 /// namesakes apart with a four-digit suffix (`Wei Wang 0001`), which is
 /// not part of the name.
 fn dblp_author(author: &Value) -> Option<Author> {
@@ -116,7 +116,7 @@ fn dblp_author(author: &Value) -> Option<Author> {
 }
 
 // ---------------------------------------------------------------------------
-// Tests — no network. The fixture is trimmed from dblp's documented JSON
+// Tests - no network. The fixture is trimmed from dblp's documented JSON
 // search response.
 // ---------------------------------------------------------------------------
 

@@ -1,4 +1,4 @@
-# SpeedyF Extension API — design plan
+# SpeedyF Extension API - design plan
 
 **Status:** design, not implemented. Nothing in this document exists in the
 codebase yet.
@@ -8,7 +8,7 @@ deliberately deferred in favour of a versioned on-disk data contract between
 SpeedyF and a separate corpus tool. That deferral left an explicit fork: keep
 the reader clean (data contract wins) or make SpeedyF a platform others build
 on (plugin API is right, at a multi-month price). This document takes the
-second branch, and honours the condition attached to it — the design is tested
+second branch, and honours the condition attached to it - the design is tested
 against several unrelated extension ideas rather than a single one.
 
 ---
@@ -56,11 +56,11 @@ shape matters more than its difficulty.
    promised.
 4. **Everything is declared up front.** Permissions and UI placement live in a
    manifest that is readable before any extension code runs.
-5. **Extensions are never on the critical path** — until v3 deliberately puts
+5. **Extensions are never on the critical path** - until v3 deliberately puts
    one there, with a timeout policy.
 6. **The user can always tell what is installed and what it can reach.**
 
-## 4. Mechanism one — where code runs
+## 4. Mechanism one - where code runs
 
 SpeedyF ships a Content Security Policy (in `tauri.conf.json`) that includes
 `script-src 'self'`, meaning **only JavaScript that shipped with the app may
@@ -68,14 +68,14 @@ run**. It exists so a hostile PDF cannot inject code into the window. It stays.
 
 Extension logic therefore runs in a **Web Worker**: a separate JavaScript
 environment with no DOM access, no access to app variables, and exactly one
-channel out — asynchronous messages. A worker that crashes crashes alone; a
+channel out - asynchronous messages. A worker that crashes crashes alone; a
 worker that spins forever does not freeze the UI.
 
 This is the direct equivalent of Chrome's isolated worlds, and it is cheaper
 here because SpeedyF's extensions have no reason to touch the document DOM at
 all.
 
-**Loading mechanism — settled by measurement, not assumption.** The obvious
+**Loading mechanism - settled by measurement, not assumption.** The obvious
 route does not work. `new Worker(url)` requires the URL to be same-origin with
 the creating document; that is a platform rule, not a CSP setting, and no
 policy change relaxes it. A custom scheme is by definition a different origin,
@@ -93,7 +93,7 @@ Two consequences worth knowing before writing an extension:
   from a blob, so extensions ship a bundle.
 - **The worker inherits the app's CSP** for its own subresource loads, and
   `connect-src` is `ipc:` alone. An extension therefore cannot reach the
-  network at all — denied by the platform rather than by our policy. That is a
+  network at all - denied by the platform rather than by our policy. That is a
   stronger guarantee than the permission model gives, and it holds until v3
   deliberately opens a hole.
 
@@ -101,7 +101,7 @@ The `speedyf-ext://` scheme still exists and is still needed: sandboxed pane
 documents (v3) are iframes, and iframes are allowed to be cross-origin. Only
 workers need the blob route.
 
-## 5. Mechanism two — how extensions draw
+## 5. Mechanism two - how extensions draw
 
 Arbitrary DOM injection into a SolidJS tree is rejected: it inherits every
 extension's layout bugs, style clashes and reactivity mistakes.
@@ -130,11 +130,11 @@ restyle without their authors touching anything.
 
 The vocabulary is deliberately small and grows only on demand:
 
-- `rows` — title, optional subtitle, badge, thumbnail, action
-- `sections` — a heading plus rows
-- `empty` — placeholder text when there is nothing to show
-- `error` — a failure message in the house style
-- `fields` — label plus control (text, checkbox, select), for settings
+- `rows` - title, optional subtitle, badge, thumbnail, action
+- `sections` - a heading plus rows
+- `empty` - placeholder text when there is nothing to show
+- `error` - a failure message in the house style
+- `fields` - label plus control (text, checkbox, select), for settings
 
 ### Custom panes (the escape hatch)
 
@@ -143,10 +143,10 @@ extension may declare a pane rendered as a sandboxed `iframe` served from
 `speedyf-ext://<id>/`. It has its own origin and cannot reach the host DOM.
 
 It is clunkier, will not match SpeedyF's styling, and needs its own message
-bridge — which is correct. It should be the rare path, and it does not exist
+bridge - which is correct. It should be the rare path, and it does not exist
 until v3.
 
-## 6. Mechanism three — the manifest
+## 6. Mechanism three - the manifest
 
 Every extension ships a `speedyf.json` beside its code.
 
@@ -200,12 +200,12 @@ custom URI scheme path.
 
 **What `document:read` actually grants.** Page text, in a loop, is the whole
 document's text. The permission means "everything this document says", not "a
-page at a time", and consent UI must say so — a prompt that reads narrower than
+page at a time", and consent UI must say so - a prompt that reads narrower than
 the grant is misleading by omission.
 
 **Raw PDF bytes are deliberately absent.** No `document.bytes`, no file path, no
-rasters. Not because no extension could use them — a converter or a signature
-verifier genuinely would — but because that one primitive makes every other
+rasters. Not because no extension could use them - a converter or a signature
+verifier genuinely would - but because that one primitive makes every other
 piece of scoping pointless: there is no reason to think carefully about what
 `citations.list` returns if the whole file sits available beside it. If it is
 ever added it belongs in v3, under its own loud permission, and
@@ -220,12 +220,12 @@ never `document:read`.
 **What keeps this safe today is structural, not policy.** The worker inherits
 the app's CSP, whose `connect-src` is `ipc:` alone, so an extension can read
 everything and has nowhere to send it. That guarantee holds until v3 opens
-`network` — which is the moment read-breadth starts to matter, and the reason
+`network` - which is the moment read-breadth starts to matter, and the reason
 the row below is not just another permission.
 
 _Since v3 opened it:_ the worker's CSP is unchanged, so an extension still
 cannot send anything anywhere by itself. One holding `network` can ask the core
-to fetch, and only from the hosts its manifest names — a list the user sees on
+to fetch, and only from the hosts its manifest names - a list the user sees on
 the card before they switch the extension on. `document:read` plus `network`
 therefore means "can send what it reads to these hosts", which is exactly what
 the tag on the card has to make plain.
@@ -262,7 +262,7 @@ OCR (#3) is the exception, and how it is framed decides how hard it is.
 **The shape to avoid** is a synchronous provider: the core calls the extension
 mid-render and waits, because search, selection, smart copy and figure
 detection all need the answer. That puts third-party code on the critical path
-of core features — slow extension, slow SpeedyF — and needs a timeout policy, a
+of core features - slow extension, slow SpeedyF - and needs a timeout policy, a
 partial-results story and a precedence rule for competing extensions.
 
 **The shape to build** is a batch contributor. The extension is handed a
@@ -274,10 +274,10 @@ This leaves exactly one real question: **where do the results land?**
 
 - _Into the extension's own panel only._ A pure consumer, zero new machinery,
   ships in v2 as-is. But the app's own search, text selection, smart copy and
-  figure detection still see a blank page — the user gets two search boxes and
+  figure detection still see a blank page - the user gets two search boxes and
   only one works on scans. Not worth building.
 - _Into the document's real text layer._ Core features start consuming
-  third-party data, which is the thing to be careful about — but
+  third-party data, which is the thing to be careful about - but
   asynchronously, off the critical path, and with a precedent already in the
   codebase: the library extracts full text to a sidecar for library-wide
   search, tracked by `text_indexed` on `LibraryEntry`. Text produced elsewhere
@@ -299,8 +299,8 @@ Policy decisions it still carries, all small:
 - **Competition.** If two extensions contribute for the same document, first
   writer wins and the second is reported, rather than silently discarded.
 
-`CitationResolver` in `src-tauri/src/library/mod.rs` — a one-method trait with a
-single implementation — remains the template for any genuinely synchronous
+`CitationResolver` in `src-tauri/src/library/mod.rs` - a one-method trait with a
+single implementation - remains the template for any genuinely synchronous
 provider slot, if one is ever needed. None is needed for OCR.
 
 **The first provider slot: reference lists.** The library's citation graph
@@ -308,7 +308,7 @@ needed something to cut every library paper's bibliography into entries, so a
 title can be matched when an entry prints no identifier. That is parsing, the
 engine had grown its own parser for it, and that was the wrong place: it moved
 into the built-in References extension, and the extension gained the slot it
-needed — `referenceProvider`, under `library:contributeReferences`. It keeps
+needed - `referenceProvider`, under `library:contributeReferences`. It keeps
 the batch-contributor shape above rather than becoming a synchronous provider:
 the window asks the engine for documents the provider has not read, invokes
 the provider's command at idle, one document at a time, with
@@ -317,15 +317,15 @@ the provider's command at idle, one document at a time, with
 or resolves while waiting on it, so the timeout (20 s per document) is a
 budget, not a latency. Precedence is the simplest rule that works: the first
 enabled extension declaring one is the provider, and only its results are
-read — results are stamped with its id and version, so disabling it switches
+read - results are stamped with its id and version, so disabling it switches
 title matching off and a new version re-reads the library. The engine keeps
-the identifier rules (explicit DOIs and arXiv ids, the APS journal→DOI rule)
+the identifier rules (explicit DOIs and arXiv ids, the APS journal->DOI rule)
 and the matching, so DOI, arXiv and APS edges survive with no provider at all.
 
 ## 10. Message protocol
 
 All host/extension traffic is asynchronous request/response with correlation
-IDs. Never synchronous, from the very first version — see section 14.
+IDs. Never synchronous, from the very first version - see section 14.
 
 Host to extension:
 
@@ -374,14 +374,14 @@ Extensions are unpacked directories under the Tauri app data directory
 ```
 
 `installed.json` carries a schema version from day one. The library index
-learned this lesson the hard way — an unrecognised shape used to discard the
-whole index — and both persisted library files now carry versions.
+learned this lesson the hard way - an unrecognised shape used to discard the
+whole index - and both persisted library files now carry versions.
 
 ---
 
 # Version plan
 
-## v1 — the skeleton
+## v1 - the skeleton
 
 **Goal:** prove isolation, lifecycle and permissions end to end, with the
 smallest possible API surface. If v1 is right, everything after it is
@@ -396,7 +396,7 @@ additive.
 - Worker host: spawn, terminate, restart, crash containment
 - Message protocol with correlation IDs and deadlines
 - Permission gate at the API boundary (with only trivial permissions to gate)
-- `contributes.commands` — extension commands appear in the command palette
+- `contributes.commands` - extension commands appear in the command palette
   and are bindable, via the existing registry in `src/app/commands.ts`
 - The Extensions panel replaces its placeholder: installed list, enable
   toggle, permissions, uninstall, per-extension error state
@@ -405,7 +405,7 @@ additive.
 clipboard, storage, network, custom panes, providers, install from a URL,
 updates.
 
-**Reference extension:** `examples/extensions/hello` — four commands that
+**Reference extension:** `examples/extensions/hello` - four commands that
 respectively succeed, fail, hang, and attempt a call the permission gate
 refuses. It exercises the whole v1 surface and no more.
 
@@ -415,7 +415,7 @@ own commands, and v1 has neither. It moves to v2.
 
 **Done when:** an extension living in a separate git repo can be installed from
 a folder, adds a command to the palette, survives an app restart, is cleanly
-uninstalled, and — when deliberately made to throw or loop forever — does not
+uninstalled, and - when deliberately made to throw or loop forever - does not
 degrade the reader.
 
 Note that v1 grants no host APIs at all, so the permission gate refuses
@@ -426,7 +426,7 @@ than to take them away from extensions already built against them.
 _"Everything SpeedyF can be asked to do, as data. One registry, two readers."_
 An extension API is the third reader.
 
-## v2 — the useful one
+## v2 - the useful one
 
 **Goal:** extensions people actually want. Everything here is a _consumer_, so
 failure stays contained.
@@ -434,36 +434,36 @@ failure stays contained.
 **Ships:**
 
 - **[shipped]** Declarative UI vocabulary (`rows`, `sections`, `empty`,
-  `error`) and `contributes.panels` — a real sidebar tab. Extensions describe;
+  `error`) and `contributes.panels` - a real sidebar tab. Extensions describe;
   SpeedyF draws with its own components, so a contributed panel matches the
   built-ins and inherits every future restyle. The description is untrusted
   input, so it is validated structurally rather than cast: unreadable rows are
   dropped individually so one bad row does not cost the panel, text is
   truncated rather than refused, and the row cap applies across the whole
   description so splitting into sections is not a way around it. Panels render
-  when opened, never on a timer — an extension is not woken because a document
+  when opened, never on a timer - an extension is not woken because a document
   scrolled. Reference extension: `extensions/references`, which now ships built in.
 - `fields` in the vocabulary, for `contributes.settings`
 - **[shipped]** `contributes.selectionActions` and
   `contributes.citationActions`. Deliberately need **no permission at all**:
   the extension is handed exactly what the user picked and nothing else. This
   is the counterweight that keeps `document:read` from being the only way to
-  reach a paragraph — a translate, summarise or note-taking extension should
+  reach a paragraph - a translate, summarise or note-taking extension should
   need neither. Selection actions appear in the command palette when text is
   selected; citation actions appear on the hover popover. Reference extension:
   `examples/extensions/scratchpad`, which asks only for `clipboard:write` and
   `storage` and never reads the document.
-- **[shipped]** `contributes.settings` — declared, not drawn: the extension
+- **[shipped]** `contributes.settings` - declared, not drawn: the extension
   says what it wants to ask (text, checkbox, select) and SpeedyF renders the
   control in the Extensions panel. Values persist under their own key prefix,
   so an extension's `storage.set` cannot overwrite what the user chose, and
-  `settings.get` needs no permission — reading its own declared settings is not
+  `settings.get` needs no permission - reading its own declared settings is not
   access to anything. Read fresh on each call rather than cached at activation,
   so a change takes effect without restarting the worker.
 - **[shipped]** Read APIs: `document.info`, `document.pageText`,
   `document.outline`, `document.figures`, `citations.list`,
   `citations.resolve`, `library.search`. Deliberately _not_ the engine's DTOs
-  forwarded — each shape is a narrower version, and the mapping between them is
+  forwarded - each shape is a narrower version, and the mapping between them is
   the seam that lets the engine change without breaking anything installed.
   Three rules chose them: omit what belongs to another permission (no
   filesystem paths, no engine ids), omit geometry until something needs it
@@ -471,7 +471,7 @@ failure stays contained.
   pass them on (`arXiv` becomes `arxiv`). Reads are scoped to the _active_
   document, so an extension never names one and cannot reach a tab the user is
   not looking at. Reference extension: `examples/extensions/bibtex`.
-- **[shipped]** `storage` — namespaced key/value, bounded (64 KB a value, 100
+- **[shipped]** `storage` - namespaced key/value, bounded (64 KB a value, 100
   keys an extension), cleared on uninstall. The namespace is applied by the
   host, not the extension, so one cannot read or overwrite another's.
 - **[shipped]** `clipboard.write`, bounded at 100 KB. Note the platform
@@ -482,15 +482,15 @@ failure stays contained.
   sends authors looking for a permission that does not exist.
 - **[shipped]** Install from a git URL, optionally pinned with
   `#<branch|tag|commit>`. Shells out to `git clone` rather than adding an HTTP
-  client, so SpeedyF still makes no outbound connections of its own — the cost
+  client, so SpeedyF still makes no outbound connections of its own - the cost
   is that git must be installed, which is reported by name when it is not. Only
   `https://` and `http://` are accepted: `ssh://` would clone with the user's
   own credentials, and `file://` would let a "URL" reach anywhere on disk. A
   URL or ref beginning with `-` is refused before git runs, since that is the
-  one injection this interface has — git would read it as an option. Shallow by
+  one injection this interface has - git would read it as an option. Shallow by
   default, falling back to a full clone on remotes that cannot do it.
 - Developer mode: load unpacked, hot reload on file change, a log console
-- **[shipped]** `commands.run` + `contributes.keybindings` — the first real
+- **[shipped]** `commands.run` + `contributes.keybindings` - the first real
   host API, and what vim keybindings needs. Two rules make it safe:
   `commands:run` reaches only the command groups that change _what you are
   looking at_ (View, Navigate, Panels, Search) and never the document, the file
@@ -498,20 +498,20 @@ failure stays contained.
   on the app passes through the gate rather than a manifest entry. Built-in
   chords always win, and a contested chord goes to the first claimant with the
   loser told why. Reference extension: `examples/extensions/vim`.
-- **[shipped, plumbing only]** `contributes.documentTasks` — batch work over a
+- **[shipped, plumbing only]** `contributes.documentTasks` - batch work over a
   whole document, with `render:read` and `document:contributeText`. Rasters
   come from a Tauri command rather than a `pdfr://` URL, because the CSP's
   `connect-src` is `ipc:` alone and an extension needs bytes rather than an
   `<img>`; they are rendered at `Priority::Idle`, so a three-hundred-page job
   is starved behind the reader's own scrolling. Contributed text lands in a
-  versioned sidecar under the app data directory, never in the PDF — writing
+  versioned sidecar under the app data directory, never in the PDF - writing
   into the file would change bytes the user did not ask to change. Provenance,
   precedence and competition are enforced (first writer wins, second is told
   who holds it); a sidecar deliberately outlives the extension that wrote it.
   Reference extension: `examples/extensions/pageaudit`.
 
   **Not shipped: core consumption.** SpeedyF's own search, selection, smart
-  copy and figure detection do not read contributed text yet — that is engine
+  copy and figure detection do not read contributed text yet - that is engine
   work in Rust and the point at which core features start depending on
   third-party output. Deferred on purpose so the contract can settle against a
   real OCR extension first.
@@ -524,11 +524,11 @@ citation in the open document with library hit/miss status; and OCR (#3),
 which is the reason `documentTasks` is in this version rather than the next.
 
 **Done when:** all three reference extensions are built in separate repos by
-following this document alone, with no changes to SpeedyF — and a scanned PDF
+following this document alone, with no changes to SpeedyF - and a scanned PDF
 processed by the OCR extension is searchable and selectable through SpeedyF's
 own search and text layer, not a parallel one.
 
-## v3 — the platform
+## v3 - the platform
 
 **Goal:** everything supported. After this, the API is a public commitment.
 
@@ -538,13 +538,13 @@ _Capability_
 
 - Custom panes: sandboxed iframe views with their own message bridge
 - Synchronous provider slots (citation resolution, metadata) with timeouts and
-  precedence — only if something actually needs them; OCR does not.
+  precedence - only if something actually needs them; OCR does not.
   _Implemented for one:_ `referenceProvider` (library reference lists), as an
   idle batch contributor with a 20 s budget per document and first-enabled
-  precedence — see section 9
+  precedence - see section 9
 - **[shipped]** `network` with a manifest host allowlist, install-time
-  consent, and a live in-app indicator. The worker's CSP is unchanged — it
-  still cannot connect anywhere — and `net.fetch` is answered by the core:
+  consent, and a live in-app indicator. The worker's CSP is unchanged - it
+  still cannot connect anywhere - and `net.fetch` is answered by the core:
   `https://` only, hosts checked against the manifest's `network` list (exact,
   or `*.` for subdomains; redirects checked the same way), through the same
   per-host limiter as the library lookups, capped at 5 MB by default and 20 MB
@@ -553,20 +553,20 @@ _Capability_
   "Uses the internet: <hosts>" whether on or off, and the status bar names it
   while a request is in flight. Reference extension: the built-in Math to
   LaTeX, which fetches arXiv sources and journal XML for the paper on screen.
-- **[shipped]** `document:layout` — glyph geometry (`selection.glyphs`,
+- **[shipped]** `document:layout` - glyph geometry (`selection.glyphs`,
   `region.glyphs`: Unicode, raw code where PDFium has one, font with its
   subset prefix stripped, size, loose box, baseline, bold/italic, and fraction
   and radical rules as `__rule` glyphs) and tagged-PDF Formula elements
   (`document.mathTags`). Top-left coordinates, which this contract chose for
   formula reading; the older APIs stay y-up.
-- **[shipped]** `contributes.equationActions` — a button on each display
+- **[shipped]** `contributes.equationActions` - a button on each display
   equation the core detects (at idle, cached per page, only while an enabled
   extension contributes one), invoked with `{ page, bbox, number }`; and
   `ui.showMath`, a popover SpeedyF owns that typesets the answer with KaTeX
   and copies it as LaTeX, Markdown or an `align` block on the user's click.
 - `filesystem:read`/`write`, user-chosen paths only, through a picker
 - `document:annotate` and `document:edit`
-- `render:read` — page and region rasters
+- `render:read` - page and region rasters
 - Background tasks on idle, budgeted and cancellable
 
 _Operations_
@@ -590,7 +590,7 @@ updated and removed without either party talking to the other.
 
 v1 is on the order of weeks. v2 is larger than it looks now that
 `documentTasks` sits in it, but it is where the platform becomes worth having.
-v3 is where the multi-month estimate lives — sandboxed panes, network policy
+v3 is where the multi-month estimate lives - sandboxed panes, network policy
 and update infrastructure are separate hard problems wearing one version
 number. Treat v3 as a phase, not a release.
 
@@ -611,7 +611,7 @@ number. Treat v3 as a phase, not a release.
 - **A published API is hard to withdraw.** Every surface here is a maintenance
   commitment for as long as extensions exist.
 
-## 14. Hard to retrofit — get these right in v1
+## 14. Hard to retrofit - get these right in v1
 
 Each of these is cheap now and a breaking change for every installed extension
 later.

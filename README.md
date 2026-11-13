@@ -107,7 +107,7 @@ insertion. Page rotation in the sidebar changes saved page rotation; **Rotate
 view** in the main toolbar is temporary display state.
 
 Annotation tools use PDF page coordinates, so marks stay aligned through zoom,
-scroll, and 90°/180°/270° rotations. Click away from a text box to hide its outline
+scroll, and 90 degrees/180 degrees/270 degrees rotations. Click away from a text box to hide its outline
 and formatting toolbar. In pointer mode, click a text box to select it for moving
 or resizing. Double-click text boxes or notes to edit their content. Select an annotation and press Delete/Backspace to remove it.
 
@@ -120,29 +120,29 @@ in saved PDFs. Drag a corner to set a custom width; text then wraps to that widt
 Drag a document tab out of the tab strip and release it to move it into a new
 window. Edits, undo/redo, zoom, and reading position move with the tab. Drag
 within the strip to reorder; press Escape to cancel a drag. You can also use
-**File → New Window**, the tab-bar window buttons, or the command palette's
+**File -> New Window**, the tab-bar window buttons, or the command palette's
 **New Window** and **Move Tab to New Window** commands. A tab's right-click
 menu also closes the other tabs or the tabs to its right, and moves the tab
 into a new window or into any other open window, edits and all.
 
-| Action                     | macOS               | Windows/Linux             |
-| -------------------------- | ------------------- | ------------------------- |
-| Open                       | `⌘O`                | `Ctrl+O`                  |
-| New window                 | `⌘N`                | `Ctrl+N`                  |
-| Save / Save As             | `⌘S` / `⇧⌘S`        | `Ctrl+S` / `Ctrl+Shift+S` |
-| Search                     | `⌘F`                | `Ctrl+F`                  |
-| Undo / redo                | `⌘Z` / `⇧⌘Z`        | `Ctrl+Z` / `Ctrl+Y`       |
-| Zoom in/out                | `⌘+` / `⌘−`         | `Ctrl++` / `Ctrl+−`       |
-| Fit page / 100%            | `⌘0` / `⌘1`         | `Ctrl+0` / `Ctrl+1`       |
-| Previous/next page         | Page Up / Page Down | Page Up / Page Down       |
-| Close panel/tool/selection | Escape              | Escape                    |
+| Action                     | macOS                   | Windows/Linux             |
+| -------------------------- | ----------------------- | ------------------------- |
+| Open                       | `Cmd+O`                 | `Ctrl+O`                  |
+| New window                 | `Cmd+N`                 | `Ctrl+N`                  |
+| Save / Save As             | `Cmd+S` / `Cmd+Shift+S` | `Ctrl+S` / `Ctrl+Shift+S` |
+| Search                     | `Cmd+F`                 | `Ctrl+F`                  |
+| Undo / redo                | `Cmd+Z` / `Cmd+Shift+Z` | `Ctrl+Z` / `Ctrl+Y`       |
+| Zoom in/out                | `Cmd++` / `Cmd+-`       | `Ctrl++` / `Ctrl+-`       |
+| Fit page / 100%            | `Cmd+0` / `Cmd+1`       | `Ctrl+0` / `Ctrl+1`       |
+| Previous/next page         | Page Up / Page Down     | Page Up / Page Down       |
+| Close panel/tool/selection | Escape                  | Escape                    |
 
 Search starts returning results from the pages already indexed instead of
 waiting for the whole document. Scanned PDFs without an embedded text layer
 are viewable but not searchable because OCR is not implemented.
 
 Hover a linked citation, section, figure, or table for a destination crop.
-Choose **Citation library…** in the status bar to index a local folder of PDFs;
+Choose **Citation library...** in the status bar to index a local folder of PDFs;
 recognized DOI/arXiv links can then show the matching paper's first page. The
 library is local-only and can be disabled from the same control.
 
@@ -150,11 +150,11 @@ library is local-only and can be disabled from the same control.
 
 ```text
 SolidJS webview (lightweight model, virtualized DOM, vector overlays)
-       │ typed invoke/events                    ▲ binary PNG responses
-       ▼                                        │
-Tauri Rust host ── pdfr:// protocol ── byte-budgeted raster/text caches
-       │ priority + generation-stamped messages
-       ▼
+       | typed invoke/events                    ^ binary PNG responses
+       v                                        |
+Tauri Rust host -- pdfr:// protocol -- byte-budgeted raster/text caches
+       | priority + generation-stamped messages
+       v
 one dedicated engine thread (sole owner of every PDFium handle)
 ```
 
@@ -244,19 +244,19 @@ performance model.
 
 ## Project map
 
-- `src-tauri/src/engine/` — PDFium worker, queue, rendering, text, and save
-- `src-tauri/src/cache/` — encoded-byte-cost, stale-first LRU implementation
-- `src-tauri/src/search/` — incremental NFKC search index and source offsets
-- `src-tauri/src/library/` — local-library index, citation resolver, paper
+- `src-tauri/src/engine/` - PDFium worker, queue, rendering, text, and save
+- `src-tauri/src/cache/` - encoded-byte-cost, stale-first LRU implementation
+- `src-tauri/src/search/` - incremental NFKC search index and source offsets
+- `src-tauri/src/library/` - local-library index, citation resolver, paper
   records, projects, cite keys, BibTeX, and the opt-in metadata lookup
-- `src-tauri/src/lib.rs` — Tauri app, custom protocol, and command registration
-- `src/features/viewer/` — virtualization, progressive raster, tiles, text layer
-- `src/features/document/` — document model, undo/redo, EditPlan, workflows
-- `src/features/annotations/` — pointer mapping and vector edit overlays
-- `src/features/citations/` — link hotspots, dwell state machine, and popover
-- `src/features/projects/` — the Projects launch screen and the reader's Paper panel
-- `src/lib/coordinates/` — the only page/PDF/CSS rotation conversion layer
-- `src/lib/transport/engine.ts` — the frontend’s typed engine boundary
+- `src-tauri/src/lib.rs` - Tauri app, custom protocol, and command registration
+- `src/features/viewer/` - virtualization, progressive raster, tiles, text layer
+- `src/features/document/` - document model, undo/redo, EditPlan, workflows
+- `src/features/annotations/` - pointer mapping and vector edit overlays
+- `src/features/citations/` - link hotspots, dwell state machine, and popover
+- `src/features/projects/` - the Projects launch screen and the reader's Paper panel
+- `src/lib/coordinates/` - the only page/PDF/CSS rotation conversion layer
+- `src/lib/transport/engine.ts` - the frontend's typed engine boundary
 
 ## Current limitations
 

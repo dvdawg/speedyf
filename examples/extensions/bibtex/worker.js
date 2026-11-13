@@ -85,9 +85,9 @@ async function handle(command) {
       const outline = await call('document.outline');
       const figures = await call('document.figures');
       const firstPage = await call('document.pageText', { page: 0 });
-      log('info', `${info.name} — ${info.pageCount} pages, on page ${info.currentPage + 1}`);
+      log('info', `${info.name} - ${info.pageCount} pages, on page ${info.currentPage + 1}`);
       log('info', `${count(outline)} outline entries, ${figures.length} figures`);
-      log('info', `page 1 opens: ${firstPage.slice(0, 120)}…`);
+      log('info', `page 1 opens: ${firstPage.slice(0, 120)}...`);
       return;
     }
 

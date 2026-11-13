@@ -1,9 +1,9 @@
-//! Semantic Scholar's Academic Graph API (projects.md §4). It knows most
-//! papers in computer science and the sciences by DOI or arXiv id, and —
-//! what no other source here offers — what each paper cites and what cites
+//! Semantic Scholar's Academic Graph API (projects.md sec. 4). It knows most
+//! papers in computer science and the sciences by DOI or arXiv id, and -
+//! what no other source here offers - what each paper cites and what cites
 //! it. What leaves the machine: for a paper, its DOI or arXiv id
-//! (`paper/DOI:…`, `paper/ARXIV:…`); for its references and citations, the
-//! same id; for a title search, the title. The optional key (Settings →
+//! (`paper/DOI:...`, `paper/ARXIV:...`); for its references and citations, the
+//! same id; for a title search, the title. The optional key (Settings ->
 //! Semantic Scholar API key) goes in the `x-api-key` header and buys a
 //! better rate limit, nothing else; without it the limiter spaces requests
 //! three seconds apart. No contact is sent.
@@ -26,7 +26,7 @@ const LINK_FIELDS: &str = "externalIds";
 const LINK_LIMIT: &str = "1000";
 const KEY_HEADER: &str = "x-api-key";
 
-/// `paper/{DOI:…|ARXIV:…}?fields=…`. Sends the identifier. `Ok(None)` on
+/// `paper/{DOI:...|ARXIV:...}?fields=...`. Sends the identifier. `Ok(None)` on
 /// 404 or a record without a title.
 pub async fn fetch_by_id(
     client: &reqwest::Client,
@@ -88,7 +88,7 @@ async fn fetch_links(
     Ok(parse_links(&body))
 }
 
-/// `paper/search?query={title}&limit=5&fields=…`. Sends the title. Up to
+/// `paper/search?query={title}&limit=5&fields=...`. Sends the title. Up to
 /// five candidates in Semantic Scholar's relevance order.
 pub async fn search_by_title(
     client: &reqwest::Client,
@@ -156,7 +156,7 @@ pub fn parse_paper(json: &str) -> Option<LookupCandidateDto> {
 }
 
 /// Parses a `paper/search` response: one candidate per titled paper in
-/// `data`, in API order. Not JSON, or no `data` → empty.
+/// `data`, in API order. Not JSON, or no `data` -> empty.
 pub fn parse_search(json: &str) -> Vec<LookupCandidateDto> {
     let Ok(root) = serde_json::from_str::<Value>(json) else {
         return Vec::new();
@@ -279,7 +279,7 @@ fn external_id(ids: &Value) -> Option<CitationIdDto> {
 }
 
 // ---------------------------------------------------------------------------
-// Tests — no network. Fixtures are trimmed from the Academic Graph API's
+// Tests - no network. Fixtures are trimmed from the Academic Graph API's
 // documented response shapes.
 // ---------------------------------------------------------------------------
 

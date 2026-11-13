@@ -1,13 +1,13 @@
 //! Reading annotations back out of a PDF.
 //!
 //! The counterpart to `save.rs`, and the reason annotating a paper stopped
-//! being one-way. Renders have always included annotations — `render.rs` passes
-//! `FPDF_ANNOT` — so a file's existing markup was *visible*; it was simply
+//! being one-way. Renders have always included annotations - `render.rs` passes
+//! `FPDF_ANNOT` - so a file's existing markup was *visible*; it was simply
 //! unreachable, because nothing turned it back into something the editor could
 //! select, move or delete.
 //!
-//! Only the subtypes `save.rs` knows how to write are read. Everything else —
-//! links, form widgets, popups, XFA, redactions — is skipped here and left
+//! Only the subtypes `save.rs` knows how to write are read. Everything else -
+//! links, form widgets, popups, XFA, redactions - is skipped here and left
 //! untouched by the save path too. Adopting an annotation this model cannot
 //! represent would mean silently degrading it the next time the file was saved.
 //!
@@ -62,7 +62,7 @@ fn color_or(found: Option<PdfColor>, fallback: &str) -> (String, f32) {
 
 /// A highlight's quads, in display space.
 ///
-/// Highlights carry attachment points — one quad per line of text covered —
+/// Highlights carry attachment points - one quad per line of text covered -
 /// rather than one rectangle, which is what lets a highlight follow a sentence
 /// across a line break instead of boxing the whole paragraph.
 fn quads_of(points: &PdfPageAnnotationAttachmentPoints<'_>, space: &PageSpace) -> Vec<QuadDto> {
@@ -82,7 +82,7 @@ fn quads_of(points: &PdfPageAnnotationAttachmentPoints<'_>, space: &PageSpace) -
 }
 
 /// A rectangle as a single quad, for a highlight that carries no attachment
-/// points. Degenerate, but still selectable — better than dropping it.
+/// points. Degenerate, but still selectable - better than dropping it.
 fn quad_of_rect(rect: &RectDto) -> QuadDto {
     let (l, r) = (rect.x, rect.x + rect.w);
     let (b, t) = (rect.y, rect.y + rect.h);
@@ -98,13 +98,13 @@ fn quad_of_rect(rect: &RectDto) -> QuadDto {
 ///
 /// Never from `PdfPageAnnotationCommon::fill_color()` or `stroke_color()`.
 /// Those call `FPDFAnnot_GetColor`, which PDFium refuses outright for any
-/// annotation whose dictionary has an `/AP` entry — and `pdfium-render` answers
+/// annotation whose dictionary has an `/AP` entry - and `pdfium-render` answers
 /// that refusal by retrying through `FPDFPageObj_GetFillColor` with the
 /// `FPDF_ANNOTATION` handle *cast* to `FPDF_PAGEOBJECT`. PDFium then reads an
 /// annotation as though it were a page object. The type-confused load happens
 /// to hit mapped memory on macOS; on Linux and Windows it faults, which is what
 /// took CI down. The cast is still present in pdfium-render 0.9.3, so there is
-/// no version to upgrade to — the call simply must not be made.
+/// no version to upgrade to - the call simply must not be made.
 ///
 /// PDFium generates appearance streams for most markup subtypes as it loads
 /// them, so `/AP` is the common case for anything read back out of a saved
@@ -158,7 +158,7 @@ fn style_of(objects: &PdfPageAnnotationObjects<'_>) -> AnnotStyle {
 /// image.
 ///
 /// A bubble is written as a single filled path and nothing else; an image
-/// stamp carries an image object. Anything holding neither — or holding both —
+/// stamp carries an image object. Anything holding neither - or holding both -
 /// came from somewhere else and is left to the image branch, which only ever
 /// moves what it does not understand.
 fn is_shaded_bubble(objects: &PdfPageAnnotationObjects<'_>) -> bool {
@@ -294,7 +294,7 @@ fn read_annotation(
         }
         PdfPageAnnotationType::Stamp if is_shaded_bubble(annot.objects()) => {
             // A shaded bubble is a Stamp too, so it has to be told apart from
-            // a placed image here or it would come back as one — and an image
+            // a placed image here or it would come back as one - and an image
             // read from a file carries no source path, so the save path drops
             // it and writes nothing in its place. Shading a quiz, saving,
             // reopening and nudging a mark would have erased it.

@@ -2,13 +2,13 @@
 //!
 //! Per-document filters plateau because they are consulted *per document*: a
 //! query reads something for every file, so the work grows with the library no
-//! matter how sharp the filter is. Sharpening it makes that worse — a document
+//! matter how sharp the filter is. Sharpening it makes that worse - a document
 //! holds ~50k distinct 5-grams, and filtering those needs far more per document
 //! than the 4 KB a trigram bitmap costs.
 //!
 //! Inverting the question fixes the complexity rather than the constant. Here a
 //! gram names the documents that contain it, so a query reads only the posting
-//! lists for its own grams — a few kilobytes — and never touches the rest of
+//! lists for its own grams - a few kilobytes - and never touches the rest of
 //! the library. Work becomes proportional to the query.
 //!
 //! Two details make it small and honest:
@@ -32,7 +32,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// Bytes per gram. Four is short enough that a phrase yields several and long
-/// enough to be selective — "olla" is rare where "col" is everywhere.
+/// enough to be selective - "olla" is rare where "col" is everywhere.
 const GRAM: usize = 4;
 /// A gram in more of the library than this is dropped: it cannot narrow
 /// anything, and it is what makes the index large.
@@ -48,7 +48,7 @@ const VERSION: u32 = 1;
 pub enum Candidates {
     /// These documents, and no others, can contain the phrase.
     Only(Vec<u32>),
-    /// The index cannot narrow this query — every gram in it was too common.
+    /// The index cannot narrow this query - every gram in it was too common.
     /// The caller scans, which is the right answer anyway for a phrase that
     /// appears in most of the library.
     Unknown,
@@ -62,7 +62,7 @@ pub struct GramIndex {
     directory: Vec<(u32, u32, u32)>,
     postings: Vec<u32>,
     /// Slots with no indexed text, which therefore must be considered for
-    /// every query — the index has nothing to say about them, and saying
+    /// every query - the index has nothing to say about them, and saying
     /// nothing must not read as saying no.
     always: Vec<u32>,
     /// Identifies the document set this was built from, so an index that no
@@ -247,7 +247,7 @@ impl GramIndex {
     }
 
     /// Parse an index, or nothing if it is not one this build understands.
-    /// Every length is checked against what is actually there — the file is
+    /// Every length is checked against what is actually there - the file is
     /// read back from disk and must not be trusted to be well formed.
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         let mut at = 0usize;
@@ -363,7 +363,7 @@ mod tests {
     #[test]
     fn a_gram_in_everything_narrows_nothing_but_never_lies() {
         // "smoothing" is in all three, so its grams are dropped as common and
-        // the index admits it cannot help — which must not be confused with
+        // the index admits it cannot help - which must not be confused with
         // saying no document matches.
         let index = GramIndex::build(corpus(), 1);
         assert_eq!(index.candidates("smoothing"), Candidates::Unknown);

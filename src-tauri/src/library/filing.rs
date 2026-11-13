@@ -1,7 +1,7 @@
 //! Filing: a PDF from outside the library folders is copied into an inbox
-//! folder inside one of them. Copy, never move, never delete — the one
+//! folder inside one of them. Copy, never move, never delete - the one
 //! filesystem write this feature makes outside its own data files, and the
-//! one a user could not undo from inside SpeedyF (projects.md §6, §12).
+//! one a user could not undo from inside SpeedyF (projects.md sec. 6, sec. 12).
 
 use super::{contained_in_any, content_fingerprint};
 use crate::errors::{AppError, AppResult};
@@ -14,7 +14,7 @@ const MAX_SUFFIX: u32 = 10_000;
 /// The path of `src` inside the library: `src` itself when it already is in
 /// a root, otherwise a copy in `inbox_dir`. A copy that is already there
 /// with the same bytes is reused; a different file of the same name gets
-/// " (2)", " (3)", … rather than being replaced.
+/// " (2)", " (3)", ... rather than being replaced.
 pub fn copy_into_inbox(src: &Path, inbox_dir: &Path, roots: &[PathBuf]) -> AppResult<PathBuf> {
     let source = src
         .canonicalize()

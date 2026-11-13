@@ -5,7 +5,7 @@
 //! the *paths* each window shows, in tab order. Those answer the questions
 //! that span windows and that a webview cannot answer about itself: which
 //! other windows a tab can be moved to, and whether another window already
-//! has a file open — nobody opens a second copy of a document, since that is
+//! has a file open - nobody opens a second copy of a document, since that is
 //! two PDFium handles, two dirty states, and a silent overwrite on save.
 use crate::commands::EngineState;
 use crate::engine::types::{DocId, Priority};
@@ -52,12 +52,12 @@ pub struct WindowTabs {
     pub active_path: Option<String>,
 }
 
-/// A window as another window's "move tab to…" menu sees it.
+/// A window as another window's "move tab to..." menu sees it.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WindowSummaryDto {
     label: String,
-    /// The active document's file name, or the first tab's — what the window
+    /// The active document's file name, or the first tab's - what the window
     /// is actually showing, which is the only way to tell two of them apart.
     title: String,
     tab_count: usize,
@@ -202,7 +202,7 @@ fn next_label(state: &Windows) -> String {
     format!("speedyf-{}", registry.sequence)
 }
 
-/// Opens an empty window, or — at launch — one that reopens the tabs a window
+/// Opens an empty window, or - at launch - one that reopens the tabs a window
 /// had when the app last quit.
 #[tauri::command]
 pub async fn new_window(app: tauri::AppHandle, restore: Option<WindowTabs>) -> Result<(), String> {
@@ -332,7 +332,7 @@ pub async fn detach_tab(
     Ok(())
 }
 
-/// Hands a tab to a window that already exists — the "Move to …" half of the
+/// Hands a tab to a window that already exists - the "Move to ..." half of the
 /// tab menu. The same transaction as `detach_tab`: the target adopts the
 /// snapshot and acknowledges, and only then does ownership move. Unsaved edits
 /// travel with the snapshot, so nothing has to be saved first.
@@ -429,7 +429,7 @@ pub fn update_window_tabs(
         .insert(window.label().into(), WindowTabs { tabs, active_path });
 }
 
-/// The other windows, for a "move tab to…" menu, in creation order.
+/// The other windows, for a "move tab to..." menu, in creation order.
 #[tauri::command]
 pub fn window_roster(
     window: tauri::WebviewWindow,
@@ -504,7 +504,7 @@ impl Registry {
     }
 
     /// Either the window that already has `path` (open, or waiting to be
-    /// restored with it), or — when none does — `path` queued as the opening
+    /// restored with it), or - when none does - `path` queued as the opening
     /// tab of the new window `label`, which takes it at startup the way a
     /// restored window takes its session.
     fn claim_new_window(&mut self, label: &str, path: String) -> Option<String> {
@@ -635,9 +635,9 @@ fn window_title(tabs: &WindowTabs) -> String {
 
 /// Makes repeated titles tell each other apart.
 ///
-/// A menu offering "Move to “main.pdf”" twice names no destination at all,
-/// and papers arrive named that way in bulk — `1-s2.0-…-main.pdf` beside
-/// `…-main.pdf`. The containing folder is what distinguishes those, so
+/// A menu offering "Move to "main.pdf"" twice names no destination at all,
+/// and papers arrive named that way in bulk - `1-s2.0-...-main.pdf` beside
+/// `...-main.pdf`. The containing folder is what distinguishes those, so
 /// duplicates take it; empty windows, which have no folder, are numbered.
 fn disambiguate(entries: &mut [(String, Option<&str>)]) {
     let mut seen: HashMap<String, usize> = HashMap::new();

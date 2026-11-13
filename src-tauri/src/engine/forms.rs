@@ -28,7 +28,7 @@ use std::os::raw::{c_int, c_ulong, c_void};
 /// every hook null.
 ///
 /// Enough to *read* fields, which is all the enumeration in `worker.rs` needs.
-/// Not enough to change one — see `FormSession`. PDFium retains this pointer
+/// Not enough to change one - see `FormSession`. PDFium retains this pointer
 /// until `FPDFDOC_ExitFormFillEnvironment`, so whatever holds it has to keep
 /// it at a fixed address for the whole session.
 pub fn form_fill_info() -> FPDF_FORMFILLINFO {
@@ -74,7 +74,7 @@ pub fn form_fill_info() -> FPDF_FORMFILLINFO {
 /// A form-fill environment that can commit values and regenerate appearances.
 ///
 /// The null callback table above is enough to read fields, and enough to
-/// *check a checkbox* — but not enough to select a radio button. Selecting one
+/// *check a checkbox* - but not enough to select a radio button. Selecting one
 /// means clearing every other button in its group, and PDFium reaches those
 /// siblings by asking the host for the page they sit on. With `FFI_GetPage`
 /// left null it cannot, so it abandons the change and reports nothing: the
@@ -201,7 +201,7 @@ impl BufferWriter {
 /// rewriting the file in place.
 ///
 /// Runs after the document has been written, because it needs a file PDFium
-/// can open on its own terms — the form-fill environment attaches to a raw
+/// can open on its own terms - the form-fill environment attaches to a raw
 /// document handle, which `pdfium-render` does not hand out.
 ///
 /// A widget already in the requested state is left alone, so this is a no-op
@@ -592,7 +592,7 @@ mod tests {
 
     /// Saving a form used to hand back a page of dead boxes: `FPDF_ImportPages`
     /// copies widget annotations but not the `/AcroForm` that gives them
-    /// meaning, so the output stopped being a form at all — and the text
+    /// meaning, so the output stopped being a form at all - and the text
     /// values the user had typed went with it, silently, while the panel said
     /// they had been written.
     #[test]

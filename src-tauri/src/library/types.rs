@@ -216,7 +216,7 @@ pub struct PaperRowDto {
     pub id: String,
     /// The title, or the file name when there is none.
     pub title: String,
-    /// "Jarzynski", "Evans, Cohen & Morriss", "Marchetti et al." — or "".
+    /// "Jarzynski", "Evans, Cohen & Morriss", "Marchetti et al." - or "".
     pub authors: String,
     pub year: Option<i32>,
     pub venue: Option<String>,
@@ -396,7 +396,7 @@ pub struct LibraryCountsDto {
 }
 
 /// What a whole-project lookup did. Papers without an identifier are
-/// skipped, never searched by title (projects.md §4).
+/// skipped, never searched by title (projects.md sec. 4).
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LookupBatchDto {

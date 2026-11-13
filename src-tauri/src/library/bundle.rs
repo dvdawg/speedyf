@@ -1,4 +1,4 @@
-//! Export a project as a bundle (projects.md §5): one `.zip` holding the
+//! Export a project as a bundle (projects.md sec. 5): one `.zip` holding the
 //! project's `.bib` and the main PDF of each of its items, named by cite
 //! key, for handing a reading list to a co-author or a submission system.
 //!

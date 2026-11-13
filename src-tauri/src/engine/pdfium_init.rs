@@ -1,8 +1,8 @@
 //! Locates and binds the PDFium dynamic library.
 //!
-//! Search order: `SPEEDYF_PDFIUM_PATH` env (file or dir) → caller-provided
-//! hints (Tauri resource dir in production) → dev-time `src-tauri/pdfium/`
-//! (compile-time manifest path) → executable-adjacent dirs → system library.
+//! Search order: `SPEEDYF_PDFIUM_PATH` env (file or dir) -> caller-provided
+//! hints (Tauri resource dir in production) -> dev-time `src-tauri/pdfium/`
+//! (compile-time manifest path) -> executable-adjacent dirs -> system library.
 
 use pdfium_render::prelude::*;
 use std::path::PathBuf;
@@ -19,7 +19,7 @@ pub fn candidate_dirs(hints: &[PathBuf]) -> Vec<PathBuf> {
         if let Some(dir) = exe.parent() {
             dirs.push(dir.join("pdfium"));
             dirs.push(dir.to_path_buf());
-            // macOS bundle: Contents/MacOS/<exe> → Contents/Resources/pdfium
+            // macOS bundle: Contents/MacOS/<exe> -> Contents/Resources/pdfium
             dirs.push(dir.join("../Resources/pdfium"));
             dirs.push(dir.join("../Resources"));
         }

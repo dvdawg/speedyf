@@ -1,13 +1,13 @@
 //! Projects and memberships: a name, an ordered position, the ids of its
 //! papers, and an optional synced `.bib` path. Flat, many-to-many, held on
-//! the project as a list of paper ids (projects.md §2).
+//! the project as a list of paper ids (projects.md sec. 2).
 //!
 //! Deleting a project removes memberships and nothing else; files and papers
 //! are untouched.
 //!
-//! A project's `.bib` is written here too (projects.md §7): once, on export,
+//! A project's `.bib` is written here too (projects.md sec. 7): once, on export,
 //! or on every save while the project has a synced path. SpeedyF owns a
-//! synced file — hand edits to it are lost by design, and the file says so
+//! synced file - hand edits to it are lost by design, and the file says so
 //! in its first line.
 
 use super::bibtex;
@@ -120,7 +120,7 @@ impl PaperStore {
         Ok(self.project_dto_for(project))
     }
 
-    /// Paper id → ids of the projects holding it, in project order. Papers
+    /// Paper id -> ids of the projects holding it, in project order. Papers
     /// in no project are absent.
     pub(super) fn membership_map(&self) -> HashMap<&str, Vec<String>> {
         let mut map: HashMap<&str, Vec<String>> = HashMap::new();
@@ -240,8 +240,8 @@ impl PaperStore {
         Ok(self.projects[self.project_index(project_id)?].name.clone())
     }
 
-    /// The project's papers in list order — the order `library_papers`
-    /// shows them — so a `.bib` reads like the screen. Ids that name no
+    /// The project's papers in list order - the order `library_papers`
+    /// shows them - so a `.bib` reads like the screen. Ids that name no
     /// paper are skipped.
     pub fn project_members(&self, project_id: &str) -> AppResult<Vec<&PaperRecord>> {
         let project = &self.projects[self.project_index(project_id)?];
@@ -280,7 +280,7 @@ impl PaperStore {
         Ok((bibtex::render(&dtos, true, &self.bibtex_options), ids))
     }
 
-    /// Export .bib…: the project's entries written to `path` once. The
+    /// Export .bib...: the project's entries written to `path` once. The
     /// file is written before the keys are pinned, so a write that fails
     /// pins nothing.
     pub fn export_project_bib(&mut self, project_id: &str, path: &Path) -> AppResult<()> {
@@ -295,7 +295,7 @@ impl PaperStore {
     /// compared with the file, written only when the bytes differ, and its
     /// keys pinned. Called from every save, so the file never lags the
     /// data. A file that cannot be written is reported by project and does
-    /// not stop the others or the save — the user's action was a change to
+    /// not stop the others or the save - the user's action was a change to
     /// their library, and that must land whatever the state of a folder
     /// that may be unmounted.
     ///

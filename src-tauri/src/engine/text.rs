@@ -1,5 +1,5 @@
 //! Text extraction on the engine thread. Character boxes come back in raw
-//! PDF user space; we convert them through FPDF_PageToDevice (at 100×
+//! PDF user space; we convert them through FPDF_PageToDevice (at 100x
 //! precision) into display-normalized page space (origin bottom-left of the
 //! displayed page, y-up, points) so the frontend never sees crop-box or
 //! /Rotate weirdness. The raw character stream is kept 1:1 with PDFium char
@@ -20,8 +20,8 @@ pub struct ExtractedPage {
     pub boxes: Vec<[f32; 4]>,
     /// nominal point size of each character's font.
     ///
-    /// This is what a superscript actually is — a glyph set at a smaller size
-    /// — and it is not recoverable from the character box, whose height is a
+    /// This is what a superscript actually is - a glyph set at a smaller size -
+    /// and it is not recoverable from the character box, whose height is a
     /// property of the glyph's shape. A period and a hyphen are short at any
     /// size, which is exactly how they came to be read as raised scripts.
     pub sizes: Vec<f32>,
@@ -35,7 +35,7 @@ pub struct ExtractedPage {
 /// Font families TeX reserves for mathematics. `CMMI` carries variables,
 /// `CMSY` operators and relations, `CMEX` the large braces and integrals,
 /// `MSAM`/`MSBM` the AMS symbols. A subsetted font keeps the family name after
-/// its six-letter tag — "EWJNXA+CMMI10".
+/// its six-letter tag - "EWJNXA+CMMI10".
 const MATH_FONT_FAMILIES: &[&str] = &[
     "CMMI",
     "CMSY",
@@ -115,14 +115,14 @@ impl DispMapper {
         }
     }
 
-    /// user-space point → display-normalized (y-up) point
+    /// user-space point -> display-normalized (y-up) point
     pub(crate) fn map(&self, ux: f64, uy: f64) -> (f32, f32) {
         let dx = self.origin.0 + ux * self.x_axis.0 + uy * self.y_axis.0;
         let dy = self.origin.1 + ux * self.x_axis.1 + uy * self.y_axis.1;
         (dx as f32, self.disp_h - dy as f32)
     }
 
-    /// user-space direction → display-normalized (y-up) direction: where a
+    /// user-space direction -> display-normalized (y-up) direction: where a
     /// step of (`ux`, `uy`) in user space goes on the displayed page.
     pub(crate) fn map_vector(&self, ux: f64, uy: f64) -> (f32, f32) {
         let dx = ux * self.x_axis.0 + uy * self.y_axis.0;
@@ -142,7 +142,7 @@ impl DispMapper {
         }
     }
 
-    /// user-space char box → display rect (x, y_bottom, w, h), y-up
+    /// user-space char box -> display rect (x, y_bottom, w, h), y-up
     pub(crate) fn map_box(&self, l: f64, r: f64, b_: f64, t: f64) -> (f32, f32, f32, f32) {
         let (x1, y1) = self.map(l, b_);
         let (x2, y2) = self.map(r, t);
@@ -225,7 +225,7 @@ pub fn extract_page(
 
         let (mut l, mut r, mut bo, mut t) = (0f64, 0f64, 0f64, 0f64);
         let ok = b.FPDFText_GetCharBox(tp, i, &mut l, &mut r, &mut bo, &mut t) != 0;
-        // A glyph with no ink has no box — a space usually, sometimes a
+        // A glyph with no ink has no box - a space usually, sometimes a
         // combining mark. Reported as such rather than dropped, because
         // whether it is worth keeping is a question about text and belongs
         // with the rest of that question, in `build_runs`.
@@ -269,8 +269,8 @@ pub(crate) struct Glyph {
 /// Assemble a page's characters into positioned runs.
 ///
 /// Separated from extraction so that it can be tested without a PDF. The rules
-/// here — where a run breaks, and whether a character with no box still
-/// contributes text — are easy to get wrong and impossible to see from
+/// here - where a run breaks, and whether a character with no box still
+/// contributes text - are easy to get wrong and impossible to see from
 /// outside, and the fixture needed to exercise them through PDFium turned out
 /// not to be constructible: PDFium gives a Type3 space a box synthesised from
 /// its width, so the very case this has to handle cannot be written into a
@@ -279,7 +279,7 @@ pub(crate) struct Glyph {
 /// A character with no box cannot extend a run's geometry, and used to be
 /// skipped entirely. That silently deleted spaces: whether two words stayed
 /// apart then depended on whether the *next* glyph happened to sit far enough
-/// away to split the run, and often it did not — "Samuel B Hopkins" reached
+/// away to split the run, and often it did not - "Samuel B Hopkins" reached
 /// the reference panel as "SamuelBHopkins", and the same text reached search
 /// and the clipboard. A space belongs in the text whether or not it has a
 /// place on the page.
@@ -322,7 +322,7 @@ pub(crate) fn build_runs(glyphs: &[Glyph]) -> Vec<TextRun> {
         }
         let Some([x, y, w, h]) = glyph.bbox else {
             // Into a run already open only, so a run never begins with a
-            // space, and never carries two in a row — a PDF often encodes one
+            // space, and never carries two in a row - a PDF often encodes one
             // gap as several zero-width characters.
             if glyph.ch.is_whitespace() {
                 if let Some(run) = cur.as_mut() {
@@ -451,8 +451,8 @@ mod tests {
 
     /// The bug this was written for: two words three points apart, which is
     /// closer than the 5.4pt that would split the run, so nothing but the
-    /// space itself can keep them apart. Without it they came out welded —
-    /// "Samuel B Hopkins" as "SamuelBHopkins" — in the panel, in search, and
+    /// space itself can keep them apart. Without it they came out welded -
+    /// "Samuel B Hopkins" as "SamuelBHopkins" - in the panel, in search, and
     /// on the clipboard.
     #[test]
     fn a_space_with_no_glyph_still_separates_the_words() {
@@ -461,7 +461,7 @@ mod tests {
         assert_eq!(runs[0].text, "a b");
     }
 
-    /// The box covers the glyphs, and a trailing space has none — so a run
+    /// The box covers the glyphs, and a trailing space has none - so a run
     /// that ends on one must not carry it, or every line ends in whitespace
     /// for whoever joins the runs back up.
     #[test]

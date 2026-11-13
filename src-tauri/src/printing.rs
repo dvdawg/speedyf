@@ -54,7 +54,7 @@ pub struct PrintJobDto {
 }
 
 /// A CUPS name: letters, digits, and the three punctuation marks CUPS allows.
-/// Deliberately narrow — this is the difference between an argument and an
+/// Deliberately narrow - this is the difference between an argument and an
 /// instruction.
 fn is_safe_token(value: &str) -> bool {
     !value.is_empty()
@@ -114,15 +114,15 @@ pub fn is_print_temp(path: &Path) -> bool {
     if !named {
         return false;
     }
-    // Compare resolved parents: macOS hands out /var/folders/… which is a
-    // symlink to /private/var/folders/….
+    // Compare resolved parents: macOS hands out /var/folders/... which is a
+    // symlink to /private/var/folders/....
     let parent = path.parent().and_then(|p| p.canonicalize().ok());
     let temp = std::env::temp_dir().canonicalize().ok();
     matches!((parent, temp), (Some(a), Some(b)) if a == b)
 }
 
 /// Delete a finished print job. A path that is not ours is refused, not
-/// ignored — a caller asking for it has a bug worth surfacing.
+/// ignored - a caller asking for it has a bug worth surfacing.
 pub fn discard(path: &str) -> AppResult<()> {
     let path = Path::new(path);
     if !is_print_temp(path) {
@@ -138,7 +138,7 @@ pub fn discard(path: &str) -> AppResult<()> {
     }
 }
 
-/// Copy a prepared print job somewhere the user chose — "print to PDF",
+/// Copy a prepared print job somewhere the user chose - "print to PDF",
 /// which for us is just keeping the file we were going to print anyway.
 ///
 /// Refuses a source we did not prepare, for the same reason `discard` does.
@@ -244,7 +244,7 @@ pub fn parse_printers(lpstat_p: &str, lpstat_d: &str) -> Vec<PrinterDto> {
 
     lpstat_p
         .lines()
-        // "printer HP_ENVY_7640_series is idle.  enabled since …"
+        // "printer HP_ENVY_7640_series is idle.  enabled since ..."
         .filter_map(|line| line.strip_prefix("printer ")?.split_whitespace().next())
         .filter(|name| is_safe_token(name))
         .map(|name| PrinterDto {
@@ -303,7 +303,7 @@ pub fn parse_lpoptions(text: &str) -> Vec<PrintOptionDto> {
 ///
 /// This is the *only* platform-gated thing in the module, and deliberately so.
 /// Gating the callers instead left every parser and validator below
-/// unreachable on Windows, which is a dead-code error under `-D warnings` —
+/// unreachable on Windows, which is a dead-code error under `-D warnings` -
 /// the same shape of bug as the ungated `RunEvent::Opened`. Keeping one code
 /// path for every platform means a lint can no longer disagree across them.
 #[cfg(unix)]
@@ -338,7 +338,7 @@ fn run(_program: &str, _args: &[String]) -> AppResult<String> {
 
 /// Printers CUPS knows about.
 ///
-/// A machine with no printers is not an error — `lpstat` exits non-zero for
+/// A machine with no printers is not an error - `lpstat` exits non-zero for
 /// it, and so does a platform with no `lpstat` at all. An empty list is
 /// exactly what the dialog should show in both cases, and "Save as PDF" keeps
 /// working regardless, since that path never touches a printer.
@@ -365,7 +365,7 @@ pub fn printer_options(printer: &str) -> AppResult<Vec<PrintOptionDto>> {
 /// Hand the job to CUPS.
 ///
 /// Waits for `lp` and reports what it said. Unlike opening a browser, a print
-/// that did not happen is worth telling the user about — and `lp` fails
+/// that did not happen is worth telling the user about - and `lp` fails
 /// cheaply and immediately when a queue is wrong. The job is validated before
 /// the platform is consulted, so a malformed one is refused the same way
 /// everywhere.

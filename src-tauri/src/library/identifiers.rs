@@ -1,10 +1,10 @@
-//! What an identifier says on its own, with no network (projects.md §4).
+//! What an identifier says on its own, with no network (projects.md sec. 4).
 //!
 //! An arXiv id encodes the month it was submitted; the stamp arXiv prints
 //! down the first page's margin adds the primary category and the date of
 //! the version. A DOI from a few publisher families carries its year in a
-//! fixed place. An Elsevier PII — what an old ScienceDirect scan prints in
-//! place of a DOI, often as the file's only identifier — carries its year
+//! fixed place. An Elsevier PII - what an old ScienceDirect scan prints in
+//! place of a DOI, often as the file's only identifier - carries its year
 //! in the parentheses and converts to the article's DOI, which is what
 //! unlocks a Crossref lookup for a 1988 paper.
 //!
@@ -72,8 +72,8 @@ fn arxiv_yymm(id: &str) -> Option<(u32, u32, bool)> {
     Some((yy, mm, false))
 }
 
-/// The year an arXiv id was submitted: `2401.12345` → 2024,
-/// `hep-th/9901001` → 1999, `cond-mat/0601234` → 2006. The old scheme ran
+/// The year an arXiv id was submitted: `2401.12345` -> 2024,
+/// `hep-th/9901001` -> 1999, `cond-mat/0601234` -> 2006. The old scheme ran
 /// from 1991 to March 2007, so a two-digit year of 91 or more is in the
 /// nineteen-hundreds.
 pub fn year_from_arxiv(id: &str) -> Option<i32> {
@@ -82,7 +82,7 @@ pub fn year_from_arxiv(id: &str) -> Option<i32> {
     Some(century + yy as i32)
 }
 
-/// The month (1–12) an arXiv id was submitted. Nothing stores it yet; it
+/// The month (1-12) an arXiv id was submitted. Nothing stores it yet; it
 /// sits beside the year for when a record wants it.
 #[cfg_attr(not(test), allow(dead_code))] // read by the tests
 pub fn month_from_arxiv(id: &str) -> Option<u8> {
@@ -342,7 +342,7 @@ pub fn valid_issn(issn: &str) -> bool {
     (sum + check) % 11 == 0
 }
 
-/// Whether the PII's ISSN checks out — the bar a PII must clear before it
+/// Whether the PII's ISSN checks out - the bar a PII must clear before it
 /// may stand in for a DOI and merge files. A mis-OCR'd digit would
 /// otherwise merge two articles.
 pub fn pii_has_valid_issn(pii: &str) -> bool {
@@ -356,7 +356,7 @@ pub fn doi_from_pii(pii: &str) -> String {
     format!("10.1016/{}", pii.trim())
 }
 
-/// The year in a PII's parentheses: `(88)` → 1988, `(05)` → 2005.
+/// The year in a PII's parentheses: `(88)` -> 1988, `(05)` -> 2005.
 pub fn year_from_pii(pii: &str) -> Option<i32> {
     let open = pii.find('(')?;
     let yy = pii.get(open + 1..open + 3)?;
@@ -384,7 +384,7 @@ fn year_at_start(s: &str) -> Option<i32> {
         .filter(|year| (1900..=2100).contains(year))
 }
 
-/// `<segment>.YYYY.` — the year a journal's DOIs carry after the journal
+/// `<segment>.YYYY.` - the year a journal's DOIs carry after the journal
 /// code, as Elsevier (`j.physa.2020.124578`) and IEEE (`tpami.2019.291`)
 /// write them.
 fn year_after_first_segment(rest: &str) -> Option<i32> {

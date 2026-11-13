@@ -4,12 +4,12 @@
 //! per-document stamps taken at submission time, and the worker skips (and
 //! counts) obsolete render jobs whose stamps have since been superseded:
 //!
-//! * `gen` — the *URL* generation. Bumping it changes every pdfr:// URL the
+//! * `gen` - the *URL* generation. Bumping it changes every pdfr:// URL the
 //!   frontend mints and flags the document's cached rasters as preferred
 //!   eviction victims. Reserved for changes that make cached pixels wrong
 //!   (page edits), because it forces the webview to re-fetch and re-decode
 //!   every mounted image.
-//! * `epoch` — the *cancel* stamp. Bumping it abandons queued and in-flight
+//! * `epoch` - the *cancel* stamp. Bumping it abandons queued and in-flight
 //!   render work for a document without touching URLs or caches, which is all
 //!   that scrolling past a page needs.
 //!

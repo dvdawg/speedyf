@@ -1,7 +1,7 @@
 //! Finding the bubbles and checkboxes a document *draws* rather than declares.
 //!
 //! An AcroForm checkbox is a widget: it has a name, a value, and a viewer that
-//! knows how to toggle it. A LaTeX `\bigcirc` is none of those things — it is a
+//! knows how to toggle it. A LaTeX `\bigcirc` is none of those things - it is a
 //! glyph, no different to the engine from a comma. Yet it is what almost every
 //! problem set and paper quiz actually uses, and "shade the correct bubble" is
 //! a real instruction a reader has to be able to follow.
@@ -19,11 +19,11 @@ use super::types::{BubbleDto, RectDto};
 
 /// Characters that are drawn as an empty, fillable control.
 ///
-/// `\bigcirc` in CMSY10 — the LaTeX bubble — reaches us as U+20DD, a
+/// `\bigcirc` in CMSY10 - the LaTeX bubble - reaches us as U+20DD, a
 /// *combining* enclosing circle, because that is the nearest thing the font's
 /// `ToUnicode` map can name. It is the single most common entry here.
 const BUBBLE_CHARS: &[char] = &[
-    '\u{20DD}', // COMBINING ENCLOSING CIRCLE — LaTeX \bigcirc
+    '\u{20DD}', // COMBINING ENCLOSING CIRCLE - LaTeX \bigcirc
     '\u{25CB}', // WHITE CIRCLE
     '\u{25EF}', // LARGE CIRCLE
     '\u{26AA}', // MEDIUM WHITE CIRCLE
@@ -52,7 +52,7 @@ const MIN_ASPECT: f32 = 0.55;
 /// `boxes` and `sizes` are indexed by PDFium character index, exactly as
 /// `text::extract_page` returns them; `raw` holds one Rust char per index. A
 /// zero box means PDFium reported no geometry, which disqualifies a character
-/// outright — there is nothing to aim at.
+/// outright - there is nothing to aim at.
 pub fn detect(raw: &str, boxes: &[[f32; 4]], sizes: &[f32]) -> Vec<BubbleDto> {
     let mut out = Vec::new();
     for (index, ch) in raw.chars().enumerate() {

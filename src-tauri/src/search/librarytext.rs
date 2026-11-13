@@ -1,21 +1,21 @@
 //! The library's own search index: one text sidecar per document, on disk.
 //!
 //! Separate from `SearchStore`, which cannot serve this. That store is keyed by
-//! the ephemeral `DocId` a file gets when it is opened, holds ~2.1× the raw
+//! the ephemeral `DocId` a file gets when it is opened, holds ~2.1x the raw
 //! text inside a 64 MiB budget shared with every open tab, and is dropped when
 //! a document closes. A library of a few hundred papers is more text than the
 //! budget allows and has to survive quitting, so it needs a different home.
 //!
 //! What is *not* duplicated is the matching. `PageEntry`, `prepare_query` and
 //! `find_prepared_matches` come from the parent module unchanged: they define
-//! what "matches" means here — NFKC, collapsed whitespace, straightened
-//! quotes, folded ligatures — and the offset map they carry is the bridge back
+//! what "matches" means here - NFKC, collapsed whitespace, straightened
+//! quotes, folded ligatures - and the offset map they carry is the bridge back
 //! to raw PDFium character indices, which is what lets a hit found here be
 //! highlighted later by the ordinary per-document path.
 //!
 //! Sidecars hold text already normalized *and* case-folded. Storing only the
 //! normalized form was the first design, on the reasoning that folding is
-//! cheap — measurement disagreed: re-folding the library cost ~770ms a query,
+//! cheap - measurement disagreed: re-folding the library cost ~770ms a query,
 //! because it allocates a lowercased copy of every page whether or not the
 //! page can match. The folded copy costs a few megabytes of disk and removes
 //! that entirely.
@@ -41,9 +41,9 @@ const MAX_SIDECAR_BYTES: u64 = 64 * 1024 * 1024;
 #[derive(Serialize, Deserialize)]
 struct StoredPage {
     src: u32,
-    /// normalized text — what snippets are cut from
+    /// normalized text - what snippets are cut from
     text: String,
-    /// case-folded text — what a case-insensitive query scans
+    /// case-folded text - what a case-insensitive query scans
     folded: String,
     /// offset-map breakpoints, mapping a hit back to a raw PDFium index
     breaks: Vec<(u32, i32)>,
@@ -84,7 +84,7 @@ pub fn scan_path(app_data_dir: &Path, document: &Path) -> PathBuf {
     sidecar_path(app_data_dir, document).with_extension("fold")
 }
 
-/// Where a document's trigram filter lives — 4 KB beside the text it stands
+/// Where a document's trigram filter lives - 4 KB beside the text it stands
 /// for, so a search can rule the document out without reading the text.
 pub fn filter_path(app_data_dir: &Path, document: &Path) -> PathBuf {
     sidecar_path(app_data_dir, document).with_extension("tri")
@@ -109,8 +109,8 @@ pub fn refs_path(app_data_dir: &Path, document: &Path) -> PathBuf {
     sidecar_path(app_data_dir, document).with_extension("refs.json")
 }
 
-/// One page's text as a sidecar stores it — NFKC, quotes straightened,
-/// whitespace collapsed — for a reader that must see what a later read of
+/// One page's text as a sidecar stores it - NFKC, quotes straightened,
+/// whitespace collapsed - for a reader that must see what a later read of
 /// the sidecar would.
 ///
 /// `breaks` are the word breaks the page's geometry implies
@@ -198,7 +198,7 @@ pub fn write_spaced_sidecar(
     let _ = std::fs::write(filter_path(app_data_dir, document), filter.as_bytes());
 
     // The scan copy: every page's folded text run together. Page boundaries do
-    // not matter here — this file only ever answers "is the phrase anywhere in
+    // not matter here - this file only ever answers "is the phrase anywhere in
     // this document", and the sidecar settles where.
     let scan: String = sidecar
         .pages
@@ -212,8 +212,8 @@ pub fn write_spaced_sidecar(
 
 /// Read a sidecar's bytes, or nothing if there is no usable file there.
 ///
-/// Split from parsing so a search can reject a document on its raw bytes —
-/// see `worth_parsing` — without ever building the strings inside it.
+/// Split from parsing so a search can reject a document on its raw bytes -
+/// see `worth_parsing` - without ever building the strings inside it.
 fn read_filter(app_data_dir: &Path, document: &Path) -> Option<Filter> {
     let path = filter_path(app_data_dir, document);
     if std::fs::metadata(&path).ok()?.len() != FILTER_BYTES as u64 {
@@ -283,7 +283,7 @@ fn parse_sidecar(
 }
 
 /// A document's indexed text, every page joined with a newline, for a reader
-/// that wants the words and not the matching — the citation backfill. The
+/// that wants the words and not the matching - the citation backfill. The
 /// same checks as a search: nothing comes back for bytes the sidecar does not
 /// describe.
 pub fn read_sidecar_text(
@@ -352,7 +352,7 @@ pub fn search_document(
     out
 }
 
-/// Where the library's inverted gram index lives — one file for the whole
+/// Where the library's inverted gram index lives - one file for the whole
 /// library, unlike the per-document sidecars beside it.
 pub fn gram_index_path(app_data_dir: &Path) -> PathBuf {
     app_data_dir.join("text").join("grams.idx")
@@ -374,8 +374,8 @@ pub fn library_signature(documents: &[LibraryDocument]) -> u64 {
 
 /// Build the inverted index by reading every document's scan copy.
 ///
-/// This is the expensive operation in the whole feature — it reads the
-/// library's entire folded text once — so it is done off any hot path and its
+/// This is the expensive operation in the whole feature - it reads the
+/// library's entire folded text once - so it is done off any hot path and its
 /// result persisted. A document whose scan copy is unreadable is passed
 /// through as unknown rather than dropped.
 pub fn build_gram_index(app_data_dir: &Path, documents: &[LibraryDocument]) -> GramIndex {
@@ -427,8 +427,8 @@ pub struct LibraryDocument {
 ///    could contain this" without touching the documents at all, which is the
 ///    only step whose cost does not grow with the library. On a real
 ///    1017-paper corpus a distinctive phrase leaves fewer than seventy.
-/// 2. **The trigram filter** — 4 KB per document, against ~100 KB of text.
-/// 3. **The scan copy** — the folded text with nothing else, a third the size
+/// 2. **The trigram filter** - 4 KB per document, against ~100 KB of text.
+/// 3. **The scan copy** - the folded text with nothing else, a third the size
 ///    of the sidecar and needing no parsing.
 ///
 /// Only a document that survives all three pays to have its sidecar parsed.
@@ -449,12 +449,12 @@ pub fn search_library(
     }
     // The filters all work against folded text, so they are asked the folded
     // question whatever the search's own case sensitivity. Folding widens what
-    // matches, so this can only ever admit extra documents — asking a
+    // matches, so this can only ever admit extra documents - asking a
     // case-sensitive query of folded text would wrongly reject them.
     let folded = prepare_query(query, false);
 
     // Documents the index has ruled in. `None` means it could not narrow this
-    // query — every gram in it was too common — and everything is considered,
+    // query - every gram in it was too common - and everything is considered,
     // which is the right answer for a phrase that common anyway.
     let allowed: Option<HashSet<&Path>> = index.and_then(|index| match index.candidates(&folded) {
         Candidates::Unknown => None,
@@ -479,14 +479,14 @@ pub fn search_library(
         {
             continue;
         }
-        // A document with no filter — written before filters existed, or whose
-        // write failed — is read as before.
+        // A document with no filter - written before filters existed, or whose
+        // write failed - is read as before.
         if let Some(filter) = read_filter(app_data_dir, &document.path) {
             if !filter.might_contain(&folded) {
                 continue;
             }
         }
-        // No scan copy — indexed before this existed, or the write failed —
+        // No scan copy - indexed before this existed, or the write failed -
         // falls through to the sidecar, which is slower and correct.
         if let Ok(scan) = std::fs::read_to_string(scan_path(app_data_dir, &document.path)) {
             if !scan.contains(&folded) {
@@ -675,7 +675,7 @@ mod tests {
         ];
         let index = build_gram_index(dir.path(), &docs);
 
-        // Same results with the index as without it — the index decides what
+        // Same results with the index as without it - the index decides what
         // is read, never what matches.
         for query in [
             "variance",
@@ -706,7 +706,7 @@ mod tests {
 
         assert!(load_gram_index(dir.path(), signature).is_some());
         // A library that has changed since must not be searched through an
-        // index describing the old one — it would rule out the new files.
+        // index describing the old one - it would rule out the new files.
         assert!(load_gram_index(dir.path(), signature ^ 1).is_none());
     }
 

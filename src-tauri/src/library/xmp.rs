@@ -1,16 +1,16 @@
 //! The XMP packet embedded in a PDF: what the publisher's typesetter wrote
-//! about the work, when there is one (projects.md §4).
+//! about the work, when there is one (projects.md sec. 4).
 //!
 //! The packet is XML inside the file, stored uncompressed by spec so that a
-//! tool can find it without parsing the PDF — which is exactly what happens
-//! here. The file's bytes are searched for `<x:xmpmeta` … `</x:xmpmeta>`;
+//! tool can find it without parsing the PDF - which is exactly what happens
+//! here. The file's bytes are searched for `<x:xmpmeta` ... `</x:xmpmeta>`;
 //! every packet found is parsed, and the one that says the most wins. That
 //! settles both an incremental update that leaves an older packet in place
 //! (the newer one says as much or more, and ties go to the later one) and an
 //! embedded image's packet (which says next to nothing about the paper).
 //!
-//! What is read: Dublin Core (`dc:title`, `dc:creator`, `dc:identifier` —
-//! a DOI, an ISBN or an Elsevier PII — and `dc:publisher`), PRISM (`prism:doi`, `prism:isbn`,
+//! What is read: Dublin Core (`dc:title`, `dc:creator`, `dc:identifier` -
+//! a DOI, an ISBN or an Elsevier PII - and `dc:publisher`), PRISM (`prism:doi`, `prism:isbn`,
 //! `prism:publicationName`, `prism:volume`, `prism:number`,
 //! `prism:startingPage`, `prism:endingPage`, `prism:publicationDate`) and
 //! `pdfx:doi`. Both the element form and the attribute form on
@@ -137,7 +137,7 @@ pub fn read_xmp_bytes(bytes: &[u8]) -> Option<XmpFields> {
     best
 }
 
-/// Every `<x:xmpmeta …>…</x:xmpmeta>` slice in the file, in file order. A
+/// Every `<x:xmpmeta ...>...</x:xmpmeta>` slice in the file, in file order. A
 /// packet opened and never closed is skipped, as is anything after it.
 fn packets(bytes: &[u8]) -> Vec<&[u8]> {
     let mut found = Vec::new();
@@ -199,7 +199,7 @@ fn ns_of_prefix(prefix: &str) -> Ns {
     }
 }
 
-/// `prefix:local` → (namespace, local name). An undeclared prefix falls
+/// `prefix:local` -> (namespace, local name). An undeclared prefix falls
 /// back to its conventional meaning; no prefix is no namespace.
 fn resolve(qname: &[u8], declared: &HashMap<String, Ns>) -> (Ns, String) {
     let qname = String::from_utf8_lossy(qname);
@@ -302,8 +302,8 @@ fn absorb(fields: &mut XmpFields, field: Field, value: &str) {
     }
 }
 
-/// `dc:identifier` is a bag of anything: `doi:10.…`, a bare DOI, a DOI
-/// URL, `urn:isbn:…`, a publisher's own id. DOIs, ISBNs and Elsevier PIIs
+/// `dc:identifier` is a bag of anything: `doi:10....`, a bare DOI, a DOI
+/// URL, `urn:isbn:...`, a publisher's own id. DOIs, ISBNs and Elsevier PIIs
 /// (`S0022000088900281`, as the packet writes them) are picked out; the
 /// rest is ignored.
 fn absorb_identifier(fields: &mut XmpFields, value: &str) {

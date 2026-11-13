@@ -1,6 +1,6 @@
-//! Title normalization and matching for title searches (projects.md §4).
+//! Title normalization and matching for title searches (projects.md sec. 4).
 //!
-//! A title search — on request, for a paper that has no identifier — comes
+//! A title search - on request, for a paper that has no identifier - comes
 //! back with up to five candidates from each source asked. Whether one is
 //! applied without asking is decided here, by the rule the user chose:
 //! **exact, or a near match with the same year**. Exact is equal normalized
@@ -68,7 +68,7 @@ fn squeeze(normalized: &str) -> String {
 /// sets: shared words over all words, so word order does not matter and one
 /// word added or changed in six costs about 0.15. Short titles have too few
 /// words for that to grade anything (two words, one changed, is 0.33
-/// whether the change is `Computing` → `Computation` or → `Chemistry`), so
+/// whether the change is `Computing` -> `Computation` or -> `Chemistry`), so
 /// for them it is the Dice coefficient over the character bigrams of the
 /// space-free text, which credits a shared stem and charges a different
 /// word in proportion to its length.
@@ -125,8 +125,8 @@ fn bigram_dice(a: &str, b: &str) -> f32 {
 pub enum MatchQuality {
     /// The normalized titles are equal. Applied without asking.
     Exact,
-    /// Similarity ≥ [`NEAR_THRESHOLD`] and the same year on both sides.
-    /// Applied without asking — the user's rule.
+    /// Similarity >= [`NEAR_THRESHOLD`] and the same year on both sides.
+    /// Applied without asking - the user's rule.
     Near,
     /// Anything less, including a near title with a year missing or
     /// different. Parked for the user.
@@ -168,9 +168,9 @@ pub fn judge(
 /// Folds several sources' candidate lists into one. Two candidates are the
 /// same work when their DOIs agree, failing that (either lacks one) when
 /// their arXiv ids agree, failing that when their normalized titles are
-/// equal; two that both carry DOIs — or both arXiv ids — that differ are
+/// equal; two that both carry DOIs - or both arXiv ids - that differ are
 /// different works whatever their titles say. An arXiv DOI
-/// (`10.48550/arxiv.…`) counts as the arXiv id it stands for, not as a DOI.
+/// (`10.48550/arxiv....`) counts as the arXiv id it stands for, not as a DOI.
 /// The higher-ranked source's record is kept and its empty fields filled
 /// from the others; the result is in source rank order, highest first,
 /// each source's own order within.
@@ -567,8 +567,8 @@ mod tests {
             vec![preprint_a, preprint_b],
         ]);
         // The two DOIs stay apart; each preprint has no DOI, so it joins the
-        // first title match without an arXiv id of its own — the journal
-        // record — and the second preprint then differs from it by arXiv id
+        // first title match without an arXiv id of its own - the journal
+        // record - and the second preprint then differs from it by arXiv id
         // and joins the conference record.
         assert_eq!(merged.len(), 2);
         assert_eq!(merged[0].doi.as_deref(), Some("10.1000/journal"));

@@ -1,11 +1,11 @@
-//! Per-host pacing for everything the lookup chain sends (projects.md §4).
+//! Per-host pacing for everything the lookup chain sends (projects.md sec. 4).
 //!
 //! Every lookup service publishes a rate limit, and a project-wide lookup
 //! would blow through any of them if it fired its requests at once. So
 //! requests are queued per host: one in flight per host, each started no
 //! sooner than that host's minimum interval after the last
 //! ([`minimum_interval`]), and when a host answers 429 or 503 the queue
-//! pauses — for what its `Retry-After` says, or without one for a backoff
+//! pauses - for what its `Retry-After` says, or without one for a backoff
 //! that starts at 2 s and doubles to a 120 s cap until the next success
 //! resets it. Hosts never wait on each other: a slow arXiv does not hold up
 //! Crossref.
@@ -13,7 +13,7 @@
 //! Nothing here chooses what to send, and nothing is sent that a caller did
 //! not build; [`HostLimiter::send`] is the one way a request leaves. It
 //! retries once, after the pause, on 429, 503, any other 5xx, or a timeout,
-//! and never on another 4xx — a 404 is an answer, not a fault.
+//! and never on another 4xx - a 404 is an answer, not a fault.
 //!
 //! The clock is injected ([`Clock`]) so the tests wait on a fake one rather
 //! than sleep.
@@ -98,7 +98,7 @@ pub fn service_name(host: &str) -> String {
 }
 
 /// The pause after the `strikes`-th consecutive 429/503 that came without a
-/// `Retry-After`: 2 s, 4 s, 8 s, … capped at 120 s.
+/// `Retry-After`: 2 s, 4 s, 8 s, ... capped at 120 s.
 pub fn backoff(strikes: u32) -> Duration {
     let doublings = strikes.saturating_sub(1).min(6);
     (BACKOFF_START * (1 << doublings)).min(BACKOFF_CAP)
@@ -247,8 +247,8 @@ impl HostLimiter {
 
     /// The one way a request leaves: waits for the host's turn, sends, tells
     /// the limiter what came back, and on a 429, 503, other 5xx or timeout
-    /// retries once after the pause. Any other answer — 2xx, 3xx, 404, a
-    /// 403 — comes back as the response for the caller to read; a second
+    /// retries once after the pause. Any other answer - 2xx, 3xx, 404, a
+    /// 403 - comes back as the response for the caller to read; a second
     /// retryable failure, or a transport failure other than a timeout, is an
     /// error naming the service.
     pub async fn send(
@@ -409,7 +409,7 @@ fn parse_http_date(text: &str) -> Option<u64> {
         .position(|token| month_number(token).is_some())?;
     let month = month_number(tokens[month_at])?;
     let (day, year) = match month_at {
-        // `Sun 06 Nov 1994 …` and `Sunday 06 Nov 94 …`
+        // `Sun 06 Nov 1994 ...` and `Sunday 06 Nov 94 ...`
         2 => (tokens.get(1)?, tokens.get(3)?),
         // `Sun Nov 6 08:49:37 1994`
         1 => (tokens.get(2)?, tokens.last()?),
@@ -471,7 +471,7 @@ pub(crate) fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
 }
 
 // ---------------------------------------------------------------------------
-// Tests — no network, no sleeping. The clock is a counter the limiter's own
+// Tests - no network, no sleeping. The clock is a counter the limiter's own
 // waits advance.
 // ---------------------------------------------------------------------------
 

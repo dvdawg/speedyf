@@ -1,4 +1,4 @@
-//! Raw-bindings render path. All calls MUST happen on the engine thread —
+//! Raw-bindings render path. All calls MUST happen on the engine thread -
 //! PDFium is not thread-safe. Whole pages and tiles both go through
 //! `FPDF_RenderPageBitmap`, which applies the page's own /Rotate itself;
 //! tiles are produced by offsetting the page origin negatively inside a
@@ -28,7 +28,7 @@ pub(crate) const FPDF_PAGEOBJ_FORM: i32 = 5;
 /// forever, not because four levels is a meaningful boundary.
 pub(crate) const MAX_FORM_DEPTH: u8 = 4;
 /// Ceiling on objects inspected per render. Reached only by pages with tens of
-/// thousands of objects, which are vector-heavy CAD sheets — exactly the pages
+/// thousands of objects, which are vector-heavy CAD sheets - exactly the pages
 /// with no photographs to find.
 const MAX_OBJECTS_SCANNED: u32 = 20_000;
 /// Ceiling on protected regions. Past this the per-row span walk stops being
@@ -64,7 +64,7 @@ pub fn open_document(
     if doc.is_null() {
         // FPDF_GetLastError returns c_ulong: 32-bit on Windows, 64-bit on
         // Unix. Clippy only ever sees the target it runs on, so on Windows
-        // this reads as a no-op cast — but dropping it fails to compile on
+        // this reads as a no-op cast - but dropping it fails to compile on
         // Unix, where it is a real narrowing. The mirror of the cast in
         // engine::formal, which is redundant on Unix and required on Windows.
         #[allow(clippy::unnecessary_cast)]
@@ -103,7 +103,7 @@ pub struct RenderOutput {
     pub png: Vec<u8>,
 }
 
-/// A PDF affine, row-vector convention: `[x y 1] · [[a b 0] [c d 0] [e f 1]]`.
+/// A PDF affine, row-vector convention: `[x y 1] - [[a b 0] [c d 0] [e f 1]]`.
 pub(crate) type Matrix = [f32; 6];
 
 pub(crate) const IDENTITY: Matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
@@ -128,7 +128,7 @@ pub(crate) fn compose(outer: &Matrix, inner: &Matrix) -> Matrix {
 ///
 /// The device mapping goes through `FPDF_PageToDevice` with the very arguments
 /// the render was issued with, so rotation, scale and the negative tile origin
-/// are all accounted for by PDFium itself rather than re-derived here — for a
+/// are all accounted for by PDFium itself rather than re-derived here - for a
 /// tile, the coordinates come back already in tile space.
 ///
 /// Bounds are rounded *inward*. An image edge that inverts along with the page
@@ -239,8 +239,8 @@ fn image_rects(
 }
 
 /// Whether a page has raster images, and their combined share of the
-/// page's area (0..1): how the library tells a scanned page — the page as
-/// a picture — from a born-digital one (`library::ocrtext`). Combined,
+/// page's area (0..1): how the library tells a scanned page - the page as
+/// a picture - from a born-digital one (`library::ocrtext`). Combined,
 /// because capture tools cut the page into strips: Acrobat Capture's
 /// 1988 JCSS scan is twenty-one full-width bands, none over 5 %.
 /// An image inside a form XObject counts with the form's bounds, which is
@@ -293,7 +293,7 @@ pub fn image_coverage(b: &dyn PdfiumLibraryBindings, page: FPDF_PAGE) -> (bool, 
 /// extra rotation on top of the page's own /Rotate, returning encoded PNG.
 ///
 /// With `invert` set the raster is turned into a dark page before it is
-/// encoded — see `engine::invert` for why that happens here, on the pixels,
+/// encoded - see `engine::invert` for why that happens here, on the pixels,
 /// rather than as a CSS filter over the `<img>`.
 #[allow(clippy::too_many_arguments)]
 pub fn render_page<F>(
@@ -387,7 +387,7 @@ where
         return Err(AppError::Internal("bitmap buffer unavailable".into()));
     }
     let (w, h) = (bmp_w as usize, bmp_h as usize);
-    // BGRA → RGB (pages are composited over an opaque white fill).
+    // BGRA -> RGB (pages are composited over an opaque white fill).
     let mut rgb = vec![0u8; w * h * 3];
     // SAFETY: buffer is valid for stride*h bytes until FPDFBitmap_Destroy.
     let src = unsafe { std::slice::from_raw_parts(buffer, stride * h) };
@@ -404,7 +404,7 @@ where
 
     if invert {
         // Classified against the pixels that were actually drawn, so a figure
-        // is judged as it appears — scaled, clipped and composited — not by
+        // is judged as it appears - scaled, clipped and composited - not by
         // whatever its source bitmap happens to contain.
         let protect: Vec<PixelRect> = image_rects(
             b,

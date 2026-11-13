@@ -1,5 +1,5 @@
 //! Typed Tauri commands. All file access flows through these narrow entry
-//! points — the webview has no filesystem capability of its own.
+//! points - the webview has no filesystem capability of its own.
 //! (JS invoke args arrive camelCase; Tauri maps them onto snake_case params.)
 
 use crate::engine::types::*;
@@ -18,7 +18,7 @@ pub struct FileMetaDto {
     modified_ms: i64,
 }
 
-/// Pure `std::fs` stat, no worker-thread involvement — used by the home
+/// Pure `std::fs` stat, no worker-thread involvement - used by the home
 /// screen's recent-files list, not a PDFium operation.
 #[tauri::command]
 pub async fn file_metadata(path: String) -> AppResult<FileMetaDto> {
@@ -223,7 +223,7 @@ pub async fn change_library_root(
 
 /// Search every indexed document in the library.
 ///
-/// On a blocking thread rather than the engine thread — it reads text sidecars
+/// On a blocking thread rather than the engine thread - it reads text sidecars
 /// and never touches PDFium, so it cannot stall the page being read.
 #[tauri::command]
 pub async fn library_search(
@@ -287,7 +287,7 @@ pub async fn cancel_renders(state: tauri::State<'_, EngineState>, doc_id: DocId)
 /// Follow a link the document points at, out to the user's browser.
 ///
 /// The frontend asks the user before calling this. The scheme check inside is
-/// the second gate and the one the document cannot influence — see
+/// the second gate and the one the document cannot influence - see
 /// `crate::external` for what is refused and why.
 #[tauri::command]
 pub async fn open_external_url(url: String) -> AppResult<()> {
@@ -309,7 +309,7 @@ pub async fn search_query(
             limit: GLOBAL_MATCH_LIMIT as u32,
         });
     }
-    // Runs directly against the shared index — no engine round-trip, so
+    // Runs directly against the shared index - no engine round-trip, so
     // results are instant over whatever subset is indexed so far.
     let engine = state.0.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -341,7 +341,7 @@ pub async fn get_match_rects(
         .await
 }
 
-/// Materialize the document — including every unsaved edit — into a temp file
+/// Materialize the document - including every unsaved edit - into a temp file
 /// for printing, and return where it went.
 ///
 /// The caller opens that path as an ordinary document to preview it, then
@@ -374,7 +374,7 @@ pub async fn discard_print_pdf(path: String) -> AppResult<()> {
     crate::printing::discard(&path)
 }
 
-/// Save a prepared print job where the user asked — "print to PDF".
+/// Save a prepared print job where the user asked - "print to PDF".
 #[tauri::command]
 pub async fn export_print_pdf(path: String, dest_path: String) -> AppResult<()> {
     crate::printing::export_to(&path, &dest_path)
@@ -386,7 +386,7 @@ pub async fn list_printers() -> AppResult<Vec<crate::printing::PrinterDto>> {
     crate::printing::list_printers()
 }
 
-/// What one printer can vary — duplex, paper, quality — as it reports it, so
+/// What one printer can vary - duplex, paper, quality - as it reports it, so
 /// the dialog offers real capabilities instead of a guessed subset.
 #[tauri::command]
 pub async fn printer_options(printer: String) -> AppResult<Vec<crate::printing::PrintOptionDto>> {
@@ -394,7 +394,7 @@ pub async fn printer_options(printer: String) -> AppResult<Vec<crate::printing::
 }
 
 /// Hand a prepared print job to CUPS. Every field is re-validated here against
-/// a grammar — the job description comes from the webview.
+/// a grammar - the job description comes from the webview.
 #[tauri::command]
 pub async fn submit_print(job: crate::printing::PrintJobDto, path: String) -> AppResult<()> {
     crate::printing::submit(&job, std::path::Path::new(&path))
@@ -692,8 +692,8 @@ pub struct ExtensionDto {
     pub installed: InstalledExtension,
     pub manifest: Option<Manifest>,
     /// Contributed commands, ids already namespaced for the palette. Derived
-    /// here rather than in the frontend so the id format has exactly one owner
-    /// — it is what a user's keybindings are stored against.
+    /// here rather than in the frontend so the id format has exactly one owner -
+    /// it is what a user's keybindings are stored against.
     pub commands: Vec<PaletteCommandDto>,
     /// Contributed panels, ids namespaced the same way commands are.
     pub panels: Vec<PanelDto>,
@@ -810,7 +810,7 @@ const MAX_ICON_BYTES: u64 = 256 * 1024;
 /// Not a `speedyf-ext://` URL, though the scheme would serve the same bytes.
 /// The icon is drawn as a CSS mask so it can take the sidebar's own colour, and
 /// a mask is subject to origin restrictions an `<img>` is not: a cross-origin
-/// one paints nothing whatsoever — no error, no broken-image mark, just an
+/// one paints nothing whatsoever - no error, no broken-image mark, just an
 /// empty square. Measured in the WebKit this ships against, where a `data:`
 /// mask renders and a file or custom-scheme mask does not.
 ///
@@ -842,7 +842,7 @@ fn icon_data_uri(root: &std::path::Path, id: &str, icon: &str) -> Option<String>
 /// currently declares.
 ///
 /// A manifest that will not parse still produces a row. The extension cannot
-/// run, but the user needs to see it in order to remove it — and for a built-in
+/// run, but the user needs to see it in order to remove it - and for a built-in
 /// they need to see *why*, since they cannot have caused it.
 fn describe(root: &std::path::Path, installed: InstalledExtension, builtin: bool) -> ExtensionDto {
     let blank = ExtensionDto {
@@ -905,7 +905,7 @@ fn describe(root: &std::path::Path, installed: InstalledExtension, builtin: bool
 
 /// A built-in as a registry row.
 ///
-/// Built-ins are not in `installed.json` and never will be — the identity is
+/// Built-ins are not in `installed.json` and never will be - the identity is
 /// read from the manifest each time, so a release that renames or re-describes
 /// one needs no migration. Only the enabled bit is persisted, and that lives in
 /// its own file beside the registry.
@@ -961,7 +961,7 @@ pub async fn list_extensions(app: tauri::AppHandle) -> AppResult<Vec<ExtensionDt
 ///
 /// Checked after the fact because a git install only learns its own id once it
 /// has cloned. The files are removed again, so a refused install leaves nothing
-/// behind — the same guarantee `install_from_folder` makes for a bad manifest.
+/// behind - the same guarantee `install_from_folder` makes for a bad manifest.
 fn refuse_builtin_collision(
     app: &tauri::AppHandle,
     root: &std::path::Path,
@@ -1225,7 +1225,7 @@ pub async fn extension_document_identifiers(
 /// A page raster for an extension, as PNG bytes.
 ///
 /// A command rather than a `pdfr://` URL because the CSP's `connect-src` is
-/// `ipc:` alone — the webview cannot `fetch` the render scheme, and an
+/// `ipc:` alone - the webview cannot `fetch` the render scheme, and an
 /// extension needs the bytes, not an `<img>`.
 ///
 /// Submitted at `Priority::Idle`, so a batch job over three hundred pages is

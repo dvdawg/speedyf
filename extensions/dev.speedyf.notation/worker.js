@@ -408,6 +408,7 @@ function draw(ui) {
 
 // ---------- normalising page text ----------
 
+// ascii-guard: data begin - Unicode recognised in page text
 const SUPERSCRIPTS = {
   '⁰': '0',
   '¹': '1',
@@ -471,6 +472,7 @@ const REPLACE = {
   '≔': ':=',
   '­': '',
 };
+// ascii-guard: data end
 
 const IS_SPACE = /\s/;
 const IS_LOWER = /\p{Ll}/u;
@@ -1111,6 +1113,7 @@ function greekTex(ch) {
   return null;
 }
 
+// ascii-guard: data begin - Unicode recognised in page text
 const ACCENTS = {
   '̂': '\\hat',
   '̃': '\\tilde',
@@ -1161,6 +1164,7 @@ const MATH_TEX = {
   '∅': '\\emptyset',
   '∘': '\\circ',
 };
+// ascii-guard: data end
 
 /** Characters TeX-escaped or converted, one at a time. */
 function texChars(text) {
@@ -1194,7 +1198,7 @@ function symbolTex(symbol) {
     out = `${ACCENTS[chars[i]]}{${tightTex(out)}}`;
     i++;
   }
-  while (i < chars.length && /[̀-ͯ⃐-⃿]/.test(chars[i])) i++;
+  while (i < chars.length && /[\u0300-\u036f\u20d0-\u20ff]/.test(chars[i])) i++;
   while (i < chars.length) {
     const c = chars[i];
     if (c === '_' || c === '^') {
@@ -1205,7 +1209,11 @@ function symbolTex(symbol) {
         while (i < chars.length && chars[i] !== '}') arg += chars[i++];
         i++;
       } else {
-        while (i < chars.length && arg.length < 3 && /[A-Za-z0-9+*Α-Ωα-ω-]/.test(chars[i])) {
+        while (
+          i < chars.length &&
+          arg.length < 3 &&
+          /[A-Za-z0-9+*\u0391-\u03a9\u03b1-\u03c9-]/.test(chars[i])
+        ) {
           arg += chars[i++];
         }
       }
@@ -1227,23 +1235,40 @@ function symbolTex(symbol) {
   }
   return tightTex(out);
 }
+// ascii-guard: data begin - Unicode recognised in page text
 
 /** Typographic characters that read as ASCII. */
 const PLAIN = {
   '…': '...',
   '‘': "'",
   '’': "'",
+  '‚': "'",
   '“': '"',
   '”': '"',
+  '„': '"',
+  '«': '"',
+  '»': '"',
+  '‐': '-',
+  '‑': '-',
   '–': '-',
-  '—': '-',
+  '—': ' - ',
   '−': '-',
-  ' ': ' ',
+  '•': '-',
+  '′': "'",
+  '″': "''",
+  '\u00a0': ' ',
+  '\u2009': ' ',
+  '\u00ad': '',
 };
+// ascii-guard: data end
 
 /** Text from the page as something the panel can show: ASCII, with Greek
- * letters and mathematical symbols as `$...$` TeX the panel typesets, and any
- * `$` already in the text escaped so it is not read as math. */
+ * letters, mathematical symbols and super- and subscripts as `$...$` TeX the
+ * panel typesets, and any `$` already in the text escaped so it is not read
+ * as math. Ligatures and styled letters get their ASCII spelling; a letter
+ * with an accent, or from another alphabet, is kept as written, since a name
+ * is spelled the way its owner spells it. The References extension has a
+ * copy of this as `displayText`. */
 function asciiText(text) {
   return asciiParts(text).replace(/\s+/g, ' ').trim();
 }
@@ -1257,7 +1282,36 @@ function asciiParts(text) {
     if (last && last.kind === kind) last.value += kind === 'math' ? ` ${value}` : value;
     else parts.push({ kind, value });
   };
-  for (const ch of text) {
+  /** A run of raised or lowered characters, onto the math before it, or the
+   * letter or number it sits on. */
+  const script = (mark, run) => {
+    const last = parts[parts.length - 1];
+    if (last?.kind === 'math') {
+      last.value += `${mark}{${run}}`;
+      return;
+    }
+    const base = last
+      ? /(?:^|[^A-Za-z0-9.])([A-Za-z]|[0-9]+(?:\.[0-9]+)?)$/.exec(last.value)
+      : null;
+    if (base) {
+      last.value = last.value.slice(0, last.value.length - base[1].length);
+      if (!last.value) parts.pop();
+      parts.push({ kind: 'math', value: `${base[1]}${mark}{${run}}` });
+    } else {
+      parts.push({ kind: 'math', value: `${mark}{${run}}` });
+    }
+  };
+  const chars = Array.from(text.normalize('NFC'));
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i];
+    if (SUPERSCRIPTS[ch] !== undefined || SUBSCRIPTS[ch] !== undefined) {
+      const table = SUPERSCRIPTS[ch] !== undefined ? SUPERSCRIPTS : SUBSCRIPTS;
+      let run = '';
+      while (i < chars.length && table[chars[i]] !== undefined) run += table[chars[i++]];
+      i--;
+      script(table === SUPERSCRIPTS ? '^' : '_', run);
+      continue;
+    }
     const code = ch.charCodeAt(0);
     const greek = greekTex(ch);
     if (ch === '$') push('text', '\\$');
@@ -1273,8 +1327,9 @@ function asciiParts(text) {
     else if (MATH_TEX[ch]) push('math', MATH_TEX[ch]);
     else if (PLAIN[ch] !== undefined) push('text', PLAIN[ch]);
     else {
-      const plain = ch.normalize('NFKD').replace(/[̀-ͯ]/g, '');
+      const plain = ch.normalize('NFKC');
       if (/^[\x20-\x7e]+$/.test(plain)) push('text', plain);
+      else if (/^[\p{L}\p{M}]+$/u.test(ch)) push('text', ch);
     }
   }
   return parts

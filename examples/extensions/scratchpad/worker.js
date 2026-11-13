@@ -1,7 +1,7 @@
 // Collects things you pick into a list you can copy out.
 //
 // Worth reading for what it does *not* ask for. It has no `document:read`, no
-// `citations:read`, no `library:read` — it never reads the document at all.
+// `citations:read`, no `library:read` - it never reads the document at all.
 // Everything it holds arrived because you selected it and chose an action, and
 // the extension is handed exactly that and nothing else.
 //
@@ -141,7 +141,7 @@ function draw() {
 
 function preview(text) {
   const flat = text.replace(/\s+/g, ' ').trim();
-  return flat.length > 90 ? `${flat.slice(0, 90)}…` : flat;
+  return flat.length > 90 ? `${flat.slice(0, 90)}...` : flat;
 }
 
 function done(requestId, ok, error) {

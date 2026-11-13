@@ -1,13 +1,13 @@
-//! Online metadata lookup (projects.md §4, phase 2).
+//! Online metadata lookup (projects.md sec. 4, phase 2).
 //!
 //! This is the first code in SpeedyF that talks to the network, so the terms
-//! are stated here. Nothing leaves the machine unless **Settings → Look up
+//! are stated here. Nothing leaves the machine unless **Settings -> Look up
 //! paper metadata online** is on; every entry point checks that before it
-//! builds a request. What is sent is only an identifier — a DOI to Crossref
-//! and OpenAlex, an arXiv id to arXiv — plus, for the `search_*_by_title`
+//! builds a request. What is sent is only an identifier - a DOI to Crossref
+//! and OpenAlex, an arXiv id to arXiv - plus, for the `search_*_by_title`
 //! functions, which the UI offers on request for a paper that has no
 //! identifier, the title itself to OpenAlex, Crossref and arXiv. The
-//! optional contact address (Settings → Contact for lookups) goes to
+//! optional contact address (Settings -> Contact for lookups) goes to
 //! Crossref in the User-Agent and to OpenAlex as `mailto`, which is each
 //! service's polite-pool convention. No file content, path, or anything else
 //! from the library is ever sent. The other services (DataCite, Semantic
@@ -51,7 +51,7 @@ const OPENALEX_WORKS: &str = "https://api.openalex.org/works";
 /// DataCite's prefix for the DOIs it registers for arXiv; OpenAlex files
 /// arXiv papers under these.
 const ARXIV_DOI_PREFIX: &str = "10.48550/arxiv.";
-/// How many OpenAlex ids one `works?filter=openalex_id:…` request resolves.
+/// How many OpenAlex ids one `works?filter=openalex_id:...` request resolves.
 const OPENALEX_BATCH: usize = 50;
 const TIMEOUT: Duration = Duration::from_secs(15);
 /// How many candidates a title search returns at most.
@@ -99,7 +99,7 @@ impl LookupSettings {
 }
 
 /// The one gate every request passes. Kept synchronous so it can be checked
-/// before any work — including the status-bar indicator — starts. Public so
+/// before any work - including the status-bar indicator - starts. Public so
 /// a command can refuse before consulting the cache: a cache hit would make
 /// no request, but the user turned lookups off and expects nothing to run.
 pub fn ensure_enabled(settings: &LookupSettings) -> AppResult<()> {
@@ -158,7 +158,7 @@ pub struct ArxivRecord {
 }
 
 /// arXiv export API `query?id_list={id}`. Sends the arXiv id (sans version,
-/// so the newest version answers — it carries the journal reference when
+/// so the newest version answers - it carries the journal reference when
 /// there is one) and nothing else. `Ok(None)` when the feed is empty.
 pub async fn fetch_by_arxiv(
     client: &reqwest::Client,
@@ -236,8 +236,8 @@ pub async fn search_crossref_by_title(
 }
 
 /// arXiv export API `query?search_query=ti:"{title}"&max_results=5`. Sends
-/// the title's words — punctuation is dropped, since it is query syntax to
-/// arXiv's Lucene — and nothing else. Up to five candidates in arXiv's
+/// the title's words - punctuation is dropped, since it is query syntax to
+/// arXiv's Lucene - and nothing else. Up to five candidates in arXiv's
 /// relevance order.
 pub async fn search_arxiv_by_title(
     client: &reqwest::Client,
@@ -314,7 +314,7 @@ fn openalex_doi(id: &CitationIdDto) -> Option<String> {
 
 /// OpenAlex work ids (`W123`, a work's `referenced_works`) resolved to
 /// identifiers in batches of fifty through
-/// `works?filter=openalex_id:W1|W2|…&select=doi,ids&per-page=50`. Sends the
+/// `works?filter=openalex_id:W1|W2|...&select=doi,ids&per-page=50`. Sends the
 /// OpenAlex ids, which name works, not the user. A work without a DOI is
 /// left out; one whose DOI is an arXiv DOI comes back as the arXiv id, which
 /// is how the library names preprints.
@@ -432,7 +432,7 @@ pub(crate) async fn fetch_text(
 
 /// Parses a Crossref `works/{doi}` response. Accepts the usual
 /// `{"message": {...}}` envelope or a bare work object. `None` when the JSON
-/// is not a work or the work has no title — a candidate without a title has
+/// is not a work or the work has no title - a candidate without a title has
 /// nothing to show and would blank the paper's own title if applied.
 pub fn parse_crossref_work(json: &str) -> Option<LookupCandidateDto> {
     let root: Value = serde_json::from_str(json).ok()?;
@@ -445,7 +445,7 @@ pub fn parse_crossref_work(json: &str) -> Option<LookupCandidateDto> {
 
 /// Parses a Crossref `works?query.bibliographic=` response: one candidate
 /// per titled item of `message.items`, in Crossref's order. Not JSON, or no
-/// items → empty.
+/// items -> empty.
 pub fn parse_crossref_search(json: &str) -> Vec<LookupCandidateDto> {
     let Ok(root) = serde_json::from_str::<Value>(json) else {
         return Vec::new();
@@ -662,9 +662,9 @@ fn attribute(tag: &str, name: &str) -> Option<String> {
 }
 
 /// Crossref abstracts are JATS fragments. Section headings
-/// (`<jats:title>Abstract</jats:title>`, `Background`, …) are dropped with
-/// their text, remaining tags are stripped — block elements leave a space,
-/// inline ones none — then entities are decoded and whitespace collapsed.
+/// (`<jats:title>Abstract</jats:title>`, `Background`, ...) are dropped with
+/// their text, remaining tags are stripped - block elements leave a space,
+/// inline ones none - then entities are decoded and whitespace collapsed.
 fn strip_jats(raw: &str) -> String {
     collapse_whitespace(&decode_entities(&strip_tags(&drop_title_elements(raw))))
 }
@@ -887,8 +887,8 @@ struct ArxivEntry {
     authors: Vec<Author>,
     /// The `<name>` of the `<author>` currently open.
     name: String,
-    /// `<arxiv:primary_category term="…"/>`, and failing that the first
-    /// `<category term="…"/>`.
+    /// `<arxiv:primary_category term="..."/>`, and failing that the first
+    /// `<category term="..."/>`.
     primary_category: Option<String>,
     category: Option<String>,
 }
@@ -985,7 +985,7 @@ impl ArxivEntry {
 // ---------------------------------------------------------------------------
 
 /// Parses an OpenAlex `works?search=` response into candidates in API order.
-/// Results without a title are skipped. Not JSON, or no `results` → empty.
+/// Results without a title are skipped. Not JSON, or no `results` -> empty.
 pub fn parse_openalex_search(json: &str) -> Vec<LookupCandidateDto> {
     let Ok(root) = serde_json::from_str::<Value>(json) else {
         return Vec::new();
@@ -996,7 +996,7 @@ pub fn parse_openalex_search(json: &str) -> Vec<LookupCandidateDto> {
         .unwrap_or_default()
 }
 
-/// Parses an OpenAlex `works/{id}` response — one work, no envelope. `None`
+/// Parses an OpenAlex `works/{id}` response - one work, no envelope. `None`
 /// when it is not a work or has no title.
 pub fn parse_openalex_work(json: &str) -> Option<LookupCandidateDto> {
     let root: Value = serde_json::from_str(json).ok()?;
@@ -1021,7 +1021,7 @@ pub fn parse_openalex_referenced_works(json: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The identifiers of the works in a `works?filter=openalex_id:…` response:
+/// The identifiers of the works in a `works?filter=openalex_id:...` response:
 /// each result's DOI (`doi`, else `ids.doi`), lower-cased, with an arXiv
 /// DOI folded to its arXiv id. Results without a DOI are left out.
 pub fn parse_openalex_dois(json: &str) -> Vec<CitationIdDto> {
@@ -1046,7 +1046,7 @@ pub fn parse_openalex_dois(json: &str) -> Vec<CitationIdDto> {
         .unwrap_or_default()
 }
 
-/// `https://openalex.org/W123` or `W123` → `W123`.
+/// `https://openalex.org/W123` or `W123` -> `W123`.
 fn openalex_bare_id(id: &str) -> Option<String> {
     let bare = id.trim().rsplit('/').next().unwrap_or("").trim();
     let valid =
@@ -1121,7 +1121,7 @@ fn openalex_work(work: &Value) -> Option<LookupCandidateDto> {
     })
 }
 
-/// OpenAlex stores abstracts as `word → [positions]`; put the words back.
+/// OpenAlex stores abstracts as `word -> [positions]`; put the words back.
 fn rebuild_inverted_index(index: &serde_json::Map<String, Value>) -> String {
     let mut slots: Vec<(usize, &str)> = Vec::new();
     for (word, positions) in index {
@@ -1180,9 +1180,9 @@ pub(crate) fn normalize_doi(raw: &str) -> String {
     doi.to_string()
 }
 
-/// The bare id without version: `2401.12345v2` → `2401.12345`,
-/// `hep-th/9901001v1` → `hep-th/9901001`. Accepts `arXiv:` prefixes and
-/// `arxiv.org/abs/…` or `/pdf/…` URLs.
+/// The bare id without version: `2401.12345v2` -> `2401.12345`,
+/// `hep-th/9901001v1` -> `hep-th/9901001`. Accepts `arXiv:` prefixes and
+/// `arxiv.org/abs/...` or `/pdf/...` URLs.
 pub(crate) fn normalize_arxiv_id(raw: &str) -> String {
     if let Some(id) = arxiv_id_from_url(raw) {
         return id;
@@ -1195,7 +1195,7 @@ pub(crate) fn normalize_arxiv_id(raw: &str) -> String {
     strip_arxiv_version(bare).to_string()
 }
 
-/// The id in an `arxiv.org/abs/…` or `arxiv.org/pdf/…` URL, without version.
+/// The id in an `arxiv.org/abs/...` or `arxiv.org/pdf/...` URL, without version.
 fn arxiv_id_from_url(url: &str) -> Option<String> {
     let url = url.trim();
     let rest = ["arxiv.org/abs/", "arxiv.org/pdf/"]
@@ -1226,7 +1226,7 @@ fn strip_arxiv_version(id: &str) -> &str {
     }
 }
 
-/// `Given Names Family` → family is the last token; `Family, Given` is
+/// `Given Names Family` -> family is the last token; `Family, Given` is
 /// honoured too. A single token is a family name alone.
 pub(crate) fn split_name(name: &str) -> Option<Author> {
     if let Some((family, given)) = name.split_once(',') {
@@ -1282,7 +1282,7 @@ pub(crate) fn text_field(value: &Value) -> Option<String> {
 /// - the merged candidate list of a title search, `title:<normalized
 ///   title>`, which stands for [`LIST_TTL`];
 /// - the identifiers the network says a paper cites and is cited by,
-///   `refs:<id key>` / `cites:<id key>` (projects.md §8);
+///   `refs:<id key>` / `cites:<id key>` (projects.md sec. 8);
 /// - misses, for any of the first two kinds, stamped with when they were
 ///   seen and expiring after [`MISS_TTL`]: a DOI nobody knew last week may
 ///   be registered by now, but not by tonight.
@@ -1291,11 +1291,11 @@ pub(crate) fn text_field(value: &Value) -> Option<String> {
 #[derive(Clone, Debug, Default)]
 pub struct LookupCache {
     entries: HashMap<String, LookupCandidateDto>,
-    /// Key → unix second of the lookup that found nothing.
+    /// Key -> unix second of the lookup that found nothing.
     misses: HashMap<String, u64>,
     lists: HashMap<String, CachedList>,
     links: HashMap<String, Vec<CitationIdDto>>,
-    /// `arxiv:<id>` → the primary category arXiv gave, so a cached answer
+    /// `arxiv:<id>` -> the primary category arXiv gave, so a cached answer
     /// decides INSPIRE the way the live one did.
     categories: HashMap<String, String>,
 }
@@ -1309,7 +1309,7 @@ struct CachedList {
     candidates: Vec<LookupCandidateDto>,
 }
 
-/// The file: `{"entries": {…}, "misses": {…}, "lists": {…}, "links": {…}}`,
+/// The file: `{"entries": {...}, "misses": {...}, "lists": {...}, "links": {...}}`,
 /// every map optional. The file before misses existed was the entries map
 /// alone; [`LookupCache::load`] still reads it.
 #[derive(Serialize, Deserialize)]
@@ -1365,7 +1365,7 @@ impl LookupCache {
         format!("isbn:{digits}")
     }
 
-    /// `doi:…` or `arxiv:…` for an identifier.
+    /// `doi:...` or `arxiv:...` for an identifier.
     pub fn id_key(id: &CitationIdDto) -> String {
         match id {
             CitationIdDto::Doi(doi) => Self::doi_key(doi),
@@ -1373,7 +1373,7 @@ impl LookupCache {
         }
     }
 
-    /// `<service>:doi:…` / `<service>:arxiv:…`: one service's answer for an
+    /// `<service>:doi:...` / `<service>:arxiv:...`: one service's answer for an
     /// identifier, for the services that are not the identifier's own
     /// registry (`doi:` is Crossref's answer, `arxiv:` arXiv's).
     pub fn source_key(service: &str, id: &CitationIdDto) -> String {
@@ -1395,7 +1395,7 @@ impl LookupCache {
         format!("cites:{}", Self::id_key(id))
     }
 
-    /// Reads `dir/lookup-cache.json`, in either shape. Missing or corrupt →
+    /// Reads `dir/lookup-cache.json`, in either shape. Missing or corrupt ->
     /// empty. Misses and lists past their time are dropped on the way in.
     pub fn load(dir: &Path) -> Self {
         let path = dir.join(CACHE_FILE);
@@ -1629,7 +1629,7 @@ fn unix_now() -> u64 {
 }
 
 // ---------------------------------------------------------------------------
-// Tests — no network. Fixtures are trimmed from the three APIs' documented
+// Tests - no network. Fixtures are trimmed from the three APIs' documented
 // response shapes.
 // ---------------------------------------------------------------------------
 

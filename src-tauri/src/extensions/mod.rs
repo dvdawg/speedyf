@@ -3,7 +3,7 @@
 //!
 //! Extension code never runs in the app document. The app's CSP is
 //! `script-src 'self'`, which exists so a hostile PDF cannot inject script,
-//! and it stays that way. Extensions run in Web Workers instead — a separate
+//! and it stays that way. Extensions run in Web Workers instead - a separate
 //! JavaScript environment with no DOM and no access to app state, whose only
 //! channel out is `postMessage`. Isolation is therefore a property of where
 //! the code runs rather than a rule anyone has to remember.
@@ -15,14 +15,14 @@
 //! `speedyf-ext://` fails with an opaque error. This was measured, not assumed.
 //!
 //! So worker source is read here and handed to the frontend, which wraps it in
-//! a blob URL — blob URLs inherit the creating document's origin, satisfying
+//! a blob URL - blob URLs inherit the creating document's origin, satisfying
 //! the rule. Two consequences worth knowing:
 //!
 //! - An extension's entry must be self-contained. Relative `importScripts`
 //!   cannot resolve from a blob, so extensions ship a bundle.
 //! - The worker inherits the app's CSP for its own subresource loads, and
 //!   `connect-src` is `ipc:` only. A worker therefore cannot reach the
-//!   network itself — denied by the platform rather than by policy. An
+//!   network itself - denied by the platform rather than by policy. An
 //!   extension with the `network` permission asks SpeedyF to fetch for it
 //!   (`net`), which checks the host against the manifest's list and paces it.
 //!
@@ -129,7 +129,7 @@ pub const CURRENT_API_VERSION: u32 = 1;
 
 /// A capability an extension asks for in its manifest.
 ///
-/// v1 gates almost nothing — there is nothing yet to gate, since commands are
+/// v1 gates almost nothing - there is nothing yet to gate, since commands are
 /// the only contribution point. The enum exists anyway, and the gate is
 /// enforced from the first release, because retrofitting permissions onto
 /// extensions that already had unrestricted access is a breaking change for
@@ -153,7 +153,7 @@ pub enum Permission {
     #[serde(rename = "document:contributeText")]
     DocumentContributeText,
     /// Being handed the stored text of library documents during idle
-    /// indexing — never their paths — and returning their reference lists.
+    /// indexing - never their paths - and returning their reference lists.
     #[serde(rename = "library:contributeReferences")]
     LibraryContributeReferences,
     /// Glyph geometry and math tags of the open document: every character
@@ -170,7 +170,7 @@ pub enum Permission {
     Network,
 }
 
-/// An action offered on something the user picked — a text selection, a
+/// An action offered on something the user picked - a text selection, a
 /// citation. It names one of the extension's own commands, which is invoked
 /// with the picked thing as its value.
 ///
@@ -232,7 +232,7 @@ pub struct CommandContribution {
 ///
 /// Bindings point at the extension's own commands, never at SpeedyF's. An
 /// extension that wants to drive the app binds a key to its own command and
-/// calls `commands.run` from there — which keeps every such call inside the
+/// calls `commands.run` from there - which keeps every such call inside the
 /// permission gate rather than letting a manifest entry bypass it.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -246,7 +246,7 @@ pub struct KeybindingContribution {
 /// A sidebar tab an extension contributes.
 ///
 /// Declarative only: the extension sends a description of rows and SpeedyF
-/// draws them. There is no `kind` field yet — sandboxed custom panes are v3,
+/// draws them. There is no `kind` field yet - sandboxed custom panes are v3,
 /// and adding the discriminator before there is a second variant would be
 /// guessing at its shape.
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -459,7 +459,7 @@ pub fn parse_manifest(source: &str) -> Result<Manifest, ManifestError> {
     if let Some(icon) = &manifest.icon {
         // Resolved through the same component walk that guards asset serving,
         // and restricted to image types: the icon is rendered in an <img>, and
-        // an <img> is the safe way to show an SVG nobody has reviewed — a
+        // an <img> is the safe way to show an SVG nobody has reviewed - a
         // passive image, with no script or event handlers running.
         let allowed = matches!(
             std::path::Path::new(icon)
@@ -700,14 +700,14 @@ impl Registry {
             Ok(registry) if registry.version == REGISTRY_VERSION => registry,
             Ok(registry) => {
                 log::warn!(
-                    "extension registry is version {}, this build reads {} — ignoring it",
+                    "extension registry is version {}, this build reads {} - ignoring it",
                     registry.version,
                     REGISTRY_VERSION
                 );
                 Registry::default()
             }
             Err(e) => {
-                log::warn!("extension registry unreadable ({e}) — ignoring it");
+                log::warn!("extension registry unreadable ({e}) - ignoring it");
                 Registry::default()
             }
         }
@@ -855,7 +855,7 @@ pub struct GitSource {
 ///
 /// Validation is a whitelist rather than a blacklist, because the value ends up
 /// as an argument to a subprocess. Even though the arguments are passed as a
-/// vector — never through a shell, so there is no quoting to escape — a URL
+/// vector - never through a shell, so there is no quoting to escape - a URL
 /// beginning with `-` would still be read by git as an *option* rather than a
 /// URL, which is the one injection this interface actually has.
 pub fn parse_git_source(input: &str) -> Result<GitSource, String> {
@@ -916,7 +916,7 @@ pub fn parse_git_source(input: &str) -> Result<GitSource, String> {
 }
 
 /// One `git clone` attempt. Arguments are passed as a vector, never through a
-/// shell, so there is nothing to quote or escape — and `--` stops git reading
+/// shell, so there is nothing to quote or escape - and `--` stops git reading
 /// anything after it as an option whatever `parse_git_source` may have missed.
 fn run_clone(source: &GitSource, target: &Path, shallow: bool) -> AppResult<std::process::Output> {
     let mut args: Vec<String> = vec!["clone".into()];
@@ -958,7 +958,7 @@ fn run_clone(source: &GitSource, target: &Path, shallow: bool) -> AppResult<std:
 ///
 /// The clone lands in a temporary directory that is removed either way, so a
 /// repository that turns out not to hold a valid extension leaves nothing
-/// behind — the same promise `install_from_folder` already makes.
+/// behind - the same promise `install_from_folder` already makes.
 pub fn install_from_git(root: &Path, input: &str) -> AppResult<InstalledExtension> {
     let source = parse_git_source(input).map_err(AppError::Malformed)?;
     let temp = tempfile::tempdir().map_err(|e| AppError::Io(format!("temp dir: {e}")))?;
@@ -966,7 +966,7 @@ pub fn install_from_git(root: &Path, input: &str) -> AppResult<InstalledExtensio
 
     // Shallow first: extensions are source, not history, and a full clone of a
     // repository with a long past is wasted bandwidth. Not every remote can do
-    // it though — the "dumb" HTTP transport cannot — so a shallow failure falls
+    // it though - the "dumb" HTTP transport cannot - so a shallow failure falls
     // back to a full clone rather than reporting an error the user cannot act
     // on. Every hosted forge supports shallow, so the fallback is rare.
     let output = match run_clone(&source, &target, true) {
@@ -1052,7 +1052,7 @@ pub fn load_contributed(root: &Path, document: &str) -> Option<ContributedText> 
     let text = std::fs::read_to_string(contributed_path(root, document)).ok()?;
     let parsed: ContributedText = serde_json::from_str(&text).ok()?;
     // A sidecar written by a future version is ignored rather than misread, and
-    // one that describes a different document is a hash collision — rare, but
+    // one that describes a different document is a hash collision - rare, but
     // silently serving the wrong text would be far worse than serving none.
     if parsed.version != CONTRIBUTED_VERSION || parsed.document != document {
         return None;
@@ -1063,7 +1063,7 @@ pub fn load_contributed(root: &Path, document: &str) -> Option<ContributedText> 
 /// Record text for one page.
 ///
 /// First writer wins. If another extension has already contributed to this
-/// document, the second is refused and told who holds it — silently
+/// document, the second is refused and told who holds it - silently
 /// interleaving two extensions' output would produce a document whose text came
 /// from nowhere in particular.
 pub fn contribute_text(

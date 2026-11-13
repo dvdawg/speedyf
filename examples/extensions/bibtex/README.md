@@ -1,9 +1,9 @@
-# BibTeX Export — SpeedyF v2 read-API reference
+# BibTeX Export - SpeedyF v2 read-API reference
 
 Reads the open document: every DOI and arXiv citation in it, which of them are
 already in your library, and a summary of its outline and figures.
 
-Load it from **Home → Extensions → Load folder…**, open a paper, then run any of
+Load it from **Home -> Extensions -> Load folder...**, open a paper, then run any of
 its commands from the command palette. Results appear in this extension's log in
 the Extensions panel.
 
@@ -23,4 +23,4 @@ the Extensions panel.
   nothing needed them yet.
 
 Ask for an API you did not declare a permission for and the call is rejected
-with a message naming the permission — the same way a wrong command id is.
+with a message naming the permission - the same way a wrong command id is.

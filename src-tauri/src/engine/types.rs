@@ -63,7 +63,7 @@ pub struct RenderKey {
     pub kind: RenderKind,
     pub tile: Option<TileRect>,
     /// Rendered as a dark page. Part of the key rather than a post-process so
-    /// both variants can sit in the cache at once — toggling the setting back
+    /// both variants can sit in the cache at once - toggling the setting back
     /// and forth costs nothing after the first pass.
     pub invert: bool,
 }
@@ -137,7 +137,7 @@ pub struct FigureDto {
     /// the caption text after the label, with LaTeX scripts restored
     pub title: String,
     pub page: u32,
-    /// caption anchor (display space, y-up) — where clicking the row goes
+    /// caption anchor (display space, y-up) - where clicking the row goes
     pub y: f32,
     /// the artwork above the caption, in device pixels at `scale_milli`
     pub tile: TileRect,
@@ -225,7 +225,7 @@ pub struct LibraryStatusDto {
     pub total: u32,
     pub scanning: bool,
     /// Documents whose full text has been extracted for search. Separate from
-    /// `indexed`, which counts metadata only — a document is findable by
+    /// `indexed`, which counts metadata only - a document is findable by
     /// citation long before it is findable by its contents.
     pub text_indexed: u32,
     pub text_total: u32,
@@ -288,7 +288,7 @@ pub struct SearchStatusDto {
     pub chars_indexed: u64,
 }
 
-/// One fillable-looking glyph found on a page — a drawn bubble or checkbox
+/// One fillable-looking glyph found on a page - a drawn bubble or checkbox
 /// that carries no form field of its own. See `engine::bubbles`.
 #[derive(Serialize, Clone, Copy, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -296,7 +296,7 @@ pub struct BubbleDto {
     /// Index of the glyph in the page's character stream. Stable for a given
     /// page, so the frontend can key a shading to the bubble it fills.
     pub char_index: u32,
-    /// Display-normalized page space, y-up — the same space text runs use.
+    /// Display-normalized page space, y-up - the same space text runs use.
     pub rect: RectDto,
     /// Nominal point size of the glyph's font, used to scale the shading dot
     /// when the glyph box is a loose fit.
@@ -324,7 +324,7 @@ pub struct FormFieldDto {
     /// `name` is not: every button in a radio group shares its field's name,
     /// so a name alone cannot say which of them was clicked.
     pub index: u32,
-    /// Display-normalized page space, y-up — the same space text runs use.
+    /// Display-normalized page space, y-up - the same space text runs use.
     pub rect: RectDto,
     /// The "on" state this widget turns its field to, for checkboxes and
     /// radio buttons. Empty for every other kind.
@@ -348,11 +348,11 @@ pub struct PlanFormButton {
 pub struct OutlineNodeDto {
     pub title: String,
     /// destination page index, if the bookmark resolves to one (a GoTo dest
-    /// or a GoTo action) — None for bookmarks pointing elsewhere (external
+    /// or a GoTo action) - None for bookmarks pointing elsewhere (external
     /// URIs, unrecognized actions).
     pub page: Option<u32>,
     /// destination y in page space (points, y-up), when the destination
-    /// specifies one — /Fit destinations do not
+    /// specifies one - /Fit destinations do not
     pub y: Option<f32>,
     pub children: Vec<OutlineNodeDto>,
 }
@@ -427,7 +427,7 @@ pub struct PlanAnnot {
 
 /// One annotation read back out of a PDF.
 ///
-/// Mirrors the TypeScript `Annotation` model, plus `index` — the annotation's
+/// Mirrors the TypeScript `Annotation` model, plus `index` - the annotation's
 /// position in PDFium's enumeration of its source page. That index is the
 /// identity the save path uses to decide which annotations to replace and
 /// which to leave exactly as they were imported.
@@ -509,7 +509,7 @@ pub struct PlanPage {
     /// Only annotations SpeedyF owns and the user actually touched appear
     /// here. Anything untouched is left exactly as imported, because a
     /// highlight made in another tool carries an author, dates, a popup and an
-    /// appearance stream that this model does not hold — rewriting it through
+    /// appearance stream that this model does not hold - rewriting it through
     /// our own shape would quietly throw all of that away.
     #[serde(default)]
     pub drop_src_annots: Vec<u32>,
@@ -522,7 +522,7 @@ pub struct EditPlan {
     /// Text field values, keyed by field name.
     pub form: Vec<(String, String)>,
     /// Checkbox and radio states, keyed by the widget's page and annotation
-    /// index — see `PlanFormButton`.
+    /// index - see `PlanFormButton`.
     #[serde(default)]
     pub form_buttons: Vec<PlanFormButton>,
 }

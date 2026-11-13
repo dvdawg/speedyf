@@ -2,7 +2,7 @@
 //
 // This is the shape a real OCR extension takes. It asks for a raster of each
 // page, does something with the pixels, and contributes a text layer back for
-// pages that have none. What it "recognises" here is deliberately trivial — the
+// pages that have none. What it "recognises" here is deliberately trivial - the
 // point is the flow, not the recognition.
 //
 // Note what is NOT happening: nothing in SpeedyF waits for this. It can take a
@@ -94,7 +94,7 @@ function draw() {
     ui: {
       sections: [
         {
-          title: `${report.info.name} — ${report.info.pageCount} pages`,
+          title: `${report.info.name} - ${report.info.pageCount} pages`,
           rows: [
             { id: 'text', title: 'Pages with embedded text', subtitle: String(withText) },
             {

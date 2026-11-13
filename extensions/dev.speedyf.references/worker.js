@@ -1,4 +1,4 @@
-// References — every work this paper cites, where it is genuinely cited, and
+// References - every work this paper cites, where it is genuinely cited, and
 // which ones you already have.
 //
 // Written as a worked example of the whole v2 surface: a declarative panel,
@@ -20,7 +20,7 @@
 //
 // The obvious reading of a bibliography is the wrong one: collect the links on
 // the pages that look like a reference list, and report each one. That gives a
-// list of URLs, ordered by the page they are *printed* on — which is the same
+// list of URLs, ordered by the page they are *printed* on - which is the same
 // page for all of them, so "where is this cited" answers "page 14" for every
 // row, and "what is this" answers with a hostname.
 //
@@ -29,22 +29,22 @@
 // the entry it refers to. That single fact carries both halves of the problem.
 // Follow the jumps *forward* and a reference knows every page it is cited on.
 // Sort the destinations *down the page* and they cut the reference list into
-// entries — and the words inside one entry are its authors, its title and its
+// entries - and the words inside one entry are its authors, its title and its
 // year, which is the difference between a row that reads
 //
-//     api.semanticscholar.org/CorpusID:605683      link · page 14
+//     api.semanticscholar.org/CorpusID:605683      link - page 14
 //
 // and one that reads
 //
 //     Effect of batch learning in multilayer neural networks
-//     Kenji Fukumizu · 1998 · cited on pages 3, 5, 9
+//     Kenji Fukumizu - 1998 - cited on pages 3, 5, 9
 //
 // Nothing here is guesswork about the prose. The entry boundaries come from
 // the document's own destinations, not from spotting where a citation seems to
 // start.
 //
 // What this cannot do, and what happens then: a PDF that was not typeset with
-// internal links — an older scan, most things exported from a word processor —
+// internal links - an older scan, most things exported from a word processor -
 // has no jumps at all, and none of the above is available. That is common
 // enough that it is a supported case rather than a failure: the panel falls
 // back to reading the reference list out of the text (`scanByText`, the same
@@ -133,8 +133,8 @@ async function handle(command, value) {
  * five, each with the line it appears in, and the choice belongs to the
  * reader. Activating it again closes it.
  *
- * A reference with nowhere to go — a list read from bare links, which cannot
- * know where anything is cited — goes to where it is listed instead, since
+ * A reference with nowhere to go - a list read from bare links, which cannot
+ * know where anything is cited - goes to where it is listed instead, since
  * there is nothing to open.
  */
 async function open(value) {
@@ -186,7 +186,7 @@ async function goTo(value) {
 
 /** A citation site as the value its row carries back.
  *
- * "6|91.2,343.1,50.9,12.9|89,329.6,23.8,12.9" — the page, then one box per
+ * "6|91.2,343.1,50.9,12.9|89,329.6,23.8,12.9" - the page, then one box per
  * piece of the citation. Compact because a row's value is capped at 500
  * characters and truncated silently if it runs over, which JSON would not
  * survive. */
@@ -325,8 +325,8 @@ async function scan(info) {
       name: info.name,
       pageCount: info.pageCount,
       // Recorded so the panel can say which way it read the document. The two
-      // answer different questions — one knows where a work is cited, the
-      // other only where it is listed — and a heading that does not
+      // answer different questions - one knows where a work is cited, the
+      // other only where it is listed - and a heading that does not
       // distinguish them makes the weaker one look like the stronger one.
       readBy: byEntry ? 'entries' : byText ? 'text' : 'links',
       citations,
@@ -343,7 +343,7 @@ async function scan(info) {
 /** The whole reference list, read from the document's own destinations.
  *
  * Returns null when the document has internal links but none of them describe
- * a reference list — a paper whose only jumps are to its own figures — so the
+ * a reference list - a paper whose only jumps are to its own figures - so the
  * caller can fall back rather than show an empty panel.
  */
 async function scanByEntries(info, pages) {
@@ -370,8 +370,8 @@ async function scanByEntries(info, pages) {
 
   // The height the reference list starts at, per page it occupies. A
   // bibliography often begins halfway down a page whose top half is still
-  // body text, and skipping such a page whole — which is what "is this a
-  // reference page" amounts to — threw away every citation printed above the
+  // body text, and skipping such a page whole - which is what "is this a
+  // reference page" amounts to - threw away every citation printed above the
   // list. On one paper that was the last two citations of its two most-cited
   // works, and the panel looked like it had the wrong pages.
   const listTop = new Map();
@@ -423,14 +423,14 @@ async function scanByEntries(info, pages) {
 /** The reference list: which pages it is on, and what is on them.
  *
  * Density alone cannot find it. An appendix of numbered theorems has
- * destinations on every page and looks identical from the outside — reading a
+ * destinations on every page and looks identical from the outside - reading a
  * paper's bibliography as pages 12 to 17 rather than 12 to 15 added thirty
  * "references" that were paragraphs of a proof. Nor can the printed heading
  * finish the job: it says where the list starts and nothing about where it
  * ends.
  *
  * So the pages are cut up first and judged afterwards, on whether what came
- * out looks like a list of references — labelled, dated, and several to a
+ * out looks like a list of references - labelled, dated, and several to a
  * page. That is the only test that distinguishes a bibliography from anything
  * else with the same shape, and it costs one text read per page considered.
  */
@@ -443,7 +443,7 @@ async function readReferenceList(info, pages, anchorsByPage) {
 
   const from = (await findHeading(dense)) ?? dense[0];
   const entries = [];
-  /** Pages taken so far. Only its length matters — whether the list has
+  /** Pages taken so far. Only its length matters - whether the list has
    * started, which decides how leniently the next page is judged. */
   const referencePages = [];
   let read = 0;
@@ -475,7 +475,7 @@ async function readReferenceList(info, pages, anchorsByPage) {
 
 /** Whether a page of cut-up destinations is part of a reference list.
  *
- * A reference carries a label or a year — almost all carry both — and a page
+ * A reference carries a label or a year - almost all carry both - and a page
  * of them carries several. A page of theorems cut the same way carries
  * paragraphs of prose, which is what this rejects.
  *
@@ -488,8 +488,8 @@ function isReferenceList(entries, continuing) {
   if (dated.length * 2 < entries.length) return false;
   // A reference is a few lines long. A paragraph of a proof cut at its
   // theorem anchors is far longer, and carries a year often enough to pass the
-  // test above — one arrived in a panel as a reference titled "Furthermore for
-  // an example (x, y), we define…".
+  // test above - one arrived in a panel as a reference titled "Furthermore for
+  // an example (x, y), we define...".
   const lengths = entries.map((entry) => entry.text.length).sort((a, b) => a - b);
   return lengths[Math.floor(lengths.length / 2)] <= MAX_ENTRY_LENGTH;
 }
@@ -524,12 +524,12 @@ async function findHeading(dense) {
  * entry: hyperref writes it wherever the anchor was placed relative to the
  * line, which is a whole line above the text in one paper and three points
  * above it in the next. Both are consistent within a document and neither is
- * predictable across documents, so no fixed offset works — the first attempt
+ * predictable across documents, so no fixed offset works - the first attempt
  * used one and interleaved the tail of every entry with the head of the next.
  *
  * Snapping removes the need to know. Whatever the offset, the entry starts at
- * the first line at or below its destination, so the lines of the page — not a
- * guessed distance — decide where one entry ends and the next begins.
+ * the first line at or below its destination, so the lines of the page - not a
+ * guessed distance - decide where one entry ends and the next begins.
  */
 function entriesOnPage(page, anchors, runs, links, previous) {
   if (anchors.length === 0) return [];
@@ -592,7 +592,7 @@ function extend(entry, head) {
  *
  * Not decided by comparing its `x` to the gutter, which is the obvious test
  * and the wrong one. A destination's `x` is where the typesetter recorded the
- * anchor, and for a second column that is often a point in the *first* one —
+ * anchor, and for a second column that is often a point in the *first* one -
  * one paper puts every right-hand entry at x=287 on a page whose right column
  * begins at x=308. Testing against the gutter read all sixteen of its
  * references as though they were in one column, and half of them came out as
@@ -600,7 +600,7 @@ function extend(entry, head) {
  *
  * What is reliable is that the destinations of one column agree with each
  * other. They fall into as many tight groups as there are columns, in the same
- * left-to-right order, whatever the absolute positions are — so the groups are
+ * left-to-right order, whatever the absolute positions are - so the groups are
  * matched to the columns by order and never by position. When the groups do
  * not come out one per column the pairing means nothing, and everything goes
  * into the first column rather than being split on a guess.
@@ -634,7 +634,7 @@ const COLUMN_ANCHOR_SPREAD = 24;
 /** Where a page divides into two columns, or null if it does not.
  *
  * Found as the vertical line the fewest words cross. A one-column page has no
- * such line — every line of prose crosses the middle of it — and a two-column
+ * such line - every line of prose crosses the middle of it - and a two-column
  * page has a gutter that nothing crosses but the running header.
  *
  * Worth the trouble because a two-column bibliography is otherwise read
@@ -674,8 +674,8 @@ function entriesInColumn(page, anchors, runs, links) {
   if (lines.length === 0) return { entries: [], head: null };
 
   // Each destination, snapped to the line it introduces. Two that snap to the
-  // same line are one entry — a paper anchors both the bibliography section
-  // and its first entry at the top of the page — and one that snaps above an
+  // same line are one entry - a paper anchors both the bibliography section
+  // and its first entry at the top of the page - and one that snaps above an
   // entry already found is out of order and dropped rather than allowed to
   // reopen a range that has closed.
   const starts = [];
@@ -705,7 +705,7 @@ function entriesInColumn(page, anchors, runs, links) {
       page,
       // The destination as the rest of the document spells it, so a jump can
       // be matched to its entry by equality rather than by falling inside a
-      // range — the same number on both sides, no arithmetic to get wrong.
+      // range - the same number on both sides, no arithmetic to get wrong.
       anchor: starts[index].anchor.key,
       // Where the entry begins on the page. Used to tell a citation printed
       // above the reference list from a cross-reference inside it.
@@ -738,9 +738,9 @@ function entriesInColumn(page, anchors, runs, links) {
 
 /** One citation printed on a page is often several links.
  *
- * An author-year style splits every citation in two — natbib gives "Saxe et
+ * An author-year style splits every citation in two - natbib gives "Saxe et
  * al.," one link and "2014" another, with the comma between them belonging to
- * neither — and a citation that wraps is split again across the line break.
+ * neither - and a citation that wraps is split again across the line break.
  * Left as they come, each half is its own row saying the same page twice, and
  * marking one of them draws a box around half a name.
  *
@@ -749,14 +749,14 @@ function entriesInColumn(page, anchors, runs, links) {
  * citation. The union of a group covers the punctuation *between* its pieces,
  * because that punctuation lies between two boxes that are now one.
  *
- * What it cannot cover is punctuation outside every link — the brackets around
+ * What it cannot cover is punctuation outside every link - the brackets around
  * "(Saxe et al., 2014)", or the "Proposition 2.2" in "[RZ26, Proposition
  * 2.2]". The document does not link those, and the text runs are too coarse to
  * find their edges: one paper gives a whole line as a single run.
  *
  * Two separate citations of the *same* work on consecutive lines would be read
  * as one wrapped citation. That is the accepted cost: it shows one row where
- * there should be two, and still marks both places — where not grouping shows
+ * there should be two, and still marks both places - where not grouping shows
  * two rows for one citation and marks half of it.
  */
 function citationsIn(boxes) {
@@ -805,7 +805,7 @@ function continues(previous, box) {
     const gap = box.x - (previous.x + previous.w);
     return gap >= -1 && gap <= height * 0.6;
   }
-  // Or the next line down, starting further left than the piece it follows —
+  // Or the next line down, starting further left than the piece it follows -
   // which is what a citation broken across a line break looks like.
   const drop = previous.y - box.y;
   return drop > 0 && drop <= height * 2 && box.x < previous.x;
@@ -832,7 +832,7 @@ function anchorOf(jump) {
  * A line is not one run and its runs do not share a `y`: a label set in one
  * font beside text set in another differ by a couple of points, and a line
  * broken into words is a dozen runs. Grouping by proximity puts them back
- * together, which matters because a destination is snapped to a *line* — and
+ * together, which matters because a destination is snapped to a *line* - and
  * treating the two halves of one line as two lines puts the boundary through
  * the middle of it.
  */
@@ -876,16 +876,16 @@ function lineGap(runs) {
  * hyphen on the first, and joining those with a space spells "sensi- tivity".
  * Dropping the hyphen and closing the gap is right for a word that was broken
  * and wrong for a compound the author wrote that happened to break at its own
- * hyphen — "Vapnik-Chervonenkis" would become "VapnikChervonenkis". Nothing in
+ * hyphen - "Vapnik-Chervonenkis" would become "VapnikChervonenkis". Nothing in
  * the file distinguishes the two, but a continuation that starts with a
  * capital or a digit is almost never the tail of a broken word, and that
  * recovers the proper nouns, which are the ones a reader notices. A lowercase
- * compound — "two-layer" split at its hyphen — still closes up wrongly; it is
+ * compound - "two-layer" split at its hyphen - still closes up wrongly; it is
  * the residue of a choice between two imperfect answers, and the common case
  * won.
  *
  * The hyphen itself is frequently not a hyphen. A TeX font gives the glyph no
- * Unicode value, so it arrives as a control character — but so do quotation
+ * Unicode value, so it arrives as a control character - but so do quotation
  * marks and braces in the same fonts, and reading every one of those as a
  * hyphen puts dashes through the middle of words. Only a trailing one, where a
  * break would put a hyphen, is read that way; the rest are dropped, having no
@@ -925,7 +925,7 @@ function joinRuns(lines) {
  * Curly quotes, en and em dashes, ligatures and non-breaking spaces are how a
  * typesetter sets a page and not how a list of references should read: they
  * vary with the font the PDF happened to use, so the same title comes out
- * looking different from two papers. Letters keep their accents — "Györfi" is
+ * looking different from two papers. Letters keep their accents - "Györfi" is
  * a name and "Gyorfi" is a different one.
  */
 function plain(text) {
@@ -947,8 +947,8 @@ function plain(text) {
  * TeX sets an accent as a glyph of its own, so "Györfi" arrives as "Gy¨orfi"
  * and sorts, searches and reads as though the mark were a letter. Moved after
  * the letter it precedes and composed, it becomes the letter it was always
- * meant to be. One that has drifted away from its letter entirely — "Hyvarinen,
- * ¨ A." — has nothing to attach to and is dropped rather than composed onto
+ * meant to be. One that has drifted away from its letter entirely - "Hyvarinen,
+ * ¨ A." - has nothing to attach to and is dropped rather than composed onto
  * whatever happens to follow it, which would spell a different name.
  */
 function accented(text) {
@@ -976,8 +976,8 @@ const COMBINING = {
 /** A line ending where the typesetter broke a word: a hyphen, or the glyph a
  * font with no Unicode mapping puts in its place.
  *
- * Control characters are the subject here rather than an oversight — a PDF
- * really does deliver its hyphens as U+0002 — so the rule against matching
+ * Control characters are the subject here rather than an oversight - a PDF
+ * really does deliver its hyphens as U+0002 - so the rule against matching
  * them is off for these two patterns and nowhere else. */
 // eslint-disable-next-line no-control-regex
 const HYPHENATED = /[-\u2010\u00ad\u0000-\u0008\u000b-\u001f]$/;
@@ -1010,8 +1010,8 @@ const ABBREVIATIONS = new Set([
   'vol',
 ]);
 
-/** A run of names written surname-first with initials — "Bortoli, V. D.,
- * Mathieu, E., ... and Doucet, A." — anchored at the start of an entry.
+/** A run of names written surname-first with initials - "Bortoli, V. D.,
+ * Mathieu, E., ... and Doucet, A." - anchored at the start of an entry.
  *
  * Deliberately narrow. It has to end exactly where the title begins, so it
  * only accepts the shape it is sure of: a capitalised surname, a comma, and
@@ -1098,7 +1098,7 @@ function parseEntry(text) {
   }
 
   // "Efron, B. Tweedie's formula and selection bias. Journal of the American
-  // Statistical Association, 2011." — a whole family of styles ends the author
+  // Statistical Association, 2011." - a whole family of styles ends the author
   // list on an initial, and the full stop that closes the initial is the one
   // that opens the title. Sentence splitting cannot find it, because that same
   // full stop is the one it must *not* split on in "Vapnik, V. N. and
@@ -1148,7 +1148,7 @@ function parseEntry(text) {
 
 /** The year a work was published.
  *
- * Reaching back to the seventeenth century, because reference lists do —
+ * Reaching back to the seventeenth century, because reference lists do -
  * Pearson 1894 and Bayes 1763 are cited in papers written this year, and a
  * list that dates them "unknown" looks broken beside one that does not.
  *
@@ -1175,8 +1175,8 @@ function stripYear(authors) {
 
 /** A title without the date that trails it.
  *
- * An entry with no venue runs the year straight onto the title — "Exact
- * solutions to the nonlinear dynamics of learning, 2014" — and the row then
+ * An entry with no venue runs the year straight onto the title - "Exact
+ * solutions to the nonlinear dynamics of learning, 2014" - and the row then
  * prints it twice, once in the title and again beside the authors. Removed
  * only when it is the year already found, so a title that genuinely ends in a
  * number keeps it. */
@@ -1191,7 +1191,7 @@ function withoutTrailingYear(title, year) {
 function tidy(text, limit = 180) {
   return clip(
     text
-      .replace(/^["“”'`]+|["“”'`]+$/g, '')
+      .replace(/^["\u201c\u201d'`]+|["\u201c\u201d'`]+$/g, '')
       .replace(/[.,;:]+$/, '')
       .trim(),
     limit
@@ -1226,8 +1226,8 @@ function isReferencesHeading(text) {
  */
 async function scanByLinks(info, pages) {
   const found = new Map();
-  // Links with no DOI or arXiv id — a JMLR paper, a book, a Semantic Scholar
-  // entry — are references too. Collected per page and kept below only for
+  // Links with no DOI or arXiv id - a JMLR paper, a book, a Semantic Scholar
+  // entry - are references too. Collected per page and kept below only for
   // pages that also carry identified citations, which is how the bibliography
   // is told apart from a licence link in the footer.
   const plainByPage = new Map();
@@ -1304,8 +1304,8 @@ async function scanByLinks(info, pages) {
 /** The reference list of a document with no internal links, read out of its
  * text with the same parser the library's reference lists are read with.
  *
- * Better than the bare links when it finds a list — every entry, with its
- * authors, title and year, not only the ones that print an address — and
+ * Better than the bare links when it finds a list - every entry, with its
+ * authors, title and year, not only the ones that print an address - and
  * still only "listed on": nothing in the text says where a work is cited.
  * Null when no list of at least three entries is found, so the caller falls
  * back to the links. */
@@ -1367,7 +1367,7 @@ function identifierIn(text) {
 //
 // The other half of this extension. Besides the panel for the open paper,
 // References is SpeedyF's reference provider: during idle indexing SpeedyF
-// hands it the stored text of each library document — never its path — and
+// hands it the stored text of each library document - never its path - and
 // it answers with that document's reference list, entry by entry. SpeedyF
 // keeps each entry's identifiers and a compact form of its text, and that is
 // how a reference that prints no DOI is matched to a library paper by its
@@ -1394,12 +1394,12 @@ const MAX_ENTRY_CHARS = 1500;
  * from this many entries on. */
 const MIN_UNHEADED_RUN = 5;
 /** A heading this close after the previous one is a running header over the
- * same list ("ATTIAS HANNEKE RAMASWAMI References Noga Alon, …" at the top
+ * same list ("ATTIAS HANNEKE RAMASWAMI References Noga Alon, ..." at the top
  * of each of its pages), not a new list. */
 const RUNNING_HEADER_GAP = 12_000;
 
 /** The headings a reference list stands under: the whole of a line, less a
- * section number before and a colon or period after, in any case — or, run
+ * section number before and a colon or period after, in any case - or, run
  * into the text, capitalized or in capitals. */
 const REFERENCE_HEADINGS = [
   'notes and references',
@@ -1452,7 +1452,7 @@ function trimEndAt(text, end) {
   return at;
 }
 
-/** "6", "6.", "6.1", "VI.", "(6)" — what a numbered heading starts with. */
+/** "6", "6.", "6.1", "VI.", "(6)" - what a numbered heading starts with. */
 function isSectionNumber(word) {
   const core = word.replace(/^[.()]+|[.()]+$/g, '');
   return (
@@ -1479,11 +1479,11 @@ function isReferenceHeadingLine(line) {
 
 /** Where the reference list of a document's text starts, or -1: after the
  * last reference heading, or, with none, at the first entry of the longest
- * run of `[1]`, `[2]`, … when it has at least five entries.
+ * run of `[1]`, `[2]`, ... when it has at least five entries.
  *
  * A heading is either a line of its own or the words run into the text,
  * capitalized, after the end of a sentence and right before a first entry
- * ("… thank X. References [1] A. Author"). The last one counts: an
+ * ("... thank X. References [1] A. Author"). The last one counts: an
  * introduction may say "References" too, and the list is at the end. */
 function referenceSectionStart(text) {
   let lineHeading = -1;
@@ -1575,13 +1575,13 @@ function startsEntry(text, at) {
 }
 
 /** The reference list cut into entries, `{ label, text }` each. Numbered
- * lists — `[n]`, `n.`, `(n)`, or a bare superscript `n` — are cut at labels
+ * lists - `[n]`, `n.`, `(n)`, or a bare superscript `n` - are cut at labels
  * that count up by one from 1, so a number inside an entry cannot start one;
  * the labelling that yields the longest run wins. Lists labelled by author
  * and year (`[AB99]`, `[ACSZ23a]`) are cut at every such label where an
  * entry can start. Otherwise an author-year list is cut where an entry ends
- * and "Surname, I." begins, and failing that — full names first, as most
- * machine-learning styles print them — after each "2023." that ends an
+ * and "Surname, I." begins, and failing that - full names first, as most
+ * machine-learning styles print them - after each "2023." that ends an
  * entry. Lines are joined, words broken at a line end rejoined; at most 1000
  * entries. A list with no recognizable structure yields nothing. */
 function splitEntries(section) {
@@ -1653,7 +1653,7 @@ function alphaLabelCuts(section) {
 
 /** Where entries start in a list that is neither numbered nor "Surname, I.":
  * the start, and every capitalized word after a year or a URL that ends an
- * entry ("…, 2023. Raman Arora, …", "… URL https://….  Ishaq Aden-Ali, …"),
+ * entry ("..., 2023. Raman Arora, ...", "... URL https://....  Ishaq Aden-Ali, ..."),
  * past the back-reference page numbers some styles print there ("2023. 3, 7
  * Martin Anthony"), unless the word goes on with the same entry (a URL, a
  * DOI, an arXiv id, "In"). */
@@ -1746,7 +1746,7 @@ function numberedMarkers(text, kind) {
   return out;
 }
 
-/** The longest run of markers labelled 1, 2, 3, … in text order, as indices
+/** The longest run of markers labelled 1, 2, 3, ... in text order, as indices
  * into `markers`: from each `1`, the first `2` after it, the first `3` after
  * that. Ties go to the run that starts later, so a `[1]` in the body whose
  * run jumps into the list loses to the list's own `[1]`. */
@@ -1780,11 +1780,14 @@ function longestChain(markers) {
 }
 
 /** Whether an entry can start at `at`: the start, a line start, or after
- * whatever ends an entry — a period, a closing bracket, a digit. "Smith, J.,
+ * whatever ends an entry - a period, a closing bracket, a digit. "Smith, J.,
  * Jones, K." has no entry boundary at "Jones". */
 function entryCanStart(text, at) {
   let end = at;
-  while (end > 0 && (text[end - 1] === ' ' || text[end - 1] === '\t' || text[end - 1] === ' ')) {
+  while (
+    end > 0 &&
+    (text[end - 1] === ' ' || text[end - 1] === '\t' || text[end - 1] === '\u00a0')
+  ) {
     end--;
   }
   if (end === 0 || text[end - 1] === '\n') return true;
@@ -1829,7 +1832,7 @@ function afterInitial(text, at) {
   );
 }
 
-/** Whether text at `at` starts with "Surname, I." — a capitalized word
+/** Whether text at `at` starts with "Surname, I." - a capitalized word
  * (letters, hyphens, apostrophes), a comma, and an initial. */
 function authorYearAt(text, at) {
   let i = at;
@@ -1839,7 +1842,7 @@ function authorYearAt(text, at) {
   let letters = 0;
   for (
     c = charAt(text, i);
-    isAlpha(c) || c === '-' || c === "'" || c === '’';
+    isAlpha(c) || c === '-' || c === "'" || c === '\u2019';
     c = charAt(text, i)
   ) {
     i += c.length;
@@ -1888,7 +1891,7 @@ function cleanEntry(raw) {
   let out = '';
   let space = false;
   for (const c of joined) {
-    if (c === '\u0002' || c === '­') continue;
+    if (c === '\u0002' || c === '\u00ad') continue;
     if (isSpace(c)) {
       space = out.length > 0;
       continue;
@@ -1981,13 +1984,13 @@ async function resolveAll(entries, info) {
       value: entry.citation.value,
     });
     entry.inLibrary = resolved.inLibrary;
-    // The library's title is better than one read off the page — it is the
-    // publisher's — but only where the page gave nothing.
+    // The library's title is better than one read off the page - it is the
+    // publisher's - but only where the page gave nothing.
     if (!entry.title) entry.title = resolved.title ?? resolved.fileName ?? null;
     // A paper prints its own identifier in its header, so it resolves to
     // itself and turns up at the top of its own reference list. Compared on a
-    // normalised name because a library often holds the same paper twice —
-    // "2605.25567v3.pdf" beside "2605.25567v3 (1).pdf" — and resolution may
+    // normalised name because a library often holds the same paper twice -
+    // "2605.25567v3.pdf" beside "2605.25567v3 (1).pdf" - and resolution may
     // answer with either copy.
     entry.isSelf = !!info && !!resolved.fileName && sameDocument(resolved.fileName, info.name);
   }
@@ -2016,7 +2019,7 @@ async function readCache(info) {
 /** Whether a cached scan is the shape this build knows how to draw.
  *
  * The version in the key is supposed to answer this, and it is a promise made
- * by whoever edits the scan — which is exactly the promise that gets
+ * by whoever edits the scan - which is exactly the promise that gets
  * forgotten. It was forgotten here: `sites` gained the boxes of each citation
  * and lost the single box it used to carry, under a number that had already
  * been bumped for a different change, and every cached document answered
@@ -2112,7 +2115,7 @@ function comparator(sort) {
   return (a, b) => firstAt(a) - firstAt(b) || (b.citations ?? 0) - (a.citations ?? 0);
 }
 
-/** A reference, and — when it is open — one row for each place it is cited.
+/** A reference, and - when it is open - one row for each place it is cited.
  *
  * The panel draws a flat list, so an open row is the parent followed by its
  * citations rather than anything nested. That is enough: they read as a group
@@ -2125,7 +2128,7 @@ function rowsFor(citation) {
     const line = context.get(siteKey(site));
     rows.push({
       id: `${citation.key}@${siteKey(site)}`,
-      title: line ?? `Page ${site.page + 1}`,
+      title: line ? displayText(line) : `Page ${site.page + 1}`,
       subtitle: line ? `page ${site.page + 1}` : 'go to this citation',
       // Drawn under the reference rather than beside it, because a citation of
       // a work is a detail of that work and not another entry in the list.
@@ -2139,14 +2142,238 @@ function rowsFor(citation) {
 function toRow(citation) {
   return {
     id: citation.key,
-    title: headline(citation),
-    subtitle: describe(citation),
+    title: displayText(headline(citation)),
+    subtitle: displayText(describe(citation)),
     ...(citation.inLibrary ? { badge: 'have it' } : {}),
     // The row carries its own id: activating it opens the places the work is
     // cited rather than picking one of them on your behalf. A reference with
     // no known citation sites has nothing to open and goes to its listing.
     action: { command: 'jump', value: citation.key },
   };
+}
+
+// ---------- text from the document, for display ----------
+//
+// What a row shows is ASCII, as everything SpeedyF writes is: typographic
+// punctuation and ligatures become their ASCII spelling, and Greek letters,
+// operators, relations, arrows, infinity and super- and subscripts become
+// `$...$` TeX, which the panel typesets. Accented letters in words stay as
+// they are - a name is spelled the way its owner spells it. The Notation
+// extension does the same in `asciiParts`; a worker is one self-contained
+// file, so this is a copy rather than an import.
+
+// ascii-guard: data begin
+/** Typographic characters to their ASCII spelling. */
+const DISPLAY_PLAIN = {
+  '…': '...',
+  '‘': "'",
+  '’': "'",
+  '‚': "'",
+  '‛': "'",
+  '“': '"',
+  '”': '"',
+  '„': '"',
+  '«': '"',
+  '»': '"',
+  '‹': "'",
+  '›': "'",
+  '‐': '-',
+  '‑': '-',
+  '‒': '-',
+  '–': '-',
+  '—': ' - ',
+  '―': ' - ',
+  '−': '-',
+  '•': '-',
+  '·': '-',
+  '′': "'",
+  '″': "''",
+  '©': '(c)',
+  '®': '(R)',
+  '™': '(TM)',
+  ' ': ' ',
+  ' ': ' ',
+  ' ': ' ',
+  '­': '',
+  '​': '',
+};
+
+/** Mathematical characters as TeX. */
+const DISPLAY_TEX = {
+  '∞': '\\infty',
+  '±': '\\pm',
+  '∓': '\\mp',
+  '×': '\\times',
+  '÷': '\\div',
+  '⋅': '\\cdot',
+  '∘': '\\circ',
+  '∗': '\\ast',
+  '≤': '\\leq',
+  '≥': '\\geq',
+  '≠': '\\neq',
+  '≈': '\\approx',
+  '≡': '\\equiv',
+  '∼': '\\sim',
+  '≃': '\\simeq',
+  '≅': '\\cong',
+  '∝': '\\propto',
+  '≪': '\\ll',
+  '≫': '\\gg',
+  '∈': '\\in',
+  '∉': '\\notin',
+  '⊂': '\\subset',
+  '⊆': '\\subseteq',
+  '⊃': '\\supset',
+  '⊇': '\\supseteq',
+  '∪': '\\cup',
+  '∩': '\\cap',
+  '∅': '\\emptyset',
+  '∀': '\\forall',
+  '∃': '\\exists',
+  '¬': '\\neg',
+  '∧': '\\wedge',
+  '∨': '\\vee',
+  '⊕': '\\oplus',
+  '⊗': '\\otimes',
+  '⊥': '\\perp',
+  '∥': '\\parallel',
+  '∂': '\\partial',
+  '∇': '\\nabla',
+  '∑': '\\sum',
+  '∏': '\\prod',
+  '∫': '\\int',
+  '√': '\\surd',
+  '⟨': '\\langle',
+  '⟩': '\\rangle',
+  '→': '\\to',
+  '←': '\\leftarrow',
+  '↔': '\\leftrightarrow',
+  '⇒': '\\Rightarrow',
+  '⇐': '\\Leftarrow',
+  '⇔': '\\Leftrightarrow',
+  '↦': '\\mapsto',
+  ℓ: '\\ell',
+  ℏ: '\\hbar',
+  ℝ: '\\mathbb{R}',
+  ℕ: '\\mathbb{N}',
+  ℤ: '\\mathbb{Z}',
+  ℚ: '\\mathbb{Q}',
+  ℂ: '\\mathbb{C}',
+  '°': '^{\\circ}',
+};
+
+/** Super- and subscript characters to what they raise or lower. */
+const DISPLAY_SUP = Object.fromEntries(
+  Array.from('⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱ').map((c, i) => [c, '0123456789+-=()ni'[i]])
+);
+const DISPLAY_SUB = Object.fromEntries(
+  Array.from('₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₒₓₕₖₗₘₙₚₛₜᵢⱼ').map((c, i) => [c, '0123456789+-=()aeoxhklmnpstij'[i]])
+);
+// ascii-guard: data end
+
+const DISPLAY_GREEK_UPPER =
+  'Alpha Beta Gamma Delta Epsilon Zeta Eta Theta Iota Kappa Lambda Mu Nu Xi Omicron Pi Rho - Sigma Tau Upsilon Phi Chi Psi Omega'.split(
+    ' '
+  );
+
+/** Greek capitals TeX writes as the Latin letter they look like. */
+const DISPLAY_GREEK_LATIN = {
+  Alpha: 'A',
+  Beta: 'B',
+  Epsilon: 'E',
+  Zeta: 'Z',
+  Eta: 'H',
+  Iota: 'I',
+  Kappa: 'K',
+  Mu: 'M',
+  Nu: 'N',
+  Omicron: 'O',
+  Rho: 'P',
+  Tau: 'T',
+  Chi: 'X',
+  omicron: 'o',
+};
+
+/** TeX for one Greek letter, or null. Capitals with a Latin twin (Alpha,
+ * Beta, ...) are written as that letter, as TeX has no command for them. */
+function displayGreek(ch) {
+  const cp = ch.codePointAt(0);
+  const name =
+    cp >= 0x391 && cp <= 0x3a9
+      ? DISPLAY_GREEK_UPPER[cp - 0x391]
+      : cp >= 0x3b1 && cp <= 0x3c9
+        ? DISPLAY_GREEK_UPPER[cp - 0x3b1].toLowerCase()
+        : null;
+  if (!name || name === '-') return cp === 0x3c2 ? '\\varsigma' : null;
+  return DISPLAY_GREEK_LATIN[name] ?? `\\${name}`;
+}
+
+/** Text from the document as a row can show it: ASCII words and `$...$`
+ * math, with `$` in the text escaped so it is not read as math. */
+function displayText(text) {
+  const parts = [];
+  const last = () => parts[parts.length - 1];
+  const push = (kind, value) => {
+    const prev = last();
+    if (prev && prev.kind === kind) prev.value += kind === 'math' ? ` ${value}` : value;
+    else parts.push({ kind, value });
+  };
+  /** A run of raised or lowered characters, onto the math before it, or the
+   * letter or number it sits on. */
+  const script = (mark, run) => {
+    const prev = last();
+    if (prev?.kind === 'math') {
+      prev.value += `${mark}{${run}}`;
+      return;
+    }
+    const base = prev
+      ? /(?:^|[^A-Za-z0-9.])([A-Za-z]|[0-9]+(?:\.[0-9]+)?)$/.exec(prev.value)
+      : null;
+    if (base) {
+      prev.value = prev.value.slice(0, prev.value.length - base[1].length);
+      if (!prev.value) parts.pop();
+      parts.push({ kind: 'math', value: `${base[1]}${mark}{${run}}` });
+    } else {
+      parts.push({ kind: 'math', value: `${mark}{${run}}` });
+    }
+  };
+  const chars = Array.from(String(text ?? '').normalize('NFC'));
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i];
+    const code = ch.codePointAt(0);
+    if (DISPLAY_SUP[ch] !== undefined || DISPLAY_SUB[ch] !== undefined) {
+      const table = DISPLAY_SUP[ch] !== undefined ? DISPLAY_SUP : DISPLAY_SUB;
+      let run = '';
+      while (i < chars.length && table[chars[i]] !== undefined) run += table[chars[i++]];
+      i--;
+      script(table === DISPLAY_SUP ? '^' : '_', run);
+      continue;
+    }
+    const greek = displayGreek(ch);
+    if (ch === '$') push('text', '\\$');
+    else if (ch === '\\') continue;
+    else if (code < 0x20 || code === 0x7f) push('text', ' ');
+    else if (code < 0x80) {
+      // A digit straight after math belongs to it: "$\lambda$2" would not
+      // close as math.
+      if (last()?.kind === 'math' && /[0-9]/.test(ch)) last().value += ch;
+      else push('text', ch);
+    } else if (greek) push('math', greek);
+    else if (DISPLAY_TEX[ch]) push('math', DISPLAY_TEX[ch]);
+    else if (DISPLAY_PLAIN[ch] !== undefined) push('text', DISPLAY_PLAIN[ch]);
+    else {
+      // Ligatures and styled letters have an ASCII spelling; a letter with
+      // an accent, or from another alphabet, is kept as written.
+      const plain = ch.normalize('NFKC');
+      if (/^[\x20-\x7e]+$/.test(plain)) push('text', plain);
+      else if (/^[\p{L}\p{M}]+$/u.test(ch)) push('text', ch);
+    }
+  }
+  return parts
+    .map((part) => (part.kind === 'math' ? `$${part.value.trim()}$` : part.value))
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /** What a row is called: the title printed in the bibliography, then whatever
@@ -2167,7 +2394,7 @@ function sourceOf(citation) {
   return citation.host ?? (citation.kind === 'entry' ? null : 'link');
 }
 
-/** "Kenji Fukumizu (1998), cited on pages 4, 7, 11" — the authors and year
+/** "Kenji Fukumizu (1998), cited on pages 4, 7, 11" - the authors and year
  * where the entry gave them, and where the work is cited where the document's
  * destinations said so.
  *
@@ -2189,7 +2416,7 @@ function describe(citation) {
   return out ? `${out}, ${where}` : where;
 }
 
-/** "pages 4, 7, 11" — with the tail trimmed, since a work cited on twenty
+/** "pages 4, 7, 11" - with the tail trimmed, since a work cited on twenty
  * pages does not need all twenty listed in a sidebar. Open the row for those. */
 function pages(list) {
   const shown = list.slice(0, 4).map((page) => page + 1);

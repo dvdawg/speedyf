@@ -6,7 +6,7 @@
 //
 // Note the shape. Keys are bound to *this extension's* commands, never
 // directly to SpeedyF's. Every effect on the app goes through `commands.run`,
-// which means every one of them passes the permission gate — a manifest entry
+// which means every one of them passes the permission gate - a manifest entry
 // alone can never move the document.
 
 let me = null;
@@ -76,7 +76,7 @@ async function handle(command) {
       // rejected call, not a crash.
       try {
         await run('edit.undo');
-        log('error', 'edit.undo was allowed — the permission gate is not working');
+        log('error', 'edit.undo was allowed - the permission gate is not working');
       } catch (err) {
         log('info', `refused as expected: ${err.message}`);
       }
@@ -85,11 +85,11 @@ async function handle(command) {
 
     case 'readDoc': {
       // This extension only asked for `commands:run`. Reaching for a read API
-      // is refused by permission, not by the command-group rule above — two
+      // is refused by permission, not by the command-group rule above - two
       // separate gates, both closed by default.
       try {
         await call('document.info');
-        log('error', 'document.info was allowed — the permission gate is not working');
+        log('error', 'document.info was allowed - the permission gate is not working');
       } catch (err) {
         log('info', `refused as expected: ${err.message}`);
       }

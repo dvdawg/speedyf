@@ -1,4 +1,4 @@
-//! Backups of `library.json` (projects.md §3): gzip-compressed full
+//! Backups of `library.json` (projects.md sec. 3): gzip-compressed full
 //! snapshots in `<library data dir>/backups/library-YYYYMMDD-HHMMSS.json.gz`
 //! (UTC). Full rather than diffs so each one restores on its own; a library
 //! of a thousand items compresses to a few tens of kilobytes.
@@ -54,7 +54,7 @@ pub fn file_name(at: u64) -> String {
 }
 
 /// The moment a backup's name says it was written, `None` for any other
-/// name — which is also what keeps a restore inside the backups folder.
+/// name - which is also what keeps a restore inside the backups folder.
 pub fn parse_name(name: &str) -> Option<u64> {
     let stamp = name.strip_prefix(PREFIX)?.strip_suffix(SUFFIX)?;
     let (date, time) = stamp.split_once('-')?;

@@ -5,13 +5,13 @@
 //! a paper waiting to be filed. So before it offers to add an open document
 //! to the library, it asks what the first pages say about themselves: an
 //! arXiv stamp, a DOI, a publisher's name in the header or footer, the
-//! "Received … Accepted" line of a journal, an abstract with references —
+//! "Received ... Accepted" line of a journal, an abstract with references -
 //! and, since a thesis and a textbook are library items as much as a paper
 //! is, a dissertation's title page or a book's copyright page with its ISBN.
 //!
 //! The answer is a verdict with the reason behind it, so the panel can say
 //! *why* it thinks so rather than presenting a guess as a fact. The panel
-//! prefixes the reason with the kind ("Looks like a thesis: …"), so a reason
+//! prefixes the reason with the kind ("Looks like a thesis: ..."), so a reason
 //! is a short noun phrase. "Unknown" is the honest default and costs
 //! nothing: the user can still add the file.
 
@@ -169,7 +169,7 @@ const PUBLISHER_MARKS: &[(&str, &str, MarkKind)] = &[
     ("sage publications", "SAGE", MarkKind::Article),
     ("de gruyter", "De Gruyter", MarkKind::Either),
     ("world scientific", "World Scientific", MarkKind::Either),
-    // Last, so a journal that calls itself "Proceedings of …" (PNAS, the
+    // Last, so a journal that calls itself "Proceedings of ..." (PNAS, the
     // Royal Society, the IEEE) is taken for what it is above.
     (
         "proceedings of",
@@ -194,6 +194,7 @@ const PRODUCER_MARKS: &[(&str, &str, MarkKind)] = &[
     ("integra", "a journal typesetter", MarkKind::Article),
 ];
 
+// ascii-guard: data begin - words matched in page text
 /// The submission formula of a thesis title page. Nothing else says it,
 /// so any of these settles the question on its own.
 const THESIS_SUBMISSION_MARKS: &[&str] = &[
@@ -304,6 +305,7 @@ const UNIVERSITY_MARKS: &[&str] = &[
     "école polytechnique",
     "college",
 ];
+// ascii-guard: data end
 
 /// Documents that talk about theses without being one.
 const THESIS_TALK_MARKS: &[&str] = &[
@@ -336,9 +338,10 @@ const CATALOGUE_MARKS: &[&str] = &[
     "deutsche nationalbibliothek",
 ];
 
+// ascii-guard: data begin - words matched in page text
 /// Houses that publish books and (as far as a first page goes) little
 /// else. Journal-heavy publishers are left out on purpose: an old
-/// journal page says "Printed in Great Britain … All rights reserved"
+/// journal page says "Printed in Great Britain ... All rights reserved"
 /// beside Pergamon or North-Holland too.
 const BOOK_PRESS_MARKS: &[(&str, &str)] = &[
     ("university press", "a university press"),
@@ -358,8 +361,8 @@ const BOOK_PRESS_MARKS: &[(&str, &str)] = &[
     ("w. h. freeman", "W. H. Freeman"),
     ("w.h. freeman", "W. H. Freeman"),
     ("freeman and company", "W. H. Freeman"),
-    ("birkhäuser", "Birkhäuser"),
-    ("birkhauser", "Birkhäuser"),
+    ("birkhäuser", "Birkhauser"),
+    ("birkhauser", "Birkhauser"),
     ("butterworth-heinemann", "Butterworth-Heinemann"),
     ("chapman & hall", "Chapman & Hall"),
     ("chapman and hall", "Chapman & Hall"),
@@ -387,7 +390,9 @@ const BOOK_PRESS_MARKS: &[(&str, &str)] = &[
     ("routledge", "Routledge"),
     ("blackwell publishing", "Blackwell"),
 ];
+// ascii-guard: data end
 
+// ascii-guard: data begin - words matched in page text
 /// What a manual says and a book does not. A manual has chapters and a
 /// copyright line too; these keep it out.
 const MANUAL_MARKS: &[&str] = &[
@@ -417,6 +422,7 @@ const MANUAL_MARKS: &[&str] = &[
     "datasheet",
     "data sheet",
 ];
+// ascii-guard: data end
 
 fn fold(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -521,7 +527,7 @@ impl Signals<'_> {
 }
 
 /// Whether "thesis" or "dissertation" stands within a hundred characters of
-/// a university's name — the layout of a title page, not of a paper whose
+/// a university's name - the layout of a title page, not of a paper whose
 /// affiliations happen to share a page with the word.
 fn university_near_word(folded: &str) -> bool {
     let words: Vec<usize> = ["thesis", "dissertation"]
@@ -581,16 +587,18 @@ fn strip_leading_article(line: &str) -> &str {
     line
 }
 
-/// "UNIVERSITY OF CALIFORNIA, BERKELEY" → "University of California,
+/// "UNIVERSITY OF CALIFORNIA, BERKELEY" -> "University of California,
 /// Berkeley". A line with any lower-case letter is left as written.
 fn title_case_if_shouting(line: &str) -> String {
     if line.chars().any(char::is_lowercase) {
         return line.to_owned();
     }
+    // ascii-guard: data begin - words matched in page text
     const SMALL: &[&str] = &[
         "of", "at", "the", "and", "for", "in", "de", "di", "du", "des", "la", "le", "für", "und",
         "van", "der", "del", "degli",
     ];
+    // ascii-guard: data end
     line.split(' ')
         .enumerate()
         .map(|(index, word)| {
@@ -625,8 +633,8 @@ fn thesis_reason(text: &str, s: &Signals) -> Option<String> {
     let university = word && university_near_word(folded);
 
     // The submission formula, or a degree named beside the word, is the
-    // title page's own voice — unless a journal's page says it in an
-    // author's note ("based on a dissertation submitted to…").
+    // title page's own voice - unless a journal's page says it in an
+    // author's note ("based on a dissertation submitted to...").
     let strong = (submission || degree) && !(s.publisher.is_some() || (s.doi && s.journal_like()));
     // "PhD thesis" and a supervisor's name are a thesis's words too, but a
     // paper cites theses and thanks supervisors; a paper's marks win.
@@ -659,7 +667,7 @@ fn book_reason(s: &Signals, isbn: Option<&str>) -> Option<String> {
     // words say otherwise.
     if let Some(isbn) = isbn {
         if !(s.arxiv || s.received || s.proceedings || issn) {
-            let place = if has_any(folded, &["copyright", "©", "all rights reserved"]) {
+            let place = if has_any(folded, &["copyright", "\u{a9}", "all rights reserved"]) {
                 "the copyright page"
             } else {
                 "the first page"
@@ -715,7 +723,7 @@ pub fn needs_more_pages(first_page: &str, info: &InfoFields) -> bool {
     is_sparse(first_page) || classify(first_page, info).verdict == PapernessVerdict::Unknown
 }
 
-/// What the text — the first page, or the first few pages joined — and the
+/// What the text - the first page, or the first few pages joined - and the
 /// Info dictionary say.
 pub fn classify(text: &str, info: &InfoFields) -> PapernessDto {
     let folded = fold(text);
@@ -1201,7 +1209,7 @@ mod tests {
 
     #[test]
     fn a_journal_page_with_a_publishers_edition_or_rights_line_stays_a_paper() {
-        // "All rights reserved … Printed in" on an old journal page, from a
+        // "All rights reserved ... Printed in" on an old journal page, from a
         // journal publisher: not a book.
         let page = "J. Chem. Phys. 81, 511 (1984)\nReceived 12 January 1984; accepted 2 March 1984\n© 1984 American Institute of Physics. All rights reserved. Printed in U.S.A.\nSpecial edition";
         let got = classify_text(page);

@@ -1,6 +1,6 @@
 # Contributing to SpeedyF
 
-SpeedyF’s main constraint is not feature count; it is preserving a responsive,
+SpeedyF's main constraint is not feature count; it is preserving a responsive,
 memory-bounded document pipeline while editing untrusted files safely. Read
 `docs/architecture-decision.md` and the active implementation plan before
 changing an engine or model boundary.
@@ -26,7 +26,7 @@ library or local benchmark corpora.
 Changes must preserve these rules:
 
 1. Every PDFium handle and every PDFium call stays on the dedicated engine
-   thread. Do not make “small” PDFium calls from Tauri command threads.
+   thread. Do not make "small" PDFium calls from Tauri command threads.
 2. PDF bytes, raw bitmaps, and large typed arrays do not enter frontend state.
    Rendered PNGs use the `pdfr://` transport; image previews use binary IPC.
 3. Visible work keeps priority over thumbnails, text indexing, and prefetch.
@@ -39,9 +39,9 @@ Changes must preserve these rules:
    `src/lib/coordinates/` (frontend) or the engine page-space mapper (save).
 7. All model mutations use `documentStore.apply(EditOp)` and have a valid
    inverse. Components do not own an alternate copy of document state.
-8. Rust’s `PlanPage.rotation` is an extra rotation applied after source-page
+8. Rust's `PlanPage.rotation` is an extra rotation applied after source-page
    import. It is not an absolute angle.
-9. Save remains temp-sibling → flush/sync → PDFium reopen verification →
+9. Save remains temp-sibling -> flush/sync -> PDFium reopen verification ->
    atomic replacement. A failure must leave the destination unchanged.
 10. Frontend filesystem access stays behind narrow Rust commands/native
     dialogs; do not add a broad filesystem capability for convenience.
@@ -123,7 +123,7 @@ profile, corpus identity/size, and OS/architecture when discussing a result.
 - [ ] Save failure cannot modify the original.
 - [ ] New file/path access is documented in `docs/security.md`.
 - [ ] User-facing behavior and limitations are reflected in `README.md`.
-- [ ] The full release gate passes on the contributor’s platform.
+- [ ] The full release gate passes on the contributor's platform.
 - [ ] No native libraries, benchmark PDFs/results, secrets, or signing
       credentials are committed.
 

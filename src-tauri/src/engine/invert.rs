@@ -1,8 +1,8 @@
 //! Turning a rendered page into a dark one, without turning it into a negative.
 //!
 //! The naive `255 - c` is what most viewers ship and it is wrong in two ways
-//! that matter for papers. It destroys hue — a blue hyperlink comes back
-//! orange, a red warning comes back cyan — and it renders photographs as film
+//! that matter for papers. It destroys hue - a blue hyperlink comes back
+//! orange, a red warning comes back cyan - and it renders photographs as film
 //! negatives. Neither is what "dark mode" is asking for; the request is that
 //! the *paper* go dark and the *ink* go light, with everything else recognisably
 //! itself.
@@ -17,8 +17,8 @@
 //! Photographs are exempted rather than transformed. `render` finds the image
 //! objects on the page and asks [`looks_photographic`] about each one; the
 //! continuous-tone ones keep their own pixels while the page around them
-//! inverts. Line art, plots and screenshots — the images that are mostly white
-//! paper themselves — invert with everything else, which is the whole point of
+//! inverts. Line art, plots and screenshots - the images that are mostly white
+//! paper themselves - invert with everything else, which is the whole point of
 //! doing this for a figure-heavy PDF.
 //!
 //! The pass sits between PDFium and the encoder, so it has to be cheap. Two
@@ -38,7 +38,7 @@ use std::sync::OnceLock;
 /// frontend stylesheet by `paper_matches_stylesheet` below.
 const PAPER_L: f32 = 0.231;
 /// Oklab lightness that pure black is mapped to: the "ink". Short of 1.0 on
-/// purpose — full-white text on a near-black page glares.
+/// purpose - full-white text on a near-black page glares.
 const INK_L: f32 = 0.943;
 /// Chroma is carried across intact apart from this slight pull, which keeps
 /// mid-lightness colours from reading as more saturated after the flip than
@@ -103,7 +103,7 @@ fn linear_to_srgb(c: f32) -> f32 {
     }
 }
 
-/// Linear sRGB → Oklab (Ottosson's coefficients).
+/// Linear sRGB -> Oklab (Ottosson's coefficients).
 fn linear_to_oklab(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     let l = 0.412_221_47 * r + 0.536_332_54 * g + 0.051_445_995 * b;
     let m = 0.211_903_5 * r + 0.680_699_5 * g + 0.107_396_96 * b;
@@ -116,7 +116,7 @@ fn linear_to_oklab(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     )
 }
 
-/// Oklab → linear sRGB. May land outside `[0, 1]`; the caller decides.
+/// Oklab -> linear sRGB. May land outside `[0, 1]`; the caller decides.
 fn oklab_to_linear(ok_l: f32, ok_a: f32, ok_b: f32) -> (f32, f32, f32) {
     let l = ok_l + 0.396_337_78 * ok_a + 0.215_803_76 * ok_b;
     let m = ok_l - 0.105_561_346 * ok_a - 0.063_854_17 * ok_b;
@@ -141,7 +141,7 @@ fn to_u8(c: f32) -> u8 {
 }
 
 /// The lightness curve. Decreasing and affine in Oklab L, which is already
-/// perceptually spaced — so midtones land where the eye expects rather than
+/// perceptually spaced - so midtones land where the eye expects rather than
 /// bunching up the way a gamma-space flip does.
 fn invert_lightness(ok_l: f32) -> f32 {
     INK_L + ok_l.clamp(0.0, 1.0) * (PAPER_L - INK_L)
@@ -170,7 +170,7 @@ fn invert_unit(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     let (mut cr, mut cg, mut cb) = oklab_to_linear(out_l, target_a, target_b);
     if !in_gamut(cr, cg, cb) {
         // Walk the chroma down, never the hue: the pair (a, b) is scaled
-        // together so the angle between them — the hue — is fixed, and only
+        // together so the angle between them - the hue - is fixed, and only
         // its length changes. `lo` is always in gamut because chroma 0 on a
         // valid lightness is a plain grey.
         let (mut lo, mut hi) = (0.0f32, 1.0f32);
@@ -197,16 +197,16 @@ const LUT_NODES: usize = 33;
 /// Interpolated lookup for non-neutral colours.
 ///
 /// The exact transform costs three cube roots, six powers and, off in the
-/// corners of the gamut, a bisection on top of them — about a hundred
+/// corners of the gamut, a bisection on top of them - about a hundred
 /// nanoseconds a pixel, which is a fifth of a second on one page-sized raster
 /// of continuous colour. That is the wrong order of magnitude for something
 /// standing between PDFium and the screen, so colours come from a table built
 /// once and read with trilinear interpolation.
 ///
 /// The nodes are spaced by *lightness*, not by code value. Evenly spaced codes
-/// put almost no nodes where the transform bends hardest — the shadows, where
+/// put almost no nodes where the transform bends hardest - the shadows, where
 /// a step of one code is a large step in lightness and where every dark ink on
-/// the page lives — and interpolating across that gap drifts by ten codes or
+/// the page lives - and interpolating across that gap drifts by ten codes or
 /// more. Spacing on the cube root of linear light is the same spacing Oklab's
 /// own L uses, which is the axis the transform is a straight line along.
 ///
@@ -289,7 +289,7 @@ fn invert_color_fast(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
 }
 
 /// Neutral colours collapse to one dimension, and a rendered page is almost
-/// entirely neutral — white paper, black text, and the greys of antialiasing
+/// entirely neutral - white paper, black text, and the greys of antialiasing
 /// between them. Answering those 256 cases from a table is what keeps the pass
 /// over a multi-megapixel page cheap enough to sit in the render path.
 fn gray_lut() -> &'static [u8; 256] {
@@ -392,8 +392,8 @@ pub fn invert_rgb(rgb: &mut [u8], width: usize, height: usize, protect: &[PixelR
 const SAMPLE_TARGET: usize = 4096;
 /// Channel value at or above which a pixel counts as paper rather than content.
 const NEAR_WHITE: u8 = 0xF0;
-/// A region with at least this much paper in it is line art on a white ground —
-/// a plot, a diagram, a screenshot of a document — and wants inverting with the
+/// A region with at least this much paper in it is line art on a white ground -
+/// a plot, a diagram, a screenshot of a document - and wants inverting with the
 /// rest of the page.
 const PAPER_FRACTION: f32 = 0.35;
 /// Continuous tone spreads across the histogram. Fewer occupied buckets than
@@ -403,14 +403,14 @@ const MIN_TONE_BUCKETS: usize = 14;
 const TONE_BUCKETS: usize = 32;
 
 /// Whether an image region is continuous-tone artwork that inverting would
-/// wreck — a photograph, a micrograph, a rendered 3D scene.
+/// wreck - a photograph, a micrograph, a rendered 3D scene.
 ///
 /// The two signals are deliberately cheap and independent: how much of the
 /// region is white paper, and how many distinct tones it spans. A photograph
 /// has little paper and many tones; a chart has a lot of paper; a flat logo or
 /// line drawing has few tones. Only the region that is short on paper *and*
-/// rich in tone is protected, so the common case for a paper — a matplotlib
-/// figure on a white ground — still goes dark.
+/// rich in tone is protected, so the common case for a paper - a matplotlib
+/// figure on a white ground - still goes dark.
 pub fn looks_photographic(rgb: &[u8], width: usize, height: usize, rect: PixelRect) -> bool {
     let Some(rect) = rect.clip(width, height) else {
         return false;
@@ -721,7 +721,7 @@ mod tests {
         }
     }
 
-    /// A code or two of chroma — what JPEG leaves on white paper — is taken as
+    /// A code or two of chroma - what JPEG leaves on white paper - is taken as
     /// neutral rather than dragged through the interpolated path.
     #[test]
     fn near_neutrals_are_treated_as_grey() {
@@ -733,7 +733,7 @@ mod tests {
 
     /// How far the table is allowed to sit from the exact transform.
     ///
-    /// The residual is not a resolution problem — quadrupling the nodes only
+    /// The residual is not a resolution problem - quadrupling the nodes only
     /// takes it from 12 to 7. It is the gamut mapping's own kink: colours that
     /// need their chroma cut and colours that do not meet along a crease, and
     /// interpolating across a crease rounds it off. It shows up only on inks

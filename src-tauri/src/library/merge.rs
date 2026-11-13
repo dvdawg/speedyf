@@ -1,4 +1,4 @@
-//! Duplicates, merging and unmerging (projects.md §2, identity).
+//! Duplicates, merging and unmerging (projects.md sec. 2, identity).
 //!
 //! Two records can be one work: the arXiv preprint and the journal version
 //! scanned before either knew of the other, or the same file saved twice
@@ -549,8 +549,8 @@ impl PaperStore {
     /// again (same id), takes its files back from the record it was merged
     /// into, and rejoins the projects it was in (those that still exist).
     /// Each record merged into is put back as it was before its first
-    /// merge — metadata and identifiers the user has not set since, its
-    /// aliases, its key unless it was pinned to its own since — and leaves
+    /// merge - metadata and identifiers the user has not set since, its
+    /// aliases, its key unless it was pinned to its own since - and leaves
     /// the projects it joined only through a merge. Fields its files supply
     /// are re-derived by the next scan. Returns the restored records, then
     /// `paper_id`'s.

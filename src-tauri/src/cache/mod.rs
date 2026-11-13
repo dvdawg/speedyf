@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn repeated_marking_does_not_grow_the_order_heap() {
         // mark_stale used to push a record per matching entry per call, with
-        // no compaction of its own — repeated marking with no intervening
+        // no compaction of its own - repeated marking with no intervening
         // insert grew the heap without bound.
         let mut c: ByteLru<u32> = ByteLru::new(10_000);
         for k in 0..20 {

@@ -1,4 +1,4 @@
-//! Automatic merging of duplicate items (projects.md §2, identity).
+//! Automatic merging of duplicate items (projects.md sec. 2, identity).
 //!
 //! Two item records (`is_paper`) that are plainly one work are merged
 //! without asking, through `merge_papers`, so Split restores them exactly:

@@ -3,7 +3,7 @@
 //! pdfTeX throws the LaTeX source away, which is why the rest of this engine
 //! reconstructs scripts from glyph geometry. A *tagged* document is the
 //! exception: LaTeX's tagging project (`\DocumentMetadata{tagging=on}`) emits
-//! a structure tree carrying MathML — `msup`, `mfrac`, `msqrt` and friends —
+//! a structure tree carrying MathML - `msup`, `mfrac`, `msqrt` and friends -
 //! alongside the glyphs. Where that exists it is not a guess but the author's
 //! own markup, so it wins over anything geometry can infer.
 //!
@@ -23,7 +23,7 @@ const MAX_ELEMENTS: usize = 20_000;
 pub enum MathNode {
     /// a leaf carrying text: mi, mn, mo, mtext
     Leaf { tag: String, text: String },
-    /// a container: math, mrow, msup, msub, mfrac, msqrt, …
+    /// a container: math, mrow, msup, msub, mfrac, msqrt, ...
     Row {
         tag: String,
         children: Vec<MathNode>,
@@ -61,8 +61,8 @@ pub(crate) fn is_math_tag(tag: &str) -> bool {
             | "munderover"
             | "mfenced"
             | "mspace"
-            // Display equations arrive wrapped in a table — one row, one cell
-            // per aligned part — so leaving these out drops every `equation`
+            // Display equations arrive wrapped in a table - one row, one cell
+            // per aligned part - so leaving these out drops every `equation`
             // environment in a document.
             | "mtable"
             | "mtr"
@@ -79,7 +79,7 @@ pub(crate) fn is_math_tag(tag: &str) -> bool {
 ///
 /// Only the constructs LaTeX's own tagging emits are handled, because those
 /// are the only ones that can appear here. An unrecognized node degrades to
-/// its children's text rather than failing — a title showing plain characters
+/// its children's text rather than failing - a title showing plain characters
 /// beats a title showing nothing.
 pub fn to_latex(node: &MathNode) -> String {
     match node {
@@ -176,7 +176,7 @@ struct Walker<'a> {
     b: &'a dyn PdfiumLibraryBindings,
     text: &'a str,
     by_mcid: &'a std::collections::HashMap<i32, Vec<u32>>,
-    /// every character any structure element claims — anything else on the
+    /// every character any structure element claims - anything else on the
     /// page is an artifact
     claimed: &'a std::collections::HashSet<u32>,
     budget: usize,
@@ -254,7 +254,7 @@ impl Walker<'_> {
                     // these as artifacts beside the marked content rather
                     // than inside it. Left out of the span they survive the
                     // substitution and print next to the markup that already
-                    // describes them — "√\sqrt{x}". Everything real in a
+                    // describes them - "√\sqrt{x}". Everything real in a
                     // tagged document is claimed by some element, so an
                     // unclaimed glyph hugging the span is decoration.
                     let floor = start.saturating_sub(ARTIFACT_LOOKBACK);

@@ -2,10 +2,10 @@
 //!
 //! Uses the high-level pdfium-render wrapper (editing happens once per save,
 //! so wrapper ergonomics beat raw FFI here):
-//!   new doc → import kept/reordered/duplicated pages (FPDF_ImportPages under
-//!   the hood) → blank pages → true PDF annotations (Highlight/Square/Text
-//!   note/ink/stamp) with explicit text/image appearances → AcroForm edits →
-//!   write to a temp sibling → reopen-verify → atomic rename.
+//!   new doc -> import kept/reordered/duplicated pages (FPDF_ImportPages under
+//!   the hood) -> blank pages -> true PDF annotations (Highlight/Square/Text
+//!   note/ink/stamp) with explicit text/image appearances -> AcroForm edits ->
+//!   write to a temp sibling -> reopen-verify -> atomic rename.
 //!
 //! Annotation coordinates arrive in display-normalized page space (y-up,
 //! origin at the displayed crop-box bottom-left); `disp_to_user` maps them
@@ -113,7 +113,7 @@ impl PageSpace {
         }
     }
 
-    /// display-normalized (y-up) point → raw PDF user-space point
+    /// display-normalized (y-up) point -> raw PDF user-space point
     pub(crate) fn disp_to_user(&self, dx: f32, dy: f32) -> (f32, f32) {
         let (l, b, r, t) = (self.crop_l, self.crop_b, self.crop_r, self.crop_t);
         match self.rot {
@@ -124,7 +124,7 @@ impl PageSpace {
         }
     }
 
-    /// raw PDF user-space point → display-normalized (y-up) point.
+    /// raw PDF user-space point -> display-normalized (y-up) point.
     ///
     /// The exact algebraic inverse of `disp_to_user`; the round-trip test below
     /// is what keeps it that way.
@@ -151,7 +151,7 @@ impl PageSpace {
 
     /// A user-space rectangle as a display-space one. Both corners are mapped
     /// and then re-normalized, because a rotated page swaps which corner is
-    /// which — taking the mapped corners as-is would give negative extents.
+    /// which - taking the mapped corners as-is would give negative extents.
     pub(crate) fn rect_from_user(&self, rect: &PdfRect) -> RectDto {
         let (x1, y1) = self.user_to_disp(rect.left().value, rect.bottom().value);
         let (x2, y2) = self.user_to_disp(rect.right().value, rect.top().value);
@@ -239,7 +239,7 @@ fn add_annotations<'a>(
                 // refuses `FPDFAnnot_SetColor` for any annotation carrying an
                 // `/AP` entry, and `pdfium-render` answers that refusal by
                 // retrying through `FPDFPageObj_SetStrokeColor` with the
-                // `FPDF_ANNOTATION` handle cast to `FPDF_PAGEOBJECT` — so
+                // `FPDF_ANNOTATION` handle cast to `FPDF_PAGEOBJECT` - so
                 // PDFium writes through an annotation as though it were a page
                 // object. macOS survives the type-confused access; Linux and
                 // Windows fault. `annots.rs` avoids the reading half of the
@@ -278,7 +278,7 @@ fn add_annotations<'a>(
             // Stamp rather than Square, because the control being filled is
             // round and a square annotation can only ever draw a box. Stamp
             // rather than the PDF's own /Circle subtype, because PDFium
-            // exposes no constructor for one — and because a Stamp carries
+            // exposes no constructor for one - and because a Stamp carries
             // its appearance in its own objects, which is what keeps the mark
             // looking identical in every viewer instead of depending on one
             // to synthesize it.
@@ -309,7 +309,7 @@ fn add_annotations<'a>(
                 let mut a = page.annotations_mut().create_stamp_annotation()?;
                 // Bounds BEFORE the object, not after. PDFium builds the
                 // appearance stream when an object is appended, and sizes its
-                // /BBox from the annotation's rect *at that moment* — so
+                // /BBox from the annotation's rect *at that moment* - so
                 // appending first bakes in a zero-sized box that clips the
                 // whole mark away. The annotation still holds a correct path
                 // and a correct /Rect, which is why this reads as working
@@ -387,7 +387,7 @@ fn add_annotations<'a>(
             PdfPoints::new(user_rect.bottom().value),
         )?;
         let mut a = page.annotations_mut().create_stamp_annotation()?;
-        // Bounds first — see the note on the "bubble" branch. Appending to a
+        // Bounds first - see the note on the "bubble" branch. Appending to a
         // still-empty annotation gives its appearance stream a zero /BBox,
         // which clips the image away completely while leaving a correct-looking
         // /Rect behind.
@@ -465,7 +465,7 @@ fn page_requires_mutation(page: &crate::engine::types::PlanPage) -> bool {
 ///
 /// Importing a page brings its annotations with it, so an annotation the user
 /// loaded, edited and re-saved would otherwise appear twice: once as imported,
-/// once as written. Only the indices named here are dropped — an annotation
+/// once as written. Only the indices named here are dropped - an annotation
 /// nobody touched stays exactly as it came in, keeping the author, dates, popup
 /// and appearance stream that this model has no place to put.
 ///
@@ -499,7 +499,7 @@ fn drop_replaced_annotations(page: &mut PdfPage<'_>, drop: &[u32]) {
 /// Whether `plan` hands back the source's pages exactly as it found them:
 /// same count, same order, nothing inserted, nothing dropped.
 ///
-/// Per-page edits — rotation, annotations, form values — do not count as
+/// Per-page edits - rotation, annotations, form values - do not count as
 /// restructuring; only the shape of the page list does.
 fn preserves_source_pages(plan: &EditPlan, src_page_count: u16) -> bool {
     plan.pages.len() == src_page_count as usize
@@ -518,15 +518,15 @@ fn preserves_source_pages(plan: &EditPlan, src_page_count: u16) -> bool {
 /// The default is to assemble a fresh document and import the pages the plan
 /// asks for, which is what makes reordering, deletion and inserted blanks
 /// possible at all. It also loses anything that lives on the *document*
-/// rather than on a page — and an AcroForm is exactly that. `FPDF_ImportPages`
+/// rather than on a page - and an AcroForm is exactly that. `FPDF_ImportPages`
 /// copies each widget annotation faithfully and leaves the `/AcroForm`
 /// dictionary that gives them meaning behind, so a filled-in form came out the
 /// other side as a page of inert boxes: the fields unreachable, the radio
 /// groups' parents orphaned, and filling text fields silently doing
 /// nothing because the output no longer had a form to fill.
 ///
-/// So when the document has a form and the plan is not restructuring pages —
-/// open a form, tick boxes, save, which is what filling one in *is* — the
+/// So when the document has a form and the plan is not restructuring pages -
+/// open a form, tick boxes, save, which is what filling one in *is* - the
 /// source document is edited in place and saved instead. Every later step
 /// works the same either way; they only care about pages.
 ///
@@ -895,7 +895,7 @@ mod tests {
         )
         .expect("build annotated output");
 
-        // Everything written is a real annotation now — ink and typed text
+        // Everything written is a real annotation now - ink and typed text
         // included. They used to be flattened into page content, which meant
         // that saving made them permanent.
         let saved = pdfium
@@ -1227,7 +1227,7 @@ mod tests {
     /// its own /BBox, and a zero one clips the whole mark away while leaving
     /// the annotation, its path objects and its /Rect all reading as correct.
     /// So counting annotations proves nothing here, and neither does checking
-    /// bounds — both were right the entire time a shaded bubble and an
+    /// bounds - both were right the entire time a shaded bubble and an
     /// inserted image were writing stamps that no viewer would draw. The only
     /// assertion that catches it is whether pixels actually land on the page.
     #[test]
@@ -1299,7 +1299,7 @@ mod tests {
         );
     }
 
-    /// A shaded bubble is written as a Stamp, and so is a placed image — so
+    /// A shaded bubble is written as a Stamp, and so is a placed image - so
     /// reading one back has to tell them apart. It did not: every Stamp came
     /// back as an `image`, and an image read from a file carries no source
     /// path, so the save path drops it and writes nothing in its place.
@@ -1406,7 +1406,7 @@ mod tests {
     #[test]
     fn annotations_speedyf_does_not_model_survive_a_save_untouched() {
         // A link is not something this editor can represent, so it must come
-        // through a save exactly as it went in — never adopted, never dropped.
+        // through a save exactly as it went in - never adopted, never dropped.
         let _guard = pdfium_init::test_guard();
         let pdfium = test_pdfium();
         let dir = tempfile::tempdir().expect("temp dir");

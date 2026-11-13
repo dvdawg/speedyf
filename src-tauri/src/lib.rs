@@ -126,8 +126,8 @@ fn parse_render_query(uri: &str) -> Option<RenderQuery> {
 /// to learn that. The `<img>` the request came from holds a src that is a pure
 /// function of (doc, src, rotation, scale, generation, tile), so answering 204
 /// leaves a page or tile permanently blank: the URL never changes, so nothing
-/// ever asks again. Cancellation is a scheduling signal — "not right now", not
-/// "never" — so a cancelled render goes back on the queue at the *current*
+/// ever asks again. Cancellation is a scheduling signal - "not right now", not
+/// "never" - so a cancelled render goes back on the queue at the *current*
 /// stamp instead. Aborting still hands PDFium straight back to visible work,
 /// which is the point of cancelling; the abandoned request just finishes later.
 ///
@@ -181,7 +181,7 @@ pub fn run() {
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(
         |app_handle, argv, cwd| {
-            // A second process was started to open a document — most likely a
+            // A second process was started to open a document - most likely a
             // double-click while SpeedyF was already running. Take its
             // arguments, then raise the window that already exists.
             let paths = file_arguments(argv, Path::new(&cwd));
@@ -219,7 +219,7 @@ pub fn run() {
             }));
 
             // Papers and projects changed: every window's store re-reads.
-            // No payload — the store is the source of truth, not the event.
+            // No payload - the store is the source of truth, not the event.
             let emitter = app.handle().clone();
             engine.set_library_changed_callback(Box::new(move || {
                 let _ = emitter.emit("library:changed", ());
@@ -245,7 +245,7 @@ pub fn run() {
             windows::install_menu(app.handle())?;
 
             // Someone who hand-installed an extension before it began shipping
-            // would otherwise see it listed twice under one id. Best effort —
+            // would otherwise see it listed twice under one id. Best effort -
             // never a reason the app fails to open.
             if let Ok(data_dir) = app.path().app_data_dir() {
                 let user_root = data_dir.join(extensions::EXTENSIONS_DIR);
@@ -258,12 +258,12 @@ pub fn run() {
                         builtin_root.display()
                     );
                     for id in extensions::builtin::prune_shadowed(&user_root, &ids) {
-                        log::info!("removed hand-installed \"{id}\" — it ships with SpeedyF now");
+                        log::info!("removed hand-installed \"{id}\" - it ships with SpeedyF now");
                     }
                 }
             }
 
-            // Print jobs a crash left behind. Best effort — never a reason
+            // Print jobs a crash left behind. Best effort - never a reason
             // the app fails to open.
             printing::sweep_stale_prints();
 
@@ -302,12 +302,12 @@ pub fn run() {
         })
         .register_uri_scheme_protocol("speedyf-ext", |ctx, request| {
             // Extension assets: worker code and, later, sandboxed pane
-            // documents. Nothing served here can execute in the app document —
+            // documents. Nothing served here can execute in the app document -
             // the CSP grants this scheme `worker-src` only.
             // Two places an extension's files can be: the user's extensions
             // directory, and the app bundle for the ones that ship with
-            // SpeedyF. Ids cannot collide across the two — installing over a
-            // built-in is refused — so trying each in turn is unambiguous.
+            // SpeedyF. Ids cannot collide across the two - installing over a
+            // built-in is refused - so trying each in turn is unambiguous.
             let handle = ctx.app_handle();
             let mut roots: Vec<std::path::PathBuf> = Vec::new();
             if let Ok(dir) = handle.path().app_data_dir() {
@@ -476,7 +476,7 @@ pub fn run() {
 /// started by opening a PDF.
 ///
 /// macOS and iOS only. `RunEvent::Opened` does not exist on the other
-/// platforms — referring to it there is a compile error, not a no-op — and
+/// platforms - referring to it there is a compile error, not a no-op - and
 /// they do not need it: Windows and Linux hand the path to a fresh process on
 /// the command line instead. See `file_arguments`.
 #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -514,13 +514,13 @@ fn raise_main_window(app_handle: &tauri::AppHandle) {
 fn handle_run_event(_app_handle: &tauri::AppHandle, _event: tauri::RunEvent) {}
 
 /// Hand opened paths to the frontend, and stash them for a frontend that is
-/// not listening yet — a cold launch reaches here before the webview exists.
+/// not listening yet - a cold launch reaches here before the webview exists.
 fn deliver_opens(app_handle: &tauri::AppHandle, paths: Vec<String>) {
     windows::deliver_opens(app_handle, paths);
 }
 
 /// Files named on the command line, which is how every platform except macOS
-/// delivers "open this document with SpeedyF" — and how a terminal launch
+/// delivers "open this document with SpeedyF" - and how a terminal launch
 /// delivers it on macOS too.
 ///
 /// `base` is the directory a relative path is relative *to*. For a launch that

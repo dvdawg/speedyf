@@ -1,10 +1,10 @@
-# SpeedyF Projects — design plan
+# SpeedyF Projects - design plan
 
 **Status:** implemented (phases 1 to 4) on 2026-11-12, with two additions the
 design did not foresee: file-derived metadata is re-derived on every rescan
-(§2), and the reader classifies an open PDF before offering to file it (§6),
+(sec. 2), and the reader classifies an open PDF before offering to file it (sec. 6),
 because SpeedyF is a viewer first and not every PDF is a paper. The
-bibliography parser of §8 was not ported to Rust: it runs in the References
+bibliography parser of sec. 8 was not ported to Rust: it runs in the References
 extension as the library's reference provider.
 
 **What it is:** the part of a reference manager SpeedyF does not have. Papers
@@ -72,7 +72,7 @@ order and the first hit wins:
 1. **Identifier.** The scan's DOI or arXiv id equals the paper's.
 2. **Content fingerprint.** Size plus a hash of the first and last 64 KiB.
    Cheap enough to compute in the scan, stable across renames and moves,
-   different the moment the file is re-saved with annotations — which is why
+   different the moment the file is re-saved with annotations - which is why
    it comes after the identifier and before the path.
 3. **Path.** The canonical path recorded on the file.
 
@@ -144,7 +144,7 @@ Each field carries where it came from:
 
 ```
 title, authors, year, venue, volume, issue, pages, publisher, abstract, kind
-source ∈ user | crossref | arxiv | openalex | pdf-info | first-page | filename
+source: one of user | crossref | arxiv | openalex | pdf-info | first-page | filename
 ```
 
 Precedence is fixed and the rule is one line: **a value never loses to a
@@ -181,19 +181,19 @@ in every project's `.bib`.
 
 ```
 <library data dir>/
-  library.json          # papers, projects, memberships — the user's work
+  library.json          # papers, projects, memberships - the user's work
   backups/              # library-YYYYMMDD-HHMMSS.json.gz, gzip'd snapshots
 <app data dir>/
-  library-index.json    # the scan cache, as today — disposable
+  library-index.json    # the scan cache, as today - disposable
   library-root.json     # the folders, as today
-  lookup-cache.json     # raw lookup responses by identifier — disposable
+  lookup-cache.json     # raw lookup responses by identifier - disposable
   text/                 # full-text sidecars, as today
 ```
 
 The split is between what can be regenerated and what cannot. The index and
 the sidecars are rebuilt from the folders; `library.json` is the only file
 that holds something the user did, and the only one that moves when they
-choose a different data folder. Default: the app data dir. **Settings → Library
+choose a different data folder. Default: the app data dir. **Settings -> Library
 data folder** moves it, copying the file and then reading from the new place.
 
 Written atomically: serialize to a temp file in the same directory, then
@@ -221,13 +221,13 @@ confirm.
   "version": 1,
   "papers": [
     {
-      "id": "7c1e0b5a-…",
+      "id": "7c1e0b5a-...",
       "files": [
         {
           "path": "/Users/me/Papers/noneq/jarzynski1997.pdf",
           "size": 310221,
           "mtimeMs": 1699000000000,
-          "fingerprint": "f1a2…",
+          "fingerprint": "f1a2...",
           "missing": false
         }
       ],
@@ -252,10 +252,10 @@ confirm.
   ],
   "projects": [
     {
-      "id": "3b9d…",
+      "id": "3b9d...",
       "name": "Noneq stat mech",
       "order": 0,
-      "paperIds": ["7c1e0b5a-…"],
+      "paperIds": ["7c1e0b5a-..."],
       "bibPath": "/Users/me/papers/noneq/refs.bib",
       "createdAt": "2026-11-11T20:00:00Z"
     }
@@ -297,13 +297,13 @@ point, on the engine thread, at no extra I/O:
 - **An ISBN** on the first page, checksum-validated, for books.
 - **What an identifier itself says.** An arXiv id encodes its submission
   year and month, and the first-page stamp its category; a DOI from several
-  publisher families (Elsevier `j.journal.2020.`, Springer Nature `s…-020-`,
+  publisher families (Elsevier `j.journal.2020.`, Springer Nature `s...-020-`,
   IEEE `.2019.`, Wiley) carries its year; and an Elsevier PII such as
   `0022-0000(88)90028-1`, which old scans print instead of a DOI, carries
   its year in the parentheses and converts to the DOI `10.1016/<PII>`, which
   then unlocks a Crossref lookup. These land at the `identifier` rank: above
   the Info dictionary, below XMP and every lookup.
-- **The verdict.** The classifier of §6 runs on every file during the scan,
+- **The verdict.** The classifier of sec. 6 runs on every file during the scan,
   from the first page and Info dictionary, and from pages two to four as
   well when the first says little, because a thesis or a textbook puts the
   decisive page after the cover. Theses ("a dissertation submitted", the
@@ -320,8 +320,8 @@ point, on the engine thread, at no extra I/O:
   garbage ("~ ,;l1 Il"), or good except for a title that is still a picture.
   The scan probes each page it reads, at no extra I/O: its text against a
   garbage heuristic (`ocr::needs_ocr`: too few characters on a page with
-  images, too few letters, too many 1–2 character tokens, too many
-  vowel-less words) and its image objects for one covering ≥ 60 % of the
+  images, too few letters, too many 1-2 character tokens, too many
+  vowel-less words) and its image objects for one covering >= 60 % of the
   page (a scan). A page that needs it, and a scanned first page whose layout
   gave no confident title, are rendered at 2x and read by Apple's Vision
   (`VNRecognizeTextRequest`, accurate, language correction on). The OCR text
@@ -334,7 +334,7 @@ point, on the engine thread, at no extra I/O:
   is cached per page beside the sidecar (`text/<hash>.ocr.json`), keyed by
   the content fingerprint, so no page is read twice across rescans.
   Cost: ~0.4 s a page on Apple silicon, and the first Vision call of a
-  session loads its model and can take tens of seconds — so it runs on its
+  session loads its model and can take tens of seconds - so it runs on its
   own thread (`engine::ocr_thread`, utility QoS), never on the PDFium
   worker: the worker renders the page (PDFium stays there), hands the PNG
   over a bounded channel, one page in flight per document, and goes on
@@ -342,7 +342,7 @@ point, on the engine thread, at no extra I/O:
   (so a quit loses nothing already read) and sends it back as an idle
   `OcrDone` job, which resumes whatever waited: the scan scans that file
   again with the page cached; the text pass picks its document up where it
-  stopped — pages already extracted, the six-page budget as spent. Only
+  stopped - pages already extracted, the six-page budget as spent. Only
   the idle library jobs ask, never a scan the user is waiting for (an
   inbox copy reads the cache only and is scanned again at idle,
   `ocr_deferred`). Elsewhere it compiles to nothing: Windows and Linux keep
@@ -356,7 +356,7 @@ The first-line title heuristic and the filename patterns stay as the floor.
 
 ### Online, opt-in
 
-Off until **Settings → Look up paper metadata online** is turned on. This is
+Off until **Settings -> Look up paper metadata online** is turned on. This is
 the first network call SpeedyF makes, so it meets the bar `extension_api.md`
 set for extensions wanting the same: a plain statement of what leaves the
 machine and an indicator in the status bar while a lookup runs.
@@ -365,12 +365,12 @@ What leaves the machine, once the setting is on: DOIs, arXiv ids, ISBNs, and
 for a paper that has none of them its first-page title. Never file contents.
 Only records the scan (or the user) takes for papers are looked up at all.
 
-| Have     | Ask, in order                                                                                                                                                                                                |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| DOI      | Crossref; DataCite if Crossref has no record; OpenAlex only when venue, volume or pages are still missing; Semantic Scholar (abstract, and the references for §8); INSPIRE when the paper looks like physics |
-| arXiv id | arXiv (which may yield the DOI, then the row above); INSPIRE when physics; Semantic Scholar; OpenAlex only when the venue is still missing                                                                   |
-| ISBN     | Open Library                                                                                                                                                                                                 |
-| none     | Title search on OpenAlex, Crossref, arXiv, Semantic Scholar, and DBLP when the paper looks like computer science; the answers are merged                                                                     |
+| Have     | Ask, in order                                                                                                                                                                                                    |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| DOI      | Crossref; DataCite if Crossref has no record; OpenAlex only when venue, volume or pages are still missing; Semantic Scholar (abstract, and the references for sec. 8); INSPIRE when the paper looks like physics |
+| arXiv id | arXiv (which may yield the DOI, then the row above); INSPIRE when physics; Semantic Scholar; OpenAlex only when the venue is still missing                                                                       |
+| ISBN     | Open Library                                                                                                                                                                                                     |
+| none     | Title search on OpenAlex, Crossref, arXiv, Semantic Scholar, and DBLP when the paper looks like computer science; the answers are merged                                                                         |
 
 A source is skipped when it cannot add anything the record lacks, which is
 what keeps a batch from asking eight services about every paper.
@@ -399,7 +399,7 @@ costs nothing and a rescan never re-fetches. An optional Semantic Scholar key
 (**Settings**) buys the better rate limit and nothing else.
 
 Crossref asks politely-identified clients to include a contact address in the
-User-Agent in exchange for better service; **Settings → Contact for lookups**
+User-Agent in exchange for better service; **Settings -> Contact for lookups**
 is optional and empty by default. Requests go through `reqwest` with
 `rustls-tls` from the Rust side; the webview's CSP is untouched. The arXiv API
 answers in Atom XML, parsed with `quick-xml`. Google Scholar is not a source:
@@ -415,18 +415,18 @@ at the top right of its header. The tab strip's Home button and the
 _Go to Home Screen_ command return to whichever one is set.
 
 ```
- ┌─ projects ─────┬─ papers ──────────────────────────┬─ paper ───────────────┐
- │ All papers  412│ All papers        [Home | Projects]│ ┌───────────────┐     │
- │ Not filed    37│ [search…]                          │ │ first page    │     │
- │ ───────────────│ ▾ Noneq stat mech  23              │ │               │     │
- │ Noneq stat mech│    Nonequilibrium equality…  1997  │ └───────────────┘     │
- │ Active matter  │    Entropy production…       1999  │ Jarzynski · 1997      │
- │ Thesis         │ ▸ Active matter  41                │ Physical Review Lett. │
- │                │ ▾ Thesis  117                      │ doi 10.1103/…         │
- │ + New project  │    …                               │ key jarzynski1997…    │
- │                │                                    │ ☑ Noneq  ☐ Active     │
- │                │                                    │ [Open] [Copy key]     │
- └────────────────┴────────────────────────────────────┴───────────────────────┘
++- projects ------+- papers -----------------------------+- paper ---------------+
+| All papers  412 | All papers          [Home | Projects] | +---------------+     |
+| Not filed    37 | [search...]                          | | first page    |     |
+| --------------- | v Noneq stat mech  23                | |               |     |
+| Noneq stat mech |    Nonequilibrium equality...  1997  | +---------------+     |
+| Active matter   |    Entropy production...       1999  | Jarzynski - 1997      |
+| Thesis          | > Active matter  41                  | Physical Review Lett. |
+|                 | v Thesis  117                        | doi 10.1103/...       |
+| + New project   |    ...                               | key jarzynski1997...  |
+|                 |                                      | [x] Noneq  [ ] Active |
+|                 |                                      | [Open] [Copy key]     |
++-----------------+--------------------------------------+-----------------------+
 ```
 
 **Left column.** _All papers_, _Not filed_ and _Other PDFs_ with counts, a
@@ -438,7 +438,7 @@ nothing else; files and papers are untouched. Dropping paper rows onto a
 project adds them.
 
 **Middle column.** Header: the selection's name and count; for a project also
-its synced `.bib` path or "no .bib", **Export .bib…**, and the incomplete-entry
+its synced `.bib` path or "no .bib", **Export .bib...**, and the incomplete-entry
 count. Then the search field, then the list.
 
 - Under _All papers_ the list is grouped by project, each group collapsible,
@@ -448,14 +448,14 @@ count. Then the search field, then the list.
 - A row is the title, then authors, year and venue dimmed. A missing file dims
   the whole row. The cite key appears at the right on hover.
 - Search matches title, authors, year and key as you type. Below the matches a
-  single row, _Search the full text of every paper for "…"_, runs the existing
+  single row, _Search the full text of every paper for "..."_, runs the existing
   trigram search, because "which paper said this" is a different question and
   already has an answer.
 - Selecting a row fills the right column; Enter or double-click opens the
   paper in a tab, through `openInNewTabOrFocus`, exactly as the Library panel
   does today.
 
-**Export bundle (.zip)…** (the project's menu, beside Export .bib…, and the
+**Export bundle (.zip)...** (the project's menu, beside Export .bib..., and the
 palette's _Export Project Bundle..._) writes one zip through the save
 dialog: `<project name>.bib`, rendered as Export .bib renders it and its
 keys pinned the same way, and `pdfs/<citekey>.pdf`, a byte copy of each
@@ -504,7 +504,7 @@ into the inbox and adds it to that project; elsewhere on the screen it files
 without a project; anywhere else in the app it opens, as before.
 
 **The noun is "item".** Papers, theses and books all live in the library, so
-the screen says _All items_, the detail says "Looks like a thesis: …", and
+the screen says _All items_, the detail says "Looks like a thesis: ...", and
 the reader's panel is called _Library_. Internal names keep "paper".
 
 **Keyboard.** Up and down move within a column, left and right move between
@@ -512,7 +512,7 @@ columns, Enter opens. The copy-cite-key chord is chosen at implementation
 against `reservedChords()` so it collides with nothing SpeedyF already binds.
 
 **Empty states.** No library folders: the screen says so and offers _Add
-folder…_. No projects: the left column holds only the two fixed rows and _New
+folder..._. No projects: the left column holds only the two fixed rows and _New
 project_. Nothing selected: the right column is blank.
 
 **Narrow windows.** Below roughly 900px the right column collapses behind a
@@ -533,7 +533,7 @@ key with Copy, a checkbox per project, **Copy BibTeX**, **Look up**. When the
 open file is not in any library folder it first asks the engine whether the
 document looks like a paper: an arXiv stamp, a DOI or a publisher's name on
 the first page, a journal typesetter in the Info dictionary, or the shape of
-an abstract with sections. A paper gets "This looks like a paper (arXiv:… on
+an abstract with sections. A paper gets "This looks like a paper (arXiv:... on
 the first page)" and a prominent **Add to library**; a manual, a form or a
 scan gets one quiet line and the same button in its secondary style. Adding
 copies the file into the inbox folder and then shows the panel proper.
@@ -555,7 +555,7 @@ its place. Re-read on item change and on `library:changed`. Nothing is ever
 filed without the click.
 
 New commands, in a new `Library` group in `commands.ts`: _Copy Cite Key_,
-_Copy BibTeX_, _Add to Project…_, _Look Up Metadata_, _Switch Launch Screen_.
+_Copy BibTeX_, _Add to Project..._, _Look Up Metadata_, _Switch Launch Screen_.
 The copy commands are also offered when a paper is selected on the Projects
 screen.
 
@@ -581,10 +581,10 @@ share one serializer.
 | a journal and a DOI | `@article{key, author, title, journal, year, volume, number, pages, doi}`        |
 | a conference venue  | `@inproceedings{key, author, title, booktitle, year, pages, doi}`                |
 | only an arXiv id    | `@misc{key, author, title, year, eprint, archivePrefix = {arXiv}, primaryClass}` |
-| not enough to say   | `@misc{key, title, note = {…}}` preceded by `% incomplete: no author, no year`   |
+| not enough to say   | `@misc{key, title, note = {...}}` preceded by `% incomplete: no author, no year` |
 
 Authors are written `Family, Given and Family, Given`. Titles are wrapped
-`{{…}}` to protect case. The characters `& % $ # _ { } ~ ^ \` are escaped;
+`{{...}}` to protect case. The characters `& % $ # _ { } ~ ^ \` are escaped;
 everything else is written as UTF-8, which every modern TeX reads.
 
 **Options** (Settings, Advanced, BibTeX; closed by default). Kept in
@@ -593,13 +593,13 @@ exactly the output above), so the clipboard, exports and synced files use
 them on every machine; changing one saves, which rewrites every synced
 `.bib` whose bytes change. Include abstract (off); include URL (off: the
 doi.org link, else `https://arxiv.org/abs/<id>`); include file path (off:
-the main file on disk); title case protection (on: `{{…}}`, off: `{…}`);
+the main file on disk); title case protection (on: `{{...}}`, off: `{...}`);
 abbreviate journal names (off: a built-in table of common physics, math
 and CS journals, matched ignoring case, spacing and a leading "The"; only
 the `journal` field, unknown names left alone).
 
-**Export .bib…** opens a save dialog and writes the project's entries once.
-**Sync to a .bib…** records a path on the project; from then on every change
+**Export .bib...** opens a save dialog and writes the project's entries once.
+**Sync to a .bib...** records a path on the project; from then on every change
 to the project's membership or to any member's metadata rewrites that file,
 atomically and debounced, and the project header shows the path. Keys are
 frozen on first write (section 2). The header's incomplete count tells the
@@ -638,9 +638,9 @@ to see library documents. It declares `referenceProvider` and
 window hands it each library document's stored text under an opaque token,
 never a path, and it answers with the entries (`label`, `text`, `year`) cut by
 a text parser (heading, numbered/bracketed/superscript chains, author-year
-fallbacks). The engine keeps per entry what matching needs — the compact text,
+fallbacks). The engine keeps per entry what matching needs - the compact text,
 the year, the explicit DOIs and arXiv ids and the DOI an APS journal reference
-spells out — in a refs sidecar stamped with the provider and its version, and
+spells out - in a refs sidecar stamped with the provider and its version, and
 matches entries to library titles. Disable References and no refs sidecar is
 read: DOI, arXiv and APS-journal edges remain (the engine finds those in the
 whole text itself), title-only edges go.
@@ -660,22 +660,22 @@ New Tauri commands, all going through the one library state and all emitting
 `library:changed` after a write:
 
 ```
-library_papers { filter }            → { papers, total }
-library_paper { id }                 → paper
-library_paper_for_path { path }      → paper | null
-library_update_paper { id, patch }   → paper
-library_projects                     → [project]
-library_create_project { name }      → project
+library_papers { filter }            -> { papers, total }
+library_paper { id }                 -> paper
+library_paper_for_path { path }      -> paper | null
+library_update_paper { id, patch }   -> paper
+library_projects                     -> [project]
+library_create_project { name }      -> project
 library_rename_project { id, name }
 library_delete_project { id }
 library_reorder_projects { ids }
 library_set_membership { paperId, projectId, member }
-library_preview { paperId }          → resolved (doc id + preview spec)
-library_file_into_inbox { path }     → newPath
-library_bibtex { paperIds }          → string
+library_preview { paperId }          -> resolved (doc id + preview spec)
+library_file_into_inbox { path }     -> newPath
+library_bibtex { paperIds }          -> string
 library_export_bib { projectId, path }
 library_set_project_bib { projectId, path | null }
-library_lookup { paperId, mode }     → applied | [candidate]        (phase 2)
+library_lookup { paperId, mode }     -> applied | [candidate]        (phase 2)
 library_data_dir / library_move_data { dir }
 ```
 
@@ -702,7 +702,7 @@ src/types/engine.ts, src/lib/transport/engine.ts   DTOs and calls
 
 ```
 src-tauri/src/library/
-  mod.rs        scan gains Info dict + fingerprint; reconcile files → papers
+  mod.rs        scan gains Info dict + fingerprint; reconcile files -> papers
   store.rs      library.json: load, save atomically, version
   papers.rs     paper records, identity, provenance rules
   projects.rs   projects and memberships
@@ -722,7 +722,7 @@ BibTeX example extension becomes a real one the day something needs it.
 
 ---
 
-## Phase 1 — projects
+## Phase 1 - projects
 
 **Goal:** the Projects screen works, a paper can be put in a project, and
 nothing on disk is lost or overwritten.
@@ -749,7 +749,7 @@ and the release gate passes.
 
 **Explicitly out:** network, `.bib`, tags, graph.
 
-## Phase 2 — lookup
+## Phase 2 - lookup
 
 **Ships:** the opt-in setting and status indicator; Crossref and arXiv by
 identifier, per paper and per project; OpenAlex by title on request with a
@@ -758,9 +758,9 @@ candidate picker; the response cache; `reqwest` and the XML dependency.
 **Done when:** a project of identifier-bearing papers looks up in one action
 and every field shows its source; turning the setting off makes no request.
 
-## Phase 3 — `.bib`
+## Phase 3 - `.bib`
 
-**Ships:** the serializer and its tests; Copy BibTeX; Export .bib…; synced
+**Ships:** the serializer and its tests; Copy BibTeX; Export .bib...; synced
 paths with debounced atomic rewrites; key freezing on first write; the
 incomplete count in the project header.
 
@@ -768,7 +768,7 @@ incomplete count in the project header.
 papers, and a key that has been written never changes without the user
 unpinning it.
 
-## Phase 4 — graph
+## Phase 4 - graph
 
 **Ships:** cited identifiers from sidecars; cites and cited-by in the Paper
 panel. Then, as its own decision, the Rust port of the bibliography parser.
@@ -799,7 +799,7 @@ re-estimated when it is reached.
 - **Scan cost.** Fingerprinting reads 128 KiB per file. Across a few thousand
   files that is one pass at idle priority; it is not a per-render cost.
 
-## 12. Hard to retrofit — get these right in phase 1
+## 12. Hard to retrofit - get these right in phase 1
 
 - **Paper ids are random and permanent.** Never derived from a path or an
   identifier, both of which change.

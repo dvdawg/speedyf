@@ -154,8 +154,8 @@ fn fold_text(value: &str) -> String {
     for ch in value.chars() {
         // `fold` goes through `char::to_lowercase`, which constructs an
         // iterator per character. That is invisible for one page and dominates
-        // when it runs over a whole library, so ASCII — nearly everything, even
-        // in a maths paper — takes the byte-wise path instead.
+        // when it runs over a whole library, so ASCII - nearly everything, even
+        // in a maths paper - takes the byte-wise path instead.
         if ch.is_ascii() {
             out.push(ch.to_ascii_lowercase());
         } else {
@@ -190,7 +190,7 @@ struct OcrSpan {
 
 /// Where each line of an OCR'd page's text sits on the page. Vision gives
 /// a box per line, not per character, so a hit's rectangle is the share of
-/// its line's box that its characters take, spaced evenly — close for the
+/// its line's box that its characters take, spaced evenly - close for the
 /// proportional type of a journal page, and on the right line always.
 #[derive(Debug, Default)]
 pub struct OcrGeometry {
@@ -259,7 +259,7 @@ impl PageEntry {
     ///
     /// The library index stores this form rather than the raw stream so a
     /// query does not have to re-run NFKC over the whole library on every
-    /// keystroke — only the cheap case fold, in `from_indexed`.
+    /// keystroke - only the cheap case fold, in `from_indexed`.
     pub(crate) fn indexed_parts(&self) -> (&str, &str, &[(u32, i32)], u32) {
         (
             &self.normalized,
@@ -269,8 +269,8 @@ impl PageEntry {
         )
     }
 
-    /// Rebuild a page from a sidecar. The expensive half of `new` — Unicode
-    /// normalization — was done once, when the document was indexed.
+    /// Rebuild a page from a sidecar. The expensive half of `new` - Unicode
+    /// normalization - was done once, when the document was indexed.
     pub(crate) fn from_indexed(
         normalized: String,
         folded: String,
@@ -596,7 +596,7 @@ impl SearchStore {
     /// Free at least `need` bytes on behalf of `doc` by trimming whichever
     /// document currently holds the most, dropping its highest page indices
     /// first (search degrades to prefix coverage, matching `set_budget`).
-    /// Stops once `doc` itself is the largest holder — a document never robs
+    /// Stops once `doc` itself is the largest holder - a document never robs
     /// others to grow past them, so the steady state is an even split.
     fn reclaim_for(&mut self, doc: DocId, need: u64) {
         let mut freed = 0u64;
@@ -723,7 +723,7 @@ pub struct TextLayoutData {
     pub boxes: Arc<Vec<[f32; 4]>>,
     /// Fillable-looking glyphs on the page (see `engine::bubbles`). Cached
     /// here rather than on their own because they are derived from exactly
-    /// the character stream this entry already paid to extract — finding them
+    /// the character stream this entry already paid to extract - finding them
     /// separately would mean reading the page twice to learn the same thing.
     pub bubbles: Arc<Vec<BubbleDto>>,
     pub char_count: u32,

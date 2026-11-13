@@ -1,4 +1,4 @@
-//! Works the view's items cite that are not in the library (projects.md §8):
+//! Works the view's items cite that are not in the library (projects.md sec. 8):
 //! the ghost nodes of the graph, and a reading list.
 //!
 //! Per citing item, from the same sources the graph reads: the identifiers
@@ -9,7 +9,7 @@
 //! title in it; an identifier printed in an entry that resolved by title is
 //! not missing either.
 //!
-//! **Grouping** across citing items, conservative — two printings of one
+//! **Grouping** across citing items, conservative - two printings of one
 //! work left apart is fine, two works put together is not:
 //!
 //! - by identifier: citations sharing a DOI or an arXiv id (lower-case) are
@@ -521,7 +521,7 @@ mod tests {
         assert_eq!(works.len(), 4);
     }
 
-    /// A → B → C → D, and E on its own in a project.
+    /// A -> B -> C -> D, and E on its own in a project.
     fn chain() -> (PaperStore, Vec<String>, Vec<LibraryEntry>) {
         let mut store = store();
         let names = ["a", "b", "c", "d", "e"];

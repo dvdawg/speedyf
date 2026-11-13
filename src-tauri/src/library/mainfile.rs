@@ -1,6 +1,6 @@
-//! Which of an item's files is its main one — the one opened, previewed and
-//! read for fields — and which files are byte-identical copies of one
-//! another (projects.md §2).
+//! Which of an item's files is its main one - the one opened, previewed and
+//! read for fields - and which files are byte-identical copies of one
+//! another (projects.md sec. 2).
 //!
 //! The main file is the user's choice when they made one
 //! (`PaperRecord::primary_path`). Otherwise it is chosen by narrowing the
@@ -64,7 +64,7 @@ pub fn traits_of(entry: &LibraryEntry) -> FileTraits {
 
 /// Whether a classifier reason (`paperness::classify`) names a publisher:
 /// "Elsevier on the first page", "an APS journal on the first page",
-/// "Elsevier PII … on the first page", "made by IEEE", "an edition from
+/// "Elsevier PII ... on the first page", "made by IEEE", "an edition from
 /// Cambridge University Press". Not the arXiv stamp, a bare DOI, or a
 /// file made by arXiv.
 pub fn names_publisher(reason: &str) -> bool {

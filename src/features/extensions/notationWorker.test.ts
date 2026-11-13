@@ -313,9 +313,9 @@ describe('notation: definitions in a book-length text', () => {
 });
 
 describe('notation: text for the panel', () => {
-  it('writes Greek and math as TeX, and everything else as ASCII', () => {
+  it('writes Greek and math as TeX, and punctuation as ASCII, keeping accented letters', () => {
     expect(notation.asciiText('the rate λ ∈ R, “quoted” café')).toBe(
-      'the rate $\\lambda$ $\\in$ R, "quoted" cafe'
+      'the rate $\\lambda$ $\\in$ R, "quoted" café'
     );
     expect(notation.asciiText('costs $5')).toBe('costs \\$5');
   });

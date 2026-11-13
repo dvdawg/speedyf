@@ -66,8 +66,8 @@ The loose box is the font's ascent and descent: the same for every glyph of
 a font, so it says nothing about how tall a delimiter or big operator is.
 `ink` does. PDFium exposes no raw codes for a font that has a Unicode
 mapping: `code` is the raw code only when `text` is empty, and otherwise the
-Unicode scalar. A character outside the Basic Multilingual Plane (𝑌 from an
-OpenType math font) is one glyph, its `text` the full character.
+Unicode scalar. A character outside the Basic Multilingual Plane (a
+mathematical italic Y, U+1D44C, from an OpenType math font) is one glyph, its `text` the full character.
 
 `region.glyphs` treats `bbox` as an equation's block: any glyph whose ink
 touches it is taken, then the glyphs on the same baselines next to those

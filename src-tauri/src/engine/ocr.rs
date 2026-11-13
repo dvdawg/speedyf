@@ -1,7 +1,7 @@
 //! OCR for pages whose text layer is missing or garbage (old scanned papers).
 //!
 //! macOS: Apple's Vision framework (`VNRecognizeTextRequest`, accurate level,
-//! language correction on) — on-device, no model to ship, and good on the
+//! language correction on) - on-device, no model to ship, and good on the
 //! 300 dpi-ish journal scans this is for. Every other platform compiles
 //! [`recognize_png`] to a no-op returning `None`; [`needs_ocr`] and
 //! [`page_text`] are pure Rust and work everywhere.
@@ -23,7 +23,7 @@ pub struct OcrLine {
 }
 
 /// Lines below this confidence are dropped by [`page_text`]. Vision gives
-/// 0.3 for its "best guess on a smudge" and ≥0.5 for anything real; 0.3 keeps
+/// 0.3 for its "best guess on a smudge" and >= 0.5 for anything real; 0.3 keeps
 /// faint-but-correct lines and drops specks read as `.` or `~`.
 pub const MIN_LINE_CONFIDENCE: f32 = 0.3;
 
@@ -82,7 +82,7 @@ pub fn page_text(lines: &[OcrLine]) -> String {
 /// images on it, is an image-only scan (or a scan with a stray page number).
 /// Scaled down for small pages; see [`min_chars_for_area`].
 const MIN_CHARS_FULL_PAGE: f32 = 40.0;
-/// US Letter, 612 × 792 pt — the area at which `MIN_CHARS_FULL_PAGE` applies.
+/// US Letter, 612 x 792 pt - the area at which `MIN_CHARS_FULL_PAGE` applies.
 const LETTER_AREA_PTS: f32 = 612.0 * 792.0;
 /// Floor for the scaled minimum, so a tiny page still needs *some* text.
 const MIN_CHARS_FLOOR: f32 = 10.0;
@@ -90,11 +90,11 @@ const MIN_CHARS_FLOOR: f32 = 10.0;
 /// Garbage checks only run with at least this much text; below it ratios are
 /// noise (a page reading just "254" is not garbage, it's a page number).
 const MIN_CHARS_FOR_RATIOS: usize = 12;
-/// (b1) Letters / non-whitespace chars. English prose is ~0.80–0.85, a
-/// formula-heavy page ~0.60–0.70; misread scans ("~ ,;l1 Il") fall to 0.2–0.4.
+/// (b1) Letters / non-whitespace chars. English prose is ~0.80-0.85, a
+/// formula-heavy page ~0.60-0.70; misread scans ("~ ,;l1 Il") fall to 0.2-0.4.
 const MIN_LETTER_SHARE: f32 = 0.55;
-/// (b2) Share of whitespace-separated tokens that are 1–2 chars long. Prose
-/// sits at 0.20–0.30 (a, of, to, in, is…); a scan read as confetti is > 0.5.
+/// (b2) Share of whitespace-separated tokens that are 1-2 chars long. Prose
+/// sits at 0.20-0.30 (a, of, to, in, is...); a scan read as confetti is > 0.5.
 const MAX_SHORT_TOKEN_SHARE: f32 = 0.5;
 /// Need at least this many tokens before (b2) counts.
 const MIN_TOKENS_FOR_SHORT_SHARE: usize = 8;
@@ -120,9 +120,9 @@ const MIN_RUNS_FOR_VOWEL_CHECK: usize = 5;
 /// Rules (any one triggers):
 /// - (a) fewer than ~40 non-whitespace chars (scaled by page area, floor 10)
 ///   on a page with images;
-/// - (b) with ≥ 12 non-whitespace chars, garbage-shaped text:
-///   letter share < 0.55, or > 50 % of tokens are 1–2 chars long (≥ 8
-///   tokens), or > 35 % of 4+ letter runs have no vowel (≥ 5 runs).
+/// - (b) with >= 12 non-whitespace chars, garbage-shaped text:
+///   letter share < 0.55, or > 50 % of tokens are 1-2 chars long ( >= 8
+///   tokens), or > 35 % of 4+ letter runs have no vowel ( >= 5 runs).
 pub fn needs_ocr(extracted_text: &str, page_area_pts: f32, has_images: bool) -> bool {
     let non_ws: Vec<char> = extracted_text
         .chars()
@@ -160,7 +160,7 @@ fn min_chars_for_area(page_area_pts: f32) -> f32 {
     (MIN_CHARS_FULL_PAGE * (page_area_pts / LETTER_AREA_PTS).min(1.0)).max(MIN_CHARS_FLOOR)
 }
 
-/// Counts maximal runs of ≥ 4 letters, and how many of those have no vowel.
+/// Counts maximal runs of >= 4 letters, and how many of those have no vowel.
 fn vowelless_runs(text: &str) -> (usize, usize) {
     let (mut runs, mut vowelless) = (0usize, 0usize);
     let mut len = 0usize;
@@ -190,7 +190,7 @@ fn vowelless_runs(text: &str) -> (usize, usize) {
 
 /// Top-to-bottom, and left-to-right within a row. A line joins the current
 /// row when its vertical center falls inside the row's first line, so a
-/// two-column header ("Received …" | "Accepted …") stays left before right
+/// two-column header ("Received ..." | "Accepted ...") stays left before right
 /// even when the two boxes differ by a pixel in y.
 // Only the Vision path (and its tests) sorts; elsewhere OCR is a no-op.
 #[cfg(any(target_os = "macos", test))]
@@ -267,7 +267,7 @@ mod vision {
             // binding is only `unsafe` because it is generated from a header
             // without nullability/thread annotations.
             let r = unsafe { obs.boundingBox() };
-            // Vision: normalized, bottom-left origin → ours: top-left origin.
+            // Vision: normalized, bottom-left origin -> ours: top-left origin.
             let (x, w, h) = (r.origin.x as f32, r.size.width as f32, r.size.height as f32);
             let y = 1.0 - (r.origin.y as f32 + h);
             lines.push(OcrLine {
@@ -293,7 +293,7 @@ mod tests {
     }
 
     const LETTER: f32 = LETTER_AREA_PTS;
-    /// The JCSS scan's page size (453 × 669 pt).
+    /// The JCSS scan's page size (453 x 669 pt).
     const JCSS: f32 = 453.28 * 669.0;
 
     const CLEAN_ABSTRACT: &str =
@@ -355,7 +355,7 @@ mod tests {
 
     #[test]
     fn mostly_short_tokens_trigger() {
-        // Letters dominate, but it's been shredded into 1–2 char pieces.
+        // Letters dominate, but it's been shredded into 1-2 char pieces.
         let t = "Th e qu ic k br ow n fo x ju mp s ov er th e la zy do g an d ru ns";
         assert!(needs_ocr(t, JCSS, true));
     }

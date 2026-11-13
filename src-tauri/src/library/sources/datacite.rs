@@ -1,6 +1,6 @@
-//! DataCite `dois/{doi}` (projects.md §4). DataCite registers the DOIs
-//! Crossref does not — datasets, software, theses, and every arXiv DOI
-//! (`10.48550/arxiv.…`) — so it is where a DOI goes when Crossref answers
+//! DataCite `dois/{doi}` (projects.md sec. 4). DataCite registers the DOIs
+//! Crossref does not - datasets, software, theses, and every arXiv DOI
+//! (`10.48550/arxiv....`) - so it is where a DOI goes when Crossref answers
 //! 404. What leaves the machine is the DOI and nothing else; DataCite's
 //! API takes no key and has no polite pool.
 
@@ -37,7 +37,7 @@ pub async fn fetch_by_doi(
     Ok(parse_doi(&body))
 }
 
-/// Parses a DataCite `dois/{doi}` response — JSON:API, the record under
+/// Parses a DataCite `dois/{doi}` response - JSON:API, the record under
 /// `data.attributes`. `None` when it is not one or has no title.
 pub fn parse_doi(json: &str) -> Option<LookupCandidateDto> {
     let root: Value = serde_json::from_str(json).ok()?;
@@ -149,7 +149,7 @@ fn creator(entry: &Value) -> Option<Author> {
 }
 
 // ---------------------------------------------------------------------------
-// Tests — no network. The fixture is trimmed from DataCite's documented
+// Tests - no network. The fixture is trimmed from DataCite's documented
 // JSON:API response for an arXiv-registered DOI.
 // ---------------------------------------------------------------------------
 

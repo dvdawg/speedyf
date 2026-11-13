@@ -21,12 +21,12 @@ const CACHE_VERSION: u32 = 1;
 /// A page whose images together cover at least this share of it is a scan:
 /// the page *is* the picture, and any text on it is a capture tool's
 /// invisible layer, which is why the amount of text does not tell a scan
-/// from a born-digital page — Acrobat Capture lays a full one over each.
+/// from a born-digital page - Acrobat Capture lays a full one over each.
 pub const SCAN_COVERAGE: f32 = 0.6;
 
 /// The first pages probed before deciding whether a document needs OCR at
 /// all. A born-digital paper's first three pages settle it, and the text
-/// pass skips the rest of the probing — and every render — for it.
+/// pass skips the rest of the probing - and every render - for it.
 pub const PROBE_PAGES: u32 = 3;
 
 /// Pages OCR'd per idle text job. A page costs ~0.4 s on Apple silicon, so
@@ -88,8 +88,8 @@ pub fn cache_path(app_data_dir: &Path, document: &Path) -> PathBuf {
 }
 
 impl OcrCache {
-    /// The cache for `document` as it is now. One written for other bytes
-    /// — a different fingerprint — is as good as none.
+    /// The cache for `document` as it is now. One written for other bytes -
+    /// a different fingerprint - is as good as none.
     pub fn load(app_data_dir: &Path, document: &Path, fingerprint: Option<&str>) -> Self {
         let fingerprint = fingerprint.unwrap_or_default();
         std::fs::read(cache_path(app_data_dir, document))
@@ -140,7 +140,7 @@ impl OcrCache {
         self.dirty = true;
     }
 
-    /// The page's lines, from the cache or — when `budget` allows — from
+    /// The page's lines, from the cache or - when `budget` allows - from
     /// `recognize`, which is then cached. `None` when the page could not be
     /// read or the budget is spent; `pending` says which.
     pub fn lines_or_read(
@@ -249,13 +249,13 @@ pub fn text_lines(lines: &[OcrLine], page_w: f32, page_h: f32) -> Vec<TextLine> 
 const DISPLAY_TYPE: f32 = 1.15;
 /// Stacked display lines this close in height are one block's.
 const BLOCK_SIZE_RATIO: f32 = 1.4;
-/// …when the gap between them is under this share of the smaller's height.
+/// ...when the gap between them is under this share of the smaller's height.
 const BLOCK_GAP: f32 = 0.6;
 
 /// One size for every line of a stacked block of display type: a title
 /// set over two lines. Vision's boxes follow each line's ink, so "Arthur-
 /// Merlin Games: A Randomized Proof System," and "and a Hierarchy of
-/// Complexity Classes" come out 15.9 and 13.0 pt — two tiers to the
+/// Complexity Classes" come out 15.9 and 13.0 pt - two tiers to the
 /// first-page reader, which then takes the first line for the whole title.
 /// Lines that are both display type, close in height and stacked tight are
 /// given the larger's size. Body lines are left alone.

@@ -1,8 +1,8 @@
-//! Open Library (projects.md §4), for books. `isbn/{isbn}.json` is the
+//! Open Library (projects.md sec. 4), for books. `isbn/{isbn}.json` is the
 //! edition; it names its authors only by key, so each is fetched as
 //! `{key}.json` for the name, and when the edition lists no authors its
-//! work (`/works/OL…W`) is read for them. What leaves the machine is the
-//! ISBN and then Open Library's own keys (`/authors/OL…A`, `/works/OL…W`),
+//! work (`/works/OL...W`) is read for them. What leaves the machine is the
+//! ISBN and then Open Library's own keys (`/authors/OL...A`, `/works/OL...W`),
 //! which name authors and works, not the user. No key, no contact.
 
 use crate::errors::AppResult;
@@ -21,9 +21,9 @@ const MAX_AUTHORS: usize = 10;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Edition {
     pub candidate: LookupCandidateDto,
-    /// `/authors/OL…A`, in the edition's order.
+    /// `/authors/OL...A`, in the edition's order.
     pub author_keys: Vec<String>,
-    /// `/works/OL…W`; consulted for authors when the edition lists none.
+    /// `/works/OL...W`; consulted for authors when the edition lists none.
     pub work_keys: Vec<String>,
 }
 
@@ -159,7 +159,7 @@ pub fn parse_work_authors(json: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The year in a `publish_date` — `1994`, `March 2001`, `2001-03-01` — as
+/// The year in a `publish_date` - `1994`, `March 2001`, `2001-03-01` - as
 /// the first run of four digits.
 fn year_in(text: &str) -> Option<i32> {
     let bytes = text.as_bytes();
@@ -178,7 +178,7 @@ fn year_in(text: &str) -> Option<i32> {
 }
 
 // ---------------------------------------------------------------------------
-// Tests — no network. Fixtures are trimmed from Open Library's edition,
+// Tests - no network. Fixtures are trimmed from Open Library's edition,
 // work and author records.
 // ---------------------------------------------------------------------------
 

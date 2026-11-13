@@ -167,7 +167,7 @@ fn skip_gap(chars: &[char], mut at: usize) -> usize {
 fn prefixed_at(chars: &[char], at: usize) -> Option<(usize, CitationIdDto)> {
     // Scheme-less forms are here for the same reason the arXiv list has them:
     // a URL printed in a bibliography wraps, and the scheme ends up on the
-    // previous line — the text reads "https://" then "doi.org/10.1090/...".
+    // previous line - the text reads "https://" then "doi.org/10.1090/...".
     // Without them a DOI cited that way is invisible, which is exactly how
     // 10.1090/S0002-9947-1959-0110078-1 went missing while every arXiv id on
     // the same page was found.
@@ -423,7 +423,7 @@ mod url_form_tests {
         }
     }
 
-    /// Taken from a real reference list: "…1959. doi: 10.1090/S0002-…". The
+    /// Taken from a real reference list: "...1959. doi: 10.1090/S0002-...". The
     /// space after the label meant the identifier was never read.
     #[test]
     fn reads_an_identifier_separated_from_its_label() {

@@ -1,7 +1,7 @@
 // Reference extension for the SpeedyF v1 extension API.
 //
 // v1 gives an extension exactly one thing: commands in the command palette.
-// There is no host API yet, so this file demonstrates the whole surface —
+// There is no host API yet, so this file demonstrates the whole surface -
 // activation, invocation, reporting success, reporting failure, and what
 // happens when an extension misbehaves.
 //
@@ -50,7 +50,7 @@ function run(command, requestId) {
     case 'hang':
       // Never answers. The host times out and reports it; SpeedyF itself keeps
       // running, which is the property the whole worker design exists for.
-      log('warn', 'this command will never answer — the host should time out');
+      log('warn', 'this command will never answer - the host should time out');
       return;
 
     case 'overreach':

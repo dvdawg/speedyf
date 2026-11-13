@@ -21,6 +21,7 @@ import {
 } from './protocol';
 import { COMMANDS, runCommand } from '../../app/commands';
 import { activeTab } from '../../stores/tabsStore';
+import { jumpToPage } from '../viewer/navHistory';
 import { reservedChords } from '../../app/shortcuts';
 import { selectedGeometry, selectedText } from '../../stores/selectionStore';
 import { canRunGroup, refusalReason, resolveBindings, type ExtensionBinding } from './capabilities';
@@ -800,7 +801,7 @@ async function readApi(api: string, args: unknown): Promise<unknown> {
   switch (api) {
     case 'navigate.toPage': {
       const page = readPageArg(args, doc.pages.length);
-      tab.viewport.requestScrollToPage(page);
+      jumpToPage(tab, page);
       return { page };
     }
 
@@ -817,7 +818,7 @@ async function readApi(api: string, args: unknown): Promise<unknown> {
       if (!geom) {
         // Geometry is only known for pages the viewer has measured. Landing on
         // the page is still the right thing to do; landing nowhere is not.
-        tab.viewport.requestScrollToPage(page);
+        jumpToPage(tab, page);
         return { page };
       }
       const css = pdfRectToCssRect({ x: 0, y, w: 0, h: 0 }, geom, tab.viewport.state.zoom);
@@ -825,10 +826,7 @@ async function readApi(api: string, args: unknown): Promise<unknown> {
       // line that cites the work has its context above it. Never above the
       // page's own top: for a citation in the first few lines the framing
       // offset goes negative, which lands on the end of the previous page.
-      tab.viewport.requestScrollToPage(
-        page,
-        Math.max(0, css.y - tab.viewport.state.containerH * 0.35)
-      );
+      jumpToPage(tab, page, Math.max(0, css.y - tab.viewport.state.containerH * 0.35));
       return { page, y };
     }
 

@@ -1,9 +1,9 @@
-# Scratchpad — the narrow path
+# Scratchpad - the narrow path
 
 Collects passages you select and citations you hover into a list you can copy
-out. Load it from **Home → Extensions → Load folder…**.
+out. Load it from **Home -> Extensions -> Load folder...**.
 
-Read its manifest first. It asks for `clipboard:write` and `storage` — and
+Read its manifest first. It asks for `clipboard:write` and `storage` - and
 nothing else. **No `document:read`, no `citations:read`.** It never reads the
 document.
 

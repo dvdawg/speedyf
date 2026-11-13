@@ -8,7 +8,7 @@
 
 use crate::errors::{AppError, AppResult};
 
-/// Schemes a document may send the user to. Everything else is refused —
+/// Schemes a document may send the user to. Everything else is refused -
 /// `file:` reaches the local disk, `javascript:` and `data:` execute, and a
 /// custom scheme hands control to whatever program claimed it.
 const ALLOWED_SCHEMES: &[&str] = &["http", "https", "mailto"];
@@ -71,7 +71,7 @@ fn spawn_opener(url: &str) -> AppResult<()> {
     spawn(std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", url]))
 }
 
-/// Any other Unix. Not an error at compile time — the same mistake that left
+/// Any other Unix. Not an error at compile time - the same mistake that left
 /// `RunEvent::Opened` ungated and stopped the crate building anywhere but
 /// macOS. A platform with no opener we know refuses at runtime instead.
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -149,7 +149,7 @@ mod tests {
 
     #[test]
     fn output_never_carries_control_characters() {
-        // The parser neutralizes these rather than rejecting them — a NUL is
+        // The parser neutralizes these rather than rejecting them - a NUL is
         // percent-encoded, and tabs/newlines are stripped outright. What
         // matters is the invariant on the way out, since that string is what
         // the platform opener consumes. The guard in the sanitizer is a
