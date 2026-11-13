@@ -42,8 +42,9 @@ const PROVISIONAL_EVERY: u32 = 100;
 pub struct GeneratedOutlineDto {
     /// Whether every page has been read; false means ask again.
     pub done: bool,
-    /// The outline so far: final when `done`, provisional otherwise, and
-    /// empty when no confident outline was found.
+    /// The outline: final when `done` (empty when no confident outline was
+    /// found); otherwise a provisional one when it has just changed, and
+    /// empty in between, so the caller redraws only when there is news.
     pub outline: Vec<OutlineNodeDto>,
     pub pages_done: u32,
     pub page_count: u32,
@@ -127,7 +128,8 @@ pub struct OutlineGen {
     next: u32,
     fingerprint: Option<String>,
     result: Option<Vec<Heading>>,
-    provisional: Vec<Heading>,
+    /// A provisional outline computed since the last answer, not yet sent.
+    provisional: Option<Vec<Heading>>,
 }
 
 impl OutlineGen {
@@ -153,7 +155,7 @@ impl OutlineGen {
             next: 0,
             fingerprint,
             result,
-            provisional: Vec::new(),
+            provisional: None,
         }
     }
 
@@ -180,7 +182,7 @@ impl OutlineGen {
             self.next += 1;
             if self.next % PROVISIONAL_EVERY == 0 && page_count >= PROVISIONAL_FROM {
                 self.sync_fonts();
-                self.provisional = detect::generate(&self.doc);
+                self.provisional = Some(detect::generate(&self.doc));
             }
             if started.elapsed() >= SLICE {
                 break;
@@ -189,7 +191,7 @@ impl OutlineGen {
         if self.next < page_count {
             return GeneratedOutlineDto {
                 done: false,
-                outline: nest(&self.provisional),
+                outline: self.provisional.take().map_or_else(Vec::new, |h| nest(&h)),
                 pages_done: self.next,
                 page_count,
             };
@@ -308,5 +310,144 @@ mod tests {
             .replace("\"version\":1", "\"version\":0");
         std::fs::write(&path, stale).unwrap();
         assert_eq!(load_cache(dir.path(), "abc-123"), None);
+    }
+
+    use crate::engine::pdfium_init;
+    use pdfium_render::prelude::*;
+
+    const BODY: &str = "We study the problem in a setting where observations arrive one at a time";
+
+    /// A three-page article: Helvetica body text, Helvetica-Bold headings
+    /// with space above them, a large title on the first page.
+    fn article_pdf(pdfium: &Pdfium, path: &Path, headings: bool) {
+        let mut document = pdfium.create_new_pdf().unwrap();
+        let regular = document.fonts_mut().helvetica();
+        let bold = document.fonts_mut().helvetica_bold();
+        let pages: [&[&str]; 3] = [
+            &["1 Introduction"],
+            &["2 Methods", "2.1 Data"],
+            &["3 Results", "References"],
+        ];
+        for (index, names) in pages.iter().enumerate() {
+            // (text, bold, size, baseline) for every line of the page
+            let mut lines: Vec<(&str, bool, f32, f32)> = Vec::new();
+            let mut y = 780.0;
+            if index == 0 {
+                lines.push(("A Study of Things", true, 18.0, y));
+                y -= 40.0;
+            }
+            for name in names.iter() {
+                for _ in 0..12 {
+                    lines.push((BODY, false, 10.0, y));
+                    y -= 13.0;
+                }
+                y -= 14.0;
+                if headings {
+                    lines.push((name, true, 12.0, y));
+                } else {
+                    lines.push((BODY, false, 10.0, y));
+                }
+                y -= 22.0;
+            }
+            for _ in 0..8 {
+                lines.push((BODY, false, 10.0, y));
+                y -= 13.0;
+            }
+            let mut page = document
+                .pages_mut()
+                .create_page_at_end(PdfPagePaperSize::a4())
+                .unwrap();
+            for (text, is_bold, size, y) in lines {
+                let font = if is_bold { bold } else { regular };
+                let mut object =
+                    PdfPageTextObject::new(&document, text, font, PdfPoints::new(size)).unwrap();
+                object
+                    .translate(PdfPoints::new(60.0), PdfPoints::new(y))
+                    .unwrap();
+                page.objects_mut().add_text_object(object).unwrap();
+            }
+        }
+        document.save_to_file(path).unwrap();
+    }
+
+    fn run(
+        gen: &mut OutlineGen,
+        b: &dyn PdfiumLibraryBindings,
+        raw: FPDF_DOCUMENT,
+        dir: &Path,
+    ) -> GeneratedOutlineDto {
+        for _ in 0..1000 {
+            let answer = gen.step(b, raw, dir);
+            if answer.done {
+                return answer;
+            }
+        }
+        panic!("generation never finished");
+    }
+
+    fn titles(nodes: &[OutlineNodeDto]) -> Vec<String> {
+        let mut out = Vec::new();
+        for node in nodes {
+            out.push(node.title.clone());
+            out.extend(titles(&node.children));
+        }
+        out
+    }
+
+    /// The whole path on a real file: extraction, detection, nesting, a
+    /// jump target at the heading, and the cache the second open reads.
+    #[test]
+    fn generates_and_caches_an_outline_for_a_real_pdf() {
+        let _guard = pdfium_init::test_guard();
+        let pdfium = Pdfium::new(pdfium_init::init_bindings(&[]).expect("bundled PDFium"));
+        let b = pdfium.bindings();
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("article.pdf");
+        article_pdf(&pdfium, &file, true);
+        let raw = b.FPDF_LoadDocument(file.to_str().unwrap(), None);
+        assert!(!raw.is_null());
+        let pages = b.FPDF_GetPageCount(raw) as u32;
+
+        let mut gen = OutlineGen::new(b, raw, pages, &file, dir.path());
+        let answer = run(&mut gen, b, raw, dir.path());
+        assert_eq!(
+            titles(&answer.outline),
+            [
+                "1 Introduction",
+                "2 Methods",
+                "2.1 Data",
+                "3 Results",
+                "References"
+            ]
+        );
+        assert_eq!(answer.outline[1].children.len(), 1);
+        let methods = &answer.outline[1];
+        assert_eq!(methods.page, Some(1));
+        let y = methods.y.expect("a jump target at the heading");
+        assert!(y > 300.0 && y < 842.0, "{y}");
+
+        // A second open of the same bytes reads the cache, not the pages.
+        let mut again = OutlineGen::new(b, raw, pages, &file, dir.path());
+        assert!(again.result.is_some());
+        assert_eq!(
+            titles(&run(&mut again, b, raw, dir.path()).outline),
+            titles(&answer.outline)
+        );
+        b.FPDF_CloseDocument(raw);
+    }
+
+    #[test]
+    fn a_pdf_without_headings_gets_no_outline() {
+        let _guard = pdfium_init::test_guard();
+        let pdfium = Pdfium::new(pdfium_init::init_bindings(&[]).expect("bundled PDFium"));
+        let b = pdfium.bindings();
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("plain.pdf");
+        article_pdf(&pdfium, &file, false);
+        let raw = b.FPDF_LoadDocument(file.to_str().unwrap(), None);
+        let pages = b.FPDF_GetPageCount(raw) as u32;
+        let mut gen = OutlineGen::new(b, raw, pages, &file, dir.path());
+        assert!(run(&mut gen, b, raw, dir.path()).outline.is_empty());
+        b.FPDF_CloseDocument(raw);
     }
 }
