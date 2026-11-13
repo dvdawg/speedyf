@@ -15,7 +15,9 @@
 //! what writing applies. Both directions live in `save.rs` so they cannot drift.
 
 use super::save::PageSpace;
-use super::types::{AnnotationDto, PageAnnotationsDto, PointDto, QuadDto, RectDto};
+use super::types::{
+    AnnotationDto, PageAnnotationsDto, PointDto, QuadDto, RectDto, TextFontFamily, TextStyle,
+};
 use crate::errors::{AppError, AppResult};
 use pdfium_render::prelude::*;
 
@@ -23,6 +25,7 @@ use pdfium_render::prelude::*;
 const DEFAULT_STROKE_PT: f32 = 2.0;
 /// Default size for text SpeedyF did not write itself.
 const DEFAULT_FONT_PT: f32 = 14.0;
+pub(crate) const TEXT_STAMP_CREATOR: &str = "SpeedyF Text";
 
 fn hex_of(color: &PdfColor) -> String {
     format!(
@@ -113,11 +116,31 @@ struct AnnotStyle {
     stroke: Option<PdfColor>,
     fill: Option<PdfColor>,
     width: Option<f32>,
+    font_size: Option<f32>,
+    text_style: TextStyle,
+    has_paths: bool,
 }
 
 fn style_of(objects: &PdfPageAnnotationObjects<'_>) -> AnnotStyle {
     let mut style = AnnotStyle::default();
     for object in objects.iter() {
+        if let Some(text) = object.as_text_object() {
+            style.font_size = Some(text.unscaled_font_size().value);
+            let name = text.font().name().to_ascii_lowercase();
+            style.text_style = TextStyle {
+                font_family: if name.contains("courier") {
+                    TextFontFamily::Courier
+                } else if name.contains("times") {
+                    TextFontFamily::TimesRoman
+                } else {
+                    TextFontFamily::Helvetica
+                },
+                bold: name.contains("bold"),
+                italic: name.contains("italic") || name.contains("oblique"),
+                underline: false,
+            };
+        }
+        style.has_paths |= object.as_path_object().is_some();
         if style.stroke.is_none() {
             style.stroke = object.stroke_color().ok();
         }
@@ -126,9 +149,6 @@ fn style_of(objects: &PdfPageAnnotationObjects<'_>) -> AnnotStyle {
         }
         if style.width.is_none() {
             style.width = object.stroke_width().ok().map(|w| w.value);
-        }
-        if style.stroke.is_some() && style.fill.is_some() && style.width.is_some() {
-            break;
         }
     }
     style
@@ -204,6 +224,7 @@ fn read_annotation(
         strokes: None,
         text: None,
         font_size_pt: None,
+        text_style: TextStyle::default(),
     };
 
     let style = style_of(annot.objects());
@@ -256,7 +277,20 @@ fn read_annotation(
             dto.color = color;
             dto.opacity = opacity;
             dto.text = Some(annot.contents().unwrap_or_default());
-            dto.font_size_pt = Some(DEFAULT_FONT_PT);
+            dto.font_size_pt = Some(style.font_size.unwrap_or(DEFAULT_FONT_PT));
+            dto.text_style = style.text_style;
+        }
+        PdfPageAnnotationType::Stamp if annot.creator().as_deref() == Some(TEXT_STAMP_CREATOR) => {
+            let (color, opacity) = color_or(style.fill, "#d81b60");
+            dto.kind = "textbox".into();
+            dto.color = color;
+            dto.opacity = opacity;
+            dto.text = Some(annot.contents().unwrap_or_default());
+            dto.font_size_pt = Some(style.font_size.unwrap_or(DEFAULT_FONT_PT));
+            dto.text_style = TextStyle {
+                underline: style.has_paths,
+                ..style.text_style
+            };
         }
         PdfPageAnnotationType::Stamp if is_shaded_bubble(annot.objects()) => {
             // A shaded bubble is a Stamp too, so it has to be told apart from

@@ -1,51 +1,108 @@
-/** The pre-multi-window session, kept only long enough to migrate it.
- *
- * Open tabs used to be persisted here, in localStorage. They are not any
- * more: localStorage is shared by every window in the app, so two windows
- * writing this one key means the last to write wins and the other window's
- * tabs are simply gone. The session lives in the window registry in Rust now
- * (`src-tauri/src/windows.rs`), which is per-window by construction and is
- * also what the other windows read.
- *
- * This module survives so that upgrading does not forget what was open: the
- * main window reads the old key once, restores from it, and removes it. It
- * can be deleted once every install has launched at least once.
- *
- * As before, only file paths, their order, and which was active are ever
- * remembered — never docId (meaningless across restarts), zoom, or scroll.
- */
+/** Open-tabs sessions, persisted to localStorage so they can be restored on
+ * relaunch — one per window, each under its own key, so two windows never
+ * overwrite each other. Only remembers file paths + order + which was active
+ * — never docId (meaningless across restarts), zoom, or scroll (deferred to
+ * v1.1). */
 
-export interface LegacySession {
+export interface SessionFile {
+  version: 1;
   tabs: { path: string }[];
   activePath: string | null;
 }
 
 const KEY = 'speedyf-session';
 
-/** Reads the old session and removes it, so the migration happens once. */
-export function takeLegacySession(): LegacySession | null {
-  let raw: string | null = null;
+function readSession(key: string): SessionFile {
   try {
-    raw = localStorage.getItem(KEY);
-    if (raw !== null) localStorage.removeItem(KEY);
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<SessionFile>;
+      if (Array.isArray(parsed.tabs)) {
+        return {
+          version: 1,
+          tabs: parsed.tabs.filter(
+            (t): t is { path: string } =>
+              typeof t === 'object' && t !== null && typeof t.path === 'string'
+          ),
+          activePath: typeof parsed.activePath === 'string' ? parsed.activePath : null,
+        };
+      }
+    }
   } catch {
-    return null; // storage unavailable — nothing to migrate
+    /* corrupted session falls back to empty */
   }
-  if (raw === null) return null;
+  return { version: 1, tabs: [], activePath: null };
+}
 
+export function saveSession(session: SessionFile, label = 'main'): void {
   try {
-    const parsed = JSON.parse(raw) as Partial<LegacySession>;
-    if (!Array.isArray(parsed.tabs)) return null;
-    const tabs = parsed.tabs.filter(
-      (t): t is { path: string } =>
-        typeof t === 'object' && t !== null && typeof t.path === 'string'
-    );
-    if (tabs.length === 0) return null;
-    return {
-      tabs,
-      activePath: typeof parsed.activePath === 'string' ? parsed.activePath : null,
-    };
+    localStorage.setItem(sessionKey(label), JSON.stringify(session));
   } catch {
-    return null; // corrupted session is worth no more than an absent one
+    /* storage unavailable (private mode) — session stays unrestorable */
+  }
+}
+
+function sessionKey(label: string): string {
+  return label === 'main' ? KEY : `${KEY}:${label}`;
+}
+
+/** The main window's own session from the last run. */
+export function loadSession(): SessionFile {
+  return readSession(KEY);
+}
+
+/** Past this a restore that has gone wrong could not spawn windows forever,
+ * and the windows would be unmanageable anyway. */
+export const MAX_RESTORED_WINDOWS = 11;
+
+/** Every window that was open at last quit, for a cold launch: the main
+ * window's tabs, and one entry per other window that should be reopened as a
+ * window of its own.
+ *
+ * Each live window writes its own key, so no window ever overwrites
+ * another's. The other windows' keys are removed here — the windows reopened
+ * from them get new labels and write fresh keys. A file listed by two windows
+ * is stale bookkeeping (one document is never open twice), so it stays with
+ * the first. When the main window itself was closed while others stayed
+ * open, it takes over the first of theirs rather than greeting the user with
+ * nothing. */
+export function takeWindowSessions(): { main: SessionFile; others: SessionFile[] } {
+  let main = readSession(KEY);
+  const others: SessionFile[] = [];
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(`${KEY}:`)) keys.push(key);
+    }
+    // Creation order — `speedyf-2` before `speedyf-10` — so windows come back
+    // in the order they were opened.
+    const order = (key: string) => Number(/(\d+)$/.exec(key)?.[1] ?? 0);
+    keys.sort((a, b) => order(a) - order(b));
+    const seen = new Set(main.tabs.map((t) => t.path));
+    for (const key of keys) {
+      const other = readSession(key);
+      const tabs = other.tabs.filter((t) => !seen.has(t.path));
+      for (const tab of tabs) seen.add(tab.path);
+      if (tabs.length === 0) continue;
+      const activePath = tabs.some((t) => t.path === other.activePath) ? other.activePath : null;
+      others.push({ version: 1, tabs, activePath });
+    }
+    for (const key of keys) localStorage.removeItem(key);
+  } catch {
+    /* storage unavailable */
+  }
+  if (main.tabs.length === 0 && others.length > 0) {
+    main = others.shift()!;
+    saveSession(main);
+  }
+  return { main, others: others.slice(0, MAX_RESTORED_WINDOWS) };
+}
+
+export function removeWindowSession(label: string): void {
+  try {
+    localStorage.removeItem(sessionKey(label));
+  } catch {
+    /* storage unavailable */
   }
 }

@@ -29,20 +29,22 @@ vi.mock('../lib/transport/engine', async (importOriginal) => {
 // Going home publishes the window's tabs over IPC, which a Node test has no
 // bridge for; the commands only need to be seen asking.
 const goHome = vi.fn();
+const closeOtherTabs = vi.fn();
+const closeTabsToTheRight = vi.fn();
 vi.mock('../features/document/tabsController', () => ({
-  closeOtherTabs: vi.fn(),
+  closeOtherTabs: (id: string) => closeOtherTabs(id),
   closeTab: vi.fn(),
-  closeTabsToTheRight: vi.fn(),
+  closeTabsToTheRight: (id: string) => closeTabsToTheRight(id),
   cycleTab: vi.fn(),
+  detachTab: vi.fn(),
   goHome: () => goHome(),
-  moveTabToNewWindow: vi.fn(),
   openFromDialog: vi.fn(),
-  openNewWindow: vi.fn(),
 }));
 
 const { COMMANDS, COMMAND_GROUPS, commandById, runCommand } = await import('./commands');
 const { settings, updateSettings } = await import('../stores/settings');
 const { ui, setUi } = await import('../stores/uiStore');
+const { addTab, createTab, removeTab, tabsStore } = await import('../stores/tabsStore');
 
 /** A tab with just enough shape for `enabled` to interrogate. Anything a
  * command actually calls is a spy, so running one is observable without a
@@ -123,7 +125,14 @@ describe('command registry', () => {
   });
 
   it('disables document commands when nothing is open', () => {
-    for (const id of ['file.save', 'file.print', 'edit.undo', 'page.rotateRight', 'view.fitPage']) {
+    for (const id of [
+      'file.save',
+      'file.print',
+      'file.detachTab',
+      'edit.undo',
+      'page.rotateRight',
+      'view.fitPage',
+    ]) {
       expect(commandById(id)!.enabled(empty), id).toBe(false);
     }
   });
@@ -131,6 +140,7 @@ describe('command registry', () => {
   it('keeps the always-available commands reachable with no document', () => {
     for (const id of [
       'file.open',
+      'file.newWindow',
       'file.goHome',
       'search.library',
       'library.goToProjects',
@@ -148,6 +158,44 @@ describe('command registry', () => {
   it('reports an unknown id rather than throwing', () => {
     expect(runCommand('nope.not.a.command', empty)).toBe(false);
     expect(commandById('nope.not.a.command')).toBeUndefined();
+  });
+});
+
+describe('tab commands', () => {
+  const ids = ['t1', 't2', 't3'];
+  beforeEach(() => {
+    for (const id of ids) {
+      const tab = createTab();
+      tab.id = id;
+      addTab(tab);
+    }
+  });
+  afterEach(() => {
+    for (const tab of [...tabsStore.state.tabs]) {
+      tab.citationStore.dispose();
+      removeTab(tab.id);
+    }
+  });
+  const ctxFor = (id: string) =>
+    ({ tab: tabsStore.state.tabs.find((t) => t.id === id)! }) as unknown as CommandCtx;
+
+  it('offers closing the other tabs only when there are others', () => {
+    expect(commandById('file.closeOtherTabs')!.enabled(ctxFor('t2'))).toBe(true);
+    removeTab('t1');
+    removeTab('t3');
+    expect(commandById('file.closeOtherTabs')!.enabled(ctxFor('t2'))).toBe(false);
+  });
+
+  it('offers closing the tabs to the right except from the last tab', () => {
+    expect(commandById('file.closeTabsToTheRight')!.enabled(ctxFor('t1'))).toBe(true);
+    expect(commandById('file.closeTabsToTheRight')!.enabled(ctxFor('t3'))).toBe(false);
+  });
+
+  it('runs them against the tab they were asked about', () => {
+    runCommand('file.closeOtherTabs', ctxFor('t2'));
+    runCommand('file.closeTabsToTheRight', ctxFor('t1'));
+    expect(closeOtherTabs).toHaveBeenCalledWith('t2');
+    expect(closeTabsToTheRight).toHaveBeenCalledWith('t1');
   });
 });
 

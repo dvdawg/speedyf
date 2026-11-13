@@ -32,6 +32,65 @@ const annot = (pageId: string, over: Partial<Annotation> = {}): Annotation => ({
   ...over,
 });
 
+it('does not coalesce typing across a savepoint or after undo', () => {
+  const store = fresh();
+  const pageId = store.state.pages[0]!.id;
+  const a = annot(pageId, { kind: 'textbox', text: '' });
+  store.apply({ type: 'addAnnot', annot: a });
+  const group = Symbol('typing');
+  const type = (text: string) =>
+    store.apply({ type: 'patchAnnot', pageId, id: a.id, patch: { text } }, group);
+  type('a');
+  type('ab');
+  store.markSaved();
+  type('abc');
+  store.undo();
+  expect(store.state.annotations[pageId]![0]!.text).toBe('ab');
+  expect(store.state.dirty).toBe(false);
+  type('ab!');
+  expect(store.state.dirty).toBe(true);
+  store.undo();
+  expect(store.state.annotations[pageId]![0]!.text).toBe('ab');
+  store.undo();
+  expect(store.state.annotations[pageId]![0]!.text).toBe('');
+});
+
+it('replaces a saved text appearance after a formatting-only edit', () => {
+  const store = fresh();
+  store.hydrateAnnotations([
+    {
+      src: 0,
+      annots: [
+        annot('', {
+          kind: 'textbox',
+          text: 'Existing text',
+          fontFamily: 'Helvetica',
+          bold: false,
+          italic: false,
+          underline: false,
+          srcAnnotIndex: 4,
+        }),
+      ],
+    },
+  ]);
+  const pageId = store.state.pages[0]!.id;
+  const a = store.state.annotations[pageId]![0]!;
+  expect(a.pageId).toBe(pageId);
+  expect(store.buildEditPlan().pages[0]!.texts).toHaveLength(0);
+  store.apply({
+    type: 'patchAnnot',
+    pageId,
+    id: a.id,
+    patch: { fontFamily: 'Times-Roman', bold: true, italic: true, underline: true },
+  });
+  expect(store.buildEditPlan().pages[0]).toMatchObject({
+    dropSrcAnnots: [4],
+    texts: [{ fontFamily: 'Times-Roman', bold: true, italic: true, underline: true }],
+  });
+  store.undo();
+  expect(store.buildEditPlan().pages[0]!.texts).toHaveLength(0);
+});
+
 describe('initFromMeta', () => {
   it('creates stable page entries with source indexes and base rotations', () => {
     const s = fresh();
@@ -430,4 +489,31 @@ describe('hydrateAnnotations', () => {
     s.initFromMeta(meta);
     expect(s.buildEditPlan().pages[0]!.dropSrcAnnots).toHaveLength(0);
   });
+});
+
+it('moves edits, source annotation ownership, savepoint and both history stacks through JSON', () => {
+  const source = fresh();
+  source.hydrateAnnotations([{ src: 0, annots: [annot('', { srcAnnotIndex: 3 })] }]);
+  const pageId = source.state.pages[0]!.id;
+  const id = source.state.annotations[pageId]![0]!.id;
+  source.apply({ type: 'patchAnnot', pageId, id, patch: { color: '#00ff00', bold: true } });
+  source.apply({ type: 'setForm', field: 'name', value: 'Still unsaved' });
+  source.apply({ type: 'rotate', pageId, delta: 90 });
+  source.undo();
+  const target = createDocumentStore();
+  target.restore(JSON.parse(JSON.stringify(source.snapshot())));
+  expect(target.buildEditPlan()).toEqual(source.buildEditPlan());
+  expect(target.ownedSrcAnnots()).toEqual(source.ownedSrcAnnots());
+  expect(target.state.dirty).toBe(true);
+  expect(target.redo()).toBe(true);
+  expect(target.state.pages[0]!.userRotation).toBe(90);
+  target.undo();
+  target.undo();
+  target.undo();
+  expect(target.state.dirty).toBe(false);
+  expect(target.state.annotations[pageId]![0]!.bold).toBeFalsy();
+  expect(target.buildEditPlan().pages[0]!.dropSrcAnnots).toEqual([]);
+  target.apply({ type: 'addBlank', index: 1, widthPt: 100, heightPt: 100 });
+  expect(new Set(target.state.pages.map((p) => p.id)).size).toBe(target.state.pages.length);
+  expect(source.state.formEdits.name).toBe('Still unsaved');
 });

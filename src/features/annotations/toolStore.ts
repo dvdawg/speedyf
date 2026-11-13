@@ -1,9 +1,11 @@
 /** Active annotation tool + per-tool style memory. */
 import { createStore, produce } from 'solid-js/store';
+import type { TextFormat } from '../../types/model';
+import { DEFAULT_TEXT_STYLE } from './textStyle';
 
 export type Tool = 'select' | 'highlight' | 'ink' | 'rect' | 'textbox' | 'note' | 'bubble';
 
-export interface ToolStyle {
+export interface ToolStyle extends TextFormat {
   color: string;
   opacity: number;
   strokeWidth: number;
@@ -16,16 +18,16 @@ interface ToolState {
 }
 
 const defaults: Record<Tool, ToolStyle> = {
-  select: { color: '#1e88e5', opacity: 1, strokeWidth: 2, fontSizePt: 14 },
-  highlight: { color: '#ffd54a', opacity: 0.45, strokeWidth: 0, fontSizePt: 14 },
-  ink: { color: '#e53935', opacity: 1, strokeWidth: 2, fontSizePt: 14 },
-  rect: { color: '#1e88e5', opacity: 1, strokeWidth: 2, fontSizePt: 14 },
-  textbox: { color: '#d81b60', opacity: 1, strokeWidth: 1, fontSizePt: 14 },
-  note: { color: '#fb8c00', opacity: 1, strokeWidth: 0, fontSizePt: 14 },
+  select: { ...DEFAULT_TEXT_STYLE, color: '#1e88e5', opacity: 1, strokeWidth: 2 },
+  highlight: { ...DEFAULT_TEXT_STYLE, color: '#ffd54a', opacity: 0.45, strokeWidth: 0 },
+  ink: { ...DEFAULT_TEXT_STYLE, color: '#e53935', opacity: 1, strokeWidth: 2 },
+  rect: { ...DEFAULT_TEXT_STYLE, color: '#1e88e5', opacity: 1, strokeWidth: 2 },
+  textbox: { ...DEFAULT_TEXT_STYLE, color: '#1a1a1a', opacity: 1, strokeWidth: 1 },
+  note: { ...DEFAULT_TEXT_STYLE, color: '#fb8c00', opacity: 1, strokeWidth: 0 },
   // Near-black, because a shaded bubble is answering a question rather than
   // marking up a page: it has to read as filled-in ink on a printout and
   // survive whatever a grader scans it through.
-  bubble: { color: '#1a1a1a', opacity: 1, strokeWidth: 0, fontSizePt: 14 },
+  bubble: { ...DEFAULT_TEXT_STYLE, color: '#1a1a1a', opacity: 1, strokeWidth: 0 },
 };
 
 const [toolState, setToolState] = createStore<ToolState>({
@@ -48,9 +50,13 @@ export function activeStyle(): ToolStyle {
 }
 
 export function updateActiveStyle(patch: Partial<ToolStyle>) {
+  updateToolStyle(toolState.active, patch);
+}
+
+export function updateToolStyle(tool: Tool, patch: Partial<ToolStyle>) {
   setToolState(
     produce((s) => {
-      Object.assign(s.styles[s.active], patch);
+      Object.assign(s.styles[tool], patch);
     })
   );
 }

@@ -11,16 +11,16 @@
  * with the keymap; the same command is reached by two different chords in more
  * than one case.
  */
+import { newWindow } from '../features/windows/windowController';
 import { saveDocument } from '../features/document/controller';
 import {
   closeOtherTabs,
   closeTab,
   closeTabsToTheRight,
   cycleTab,
+  detachTab,
   goHome,
-  moveTabToNewWindow,
   openFromDialog,
-  openNewWindow,
 } from '../features/document/tabsController';
 import { addBlankPageAfter } from '../features/editor/editorActions';
 import { setActiveTool, type Tool } from '../features/annotations/toolStore';
@@ -248,6 +248,25 @@ function rotate(id: string, title: string, delta: 90 | 270): Command {
 }
 
 export const COMMANDS: readonly Command[] = [
+  {
+    id: 'file.newWindow',
+    title: 'New Window',
+    group: 'File',
+    shortcut: 'mod+n',
+    keywords: ['window', 'new'],
+    enabled: () => true,
+    run: () => void newWindow(),
+  },
+  {
+    id: 'file.detachTab',
+    title: 'Move Tab to New Window',
+    group: 'File',
+    keywords: ['detach', 'tear off', 'window'],
+    enabled: (ctx) => loaded(ctx) && !ctx.tab?.opening && !state(ctx)?.saving,
+    run: (ctx) => {
+      if (ctx.tab) void detachTab(ctx.tab.id);
+    },
+  },
   // ---- File ----------------------------------------------------------
   {
     id: 'file.open',
@@ -295,28 +314,6 @@ export const COMMANDS: readonly Command[] = [
     enabled: (ctx) => ctx.tab !== null,
     run: (ctx) => {
       if (ctx.tab) void closeTab(ctx.tab.id);
-    },
-  },
-  {
-    id: 'file.newWindow',
-    title: 'New Window',
-    group: 'File',
-    shortcut: 'mod+n',
-    keywords: ['window', 'second', 'side by side'],
-    enabled: () => true,
-    run: () => void openNewWindow(),
-  },
-  {
-    id: 'file.moveTabToNewWindow',
-    title: 'Move Tab to New Window',
-    group: 'File',
-    keywords: ['window', 'detach', 'tear off', 'split', 'move'],
-    // Moving the only tab of a window into a window of its own would just
-    // rebuild the window it left.
-    enabled: (ctx) => loaded(ctx) && tabsStore.state.tabs.length > 1,
-    disabledReason: 'this window has only one tab',
-    run: (ctx) => {
-      if (ctx.tab) void moveTabToNewWindow(ctx.tab.id);
     },
   },
   {

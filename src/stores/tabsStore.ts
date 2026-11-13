@@ -34,6 +34,7 @@ export interface TabRecord {
   structureStore: StructureStore;
   /** true from creation until the open resolves (success or failure) */
   opening: boolean;
+  ready?: Promise<void>;
 }
 
 let tabSeq = 0;

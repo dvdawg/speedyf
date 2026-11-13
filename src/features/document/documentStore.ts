@@ -38,7 +38,9 @@ export interface PlanAnnot {
   text?: string;
 }
 
-export interface PlanText {
+export interface PlanText extends Partial<
+  Pick<Annotation, 'fontFamily' | 'bold' | 'italic' | 'underline'>
+> {
   rect: PdfRect;
   text: string;
   fontSizePt: number;
@@ -129,16 +131,19 @@ const emptyState = (): DocState => ({
 interface HistoryEntry {
   op: EditOp;
   inverse: EditOp;
+  group?: symbol | undefined;
 }
 
 export interface DocumentStore {
   state: DocState;
+  snapshot: () => DocumentSnapshot;
+  restore: (snapshot: DocumentSnapshot) => void;
   initFromMeta: (meta: DocMeta) => void;
   hydrateAnnotations: (byPage: { src: number; annots: Annotation[] }[]) => void;
   /** Source annotation indices owned per plan page — see `withoutAnnotations`. */
   ownedSrcAnnots: () => number[][];
   updateSizes: (from: number, sizes: [number, number, number, number, number][]) => void;
-  apply: (op: EditOp) => void;
+  apply: (op: EditOp, group?: symbol) => void;
   undo: () => boolean;
   redo: () => boolean;
   canUndo: () => boolean;
@@ -151,6 +156,18 @@ export interface DocumentStore {
   reset: () => void;
   pageIndexById: (id: PageId) => number;
   buildEditPlan: () => EditPlan;
+}
+
+/** In-memory handoff between windows, including the savepoint and source
+ * annotation ownership. Never persisted across application launches. */
+export interface DocumentSnapshot {
+  state: DocState;
+  undo: Omit<HistoryEntry, 'group'>[];
+  redo: Omit<HistoryEntry, 'group'>[];
+  savedLen: number | null;
+  idSeq: number;
+  hydrated: [string, string][];
+  hydratedByPage: [PageId, number[]][];
 }
 
 export function createDocumentStore(opts?: { historyLimit?: number }): DocumentStore {
@@ -383,15 +400,40 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
     }
   };
 
-  const apply = (op: EditOp) => {
+  const apply = (op: EditOp, group?: symbol) => {
     const mat = materialize(op);
     const inverse = computeInverse(mat);
+    const previous = undoStack.at(-1);
+    // Consecutive typing updates share one undo step. A style change, undo,
+    // or savepoint always starts a fresh step, even within the same editor.
+    const coalesce =
+      group && previous?.group === group && redoStack.length === 0 && savedLen !== undoStack.length;
     execute(mat);
     if (redoStack.length > 0) {
       redoStack = [];
       if (savedLen !== null && savedLen > undoStack.length) savedLen = null;
     }
-    undoStack.push({ op: mat, inverse });
+    if (
+      coalesce &&
+      previous.op.type === 'patchAnnot' &&
+      previous.inverse.type === 'patchAnnot' &&
+      mat.type === 'patchAnnot' &&
+      inverse.type === 'patchAnnot' &&
+      previous.op.id === mat.id &&
+      previous.op.pageId === mat.pageId
+    ) {
+      previous.op.patch = { ...previous.op.patch, ...mat.patch };
+      previous.inverse.patch = { ...inverse.patch, ...previous.inverse.patch };
+    } else if (
+      coalesce &&
+      previous.op.type === 'setForm' &&
+      mat.type === 'setForm' &&
+      previous.op.field === mat.field
+    ) {
+      previous.op = mat;
+    } else {
+      undoStack.push({ op: mat, inverse, group });
+    }
     if (undoStack.length > historyLimit) {
       undoStack.shift();
       if (savedLen !== null) {
@@ -505,6 +547,10 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
       a.strokes ?? null,
       a.text ?? null,
       a.fontSizePt ?? null,
+      a.fontFamily ?? null,
+      a.bold ?? false,
+      a.italic ?? false,
+      a.underline ?? false,
     ]);
 
   /** Adopt the annotations already in the file.
@@ -523,7 +569,7 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
           for (const index of sourcePageIndices.get(page.src) ?? []) {
             const target = s.pages[index];
             if (!target) continue;
-            const owned = page.annots.map((a) => ({ ...a, id: genId('an') }));
+            const owned = page.annots.map((a) => ({ ...a, id: genId('an'), pageId: target.id }));
             for (const a of owned) next.set(a.id, annotFingerprint(a));
             byPageIndices.set(
               target.id,
@@ -590,6 +636,10 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
             rect: a.rect,
             text: a.text ?? '',
             fontSizePt: a.fontSizePt ?? 12,
+            fontFamily: a.fontFamily ?? 'Helvetica',
+            bold: a.bold ?? false,
+            italic: a.italic ?? false,
+            underline: a.underline ?? false,
             color: a.color,
             opacity: a.opacity,
           })),
@@ -614,6 +664,31 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
       return state;
     },
     initFromMeta,
+    snapshot: () =>
+      JSON.parse(
+        JSON.stringify({
+          state,
+          undo: undoStack.map(({ op, inverse }) => ({ op, inverse })),
+          redo: redoStack.map(({ op, inverse }) => ({ op, inverse })),
+          savedLen,
+          idSeq,
+          hydrated: [...hydrated],
+          hydratedByPage: [...hydratedByPage].map(([id, indices]) => [id, [...indices]]),
+        })
+      ) as DocumentSnapshot,
+    restore: (snapshot) => {
+      undoStack = snapshot.undo;
+      redoStack = snapshot.redo;
+      savedLen = snapshot.savedLen;
+      idSeq = snapshot.idSeq;
+      hydrated = new Map(snapshot.hydrated);
+      hydratedByPage = new Map(
+        snapshot.hydratedByPage.map(([id, indices]) => [id, new Set(indices)])
+      );
+      setState(snapshot.state);
+      rebuildPageLookups();
+      syncHistoryMeta();
+    },
     hydrateAnnotations,
     ownedSrcAnnots,
     updateSizes,

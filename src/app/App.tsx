@@ -2,6 +2,7 @@ import { createEffect, onCleanup, onMount, Show } from 'solid-js';
 import { createSignal, For } from 'solid-js';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
+import { invoke } from '@tauri-apps/api/core';
 import Toolbar from '../components/Toolbar';
 import TabStrip from '../features/tabs/TabStrip';
 import Sidebar from '../components/Sidebar';
@@ -27,12 +28,14 @@ import { dropOverlayText, projectsDropTarget } from '../features/projects/dnd';
 import { addDroppedPdfs, isPdf } from '../features/projects/fileDrop';
 import { activeTab, tabsStore } from '../stores/tabsStore';
 import {
-  claimActiveDocument,
+  acceptOfferedTab,
   closeAllWithGuard,
   openInNewTabOrFocus,
-  restoreSession,
+  initializeWindow,
+  prepareWindowClose,
 } from '../features/document/tabsController';
-import { trackWindowFocus } from '../stores/windowStore';
+import { windowTransferPending } from '../features/windows/windowController';
+import { showError } from '../stores/modalStore';
 import { TabContext } from './TabContext';
 
 export default function App() {
@@ -77,27 +80,48 @@ export default function App() {
         else unlistenProgress = unlisten;
       });
 
-    // Which document the engine should treat as foreground is app-global and
-    // only the front window may set it, so this window re-states its own each
-    // time it comes forward. See windowStore.ts.
-    const cleanupFocus = trackWindowFocus(claimActiveDocument);
-
-    // Files the OS asked us to open (double-click, "Open With", Dock drop).
-    // Anything that arrived before this window was listening — a cold
-    // launch-to-open, or a tab another window handed over as it created this
-    // one — is drained by restoreSession below.
+    // Files the OS asked us to open (double-click, "Open With", Dock drop):
+    // drain anything that arrived before we were ready to listen (cold
+    // launch-to-open), then keep listening for the rest of this session.
     let unlistenOpen: (() => void) | undefined;
+    // Register first, then drain; native routing delivers to exactly one window.
     // Scoped to this window, not the plain `listen` from the event module:
     // that one subscribes with target Any, which receives events emitted to
-    // *every* window. A document handed to one window would then be opened by
-    // all of them — including the window that had just handed it over.
+    // *every* window — a document handed to one window would be opened by all.
     void getCurrentWindow()
       .listen<string[]>('file-open-requested', (event) => {
         for (const p of event.payload) void openInNewTabOrFocus(p);
       })
+      .then(async (unlisten) => {
+        if (disposed) {
+          unlisten();
+          return;
+        }
+        unlistenOpen = unlisten;
+        await initializeWindow();
+        const paths = await invoke<string[]>('take_pending_opens');
+        for (const p of paths) await openInNewTabOrFocus(p);
+      })
+      .catch((error) => showError(`Could not initialize this window: ${String(error)}`));
+
+    // Another window handing this one a tab from its tab menu. Window-scoped
+    // like the listener above, so only the addressee hears it.
+    let unlistenOffer: (() => void) | undefined;
+    void getCurrentWindow()
+      .listen('tab-transfer-offered', () => void acceptOfferedTab())
       .then((unlisten) => {
         if (disposed) unlisten();
-        else unlistenOpen = unlisten;
+        else unlistenOffer = unlisten;
+      });
+
+    let unlistenFocus: (() => void) | undefined;
+    void getCurrentWindow()
+      .onFocusChanged(({ payload: focused }) => {
+        if (focused) void engine.setActiveDocument(activeTab()?.documentStore.state.docId ?? null);
+      })
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else unlistenFocus = unlisten;
       });
 
     // Native file drag-drop. A PDF let go over the Projects screen is copied
@@ -138,15 +162,16 @@ export default function App() {
     const win = getCurrentWindow();
     void win
       .onCloseRequested(async (e) => {
-        if (closing) return;
-        const anyDirty = tabsStore.state.tabs.some((t) => t.documentStore.state.dirty);
-        if (anyDirty) {
-          e.preventDefault();
-          const ok = await closeAllWithGuard();
-          if (ok) {
-            closing = true;
+        e.preventDefault();
+        if (closing || windowTransferPending()) return;
+        closing = true;
+        try {
+          if (await closeAllWithGuard()) {
+            await prepareWindowClose();
             await win.destroy();
           }
+        } finally {
+          closing = false;
         }
       })
       .then((unlisten) => {
@@ -159,79 +184,90 @@ export default function App() {
     // The engine decides whether a lookup may go out; the setting lives here.
     void engine.librarySetLookup(settings.onlineLookup, settings.lookupContact, settings.s2Key);
     void libraryStore.initializeLibrary();
-    void restoreSession();
 
     onCleanup(() => {
       disposed = true;
       cleanupShortcuts();
-      cleanupFocus();
       unlistenProgress?.();
       unlistenOpen?.();
       unlistenDrop?.();
       unlistenClose?.();
+      unlistenFocus?.();
+      unlistenOffer?.();
       clearImagePreviews();
       clearFormFields();
     });
   });
 
   return (
-    <div class="app-shell" classList={{ 'drop-active': dropOverlay() !== null }}>
-      <TabStrip />
-      <Toolbar />
-      <div class="content-area">
-        <Show when={tabsStore.state.tabs.length > 0}>
-          <div class="tab-workspaces">
-            <For each={tabsStore.state.tabs}>
-              {(tab) => {
-                // Sidebar state (open/mode) is window-level, so without this
-                // every open document would mount its own thumbnail list and
-                // race the others for the one engine thread — for panels
-                // nobody can see. The Viewer stays mounted either way and
-                // sheds its own page rasters internally.
-                const active = () => tab.id === tabsStore.state.activeId;
-                const visible = () => active() && tab.documentStore.state.loaded;
-                return (
-                  <TabContext.Provider value={tab}>
-                    <div class="tab-workspace" classList={{ 'is-active': active() }}>
-                      <div class="app-body">
-                        <Show when={ui.sidebarOpen && visible()}>
-                          <Sidebar />
-                        </Show>
-                        <main class="app-main">
-                          <ContextHeader />
-                          <Viewer />
-                        </main>
-                        <Show when={tab.viewport.state.searchOpen && visible()}>
-                          <SearchPanel />
-                        </Show>
-                        <Show when={tab.viewport.state.formPanelOpen && visible()}>
-                          <FormPanel />
-                        </Show>
+    <>
+      <div
+        class="app-shell"
+        inert={windowTransferPending()}
+        classList={{ 'drop-active': dropOverlay() !== null }}
+      >
+        <TabStrip />
+        <Toolbar />
+        <div class="content-area">
+          <Show when={tabsStore.state.tabs.length > 0}>
+            <div class="tab-workspaces">
+              <For each={tabsStore.state.tabs}>
+                {(tab) => {
+                  // Sidebar state (open/mode) is window-level, so without this
+                  // every open document would mount its own thumbnail list and
+                  // race the others for the one engine thread — for panels
+                  // nobody can see. The Viewer stays mounted either way and
+                  // sheds its own page rasters internally.
+                  const active = () => tab.id === tabsStore.state.activeId;
+                  const visible = () => active() && tab.documentStore.state.loaded;
+                  return (
+                    <TabContext.Provider value={tab}>
+                      <div class="tab-workspace" classList={{ 'is-active': active() }}>
+                        <div class="app-body">
+                          <Show when={ui.sidebarOpen && visible()}>
+                            <Sidebar />
+                          </Show>
+                          <main class="app-main">
+                            <ContextHeader />
+                            <Viewer />
+                          </main>
+                          <Show when={tab.viewport.state.searchOpen && visible()}>
+                            <SearchPanel />
+                          </Show>
+                          <Show when={tab.viewport.state.formPanelOpen && visible()}>
+                            <FormPanel />
+                          </Show>
+                        </div>
                       </div>
-                    </div>
-                  </TabContext.Provider>
-                );
-              }}
-            </For>
-          </div>
-        </Show>
-        <Show when={tabsStore.state.activeId === null}>
-          <Show when={settings.launchScreen === 'projects'} fallback={<HomeScreen />}>
-            <ProjectsScreen />
+                    </TabContext.Provider>
+                  );
+                }}
+              </For>
+            </div>
           </Show>
+          <Show when={tabsStore.state.activeId === null}>
+            <Show when={settings.launchScreen === 'projects'} fallback={<HomeScreen />}>
+              <ProjectsScreen />
+            </Show>
+          </Show>
+        </div>
+        <StatusBar />
+        <Show when={dropOverlay()}>
+          {(text) => (
+            <div class="drop-overlay" aria-hidden="true">
+              <div class="drop-card">{text()}</div>
+            </div>
+          )}
         </Show>
+        <Modals />
+        <CommandPalette />
+        <PreviewPopover />
       </div>
-      <StatusBar />
-      <Show when={dropOverlay()}>
-        {(text) => (
-          <div class="drop-overlay" aria-hidden="true">
-            <div class="drop-card">{text()}</div>
-          </div>
-        )}
+      <Show when={windowTransferPending()}>
+        <div class="window-transfer-overlay" role="status">
+          Moving tab to another window…
+        </div>
       </Show>
-      <Modals />
-      <CommandPalette />
-      <PreviewPopover />
-    </div>
+    </>
   );
 }

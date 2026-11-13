@@ -185,17 +185,16 @@ pub fn run() {
             // double-click while SpeedyF was already running. Take its
             // arguments, then raise the window that already exists.
             let paths = file_arguments(argv, Path::new(&cwd));
-            let target = if paths.is_empty() {
-                windows::target_window(app_handle)
-            } else {
-                deliver_opens(app_handle, paths)
-            };
-            windows::raise_window(app_handle, &target);
+            if !paths.is_empty() {
+                deliver_opens(app_handle, paths);
+            }
+            raise_main_window(app_handle);
         },
     ));
 
     builder
         .plugin(tauri_plugin_dialog::init())
+        .on_window_event(windows::on_window_event)
         .setup(|app| {
             let mut hints = Vec::new();
             if let Ok(resources) = app.path().resource_dir() {
@@ -242,15 +241,8 @@ pub fn run() {
             }));
 
             app.manage(EngineState(engine));
-
-            // Which windows exist and what each has open. Read before
-            // anything can write it, so a launch never races its own session.
-            let (window_state, session) = windows::WindowState::new(app.path().app_data_dir().ok());
-            app.manage(window_state);
-            if let Some(main) = app.get_webview_window(windows::MAIN_LABEL) {
-                windows::watch_window(app.handle(), &main);
-            }
-            windows::restore_windows(app.handle(), session);
+            app.manage(windows::Windows::default());
+            windows::install_menu(app.handle())?;
 
             // Someone who hand-installed an extension before it began shipping
             // would otherwise see it listed twice under one id. Best effort —
@@ -377,13 +369,17 @@ pub fn run() {
             commands::extension_contribute_text,
             commands::extension_contributed_text,
             commands::forget_contributed_text,
-            windows::window_startup,
+            windows::take_pending_opens,
+            windows::new_window,
+            windows::detach_tab,
+            windows::window_tab_snapshot,
+            windows::accept_window_tab,
+            windows::decline_window_tab,
+            windows::take_window_restore,
+            windows::send_tab_to_window,
             windows::update_window_tabs,
             windows::window_roster,
-            windows::find_window_for_path,
-            windows::focus_window,
-            windows::open_window,
-            windows::send_paths_to_window,
+            windows::focus_window_for_path,
             commands::file_metadata,
             commands::open_document,
             commands::close_document,
@@ -469,40 +465,44 @@ pub fn run() {
 /// platforms — referring to it there is a compile error, not a no-op — and
 /// they do not need it: Windows and Linux hand the path to a fresh process on
 /// the command line instead. See `file_arguments`.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 fn handle_run_event(app_handle: &tauri::AppHandle, event: tauri::RunEvent) {
-    match event {
-        // On the way out. Freeze the window roster first: every window fires
-        // Destroyed as it tears down, and pruning each one would leave behind
-        // a session describing no windows at all.
-        tauri::RunEvent::ExitRequested { .. } => {
-            if let Some(state) = app_handle.try_state::<windows::WindowState>() {
-                state.begin_exit();
-            }
-        }
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        tauri::RunEvent::Opened { urls } => {
-            let paths: Vec<String> = urls
-                .into_iter()
-                .filter_map(|u| u.to_file_path().ok())
-                .map(|p| p.to_string_lossy().into_owned())
-                .collect();
-            if paths.is_empty() {
-                return;
-            }
-            let target = deliver_opens(app_handle, paths);
-            windows::raise_window(app_handle, &target);
-        }
-        _ => {}
+    let tauri::RunEvent::Opened { urls } = event else {
+        return;
+    };
+    let paths: Vec<String> = urls
+        .into_iter()
+        .filter_map(|u| u.to_file_path().ok())
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    if paths.is_empty() {
+        return;
+    }
+    deliver_opens(app_handle, paths);
+
+    raise_main_window(app_handle);
+}
+
+/// Bring the window forward. The OS hands us a file but does not raise us:
+/// without this an already-running SpeedyF loads the PDF behind whatever the
+/// user was looking at, and the open looks like it did nothing.
+fn raise_main_window(app_handle: &tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    let _ = app_handle.show();
+    if let Some(window) = windows::target_window(app_handle) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
     }
 }
 
-/// Hand opened paths to one window — the one the user is looking at — and
-/// return which. Emitting to every window instead would open the same PDF as
-/// many times as there are windows.
-fn deliver_opens(app_handle: &tauri::AppHandle, paths: Vec<String>) -> String {
-    let target = windows::target_window(app_handle);
-    windows::deliver_to_window(app_handle, &target, paths);
-    target
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+fn handle_run_event(_app_handle: &tauri::AppHandle, _event: tauri::RunEvent) {}
+
+/// Hand opened paths to the frontend, and stash them for a frontend that is
+/// not listening yet — a cold launch reaches here before the webview exists.
+fn deliver_opens(app_handle: &tauri::AppHandle, paths: Vec<String>) {
+    windows::deliver_opens(app_handle, paths);
 }
 
 /// Files named on the command line, which is how every platform except macOS

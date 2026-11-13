@@ -61,6 +61,10 @@ export async function hydrateAnnotations(tab: TabRecord, docId: number) {
         ...(a.strokes !== null ? { strokes: a.strokes } : {}),
         ...(a.text !== null ? { text: a.text } : {}),
         ...(a.fontSizePt !== null ? { fontSizePt: a.fontSizePt } : {}),
+        fontFamily: a.fontFamily,
+        bold: a.bold,
+        italic: a.italic,
+        underline: a.underline,
       })),
     }))
   );
@@ -144,10 +148,17 @@ export async function saveDocument(tab: TabRecord, saveAs: boolean): Promise<boo
  * post-save reload through tabsController.openInNewTabOrFocus would spawn a
  * duplicate tab for the same file on every save). */
 export async function reloadTabFromDisk(tab: TabRecord, dest: string): Promise<void> {
+  const previousDocId = tab.documentStore.state.docId;
   const meta = await engine.open(dest);
   tab.documentStore.initFromMeta(meta);
+  if (previousDocId >= 0) void engine.close(previousDocId);
   tab.searchStore.resetForDocument(meta.docId, meta.pageCount);
   tab.citationStore.syncDocument(meta.docId);
   tab.structureStore.syncDocument(meta.docId);
   recentStore.recordOpen({ path: dest, name: meta.name });
+  tab.ready = Promise.all([
+    hydrateSizes(tab, meta.pageCount),
+    hydrateAnnotations(tab, meta.docId),
+  ]).then(() => undefined);
+  await tab.ready;
 }

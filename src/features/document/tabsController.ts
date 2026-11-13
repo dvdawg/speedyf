@@ -5,7 +5,12 @@
  *
  * A tab registry is per-window (one module instance per webview), so anything
  * that crosses windows goes through the registry in Rust: see
- * lib/transport/windows.ts. */
+ * lib/transport/windows.ts and src-tauri/src/windows.rs. */
+import { invoke } from '@tauri-apps/api/core';
+import { getAllWindows } from '@tauri-apps/api/window';
+import { type DocumentSnapshot } from './documentStore';
+import { type ViewportState, VIEW_PADDING } from '../../stores/viewportStore';
+import { windowTransferPending, setWindowTransferPending } from '../windows/windowController';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { engine, isEngineError } from '../../lib/transport/engine';
 import {
@@ -25,71 +30,62 @@ import { clearImagePreviews } from '../editor/editorActions';
 import { clearFormFields } from '../forms/formStore';
 import { guardUnsaved, hydrateAnnotations, hydrateSizes } from './controller';
 import { recentStore } from '../../stores/recentStore';
-import { takeLegacySession } from '../../stores/sessionStore';
 import {
-  isMainWindow,
-  windowApi,
-  windowLabel,
-  type WindowStartup,
-} from '../../lib/transport/windows';
-import { windowFocused } from '../../stores/windowStore';
+  removeWindowSession,
+  saveSession,
+  takeWindowSessions,
+  type SessionFile,
+} from '../../stores/sessionStore';
+import { MAIN_LABEL, windowApi, windowLabel } from '../../lib/transport/windows';
 import { abandonPrintFor } from '../print/printStore';
 
 const MAX_TABS = 30;
 
-/** What this window would have the engine treat as foreground, whether or not
- * it is currently allowed to say so. */
-let desiredActiveDoc: number | null = null;
-
 function setActiveDocument(docId: number | null) {
-  desiredActiveDoc = docId;
-  // Only the window in front speaks. `set_active_document` is app-global and
-  // destructive — it bumps the citation epoch, closes the library hover
-  // session, and hands over the single text indexer — so a background window
-  // asserting its own tab would cancel the work of the window being read.
-  if (windowFocused()) void engine.setActiveDocument(docId);
+  void engine.setActiveDocument(docId);
 }
 
-/** Re-asserts this window's document when it comes back to the front. */
-export function claimActiveDocument(): void {
-  void engine.setActiveDocument(desiredActiveDoc);
-}
+let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
-let publishTimer: ReturnType<typeof setTimeout> | undefined;
-
-/** Tells the registry what this window has open: which files, in what order,
- * and which is active. Never docId (meaningless across restarts), zoom, or
- * scroll.
+/** Debounced session write — snapshots which files are open, in what order,
+ * and which is active. Never stores docId/zoom/scroll (see sessionStore.ts).
  *
- * Immediate rather than debounced, because this is not only the saved
- * session — it is what the *other* windows read to answer "does anyone
- * already have this file open". A stale entry there is a wrong answer, and
- * the wrong answer opens a second copy of a document.
- */
+ * The window registry is told at once rather than debounced: it is what the
+ * *other* windows read to answer "does anyone already have this file open",
+ * and a stale answer there opens a second copy of a document. */
+function scheduleSave(): void {
+  publishTabs();
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveCurrentSession, 250);
+}
+
 function publishTabs(): void {
-  clearTimeout(publishTimer);
   const tabs = tabsStore.state.tabs
     .map((t) => t.documentStore.state.path)
     .filter((path): path is string => typeof path === 'string');
   const activePath = activeTab()?.documentStore.state.path ?? null;
-  void windowApi.publishTabs(windowLabel(), tabs, activePath).catch(() => undefined);
+  void windowApi.publishTabs(tabs, activePath).catch(() => undefined);
 }
 
-/** The same, coalesced — for changes nothing is waiting on, like activating a
- * tab or dragging one along the strip. */
-function schedulePublish(): void {
-  clearTimeout(publishTimer);
-  publishTimer = setTimeout(publishTabs, 250);
-}
-
-/** Which other window already has `path` open, if any. A registry that cannot
- * be reached is never a reason to refuse to open a document. */
-async function windowWithPath(path: string): Promise<string | null> {
+/** Whether another window already has `path` open — in which case it has
+ * been raised with that tab focused. A registry that cannot be reached is
+ * never a reason to refuse to open a document. */
+async function openElsewhere(path: string): Promise<boolean> {
   try {
-    return await windowApi.findWindowForPath(path, windowLabel());
+    return (await windowApi.focusWindowForPath(path)) === true;
   } catch {
-    return null;
+    return false;
   }
+}
+
+export function saveCurrentSession(): void {
+  clearTimeout(saveTimer);
+  const tabs = tabsStore.state.tabs
+    .filter((t) => t.documentStore.state.path)
+    .map((t) => ({ path: t.documentStore.state.path! }));
+  const activePath = activeTab()?.documentStore.state.path ?? null;
+  saveSession({ version: 1, tabs, activePath }, windowLabel());
+  publishTabs();
 }
 
 export async function openFromDialog(): Promise<void> {
@@ -116,20 +112,11 @@ export async function openInNewTabOrFocus(
   }
   // Nobody opens a second copy of a document another window already has: that
   // is two PDFium handles, two independent dirty states, and whichever window
-  // saves last silently overwriting the other's work. Hand it back to the
-  // window that has it, which raises itself and focuses the tab.
-  const elsewhere = await windowWithPath(path);
-  if (elsewhere) {
-    // Except at restore: a duplicate across two saved windows is stale
-    // bookkeeping, and dropping it is the whole point.
-    if (opts?.fromSessionRestore) return false;
-    try {
-      await windowApi.sendPaths(elsewhere, [path]);
-      return true;
-    } catch {
-      // That window went away between the two calls — open it here after all.
-    }
-  }
+  // saves last silently overwriting the other's work. The window that has it
+  // raises itself and focuses the tab instead. Not at restore: the restored
+  // windows' sessions are already disjoint (see takeWindowSessions), and a
+  // window coming up must not raise another over itself.
+  if (!opts?.fromSessionRestore && (await openElsewhere(path))) return true;
   if (tabsStore.state.tabs.length >= MAX_TABS) {
     showError(`Too many tabs open (limit ${MAX_TABS}). Close one before opening another.`);
     return false;
@@ -174,11 +161,13 @@ export async function openInNewTabOrFocus(
         record.viewport.requestScrollToPage(0);
       }
       void engine.startIndexing(meta.docId);
-      void hydrateSizes(record, meta.pageCount);
-      void hydrateAnnotations(record, meta.docId);
+      record.ready = Promise.all([
+        hydrateSizes(record, meta.pageCount),
+        hydrateAnnotations(record, meta.docId),
+      ]).then(() => undefined);
       if (activeTab()?.id === record.id) setActiveDocument(meta.docId);
       recentStore.recordOpen({ path, name: meta.name });
-      publishTabs();
+      scheduleSave();
       return true;
     } catch (e) {
       if (isEngineError(e) && e.code === 'password') {
@@ -216,16 +205,16 @@ export function activateTab(id: string): void {
   setActiveId(id);
   const tab = activeTab();
   setActiveDocument(tab?.documentStore.state.docId ?? null);
-  schedulePublish();
+  scheduleSave();
 }
 
 /** Closes a tab, prompting first if it has unsaved changes. Returns whether
- * it actually closed, so a caller closing several in a row (close-others, or
- * moving a tab to another window) can stop when the user cancels. */
-export async function closeTab(id: string, opts?: { skipGuard?: boolean }): Promise<boolean> {
+ * it actually closed, so a caller closing several in a row can stop when the
+ * user cancels. */
+export async function closeTab(id: string): Promise<boolean> {
   const tab = tabsStore.state.tabs.find((t) => t.id === id);
-  if (!tab) return false;
-  if (!opts?.skipGuard && tab.documentStore.state.dirty) {
+  if (!tab || tab.opening || windowTransferPending()) return false;
+  if (tab.documentStore.state.dirty) {
     const ok = await guardUnsaved(tab);
     if (!ok) return false;
   }
@@ -247,7 +236,7 @@ export async function closeTab(id: string, opts?: { skipGuard?: boolean }): Prom
       setActiveDocument(null);
     }
   }
-  publishTabs();
+  scheduleSave();
   return true;
 }
 
@@ -271,7 +260,7 @@ export async function closeTabsToTheRight(id: string): Promise<void> {
 export function goHome(): void {
   setActiveId(null);
   setActiveDocument(null);
-  schedulePublish();
+  scheduleSave();
 }
 
 /** Cycles the active tab forward/backward. No-op with 0 or 1 tabs. */
@@ -291,52 +280,7 @@ export function jumpToTab(index: number): void {
 
 export function reorderTab(fromIndex: number, toIndex: number): void {
   reorderTabs(fromIndex, toIndex);
-  schedulePublish();
-}
-
-// --- Windows ---------------------------------------------------------------
-
-/** A new, empty window. */
-export async function openNewWindow(): Promise<void> {
-  try {
-    await windowApi.open([]);
-  } catch (e) {
-    showError(isEngineError(e) ? e.message : `Could not open a window: ${String(e)}`);
-  }
-}
-
-/** Hands a tab to another window — an existing one, or a new one when
- * `target` is null.
- *
- * Unsaved edits live in this window's document store and cannot travel with
- * the tab, so they are settled here before it goes. And the tab is closed
- * *before* the document is handed over: while both windows hold the same
- * path, the receiving window's own duplicate check would find this one and
- * bounce the document straight back.
- */
-async function moveTab(id: string, target: string | null): Promise<void> {
-  const tab = tabsStore.state.tabs.find((t) => t.id === id);
-  const path = tab?.documentStore.state.path;
-  if (!tab || !path) return;
-  if (tab.documentStore.state.dirty && !(await guardUnsaved(tab))) return;
-  if (!(await closeTab(id, { skipGuard: true }))) return;
-  try {
-    if (target === null) await windowApi.open([path]);
-    else await windowApi.sendPaths(target, [path]);
-  } catch (e) {
-    // The document has left this window and arrived nowhere. Take it back
-    // rather than leaving the user with neither.
-    showError(isEngineError(e) ? e.message : `Could not move that tab: ${String(e)}`);
-    await openInNewTabOrFocus(path);
-  }
-}
-
-export function moveTabToNewWindow(id: string): Promise<void> {
-  return moveTab(id, null);
-}
-
-export function moveTabToWindow(id: string, label: string): Promise<void> {
-  return moveTab(id, label);
+  scheduleSave();
 }
 
 /** Used by the window-close guard. Prompts for each dirty tab in turn
@@ -352,51 +296,211 @@ export async function closeAllWithGuard(): Promise<boolean> {
   return true;
 }
 
-/** Everything this window is owed at mount, in order: the files it had open
- * at last quit, then anything handed to it since — a document the OS asked us
- * to open during a cold launch, or the tab another window moved over when it
- * created this one. Called once from App.tsx.
- *
- * Missing files are dropped silently (see the fromSessionRestore branch
- * above); the pruned list is then republished so future launches don't keep
- * retrying dead paths. */
+/** Reopens the windows that were open at last quit: this (main) window takes
+ * its own tabs, and every other window comes back as a window of its own
+ * with its own tabs. Called once, from initializeWindow. */
 export async function restoreSession(): Promise<void> {
-  let startup: WindowStartup;
-  try {
-    startup = await windowApi.startup(windowLabel());
-  } catch {
-    return; // no registry, no session and nothing waiting
-  }
-
-  let paths = startup.restore.tabs;
-  let activePath = startup.restore.activePath;
-  // First launch after the session moved out of localStorage and into the
-  // window registry: carry the old one over rather than greeting a user who
-  // upgraded with an empty window.
-  if (paths.length === 0 && isMainWindow()) {
-    const legacy = takeLegacySession();
-    if (legacy) {
-      paths = legacy.tabs.map((t) => t.path);
-      activePath = legacy.activePath;
+  const { main, others } = takeWindowSessions();
+  for (const other of others) {
+    try {
+      await windowApi.restoreWindow({
+        tabs: other.tabs.map((t) => t.path),
+        activePath: other.activePath,
+      });
+    } catch {
+      // A window that cannot be built costs the user those tabs, nothing more.
     }
   }
+  await restoreTabs(main);
+}
+
+/** Reopens `session`'s files, in the same order, with the same tab active.
+ * Missing files are dropped silently (see the fromSessionRestore branch
+ * above); the pruned list is then re-saved so future launches don't keep
+ * retrying dead paths. */
+async function restoreTabs(session: SessionFile): Promise<void> {
+  if (session.tabs.length === 0) return;
 
   // Sequential, not Promise.all: every open costs a PDFium parse plus a page-
   // size hydration sweep on the single engine thread, so firing ten at once
   // just queues them behind each other while starving the first tab's pages
   // of the renders it needs to actually show something.
-  for (const path of paths) {
-    await openInNewTabOrFocus(path, { skipGuard: true, fromSessionRestore: true });
+  for (const t of session.tabs) {
+    await openInNewTabOrFocus(t.path, { skipGuard: true, fromSessionRestore: true });
   }
 
   const restored = tabsStore.state.tabs;
-  if (restored.length > 0) {
-    const activeMatch = restored.find((t) => t.documentStore.state.path === activePath);
-    activateTab((activeMatch ?? restored[0]!).id);
-  }
-  publishTabs();
-
-  for (const path of startup.opens) await openInNewTabOrFocus(path);
+  if (restored.length === 0) return;
+  const activeMatch = restored.find((t) => t.documentStore.state.path === session.activePath);
+  activateTab((activeMatch ?? restored[0]!).id);
+  scheduleSave();
 }
 
 export type { TabRecord };
+
+export interface TabSnapshot {
+  document: DocumentSnapshot;
+  viewport: Pick<
+    ViewportState,
+    | 'zoom'
+    | 'fitMode'
+    | 'viewRotation'
+    | 'currentPage'
+    | 'editMode'
+    | 'searchOpen'
+    | 'formPanelOpen'
+  >;
+  fraction: number;
+  search: { query: string; caseSensitive: boolean };
+}
+
+/** Where a tab is handed: a window built for it (optionally at the point a
+ * tab was dragged out to), or a window that already exists. */
+type HandOffTarget =
+  { kind: 'new'; position: [number, number] | undefined } | { kind: 'existing'; label: string };
+
+/** The source is frozen until the target acknowledges adoption. The native
+ * engine handle moves with the tab, so encrypted files need no second password. */
+export function detachTab(id: string, position?: [number, number]): Promise<void> {
+  return handOffTab(id, { kind: 'new', position });
+}
+
+/** Hands a tab to another, existing window — the tab menu's "Move to …". The
+ * same transaction as detaching: unsaved edits and undo history travel with
+ * the tab, so nothing has to be saved before it goes. */
+export function moveTabToWindow(id: string, label: string): Promise<void> {
+  return handOffTab(id, { kind: 'existing', label });
+}
+
+async function handOffTab(id: string, target: HandOffTarget): Promise<void> {
+  const tab = tabsStore.state.tabs.find((t) => t.id === id);
+  if (
+    !tab ||
+    tab.opening ||
+    !tab.documentStore.state.loaded ||
+    tab.documentStore.state.saving ||
+    windowTransferPending()
+  )
+    return;
+  setWindowTransferPending(true);
+  try {
+    await tab.ready;
+    const vp = tab.viewport.state;
+    const layout = tab.zoom.layoutFor(vp.zoom);
+    const fraction = Math.min(
+      1,
+      Math.max(
+        0,
+        (vp.scrollTop - (layout.tops[vp.currentPage] ?? 0) + VIEW_PADDING) /
+          (layout.heights[vp.currentPage] || 1)
+      )
+    );
+    const snapshot: TabSnapshot = {
+      document: tab.documentStore.snapshot(),
+      viewport: {
+        zoom: vp.zoom,
+        fitMode: vp.fitMode,
+        viewRotation: vp.viewRotation,
+        currentPage: vp.currentPage,
+        editMode: vp.editMode,
+        searchOpen: vp.searchOpen,
+        formPanelOpen: vp.formPanelOpen,
+      },
+      fraction,
+      search: {
+        query: tab.searchStore.state.query,
+        caseSensitive: tab.searchStore.state.caseSensitive,
+      },
+    };
+    const docId = snapshot.document.state.docId;
+    if (target.kind === 'new') {
+      await invoke('detach_tab', { docId, snapshot, position: target.position ?? null });
+    } else {
+      await invoke('send_tab_to_window', { docId, snapshot, target: target.label });
+    }
+    abandonPrintFor(docId);
+    tab.citationStore.dispose();
+    removeTab(id);
+    if (tabsStore.state.activeId === id) {
+      const next = tabsStore.state.tabs[0];
+      if (next) activateTab(next.id);
+      else goHome();
+    }
+    saveCurrentSession();
+  } catch (error) {
+    showError(`Could not move the tab: ${String(error)}`);
+  } finally {
+    setWindowTransferPending(false);
+  }
+}
+
+/** Builds a tab from another window's snapshot and commits native ownership.
+ * Nothing is visible or editable until the registry has moved the document
+ * here; on failure the half-built tab is discarded and the source keeps it. */
+async function adoptSnapshot(snapshot: TabSnapshot): Promise<void> {
+  const tab = createTab();
+  tab.documentStore.restore(snapshot.document);
+  tab.viewport.setState(snapshot.viewport);
+  tab.viewport.requestRestorePosition(snapshot.viewport.currentPage, snapshot.fraction);
+  const docId = snapshot.document.state.docId;
+  tab.searchStore.resetForDocument(docId, snapshot.document.state.searchIndex.total);
+  tab.searchStore.setCaseSensitive(snapshot.search.caseSensitive);
+  tab.searchStore.setQuery(snapshot.search.query);
+  tab.citationStore.syncDocument(docId);
+  tab.structureStore.syncDocument(docId);
+  try {
+    await invoke('accept_window_tab');
+  } catch (error) {
+    tab.citationStore.dispose();
+    throw error;
+  }
+  addTab(tab);
+  activateTab(tab.id);
+  void engine.startIndexing(docId);
+  saveCurrentSession();
+}
+
+/** Another window offered this one a tab (its "Move to …" menu). Declining
+ * wakes the sender at once, which keeps the tab and says so. */
+export async function acceptOfferedTab(): Promise<void> {
+  const decline = () => invoke('decline_window_tab').catch(() => undefined);
+  if (tabsStore.state.tabs.length >= MAX_TABS) {
+    await decline();
+    return;
+  }
+  try {
+    const snapshot = await invoke<TabSnapshot | null>('window_tab_snapshot');
+    if (snapshot) await adoptSnapshot(snapshot);
+  } catch {
+    await decline();
+  }
+}
+
+export async function initializeWindow(): Promise<void> {
+  const snapshot = await invoke<TabSnapshot | null>('window_tab_snapshot');
+  if (snapshot) {
+    await adoptSnapshot(snapshot);
+    return;
+  }
+  // A window reopened from the previous launch's session.
+  const restore = await windowApi.takeRestore();
+  if (restore) {
+    await restoreTabs({
+      version: 1,
+      tabs: restore.tabs.map((path) => ({ path })),
+      activePath: restore.activePath,
+    });
+  } else if (
+    windowLabel() === MAIN_LABEL &&
+    !new URLSearchParams(window.location.search).has('window')
+  ) {
+    await restoreSession();
+  }
+}
+
+/** Flush before destroying a window. Only the last window keeps a launch
+ * session; closing one of several must not resurrect its tabs next launch. */
+export async function prepareWindowClose(): Promise<void> {
+  saveCurrentSession();
+  if ((await getAllWindows()).length > 1) removeWindowSession(windowLabel());
+}

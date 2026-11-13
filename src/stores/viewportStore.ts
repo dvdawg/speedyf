@@ -4,7 +4,7 @@
  * the factory, with a temporary module-level singleton kept below until the
  * tab-registry wiring lands. */
 import { createStore, type SetStoreFunction } from 'solid-js/store';
-import type { FitMode, Rotation } from '../types/model';
+import type { FitMode, PageId, Rotation } from '../types/model';
 
 export interface ViewportState {
   zoom: number;
@@ -20,6 +20,8 @@ export interface ViewportState {
   searchOpen: boolean;
   formPanelOpen: boolean;
   editMode: boolean;
+  /** Active text editor, separate from an annotation selected for moving. */
+  editingText: { pageId: PageId; annotId: string } | null;
   /** bumped to request programmatic page navigation or exact view restore */
   scrollRequest: ScrollRequest | null;
   /** where the current text selection sits, so the context header can follow
@@ -77,6 +79,7 @@ function emptyState(): ViewportState {
     searchOpen: false,
     formPanelOpen: false,
     editMode: false,
+    editingText: null,
     scrollRequest: null,
     selectionAnchor: null,
   };

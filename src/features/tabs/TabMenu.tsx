@@ -10,18 +10,22 @@
  * The window list is fetched when the menu opens, never cached: windows come
  * and go while the menu is closed, and offering a destination that no longer
  * exists is worse than offering none.
+ *
+ * Moving a tab is the same transactional handoff as dragging it out of the
+ * strip: unsaved edits and undo history go with it.
  */
 import { createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { Portal } from 'solid-js/web';
-import { windowApi, windowLabel, type WindowSummary } from '../../lib/transport/windows';
+import { windowApi, type WindowSummary } from '../../lib/transport/windows';
 import { tabsStore } from '../../stores/tabsStore';
 import {
   closeOtherTabs,
   closeTab,
   closeTabsToTheRight,
-  moveTabToNewWindow,
+  detachTab,
   moveTabToWindow,
 } from '../document/tabsController';
+import { windowTransferPending } from '../windows/windowController';
 import { MENU_WIDTH, tabMenuHeight, tabMenuPosition } from './tabMenuLayout';
 
 export interface TabMenuTarget {
@@ -44,13 +48,23 @@ export default function TabMenu(props: { target: TabMenuTarget; onClose: () => v
 
   const index = () => tabsStore.state.tabs.findIndex((t) => t.id === props.target.tabId);
   const tab = () => tabsStore.state.tabs[index()] ?? null;
-  const path = () => tab()?.documentStore.state.path ?? null;
+  /** The same conditions as dragging a tab out of the strip. */
+  const movable = () => {
+    const t = tab();
+    return (
+      !!t &&
+      !t.opening &&
+      t.documentStore.state.loaded &&
+      !t.documentStore.state.saving &&
+      !windowTransferPending()
+    );
+  };
 
   const items = (): Item[] => {
     const at = index();
     const total = tabsStore.state.tabs.length;
     const id = props.target.tabId;
-    const movable = path() !== null;
+    const canMove = movable();
     const list: Item[] = [
       { label: 'Close Tab', enabled: true, run: () => void closeTab(id) },
       { label: 'Close Other Tabs', enabled: total > 1, run: () => void closeOtherTabs(id) },
@@ -62,16 +76,14 @@ export default function TabMenu(props: { target: TabMenuTarget; onClose: () => v
       {
         label: 'Move to New Window',
         separated: true,
-        // Moving the only tab of a window into a window of its own would just
-        // rebuild the window it left.
-        enabled: movable && total > 1,
-        run: () => void moveTabToNewWindow(id),
+        enabled: canMove,
+        run: () => void detachTab(id),
       },
     ];
     for (const win of windows()) {
       list.push({
         label: `Move to “${win.title}”`,
-        enabled: movable,
+        enabled: canMove,
         run: () => void moveTabToWindow(id, win.label),
       });
     }
@@ -104,7 +116,7 @@ export default function TabMenu(props: { target: TabMenuTarget; onClose: () => v
 
   onMount(() => {
     void windowApi
-      .roster(windowLabel())
+      .roster()
       .then(setWindows)
       .catch(() => setWindows([]));
 

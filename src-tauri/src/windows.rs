@@ -1,38 +1,48 @@
-//! Which windows exist, what each has open, and the cross-window moves the
-//! frontend needs: focus the window that already holds a file, hand a tab to
-//! another window, open a new one.
+//! Window ownership and transactional tab handoff. PDF handles stay on the
+//! engine thread; only lightweight editor state crosses between webviews.
 //!
-//! This lives in Rust rather than in the webviews because every question it
-//! answers spans windows, and a webview can only see itself. Two windows
-//! sharing one `localStorage` cannot even keep a session between them — both
-//! write the same key and the last one wins.
-//!
-//! The registry doubles as that session: the same per-window list of open
-//! paths is what gets written to disk and read back at launch.
+//! Besides the documents each window owns (by engine id), the registry keeps
+//! the *paths* each window shows, in tab order. Those answer the questions
+//! that span windows and that a webview cannot answer about itself: which
+//! other windows a tab can be moved to, and whether another window already
+//! has a file open — nobody opens a second copy of a document, since that is
+//! two PDFium handles, two dirty states, and a silent overwrite on save.
+use crate::commands::EngineState;
+use crate::engine::types::{DocId, Priority};
+use crate::engine::Work;
+use serde_json::Value;
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+use std::sync::{mpsc, Mutex};
+use std::time::Duration;
+use tauri::{Emitter, Manager};
 
-use crate::errors::{AppError, AppResult};
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+struct Transfer {
+    source: String,
+    doc: DocId,
+    snapshot: Value,
+    ready: mpsc::Sender<()>,
+}
 
-pub const MAIN_LABEL: &str = "main";
-const SESSION_FILE: &str = "session.json";
-const SESSION_VERSION: u32 = 2;
+#[derive(Default)]
+pub struct Windows(Mutex<Registry>);
 
-/// Past this the windows are unmanageable anyway, and a restore loop that has
-/// gone wrong stops being able to spawn windows forever.
-const MAX_WINDOWS: usize = 12;
+#[derive(Default)]
+struct Registry {
+    sequence: u64,
+    documents: HashMap<String, HashSet<DocId>>,
+    transfers: HashMap<String, Transfer>,
+    pending_opens: HashMap<String, Vec<String>>,
+    ready: HashSet<String>,
+    focused: Option<String>,
+    /// What each window shows, as it last published it.
+    tabs: HashMap<String, WindowTabs>,
+    /// Tabs a window restored from the previous launch should reopen, handed
+    /// to it once when it asks.
+    restores: HashMap<String, WindowTabs>,
+}
 
-/// Same geometry the main window is configured with in `tauri.conf.json`.
-/// A new window is not a different kind of window.
-const WINDOW_SIZE: (f64, f64) = (1280.0, 840.0);
-const MIN_WINDOW_SIZE: (f64, f64) = (720.0, 480.0);
-/// How far a new window is offset from the one it was spawned from, so it
-/// does not land exactly on top of it.
-const CASCADE: f64 = 28.0;
-
-/// One window's open documents. Ordered as the tab strip orders them.
+/// One window's open documents, in tab-strip order.
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WindowTabs {
@@ -40,23 +50,6 @@ pub struct WindowTabs {
     pub tabs: Vec<String>,
     #[serde(default)]
     pub active_path: Option<String>,
-}
-
-#[derive(Default, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SessionFile {
-    version: u32,
-    #[serde(default)]
-    windows: Vec<WindowTabs>,
-}
-
-/// What a window asks for once, on mount: the tabs it should reopen and any
-/// paths waiting for it. Both are drained by the read.
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WindowStartupDto {
-    restore: WindowTabs,
-    opens: Vec<String>,
 }
 
 /// A window as another window's "move tab to…" menu sees it.
@@ -70,153 +63,486 @@ pub struct WindowSummaryDto {
     tab_count: usize,
 }
 
-#[derive(Default)]
-struct Registry {
-    /// Live windows in creation order, which is the order menus list them in.
-    live: Vec<String>,
-    tabs: HashMap<String, WindowTabs>,
-    /// Paths handed to a window that has not asked for them yet: a cold
-    /// launch, or a window created a moment ago to receive a moved tab.
-    pending: HashMap<String, Vec<String>>,
-    /// Tabs a restored window should reopen, drained once at startup.
-    restore: HashMap<String, WindowTabs>,
-    next_id: u32,
-    /// Set once the app is on its way out, so that windows tearing down do
-    /// not erase the session they exist to leave behind. Without it, quitting
-    /// with three windows open writes a session with none: each Destroyed
-    /// event would prune its own window on the way past.
-    exiting: bool,
-}
-
-impl Registry {
-    /// The session as it stands: every live window, in creation order.
-    fn snapshot(&self) -> SessionFile {
-        SessionFile {
-            version: SESSION_VERSION,
-            windows: self
-                .live
-                .iter()
-                .map(|label| self.tabs.get(label).cloned().unwrap_or_default())
-                .collect(),
-        }
-    }
-}
-
 /// Stand-in for a window that has not published its tabs yet.
 static EMPTY_TABS: WindowTabs = WindowTabs {
     tabs: Vec::new(),
     active_path: None,
 };
 
-pub struct WindowState {
-    inner: Mutex<Registry>,
-    /// `None` when the app data directory is unavailable — the session is
-    /// then simply not persisted, which is not a reason to fail a launch.
-    session_path: Option<PathBuf>,
+impl Windows {
+    pub fn opened(&self, label: &str, doc: DocId) {
+        self.0
+            .lock()
+            .unwrap()
+            .documents
+            .entry(label.into())
+            .or_default()
+            .insert(doc);
+    }
+
+    pub fn closed(&self, label: &str, doc: DocId) {
+        if let Some(docs) = self.0.lock().unwrap().documents.get_mut(label) {
+            docs.remove(&doc);
+        }
+    }
 }
 
-impl WindowState {
-    /// Reads the session from disk without acting on it. `setup` decides how
-    /// many windows to raise; this only says what was open.
-    pub fn new(app_data_dir: Option<PathBuf>) -> (Self, Vec<WindowTabs>) {
-        let session_path = app_data_dir.map(|dir| dir.join(SESSION_FILE));
-        let restored = session_path
-            .as_deref()
-            .and_then(read_session)
-            .map(|s| s.windows)
-            .unwrap_or_default();
-        (
-            Self {
-                inner: Mutex::new(Registry::default()),
-                session_path,
+pub fn target_window(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
+    let state = app.state::<Windows>();
+    let registry = state.0.lock().unwrap();
+    registry
+        .focused
+        .as_deref()
+        .and_then(|label| app.get_webview_window(label))
+        .or_else(|| app.get_webview_window("main"))
+        .or_else(|| {
+            app.webview_windows()
+                .into_values()
+                .find(|w| !registry.transfers.contains_key(w.label()))
+        })
+}
+
+pub fn deliver_opens(app: &tauri::AppHandle, paths: Vec<String>) {
+    let Some(window) = target_window(app) else {
+        return;
+    };
+    let state = app.state::<Windows>();
+    let mut registry = state.0.lock().unwrap();
+    if registry.ready.contains(window.label()) {
+        let _ = app.emit_to(window.label(), "file-open-requested", paths);
+    } else {
+        registry
+            .pending_opens
+            .entry(window.label().into())
+            .or_default()
+            .extend(paths);
+    }
+    drop(registry);
+    let _ = window.unminimize();
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
+#[tauri::command]
+pub fn take_pending_opens(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Windows>,
+) -> Vec<String> {
+    let mut registry = state.0.lock().unwrap();
+    registry.ready.insert(window.label().into());
+    registry
+        .pending_opens
+        .remove(window.label())
+        .unwrap_or_default()
+}
+
+pub fn build_window(
+    app: &tauri::AppHandle,
+    label: &str,
+    position: Option<(f64, f64)>,
+    visible: bool,
+) -> Result<tauri::WebviewWindow, String> {
+    let mut config = app.config().app.windows[0].clone();
+    config.label = label.into();
+    config.visible = visible;
+    config.focus = visible;
+    // New windows start at Home, never by replaying the previous app session.
+    config.url = tauri::WebviewUrl::App("index.html?window=new".into());
+    let position = position
+        .filter(|(x, y)| x.is_finite() && y.is_finite())
+        .or_else(|| cascade_position(app));
+    if let Some((x, y)) = position {
+        config.x = Some(x);
+        config.y = Some(y);
+    }
+    tauri::WebviewWindowBuilder::from_config(app, &config)
+        .map_err(|e| e.to_string())?
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+/// How far a new window is offset from the one it was spawned from, so it
+/// does not land exactly on top of it.
+const CASCADE: f64 = 28.0;
+
+/// Offset from whichever window is focused, so a new one lands beside its
+/// parent rather than exactly on top of it. `None` leaves placement to the
+/// window configuration when there is nothing to cascade from.
+fn cascade_position(app: &tauri::AppHandle) -> Option<(f64, f64)> {
+    let taken: Vec<(f64, f64)> = app
+        .webview_windows()
+        .values()
+        .filter_map(logical_position)
+        .collect();
+    let (mut x, mut y) = target_window(app).and_then(|w| logical_position(&w))?;
+    // Two windows spawned from the same parent would otherwise land on the
+    // same spot and read as one window, so keep stepping until it is free.
+    for _ in 0..16 {
+        x += CASCADE;
+        y += CASCADE;
+        if !taken
+            .iter()
+            .any(|(tx, ty)| (tx - x).abs() < 2.0 && (ty - y).abs() < 2.0)
+        {
+            break;
+        }
+    }
+    Some((x, y))
+}
+
+fn logical_position(window: &tauri::WebviewWindow) -> Option<(f64, f64)> {
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let logical = window.outer_position().ok()?.to_logical::<f64>(scale);
+    Some((logical.x, logical.y))
+}
+
+fn next_label(state: &Windows) -> String {
+    let mut registry = state.0.lock().unwrap();
+    registry.sequence += 1;
+    format!("speedyf-{}", registry.sequence)
+}
+
+/// Opens an empty window, or — at launch — one that reopens the tabs a window
+/// had when the app last quit.
+#[tauri::command]
+pub async fn new_window(app: tauri::AppHandle, restore: Option<WindowTabs>) -> Result<(), String> {
+    let state = app.state::<Windows>();
+    let label = next_label(&state);
+    if let Some(restore) = restore {
+        state
+            .0
+            .lock()
+            .unwrap()
+            .restores
+            .insert(label.clone(), restore);
+    }
+    if let Err(error) = build_window(&app, &label, None, true) {
+        state.0.lock().unwrap().restores.remove(&label);
+        return Err(error);
+    }
+    Ok(())
+}
+
+/// The tabs this window was created to restore, if any. Drained by the read.
+#[tauri::command]
+pub fn take_window_restore(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Windows>,
+) -> Option<WindowTabs> {
+    state.0.lock().unwrap().restores.remove(window.label())
+}
+
+#[tauri::command]
+pub async fn detach_tab(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    doc_id: DocId,
+    snapshot: Value,
+    position: Option<(f64, f64)>,
+) -> Result<(), String> {
+    let state = app.state::<Windows>();
+    let label = next_label(&state);
+    let (ready, receiver) = mpsc::channel();
+    {
+        let mut registry = state.0.lock().unwrap();
+        if !registry
+            .documents
+            .get(window.label())
+            .is_some_and(|docs| docs.contains(&doc_id))
+        {
+            return Err("This window no longer owns the document".into());
+        }
+        registry.transfers.insert(
+            label.clone(),
+            Transfer {
+                source: window.label().into(),
+                doc: doc_id,
+                snapshot,
+                ready,
             },
-            restored,
-        )
+        );
+    }
+    let target = match build_window(&app, &label, position, false) {
+        Ok(target) => target,
+        Err(error) => {
+            state.0.lock().unwrap().transfers.remove(&label);
+            return Err(error);
+        }
+    };
+    // Bounded wait on a blocking worker, never the UI or PDF engine thread.
+    let received = tauri::async_runtime::spawn_blocking(move || {
+        receiver.recv_timeout(Duration::from_secs(20))
+    })
+    .await;
+    let failed = {
+        let mut registry = state.0.lock().unwrap();
+        // A ready signal racing the timeout has already committed ownership.
+        if received.is_ok_and(|result| result.is_ok()) {
+            false
+        } else {
+            registry.transfers.remove(&label).is_some()
+        }
+    };
+    if failed {
+        let _ = target.destroy();
+        return Err("The new window did not finish opening. Your tab is still here.".into());
+    }
+    let _ = target.show();
+    let _ = target.set_focus();
+    Ok(())
+}
+
+/// Hands a tab to a window that already exists — the "Move to …" half of the
+/// tab menu. The same transaction as `detach_tab`: the target adopts the
+/// snapshot and acknowledges, and only then does ownership move. Unsaved edits
+/// travel with the snapshot, so nothing has to be saved first.
+#[tauri::command]
+pub async fn send_tab_to_window(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    doc_id: DocId,
+    snapshot: Value,
+    target: String,
+) -> Result<(), String> {
+    let state = app.state::<Windows>();
+    let (ready, receiver) = mpsc::channel();
+    {
+        let mut registry = state.0.lock().unwrap();
+        if target == window.label() {
+            return Err("The tab is already in that window".into());
+        }
+        if !registry
+            .documents
+            .get(window.label())
+            .is_some_and(|docs| docs.contains(&doc_id))
+        {
+            return Err("This window no longer owns the document".into());
+        }
+        if app.get_webview_window(&target).is_none() || !registry.ready.contains(&target) {
+            return Err("That window is gone".into());
+        }
+        // One handoff per receiving window at a time: the snapshot is keyed
+        // by the receiver, which asks for "its" transfer.
+        if registry.transfers.contains_key(&target) {
+            return Err("That window is busy receiving another tab".into());
+        }
+        registry.transfers.insert(
+            target.clone(),
+            Transfer {
+                source: window.label().into(),
+                doc: doc_id,
+                snapshot,
+                ready,
+            },
+        );
+    }
+    if let Err(error) = app.emit_to(target.as_str(), "tab-transfer-offered", ()) {
+        state.0.lock().unwrap().transfers.remove(&target);
+        return Err(error.to_string());
+    }
+    let received = tauri::async_runtime::spawn_blocking(move || {
+        receiver.recv_timeout(Duration::from_secs(20))
+    })
+    .await;
+    let failed = {
+        let mut registry = state.0.lock().unwrap();
+        if received.is_ok_and(|result| result.is_ok()) {
+            false
+        } else {
+            registry.transfers.remove(&target);
+            true
+        }
+    };
+    if failed {
+        return Err("The other window did not take the tab. It is still here.".into());
+    }
+    if let Some(target) = app.get_webview_window(&target) {
+        let _ = target.unminimize();
+        let _ = target.show();
+        let _ = target.set_focus();
+    }
+    Ok(())
+}
+
+/// The receiving window cannot take the offered tab (it is full, or adopting
+/// it failed). Dropping the transfer's sender wakes the source at once rather
+/// than leaving it waiting out the timeout.
+#[tauri::command]
+pub fn decline_window_tab(window: tauri::WebviewWindow, state: tauri::State<'_, Windows>) {
+    state.0.lock().unwrap().transfers.remove(window.label());
+}
+
+/// What this window has open, as of now. Every window republishes on any tab
+/// change; the registry is what the other windows read.
+#[tauri::command]
+pub fn update_window_tabs(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Windows>,
+    tabs: Vec<String>,
+    active_path: Option<String>,
+) {
+    state
+        .0
+        .lock()
+        .unwrap()
+        .tabs
+        .insert(window.label().into(), WindowTabs { tabs, active_path });
+}
+
+/// The other windows, for a "move tab to…" menu, in creation order.
+#[tauri::command]
+pub fn window_roster(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Windows>,
+) -> Vec<WindowSummaryDto> {
+    state.0.lock().unwrap().roster(window.label())
+}
+
+/// If another window already has `path` open, hands it the path (it focuses
+/// that tab) and raises it, and answers true. The caller then opens nothing.
+#[tauri::command]
+pub fn focus_window_for_path(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    path: String,
+) -> bool {
+    let state = app.state::<Windows>();
+    let mut registry = state.0.lock().unwrap();
+    let Some(label) = registry.window_with_path(&path, window.label()) else {
+        return false;
+    };
+    let Some(other) = app.get_webview_window(&label) else {
+        return false;
+    };
+    if registry.ready.contains(&label) {
+        let _ = app.emit_to(label.as_str(), "file-open-requested", vec![path]);
+    } else {
+        registry.pending_opens.entry(label).or_default().push(path);
+    }
+    drop(registry);
+    let _ = other.unminimize();
+    let _ = other.show();
+    let _ = other.set_focus();
+    true
+}
+
+#[tauri::command]
+pub fn window_tab_snapshot(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Windows>,
+) -> Option<Value> {
+    state
+        .0
+        .lock()
+        .unwrap()
+        .transfers
+        .get(window.label())
+        .map(|t| t.snapshot.clone())
+}
+
+#[tauri::command]
+pub fn accept_window_tab(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Windows>,
+) -> Result<(), String> {
+    state.0.lock().unwrap().accept_transfer(window.label())
+}
+
+impl Registry {
+    /// Which window other than `exclude` shows `path`, if any.
+    fn window_with_path(&self, path: &str, exclude: &str) -> Option<String> {
+        let mut labels: Vec<&String> = self
+            .tabs
+            .iter()
+            .filter(|(label, tabs)| {
+                label.as_str() != exclude && tabs.tabs.iter().any(|p| p == path)
+            })
+            .map(|(label, _)| label)
+            .collect();
+        labels.sort_by_key(|label| window_order(label));
+        labels.first().map(|label| (*label).clone())
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Registry> {
-        // A registry poisoned by a panic elsewhere is still perfectly usable
-        // data; refusing to open windows over it helps nobody.
-        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    fn roster(&self, exclude: &str) -> Vec<WindowSummaryDto> {
+        let mut labels: Vec<&String> = self
+            .ready
+            .iter()
+            .filter(|label| label.as_str() != exclude && !self.transfers.contains_key(*label))
+            .collect();
+        labels.sort_by_key(|label| window_order(label));
+        let listed: Vec<(&String, &WindowTabs)> = labels
+            .into_iter()
+            .map(|label| (label, self.tabs.get(label).unwrap_or(&EMPTY_TABS)))
+            .collect();
+        let mut titles: Vec<(String, Option<&str>)> = listed
+            .iter()
+            .map(|(_, tabs)| (window_title(tabs), window_path(tabs)))
+            .collect();
+        disambiguate(&mut titles);
+        listed
+            .iter()
+            .zip(titles)
+            .map(|((label, tabs), (title, _))| WindowSummaryDto {
+                label: (*label).clone(),
+                title,
+                tab_count: tabs.tabs.len(),
+            })
+            .collect()
     }
 
-    /// Adds `label` to the live set, optionally with tabs to restore and
-    /// paths to open once its frontend is listening.
-    fn register(&self, label: String, restore: Option<WindowTabs>, opens: Vec<String>) {
-        let mut reg = self.lock();
-        if !reg.live.contains(&label) {
-            reg.live.push(label.clone());
+    fn accept_transfer(&mut self, label: &str) -> Result<(), String> {
+        let transfer = self
+            .transfers
+            .remove(label)
+            .ok_or("The tab transfer expired")?;
+        if let Some(docs) = self.documents.get_mut(&transfer.source) {
+            docs.remove(&transfer.doc);
         }
-        if let Some(tabs) = restore {
-            reg.restore.insert(label.clone(), tabs);
-        }
-        if !opens.is_empty() {
-            reg.pending.entry(label).or_default().extend(opens);
-        }
-    }
-
-    fn forget(&self, label: &str) {
-        let mut reg = self.lock();
-        if reg.exiting {
-            return;
-        }
-        reg.live.retain(|l| l != label);
-        reg.tabs.remove(label);
-        reg.pending.remove(label);
-        reg.restore.remove(label);
-    }
-
-    /// Stops any further pruning: from here on the session file describes the
-    /// windows that were open when the user quit.
-    pub fn begin_exit(&self) {
-        self.lock().exiting = true;
-    }
-
-    /// Mints the next window label. Labels are never reused within a run, so
-    /// a pending open cannot land in a window that replaced its addressee.
-    fn next_label(&self) -> String {
-        let mut reg = self.lock();
-        reg.next_id += 1;
-        format!("win-{}", reg.next_id)
-    }
-
-    fn window_count(&self) -> usize {
-        self.lock().live.len()
-    }
-
-    fn persist(&self) {
-        let Some(path) = self.session_path.as_deref() else {
-            return;
-        };
-        let snapshot = self.lock().snapshot();
-        // A session naming no windows at all is never a state worth keeping:
-        // launching into nothing is what happens with no session file anyway,
-        // so the only thing such a write can do is lose what was open. It is
-        // the shape a teardown produces, not one the user ever asks for — a
-        // window that is open with no tabs still reports itself, empty.
-        if snapshot.windows.is_empty() {
-            return;
-        }
-        // A session that fails to write costs the next launch its tabs, and
-        // nothing else. It is never worth interrupting the user over.
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        match serde_json::to_vec_pretty(&snapshot) {
-            Ok(bytes) => {
-                if let Err(e) = std::fs::write(path, bytes) {
-                    log::warn!("could not write session: {e}");
-                }
-            }
-            Err(e) => log::warn!("could not encode session: {e}"),
-        }
+        self.documents
+            .entry(label.into())
+            .or_default()
+            .insert(transfer.doc);
+        let _ = transfer.ready.send(());
+        Ok(())
     }
 }
 
-fn read_session(path: &Path) -> Option<SessionFile> {
-    let bytes = std::fs::read(path).ok()?;
-    let parsed: SessionFile = serde_json::from_slice(&bytes).ok()?;
-    (parsed.version == SESSION_VERSION).then_some(parsed)
+pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
+    let app = window.app_handle();
+    let Some(state) = app.try_state::<Windows>() else {
+        return;
+    };
+    match event {
+        tauri::WindowEvent::Focused(true) => {
+            state.0.lock().unwrap().focused = Some(window.label().into())
+        }
+        tauri::WindowEvent::Destroyed => {
+            let mut registry = state.0.lock().unwrap();
+            registry.ready.remove(window.label());
+            registry.pending_opens.remove(window.label());
+            registry.tabs.remove(window.label());
+            registry.restores.remove(window.label());
+            let docs = registry
+                .documents
+                .remove(window.label())
+                .unwrap_or_default();
+            drop(registry);
+            let engine = &app.state::<EngineState>().0;
+            for doc in docs {
+                engine.bump_generation(doc);
+                engine.submit(Priority::VisiblePage, doc, Work::Close { doc });
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Creation order: "main" first, then `speedyf-N` by N.
+fn window_order(label: &str) -> u64 {
+    label
+        .strip_prefix("speedyf-")
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0)
 }
 
 /// The path a window is named after: the document it is showing, or failing
@@ -266,283 +592,82 @@ fn disambiguate(entries: &mut [(String, Option<&str>)]) {
     }
 }
 
-/// Builds a window and wires its teardown. `restore` and `opens` are stashed
-/// before the window exists, so its frontend finds them waiting on mount
-/// however fast it loads.
-fn build_window(
-    app: &AppHandle,
-    restore: Option<WindowTabs>,
-    opens: Vec<String>,
-) -> AppResult<String> {
-    let state = app.state::<WindowState>();
-    if state.window_count() >= MAX_WINDOWS {
-        return Err(AppError::Unsupported(format!(
-            "too many windows open (limit {MAX_WINDOWS})"
-        )));
+pub fn install_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem, MenuItemKind, Submenu};
+    let menu = Menu::default(app)?;
+    let item = MenuItem::with_id(app, "new-window", "New Window", true, Some("CmdOrCtrl+N"))?;
+    let file = menu.items()?.into_iter().find_map(|item| match item {
+        MenuItemKind::Submenu(submenu) if submenu.text().ok().as_deref() == Some("File") => {
+            Some(submenu)
+        }
+        _ => None,
+    });
+    if let Some(file) = file {
+        file.prepend(&item)?;
+    } else {
+        menu.prepend(&Submenu::with_items(app, "File", true, &[&item])?)?;
     }
-    let label = state.next_label();
-    state.register(label.clone(), restore, opens);
-
-    let (x, y) = cascade_position(app);
-    let built = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
-        .title("SpeedyF")
-        .inner_size(WINDOW_SIZE.0, WINDOW_SIZE.1)
-        .min_inner_size(MIN_WINDOW_SIZE.0, MIN_WINDOW_SIZE.1)
-        .position(x, y)
-        .build();
-
-    match built {
-        Ok(window) => {
-            watch_window(app, &window);
-            Ok(label)
-        }
-        Err(e) => {
-            // The registry must not keep a window that does not exist, or the
-            // move-tab menu offers a destination nothing can reach.
-            state.forget(&label);
-            Err(AppError::Internal(format!("could not open a window: {e}")))
-        }
-    }
-}
-
-/// Offset from whichever window is focused, so a new one lands beside its
-/// parent rather than exactly on top of it. Falls back to the OS default
-/// placement when there is nothing to cascade from.
-fn cascade_position(app: &AppHandle) -> (f64, f64) {
-    let taken = window_positions(app);
-    let from = focused_window(app).or_else(|| app.get_webview_window(MAIN_LABEL));
-    let Some((mut x, mut y)) = from.and_then(|w| logical_position(&w)) else {
-        return (120.0, 120.0);
-    };
-    // Stepping off the *focused* window is what the user means by "next to
-    // this one", but two windows spawned from the same parent would then land
-    // on the same spot and read as one window. So keep stepping until the
-    // place is free.
-    for _ in 0..MAX_WINDOWS {
-        x += CASCADE;
-        y += CASCADE;
-        if !taken
-            .iter()
-            .any(|(tx, ty)| (tx - x).abs() < 2.0 && (ty - y).abs() < 2.0)
-        {
-            break;
-        }
-    }
-    (x, y)
-}
-
-fn logical_position(window: &tauri::WebviewWindow) -> Option<(f64, f64)> {
-    let scale = window.scale_factor().unwrap_or(1.0);
-    let logical = window.outer_position().ok()?.to_logical::<f64>(scale);
-    Some((logical.x, logical.y))
-}
-
-fn window_positions(app: &AppHandle) -> Vec<(f64, f64)> {
-    app.webview_windows()
-        .values()
-        .filter_map(logical_position)
-        .collect()
-}
-
-/// A window that goes away has to leave the registry, or it stays a
-/// destination in every other window's menu and a phantom in the session.
-pub fn watch_window<R: tauri::Runtime>(app: &AppHandle<R>, window: &tauri::WebviewWindow<R>) {
-    let handle = app.clone();
-    let label = window.label().to_string();
-    window.on_window_event(move |event| {
-        if !matches!(event, WindowEvent::Destroyed) {
-            return;
-        }
-        if let Some(state) = handle.try_state::<WindowState>() {
-            state.forget(&label);
-            state.persist();
+    app.set_menu(menu)?;
+    app.on_menu_event(|app, event| {
+        if event.id().as_ref() == "new-window" {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = new_window(app, None).await {
+                    log::error!("new window: {error}");
+                }
+            });
         }
     });
-}
-
-/// Reopens the windows that were open at last quit. The main window takes the
-/// first entry — it already exists — and the rest get windows of their own.
-pub fn restore_windows(app: &AppHandle, session: Vec<WindowTabs>) {
-    let state = app.state::<WindowState>();
-    let mut entries = session.into_iter();
-    state.register(MAIN_LABEL.to_string(), entries.next(), Vec::new());
-
-    for tabs in entries.take(MAX_WINDOWS - 1) {
-        // An empty window is not worth restoring: reopening it would greet
-        // the user with a home screen they never asked for.
-        if tabs.tabs.is_empty() {
-            continue;
-        }
-        if let Err(e) = build_window(app, Some(tabs), Vec::new()) {
-            log::warn!("could not restore a window: {e}");
-        }
-    }
-}
-
-/// The window an OS-level open should land in: whichever the user is looking
-/// at, else the main one.
-pub fn target_window(app: &AppHandle) -> String {
-    focused_window(app)
-        .map(|w| w.label().to_string())
-        .unwrap_or_else(|| MAIN_LABEL.to_string())
-}
-
-fn focused_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
-    app.webview_windows()
-        .into_values()
-        .find(|w| w.is_focused().unwrap_or(false))
-}
-
-/// Hand `paths` to one window: stashed for a frontend that is not listening
-/// yet, and emitted for one that is. Both, because a cold launch reaches here
-/// before the webview exists and a running window never sees the stash.
-pub fn deliver_to_window(app: &AppHandle, label: &str, paths: Vec<String>) {
-    if paths.is_empty() {
-        return;
-    }
-    if let Some(state) = app.try_state::<WindowState>() {
-        state
-            .lock()
-            .pending
-            .entry(label.to_string())
-            .or_default()
-            .extend(paths.clone());
-    }
-    let _ = app.emit_to(label, "file-open-requested", &paths);
-}
-
-/// Bring a window forward. The OS hands us a file but does not raise us:
-/// without this an already-running SpeedyF loads the PDF behind whatever the
-/// user was looking at, and the open looks like it did nothing.
-pub fn raise_window(app: &AppHandle, label: &str) {
-    #[cfg(target_os = "macos")]
-    let _ = app.show();
-    if let Some(window) = app.get_webview_window(label) {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
-}
-
-// --- Commands --------------------------------------------------------------
-
-/// Everything a window needs at mount, drained in one call so a slow frontend
-/// cannot miss half of it.
-#[tauri::command]
-pub fn window_startup(
-    state: tauri::State<'_, WindowState>,
-    label: String,
-) -> AppResult<WindowStartupDto> {
-    let mut reg = state.lock();
-    if !reg.live.contains(&label) {
-        reg.live.push(label.clone());
-    }
-    let restore = reg.restore.remove(&label).unwrap_or_default();
-    let opens = reg.pending.remove(&label).unwrap_or_default();
-    Ok(WindowStartupDto { restore, opens })
-}
-
-/// What this window has open, as of now. Every window republishes on any tab
-/// change; the registry is what the other windows read.
-#[tauri::command]
-pub fn update_window_tabs(
-    state: tauri::State<'_, WindowState>,
-    label: String,
-    tabs: Vec<String>,
-    active_path: Option<String>,
-) -> AppResult<()> {
-    {
-        let mut reg = state.lock();
-        if !reg.live.contains(&label) {
-            reg.live.push(label.clone());
-        }
-        reg.tabs.insert(label, WindowTabs { tabs, active_path });
-    }
-    state.persist();
-    Ok(())
-}
-
-/// The other windows, for a "move tab to…" menu.
-#[tauri::command]
-pub fn window_roster(
-    state: tauri::State<'_, WindowState>,
-    exclude: Option<String>,
-) -> AppResult<Vec<WindowSummaryDto>> {
-    let reg = state.lock();
-    let listed: Vec<(&String, &WindowTabs)> = reg
-        .live
-        .iter()
-        .filter(|label| Some(label.as_str()) != exclude.as_deref())
-        .map(|label| (label, reg.tabs.get(label).unwrap_or(&EMPTY_TABS)))
-        .collect();
-
-    let mut titles: Vec<(String, Option<&str>)> = listed
-        .iter()
-        .map(|(_, tabs)| (window_title(tabs), window_path(tabs)))
-        .collect();
-    disambiguate(&mut titles);
-
-    Ok(listed
-        .iter()
-        .zip(titles)
-        .map(|((label, tabs), (title, _))| WindowSummaryDto {
-            label: (*label).clone(),
-            title,
-            tab_count: tabs.tabs.len(),
-        })
-        .collect())
-}
-
-/// Which other window already has `path` open, if any. One document open
-/// twice means two PDFium handles, two dirty states, and whichever window
-/// saves last silently overwriting the other — so nobody opens a second copy.
-#[tauri::command]
-pub fn find_window_for_path(
-    state: tauri::State<'_, WindowState>,
-    path: String,
-    exclude: Option<String>,
-) -> AppResult<Option<String>> {
-    let reg = state.lock();
-    Ok(reg
-        .live
-        .iter()
-        .filter(|label| Some(label.as_str()) != exclude.as_deref())
-        .find(|label| reg.tabs.get(*label).is_some_and(|t| t.tabs.contains(&path)))
-        .cloned())
-}
-
-#[tauri::command]
-pub fn focus_window(app: tauri::AppHandle, label: String) -> AppResult<()> {
-    raise_window(&app, &label);
-    Ok(())
-}
-
-/// Opens a window, optionally on some documents. Returns its label so the
-/// caller can address it straight away.
-#[tauri::command]
-pub fn open_window(app: tauri::AppHandle, paths: Vec<String>) -> AppResult<String> {
-    build_window(&app, None, paths)
-}
-
-/// Hands documents to an existing window and brings it forward — the
-/// receiving half of moving a tab between windows.
-#[tauri::command]
-pub fn send_paths_to_window(
-    app: tauri::AppHandle,
-    label: String,
-    paths: Vec<String>,
-) -> AppResult<()> {
-    if app.get_webview_window(&label).is_none() {
-        return Err(AppError::Unsupported("that window is gone".into()));
-    }
-    deliver_to_window(&app, &label, paths);
-    raise_window(&app, &label);
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pending() -> (Windows, mpsc::Receiver<()>) {
+        let windows = Windows::default();
+        windows.opened("main", 42);
+        windows.opened("main", 43);
+        let (ready, receiver) = mpsc::channel();
+        windows.0.lock().unwrap().transfers.insert(
+            "speedyf-1".into(),
+            Transfer {
+                source: "main".into(),
+                doc: 42,
+                snapshot: serde_json::json!({"dirty": true}),
+                ready,
+            },
+        );
+        (windows, receiver)
+    }
+
+    #[test]
+    fn accepting_moves_only_the_transferred_document_and_acknowledges() {
+        let (windows, receiver) = pending();
+        let mut registry = windows.0.lock().unwrap();
+        registry.accept_transfer("speedyf-1").unwrap();
+        assert!(receiver.try_recv().is_ok());
+        assert_eq!(registry.documents["main"], HashSet::from([43]));
+        assert_eq!(registry.documents["speedyf-1"], HashSet::from([42]));
+        // Destroying the source can release its own PDFs without touching 42.
+        assert_eq!(
+            registry.documents.remove("main").unwrap(),
+            HashSet::from([43])
+        );
+        assert!(registry.accept_transfer("speedyf-1").is_err());
+    }
+
+    #[test]
+    fn failed_transfer_retains_source_ownership() {
+        let (windows, receiver) = pending();
+        let mut registry = windows.0.lock().unwrap();
+        registry.transfers.remove("speedyf-1");
+        assert!(receiver.try_recv().is_err());
+        assert!(registry.accept_transfer("speedyf-1").is_err());
+        assert_eq!(registry.documents["main"], HashSet::from([42, 43]));
+        assert!(!registry.documents.contains_key("speedyf-1"));
+    }
 
     fn tabs(paths: &[&str], active: Option<&str>) -> WindowTabs {
         WindowTabs {
@@ -568,8 +693,6 @@ mod tests {
 
     #[test]
     fn windows_showing_the_same_file_name_are_told_apart_by_their_folder() {
-        // Papers arrive named this way in bulk: a menu offering "Move to
-        // main.pdf" twice names no destination at all.
         let mut entries = vec![
             ("main.pdf".to_string(), Some("/papers/elsevier/main.pdf")),
             ("main.pdf".to_string(), Some("/papers/springer/main.pdf")),
@@ -578,7 +701,6 @@ mod tests {
         disambiguate(&mut entries);
         assert_eq!(entries[0].0, "main.pdf — elsevier");
         assert_eq!(entries[1].0, "main.pdf — springer");
-        // A name nothing collides with is left alone.
         assert_eq!(entries[2].0, "solo.pdf");
     }
 
@@ -593,71 +715,114 @@ mod tests {
         assert_eq!(entries[1].0, "Empty window 3");
     }
 
-    #[test]
-    fn the_session_snapshot_follows_window_order_not_hash_order() {
-        let mut reg = Registry::default();
-        for (label, path) in [("main", "/a.pdf"), ("win-1", "/b.pdf"), ("win-2", "/c.pdf")] {
-            reg.live.push(label.to_string());
-            reg.tabs
-                .insert(label.to_string(), tabs(&[path], Some(path)));
+    fn registry_with(windows: &[(&str, &[&str])]) -> Registry {
+        let mut registry = Registry::default();
+        for (label, paths) in windows {
+            registry.ready.insert((*label).into());
+            registry
+                .tabs
+                .insert((*label).into(), tabs(paths, paths.first().copied()));
         }
-        let snapshot = reg.snapshot();
-        assert_eq!(snapshot.version, SESSION_VERSION);
+        registry
+    }
+
+    #[test]
+    fn the_roster_lists_other_ready_windows_in_creation_order() {
+        let mut registry = registry_with(&[
+            ("speedyf-10", &["/c.pdf"]),
+            ("main", &["/a.pdf"]),
+            ("speedyf-2", &["/b.pdf", "/d.pdf"]),
+        ]);
+        // A window still being built to receive a dragged tab is no
+        // destination yet.
+        registry.ready.insert("speedyf-11".into());
+        let (ready, _receiver) = mpsc::channel();
+        registry.transfers.insert(
+            "speedyf-11".into(),
+            Transfer {
+                source: "main".into(),
+                doc: 1,
+                snapshot: Value::Null,
+                ready,
+            },
+        );
+        let roster = registry.roster("speedyf-2");
+        let labels: Vec<&str> = roster.iter().map(|w| w.label.as_str()).collect();
+        assert_eq!(labels, vec!["main", "speedyf-10"]);
+        assert_eq!(roster[0].title, "a.pdf");
+        assert_eq!(roster[1].tab_count, 1);
+    }
+
+    #[test]
+    fn a_path_open_elsewhere_is_found_but_never_in_the_asking_window() {
+        let registry =
+            registry_with(&[("main", &["/a.pdf"]), ("speedyf-1", &["/b.pdf", "/a.pdf"])]);
         assert_eq!(
-            snapshot
-                .windows
-                .iter()
-                .map(|w| w.tabs[0].clone())
-                .collect::<Vec<_>>(),
-            vec!["/a.pdf", "/b.pdf", "/c.pdf"]
+            registry.window_with_path("/b.pdf", "main").as_deref(),
+            Some("speedyf-1")
+        );
+        assert_eq!(
+            registry.window_with_path("/a.pdf", "speedyf-1").as_deref(),
+            Some("main")
+        );
+        assert_eq!(
+            registry.window_with_path("/a.pdf", "main").as_deref(),
+            Some("speedyf-1")
+        );
+        assert_eq!(registry.window_with_path("/b.pdf", "speedyf-1"), None);
+        assert_eq!(registry.window_with_path("/z.pdf", "main"), None);
+    }
+
+    #[test]
+    fn accepting_a_tab_into_an_existing_window_moves_ownership_there() {
+        let windows = Windows::default();
+        windows.opened("main", 7);
+        windows.opened("speedyf-1", 8);
+        let (ready, receiver) = mpsc::channel();
+        let mut registry = windows.0.lock().unwrap();
+        registry.transfers.insert(
+            "speedyf-1".into(),
+            Transfer {
+                source: "main".into(),
+                doc: 7,
+                snapshot: Value::Null,
+                ready,
+            },
+        );
+        registry.accept_transfer("speedyf-1").unwrap();
+        assert!(receiver.try_recv().is_ok());
+        assert!(registry.documents["main"].is_empty());
+        assert_eq!(registry.documents["speedyf-1"], HashSet::from([7, 8]));
+    }
+
+    #[test]
+    fn declining_wakes_the_source_at_once() {
+        let windows = Windows::default();
+        let (ready, receiver) = mpsc::channel::<()>();
+        windows.0.lock().unwrap().transfers.insert(
+            "speedyf-1".into(),
+            Transfer {
+                source: "main".into(),
+                doc: 1,
+                snapshot: Value::Null,
+                ready,
+            },
+        );
+        windows.0.lock().unwrap().transfers.remove("speedyf-1");
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(5)),
+            Err(mpsc::RecvTimeoutError::Disconnected)
         );
     }
 
     #[test]
-    fn quitting_leaves_the_session_alone_as_windows_tear_down() {
-        // Every window fires Destroyed on the way out. Pruning on each would
-        // write an empty session and lose everything that was open.
-        let (state, _) = WindowState::new(None);
-        state.register("main".into(), None, Vec::new());
-        state.register("win-1".into(), None, Vec::new());
-        state.begin_exit();
-        state.forget("main");
-        state.forget("win-1");
-        assert_eq!(state.lock().live.len(), 2, "the roster survives the exit");
-    }
-
-    #[test]
-    fn closing_one_window_while_the_app_runs_does_prune_it() {
-        let (state, _) = WindowState::new(None);
-        state.register("main".into(), None, Vec::new());
-        state.register("win-1".into(), None, Vec::new());
-        state.forget("win-1");
-        assert_eq!(state.lock().live, vec!["main".to_string()]);
-    }
-
-    #[test]
-    fn a_session_from_a_different_version_is_ignored_rather_than_guessed_at() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let path = dir.path().join(SESSION_FILE);
-        std::fs::write(&path, br#"{"version":1,"windows":[{"tabs":["/a.pdf"]}]}"#).expect("write");
-        assert!(read_session(&path).is_none());
-
-        std::fs::write(&path, br#"{"version":2,"windows":[{"tabs":["/a.pdf"]}]}"#).expect("write");
-        let session = read_session(&path).expect("current version reads back");
-        assert_eq!(session.windows[0].tabs, vec!["/a.pdf".to_string()]);
-        // A window with no active tab is legitimate: the home screen.
-        assert!(session.windows[0].active_path.is_none());
-    }
-
-    #[test]
-    fn labels_are_never_reused_within_a_run() {
-        // A pending open addressed to a window that has since closed must not
-        // land in whatever window came after it.
-        let (state, _) = WindowState::new(None);
-        let first = state.next_label();
-        state.register(first.clone(), None, vec!["/a.pdf".into()]);
-        state.forget(&first);
-        let second = state.next_label();
-        assert_ne!(first, second);
+    fn closing_a_tab_does_not_release_other_windows_documents() {
+        let windows = Windows::default();
+        windows.opened("main", 1);
+        windows.opened("speedyf-1", 2);
+        windows.closed("main", 1);
+        let registry = windows.0.lock().unwrap();
+        assert!(registry.documents["main"].is_empty());
+        assert_eq!(registry.documents["speedyf-1"], HashSet::from([2]));
     }
 }

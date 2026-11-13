@@ -2,7 +2,8 @@
 //!
 //! Everything here goes through PDFium's *form-fill environment* rather than
 //! through `pdfium-render`'s typed field wrappers. That is not a stylistic
-//! preference: at 0.8.37 the typed setters do not work for buttons.
+//! preference: at 0.8.37 the typed setters do not work for buttons, and the
+//! text setter only writes /V on the widget, leaving /AP and parent fields stale.
 //! `PdfFormCheckboxField::set_checked` hardcodes the on-state to `/Yes`, so a
 //! checkbox whose on-state is named anything else is written to a state its
 //! appearance dictionary has no entry for; and
@@ -70,7 +71,7 @@ pub fn form_fill_info() -> FPDF_FORMFILLINFO {
     }
 }
 
-/// A form-fill environment that can actually change a button.
+/// A form-fill environment that can commit values and regenerate appearances.
 ///
 /// The null callback table above is enough to read fields, and enough to
 /// *check a checkbox* — but not enough to select a radio button. Selecting one
@@ -196,7 +197,7 @@ impl BufferWriter {
     }
 }
 
-/// Set the checkbox and radio states in `buttons` on the PDF at `path`,
+/// Set text values and checkbox/radio states on the PDF at `path`,
 /// rewriting the file in place.
 ///
 /// Runs after the document has been written, because it needs a file PDFium
@@ -205,31 +206,36 @@ impl BufferWriter {
 ///
 /// A widget already in the requested state is left alone, so this is a no-op
 /// for anything the user did not actually change.
-pub fn apply_buttons(
+pub fn apply_edits(
     b: &dyn PdfiumLibraryBindings,
     path: &std::path::Path,
+    texts: &[(String, String)],
     buttons: &[PlanFormButton],
 ) -> AppResult<()> {
-    if buttons.is_empty() {
+    if texts.is_empty() && buttons.is_empty() {
         return Ok(());
     }
     let path_str = path
         .to_str()
-        .ok_or_else(|| AppError::Io("form button pass: bad path".into()))?;
+        .ok_or_else(|| AppError::Io("form edit pass: bad path".into()))?;
 
     let doc = b.FPDF_LoadDocument(path_str, None);
     if doc.is_null() {
         return Err(AppError::Internal(
-            "form button pass: could not reopen the written file".into(),
+            "form edit pass: could not reopen the written file".into(),
         ));
     }
     // Every path from here has to close the document, so the work is done in
     // a helper and the result inspected only after closing.
-    let saved = clicked_document_bytes(b, doc, buttons);
+    let saved = edited_document_bytes(b, doc, texts, buttons);
     b.FPDF_CloseDocument(doc);
     match saved? {
         Some(bytes) => {
-            std::fs::write(path, bytes)?;
+            use std::io::Write;
+            let mut file = std::fs::File::create(path)?;
+            file.write_all(&bytes)?;
+            file.flush()?;
+            file.sync_all()?;
             Ok(())
         }
         // Nothing needed changing, so the file already says what it should.
@@ -237,18 +243,19 @@ pub fn apply_buttons(
     }
 }
 
-/// Click through the requested buttons and return the resulting document, or
+/// Commit the requested edits and return the resulting document, or
 /// `None` if every widget was already in the state the plan asked for.
-fn clicked_document_bytes(
+fn edited_document_bytes(
     b: &dyn PdfiumLibraryBindings,
     doc: FPDF_DOCUMENT,
+    texts: &[(String, String)],
     buttons: &[PlanFormButton],
 ) -> AppResult<Option<Vec<u8>>> {
     let mut session = FormSession::new(b);
     let form = b.FPDFDOC_InitFormFillEnvironment(doc, &mut session.info);
     if form.is_null() {
         return Err(AppError::Internal(
-            "form button pass: document has no form-fill environment".into(),
+            "form edit pass: document has no form-fill environment".into(),
         ));
     }
 
@@ -258,7 +265,53 @@ fn clicked_document_bytes(
         by_page.entry(button.page).or_default().push(button);
     }
 
-    let mut clicked = 0usize;
+    // Inspect one page at a time without retaining every page in a large form.
+    // Only pages with edits enter the session's stable handle cache.
+    let mut text_by_page = BTreeMap::new();
+    if !texts.is_empty() {
+        for index in 0..b.FPDF_GetPageCount(doc) {
+            let page = b.FPDF_LoadPage(doc, index);
+            if page.is_null() {
+                continue;
+            }
+            let mut edits = Vec::new();
+            for ai in 0..b.FPDFPage_GetAnnotCount(page) {
+                let annot = b.FPDFPage_GetAnnot(page, ai);
+                if annot.is_null() {
+                    continue;
+                }
+                if b.FPDFAnnot_GetFormFieldType(form, annot) == PdfFormFieldType::Text as i32 {
+                    let name = read_utf16(|buffer, len| {
+                        b.FPDFAnnot_GetFormFieldName(form, annot, buffer, len)
+                    });
+                    if let Some((_, value)) = texts.iter().find(|(field, _)| *field == name) {
+                        edits.push((ai, name, value));
+                    }
+                }
+                b.FPDFPage_CloseAnnot(annot);
+            }
+            b.FPDF_ClosePage(page);
+            if !edits.is_empty() {
+                by_page.entry(index as u32).or_default();
+                text_by_page.insert(index as u32, edits);
+            }
+        }
+    }
+
+    // All widgets of an edited field must have live page views before the
+    // first change. PDFium only refreshes sibling appearances in loaded views;
+    // opening a sibling after /V changed leaves its old /AP behind.
+    let mut loaded_pages = Vec::new();
+    for index in by_page.keys() {
+        let page = session.page(doc, *index as c_int);
+        if !page.is_null() {
+            b.FORM_OnAfterLoadPage(page, form);
+            loaded_pages.push(page);
+        }
+    }
+
+    let mut changed = 0usize;
+    let mut edit_result = Ok(());
     for (page_index, page_buttons) in by_page {
         // Through the session, so PDFium and this loop are working on one
         // handle rather than two views of the same page.
@@ -266,16 +319,31 @@ fn clicked_document_bytes(
         if page.is_null() {
             continue;
         }
-        b.FORM_OnAfterLoadPage(page, form);
-        for button in page_buttons {
-            if click_button(b, form, page, button) {
-                clicked += 1;
+        if let Some(edits) = text_by_page.get(&page_index) {
+            for (index, name, value) in edits {
+                match fill_text(b, form, page, *index, name, value) {
+                    Ok(did_change) => changed += usize::from(did_change),
+                    Err(error) => {
+                        edit_result = Err(error);
+                        break;
+                    }
+                }
             }
         }
+        if edit_result.is_err() {
+            break;
+        }
+        for button in page_buttons {
+            if click_button(b, form, page, button) {
+                changed += 1;
+            }
+        }
+    }
+    for page in loaded_pages {
         b.FORM_OnBeforeClosePage(page, form);
     }
 
-    let saved = (clicked > 0).then(|| {
+    let saved = (edit_result.is_ok() && changed > 0).then(|| {
         let mut writer = BufferWriter::new();
         let ok = b.FPDF_SaveAsCopy(doc, &mut writer.inner, 0);
         b.is_true(ok).then_some(writer.buffer)
@@ -283,14 +351,85 @@ fn clicked_document_bytes(
 
     b.FPDFDOC_ExitFormFillEnvironment(form);
     session.close_pages();
+    edit_result?;
 
     match saved {
         None => Ok(None),
         Some(Some(bytes)) => Ok(Some(bytes)),
         Some(None) => Err(AppError::Internal(
-            "form button pass: PDFium refused to save".into(),
+            "form edit pass: PDFium refused to save".into(),
         )),
     }
+}
+
+fn read_utf16(read: impl Fn(*mut u16, c_ulong) -> c_ulong) -> String {
+    let length = read(std::ptr::null_mut(), 0);
+    if length < 2 {
+        return String::new();
+    }
+    let mut buffer = vec![0u16; length as usize / 2];
+    read(buffer.as_mut_ptr(), length);
+    if buffer.last() == Some(&0) {
+        buffer.pop();
+    }
+    String::from_utf16_lossy(&buffer)
+}
+
+/// Drive the same edit/blur sequence as a viewer. PDFium updates the canonical
+/// field (including parent /V and sibling widgets) and generates font resources
+/// and /AP streams. A dictionary-only setter does none of those things.
+fn fill_text(
+    b: &dyn PdfiumLibraryBindings,
+    form: FPDF_FORMHANDLE,
+    page: FPDF_PAGE,
+    index: i32,
+    name: &str,
+    value: &str,
+) -> AppResult<bool> {
+    let annot = b.FPDFPage_GetAnnot(page, index);
+    if annot.is_null() {
+        return Err(AppError::Internal(format!(
+            "cannot open text field '{name}'"
+        )));
+    }
+    let result = (|| {
+        let original =
+            read_utf16(|buffer, len| b.FPDFAnnot_GetFormFieldValue(form, annot, buffer, len));
+        if original == value {
+            return Ok(false);
+        }
+        if !b.is_true(b.FORM_SetFocusedAnnot(form, annot))
+            || !b.is_true(b.FORM_SelectAllText(form, page))
+        {
+            return Err(AppError::Internal(format!(
+                "cannot edit text field '{name}'"
+            )));
+        }
+        let units: Vec<u16> = value.encode_utf16().chain(std::iter::once(0)).collect();
+        b.FORM_ReplaceSelection(form, page, units.as_ptr());
+        if !b.is_true(b.FORM_ForceToKillFocus(form)) {
+            return Err(AppError::Internal(format!(
+                "cannot commit text field '{name}'"
+            )));
+        }
+        let saved =
+            read_utf16(|buffer, len| b.FPDFAnnot_GetFormFieldValue(form, annot, buffer, len));
+        // PDFium normalizes line endings for multiline fields.
+        let normalize = |s: &str| s.replace("\r\n", "\n").replace('\r', "\n");
+        if normalize(&saved) != normalize(value) {
+            return Err(AppError::Internal(format!(
+                "text field '{name}' did not accept the full value"
+            )));
+        }
+        if b.FPDFAnnot_GetAP(annot, 0, std::ptr::null_mut(), 0) <= 2 {
+            return Err(AppError::Internal(format!(
+                "text field '{name}' has no saved appearance"
+            )));
+        }
+        Ok(true)
+    })();
+    b.FPDFPage_CloseAnnot(annot);
+    result
 }
 
 /// Press and release inside one widget, if its state needs to change.
@@ -393,9 +532,18 @@ mod tests {
         );
         add(
             14,
-            b"<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /V () /F 4               /Rect [100 240 250 258] /DA (/Helv 10 Tf 0 g) >>",
+            b"<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /V (Before) /F 4               /Rect [100 240 250 258] /DA (/Helv 10 Tf 0 g) /AP << /N 22 0 R >> >>",
         );
+        let content = b"BT /Helv 10 Tf 0 g 2 5 Td (Before) Tj ET";
+        let mut appearance = format!("<< /Type /XObject /Subtype /Form /BBox [0 0 150 18] /Resources << /Font << /Helv 30 0 R >> >> /Length {} >>\nstream\n", content.len()).into_bytes();
+        appearance.extend_from_slice(content);
+        appearance.extend_from_slice(b"\nendstream");
+        add(22, &appearance);
 
+        write_objects(path, objects);
+    }
+
+    fn write_objects(path: &Path, mut objects: Vec<(u32, Vec<u8>)>) {
         objects.sort_by_key(|(n, _)| *n);
         let mut out: Vec<u8> = b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n".to_vec();
         let mut offsets: Vec<(u32, usize)> = Vec::new();
@@ -420,6 +568,26 @@ mod tests {
                 .as_bytes(),
         );
         std::fs::write(path, out).expect("write form fixture");
+    }
+
+    fn write_shared_text_fixture(path: &Path) {
+        let objects: Vec<(u32, &[u8])> = vec![
+            (1, b"<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [5 0 R] /DA (/Helv 12 Tf 0 g) /DR << /Font << /Helv 8 0 R >> >> >> >>"),
+            (2, b"<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>"),
+            (3, b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Annots [6 0 R] >>"),
+            (4, b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Annots [7 0 R] >>"),
+            (5, b"<< /FT /Tx /T (shared) /V (Before) /Ff 4096 /MaxLen 40 /Kids [6 0 R 7 0 R] >>"),
+            (6, b"<< /Type /Annot /Subtype /Widget /Parent 5 0 R /F 4 /Rect [40 200 260 280] /P 3 0 R >>"),
+            (7, b"<< /Type /Annot /Subtype /Widget /Parent 5 0 R /F 4 /Rect [40 200 260 280] /P 4 0 R >>"),
+            (8, b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"),
+        ];
+        write_objects(
+            path,
+            objects
+                .into_iter()
+                .map(|(id, value)| (id, value.to_vec()))
+                .collect(),
+        );
     }
 
     /// Saving a form used to hand back a page of dead boxes: `FPDF_ImportPages`
@@ -481,6 +649,14 @@ mod tests {
             after.form().is_some(),
             "the output is no longer a form — the /AcroForm was dropped"
         );
+        assert_eq!(
+            after
+                .form()
+                .unwrap()
+                .field_values(after.pages())
+                .get("name"),
+            Some(&Some("Ada".into()))
+        );
 
         // Read the states back the way the engine itself does, through a
         // form-fill environment, rather than through the typed wrappers.
@@ -489,6 +665,167 @@ mod tests {
             states,
             vec![true, false, true],
             "expected the checkbox on, the first radio off and the second on"
+        );
+    }
+
+    #[test]
+    fn text_field_updates_its_saved_appearance_without_button_edits() {
+        let _guard = pdfium_init::test_guard();
+        let pdfium = Pdfium::new(pdfium_init::init_bindings(&[]).expect("bundled PDFium"));
+        let dir = tempfile::tempdir().expect("temp dir");
+        let source = dir.path().join("form.pdf");
+        let output = dir.path().join("out.pdf");
+        write_form_fixture(&source);
+        let plan = EditPlan {
+            pages: vec![PlanPage {
+                src_index: Some(0),
+                width_pt: 300.0,
+                height_pt: 400.0,
+                rotation: 0,
+                annots: Vec::new(),
+                texts: Vec::new(),
+                images: Vec::new(),
+                drop_src_annots: Vec::new(),
+            }],
+            form: vec![("name".into(), "Ada".into())],
+            form_buttons: Vec::new(),
+        };
+        crate::engine::save::build_output(&pdfium, source.to_str().unwrap(), None, &plan, &output)
+            .expect("save text field");
+        // Read /AP before loading a form page view or rendering: either can
+        // synthesize an appearance in memory and hide a broken file on disk.
+        let b = pdfium.bindings();
+        let doc = b.FPDF_LoadDocument(output.to_str().unwrap(), None);
+        assert!(!doc.is_null());
+        let page = b.FPDF_LoadPage(doc, 0);
+        let annot = b.FPDFPage_GetAnnot(page, 3);
+        let len = b.FPDFAnnot_GetAP(annot, 0, std::ptr::null_mut(), 0);
+        let mut buffer = vec![0u16; len as usize / 2];
+        b.FPDFAnnot_GetAP(annot, 0, buffer.as_mut_ptr(), len);
+        let appearance = String::from_utf16_lossy(&buffer);
+        b.FPDFPage_CloseAnnot(annot);
+        b.FPDF_ClosePage(page);
+        b.FPDF_CloseDocument(doc);
+        assert!(
+            appearance.contains("Ada"),
+            "saved appearance is stale: {appearance}"
+        );
+        assert!(!appearance.contains("Before"));
+        let reopened = pdfium
+            .load_pdf_from_file(&output, None)
+            .expect("reopen form");
+        assert_eq!(
+            reopened
+                .form()
+                .unwrap()
+                .field_values(reopened.pages())
+                .get("name"),
+            Some(&Some("Ada".into()))
+        );
+    }
+
+    #[test]
+    fn shared_text_fields_save_multiline_values_and_can_be_cleared() {
+        let _guard = pdfium_init::test_guard();
+        let pdfium = Pdfium::new(pdfium_init::init_bindings(&[]).expect("bundled PDFium"));
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.pdf");
+        let filled = dir.path().join("filled.pdf");
+        let cleared = dir.path().join("cleared.pdf");
+        write_shared_text_fixture(&source);
+        for (input, output, value) in [
+            (&source, &filled, "Ada (Lovelace)\nSecond line"),
+            (&filled, &cleared, ""),
+        ] {
+            let plan = EditPlan {
+                pages: (0..2)
+                    .map(|index| PlanPage {
+                        src_index: Some(index),
+                        width_pt: 300.0,
+                        height_pt: 400.0,
+                        rotation: 0,
+                        annots: Vec::new(),
+                        texts: Vec::new(),
+                        images: Vec::new(),
+                        drop_src_annots: Vec::new(),
+                    })
+                    .collect(),
+                form: vec![("shared".into(), value.into())],
+                form_buttons: Vec::new(),
+            };
+            crate::engine::save::build_output(
+                &pdfium,
+                input.to_str().unwrap(),
+                None,
+                &plan,
+                output,
+            )
+            .unwrap();
+            let b = pdfium.bindings();
+            let doc = b.FPDF_LoadDocument(output.to_str().unwrap(), None);
+            assert!(!doc.is_null());
+            let mut info = Box::pin(form_fill_info());
+            let form = b.FPDFDOC_InitFormFillEnvironment(doc, info.as_mut().get_mut());
+            let mut states = Vec::new();
+            for index in 0..2 {
+                let page = b.FPDF_LoadPage(doc, index);
+                let annot = b.FPDFPage_GetAnnot(page, 0);
+                // Deliberately no OnAfterLoadPage: inspect only what was saved.
+                let field_value = read_utf16(|buffer, len| {
+                    b.FPDFAnnot_GetFormFieldValue(form, annot, buffer, len)
+                });
+                let appearance = read_utf16(|buffer, len| b.FPDFAnnot_GetAP(annot, 0, buffer, len));
+                states.push((field_value, appearance));
+                b.FPDFPage_CloseAnnot(annot);
+                b.FPDF_ClosePage(page);
+            }
+            b.FPDFDOC_ExitFormFillEnvironment(form);
+            b.FPDF_CloseDocument(doc);
+            for (field_value, appearance) in states {
+                assert_eq!(field_value.replace("\r\n", "\n").replace('\r', "\n"), value);
+                assert!(!appearance.is_empty(), "missing saved appearance");
+                assert!(!appearance.contains("Before"));
+                assert_eq!(
+                    appearance.contains("Ada"),
+                    !value.is_empty(),
+                    "stale appearance: {appearance}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_rejected_text_value_preserves_the_destination() {
+        let _guard = pdfium_init::test_guard();
+        let pdfium = Pdfium::new(pdfium_init::init_bindings(&[]).expect("bundled PDFium"));
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.pdf");
+        let destination = dir.path().join("destination.pdf");
+        write_shared_text_fixture(&source);
+        std::fs::write(&destination, b"original bytes").unwrap();
+        let result = crate::engine::save::verified_atomic_replace(
+            &destination,
+            |temp| {
+                std::fs::copy(&source, temp)?;
+                apply_edits(
+                    pdfium.bindings(),
+                    temp,
+                    &[("shared".into(), "x".repeat(100))],
+                    &[],
+                )
+            },
+            |_| Ok(()),
+            || Ok(()),
+        );
+        assert!(
+            result.is_err(),
+            "a value exceeding /MaxLen must not silently truncate"
+        );
+        assert_eq!(std::fs::read(&destination).unwrap(), b"original bytes");
+        assert_eq!(
+            std::fs::read_dir(dir.path()).unwrap().count(),
+            2,
+            "temporary file must be removed"
         );
     }
 

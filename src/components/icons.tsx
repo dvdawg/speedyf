@@ -268,3 +268,16 @@ export const IconMore = () =>
       <circle cx="12.5" cy="8" r="1" fill="currentColor" stroke="none" />
     </>
   );
+export const IconNewWindow = () =>
+  base(
+    <>
+      <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+      <path d="M1.5 5.5h13M8 7.5v4M6 9.5h4" />
+    </>
+  );
+export const IconDetachTab = () =>
+  base(
+    <>
+      <path d="M6.5 2.5h-4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-4M9 1.5h5.5V7M7 9l7.5-7.5" />
+    </>
+  );

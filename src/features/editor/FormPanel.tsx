@@ -46,35 +46,44 @@ export default function FormPanel() {
         >
           <div class="form-list">
             <For each={fields()}>
-              {(f) => (
-                <label class="form-field">
-                  <span class="form-name">
-                    {f.name} <em>p.{f.page + 1}</em>
-                  </span>
-                  <Show
-                    when={f.kind === 'text' && !f.readOnly}
-                    fallback={
-                      <span class="form-ro">
-                        {f.kind === 'checkbox' || f.kind === 'radio'
-                          ? buttonState(f)
-                          : f.value || '—'}
-                      </span>
-                    }
-                  >
-                    <input
-                      type="text"
-                      value={valueOf(f.name, f.value)}
-                      onChange={(e) =>
-                        documentStore.apply({
-                          type: 'setForm',
-                          field: f.name,
-                          value: e.currentTarget.value,
-                        })
+              {(f) => {
+                let typingGroup = Symbol('form text edit');
+                return (
+                  <label class="form-field">
+                    <span class="form-name">
+                      {f.name} <em>p.{f.page + 1}</em>
+                    </span>
+                    <Show
+                      when={f.kind === 'text' && !f.readOnly}
+                      fallback={
+                        <span class="form-ro">
+                          {f.kind === 'checkbox' || f.kind === 'radio'
+                            ? buttonState(f)
+                            : f.value || '—'}
+                        </span>
                       }
-                    />
-                  </Show>
-                </label>
-              )}
+                    >
+                      <input
+                        type="text"
+                        value={valueOf(f.name, f.value)}
+                        onFocus={() => {
+                          typingGroup = Symbol('form text edit');
+                        }}
+                        onInput={(e) =>
+                          documentStore.apply(
+                            {
+                              type: 'setForm',
+                              field: f.name,
+                              value: e.currentTarget.value,
+                            },
+                            typingGroup
+                          )
+                        }
+                      />
+                    </Show>
+                  </label>
+                );
+              }}
             </For>
           </div>
           <div class="panel-note">

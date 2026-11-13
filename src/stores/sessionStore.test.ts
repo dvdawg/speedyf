@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { takeLegacySession } from './sessionStore';
+import { loadSession, removeWindowSession, saveSession, takeWindowSessions } from './sessionStore';
 
 const map = new Map<string, string>();
 const storage: Storage = {
@@ -7,62 +7,112 @@ const storage: Storage = {
   setItem: (k: string, v: string) => void map.set(k, v),
   removeItem: (k: string) => void map.delete(k),
   clear: () => map.clear(),
-  key: () => null,
+  key: (index) => [...map.keys()][index] ?? null,
   get length() {
     return map.size;
   },
 };
 vi.stubGlobal('localStorage', storage);
 
-const KEY = 'speedyf-session';
-
 beforeEach(() => {
   map.clear();
 });
 
-describe('takeLegacySession', () => {
-  it('returns null when there is nothing to migrate', () => {
-    expect(takeLegacySession()).toBeNull();
+describe('loadSession', () => {
+  it('returns an empty session when nothing is stored', () => {
+    expect(loadSession()).toEqual({ version: 1, tabs: [], activePath: null });
   });
 
-  it('reads the old session once and then removes it', () => {
-    storage.setItem(
-      KEY,
-      JSON.stringify({ version: 1, tabs: [{ path: '/tmp/a.pdf' }], activePath: '/tmp/a.pdf' })
-    );
-    expect(takeLegacySession()).toEqual({
-      tabs: [{ path: '/tmp/a.pdf' }],
-      activePath: '/tmp/a.pdf',
-    });
-    // A migration that ran twice would resurrect tabs the user has since
-    // closed, on every launch, forever.
-    expect(storage.getItem(KEY)).toBeNull();
-    expect(takeLegacySession()).toBeNull();
+  it('falls back to empty on corrupted JSON', () => {
+    storage.setItem('speedyf-session', 'not json{');
+    expect(loadSession()).toEqual({ version: 1, tabs: [], activePath: null });
   });
 
   it('drops malformed tab entries but keeps well-formed ones', () => {
     storage.setItem(
-      KEY,
+      'speedyf-session',
       JSON.stringify({
         version: 1,
         tabs: [{ path: '/tmp/a.pdf' }, { notPath: 'x' }, { path: 42 }],
         activePath: '/tmp/a.pdf',
       })
     );
-    expect(takeLegacySession()?.tabs).toEqual([{ path: '/tmp/a.pdf' }]);
+    expect(loadSession()).toEqual({
+      version: 1,
+      tabs: [{ path: '/tmp/a.pdf' }],
+      activePath: '/tmp/a.pdf',
+    });
   });
 
   it('ignores a non-string activePath', () => {
-    storage.setItem(KEY, JSON.stringify({ tabs: [{ path: '/tmp/a.pdf' }], activePath: 123 }));
-    expect(takeLegacySession()?.activePath).toBeNull();
+    storage.setItem('speedyf-session', JSON.stringify({ version: 1, tabs: [], activePath: 123 }));
+    expect(loadSession().activePath).toBeNull();
+  });
+});
+
+describe('saveSession / loadSession round-trip', () => {
+  it('persists and reloads the same session', () => {
+    saveSession({
+      version: 1,
+      tabs: [{ path: '/tmp/a.pdf' }, { path: '/tmp/b.pdf' }],
+      activePath: '/tmp/b.pdf',
+    });
+    expect(loadSession()).toEqual({
+      version: 1,
+      tabs: [{ path: '/tmp/a.pdf' }, { path: '/tmp/b.pdf' }],
+      activePath: '/tmp/b.pdf',
+    });
+  });
+});
+
+describe('takeWindowSessions', () => {
+  it('keeps live window sessions separate and reopens each as its own window', () => {
+    saveSession({ version: 1, tabs: [{ path: '/main.pdf' }], activePath: '/main.pdf' });
+    const mainBefore = storage.getItem('speedyf-session');
+    saveSession(
+      {
+        version: 1,
+        tabs: [{ path: '/detached.pdf' }, { path: '/main.pdf' }],
+        activePath: '/detached.pdf',
+      },
+      'speedyf-1'
+    );
+    expect(storage.getItem('speedyf-session')).toBe(mainBefore);
+    expect(takeWindowSessions()).toEqual({
+      main: { version: 1, tabs: [{ path: '/main.pdf' }], activePath: '/main.pdf' },
+      // The file both windows listed stays with the first of them.
+      others: [{ version: 1, tabs: [{ path: '/detached.pdf' }], activePath: '/detached.pdf' }],
+    });
+    expect(storage.getItem('speedyf-session:speedyf-1')).toBeNull();
   });
 
-  it('treats corrupt or empty sessions as nothing to migrate, and clears them', () => {
-    storage.setItem(KEY, 'not json{');
-    expect(takeLegacySession()).toBeNull();
-    expect(storage.getItem(KEY)).toBeNull();
+  it('does not restore a window explicitly closed while another remains', () => {
+    saveSession({ version: 1, tabs: [{ path: '/closed.pdf' }], activePath: '/closed.pdf' });
+    saveSession(
+      { version: 1, tabs: [{ path: '/remaining.pdf' }], activePath: '/remaining.pdf' },
+      'speedyf-1'
+    );
+    removeWindowSession('main');
+    expect(takeWindowSessions()).toEqual({
+      main: { version: 1, tabs: [{ path: '/remaining.pdf' }], activePath: '/remaining.pdf' },
+      others: [],
+    });
+    expect(loadSession().tabs).toEqual([{ path: '/remaining.pdf' }]);
+  });
 
-    storage.setItem(KEY, JSON.stringify({ version: 1, tabs: [], activePath: null }));
-    expect(takeLegacySession()).toBeNull();
+  it('reopens other windows in the order they were created, skipping empty ones', () => {
+    saveSession({ version: 1, tabs: [{ path: '/a.pdf' }], activePath: null });
+    saveSession({ version: 1, tabs: [{ path: '/c.pdf' }], activePath: '/c.pdf' }, 'speedyf-10');
+    saveSession({ version: 1, tabs: [], activePath: null }, 'speedyf-3');
+    saveSession({ version: 1, tabs: [{ path: '/b.pdf' }], activePath: '/gone.pdf' }, 'speedyf-2');
+    const { others } = takeWindowSessions();
+    expect(others.map((s) => s.tabs[0]!.path)).toEqual(['/b.pdf', '/c.pdf']);
+    // An active path the window no longer lists falls back to its first tab.
+    expect(others[0]!.activePath).toBeNull();
+  });
+
+  it('leaves the main session alone when no other window survived', () => {
+    saveSession({ version: 1, tabs: [{ path: '/a.pdf' }], activePath: '/a.pdf' });
+    expect(takeWindowSessions()).toEqual({ main: loadSession(), others: [] });
   });
 });
