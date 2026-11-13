@@ -79,6 +79,26 @@ function makeHost(worker: FakeWorker, overrides: Record<string, unknown> = {}) {
   return { host, logs, crashes };
 }
 
+describe('ExtensionHost: a reference provider invoke', () => {
+  it('carries a document object and takes its own, longer timeout', async () => {
+    const worker = new FakeWorker();
+    const { host } = makeHost(worker);
+    const pending = host.invoke('provide', {
+      value: { document: 'tok', text: 'References [1] A.' },
+      timeoutMs: 200,
+    });
+    await tick();
+    const sent = worker.invokeAt(0) as unknown as { value: unknown };
+    expect(sent.value).toEqual({ document: 'tok', text: 'References [1] A.' });
+    // Past the ordinary 50 ms, and still waiting.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    worker.emit({ type: 'done', requestId: worker.invokeAt(0).requestId, ok: true });
+    await expect(pending).resolves.toBeUndefined();
+    const late = host.invoke('provide', { value: { document: 't2', text: '' }, timeoutMs: 20 });
+    await expect(late).rejects.toThrow('within 20ms');
+  });
+});
+
 describe('ExtensionHost lifecycle', () => {
   /** Regression: permissions arrive from a Solid store, whose arrays are
    * Proxies. postMessage structured-clones, and a Proxy is not cloneable, so

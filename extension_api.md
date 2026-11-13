@@ -181,20 +181,21 @@ custom URI scheme path.
 
 ## 7. Permission catalogue
 
-| Permission                             | Grants                                                       | Version |
-| -------------------------------------- | ------------------------------------------------------------ | ------- |
-| `commands:run`                         | Run SpeedyF's own commands, View/Navigate/Panels/Search only | v2      |
-| `document:read`                        | Text, outline, figures, page geometry of the open document   | v2      |
-| `document:annotate`                    | Create and modify annotations                                | v2      |
-| `document:edit`                        | Page operations: rotate, delete, reorder, insert             | v3      |
-| `citations:read`                       | Extracted and resolved citations                             | v2      |
-| `library:read`                         | Library entries and library-wide search                      | v2      |
-| `clipboard:write`                      | Write text or images to the clipboard                        | v2      |
-| `storage`                              | Private key/value store, namespaced to the extension         | v2      |
-| `render:read`                          | Request page and region rasters                              | v2      |
-| `document:contributeText`              | Contribute a text layer and outline for a document           | v2      |
-| `filesystem:read` / `filesystem:write` | User-chosen paths only, via a picker                         | v3      |
-| `network`                              | Outbound HTTP                                                | v3      |
+| Permission                             | Grants                                                                                     | Version          |
+| -------------------------------------- | ------------------------------------------------------------------------------------------ | ---------------- |
+| `commands:run`                         | Run SpeedyF's own commands, View/Navigate/Panels/Search only                               | v2               |
+| `document:read`                        | Text, outline, figures, page geometry of the open document                                 | v2               |
+| `document:annotate`                    | Create and modify annotations                                                              | v2               |
+| `document:edit`                        | Page operations: rotate, delete, reorder, insert                                           | v3               |
+| `citations:read`                       | Extracted and resolved citations                                                           | v2               |
+| `library:read`                         | Library entries and library-wide search                                                    | v2               |
+| `clipboard:write`                      | Write text or images to the clipboard                                                      | v2               |
+| `storage`                              | Private key/value store, namespaced to the extension                                       | v2               |
+| `render:read`                          | Request page and region rasters                                                            | v2               |
+| `document:contributeText`              | Contribute a text layer and outline for a document                                         | v2               |
+| `library:contributeReferences`         | Read library documents' stored text (never paths) at idle and return their reference lists | v3 (implemented) |
+| `filesystem:read` / `filesystem:write` | User-chosen paths only, via a picker                                                       | v3               |
+| `network`                              | Outbound HTTP                                                                              | v3               |
 
 **What `document:read` actually grants.** Page text, in a loop, is the whole
 document's text. The permission means "everything this document says", not "a
@@ -230,15 +231,16 @@ allowlist of hosts declared in the manifest.
 
 ## 8. Contribution point catalogue
 
-| Surface                | Effect                                                | Version |
-| ---------------------- | ----------------------------------------------------- | ------- |
-| `commands`             | Entries in the command palette and keymap             | v1      |
-| `panels` (declarative) | A sidebar tab built from the UI vocabulary            | v2      |
-| `citationActions`      | A row action on a resolved citation                   | v2      |
-| `selectionActions`     | An action on selected text                            | v2      |
-| `settings`             | Declarative fields in the extension's settings page   | v2      |
-| `panels` (custom)      | A sandboxed iframe pane                               | v3      |
-| `documentTasks`        | Batch work over a document, contributing results back | v2      |
+| Surface                | Effect                                                | Version          |
+| ---------------------- | ----------------------------------------------------- | ---------------- |
+| `commands`             | Entries in the command palette and keymap             | v1               |
+| `panels` (declarative) | A sidebar tab built from the UI vocabulary            | v2               |
+| `citationActions`      | A row action on a resolved citation                   | v2               |
+| `selectionActions`     | An action on selected text                            | v2               |
+| `settings`             | Declarative fields in the extension's settings page   | v2               |
+| `panels` (custom)      | A sandboxed iframe pane                               | v3               |
+| `documentTasks`        | Batch work over a document, contributing results back | v2               |
+| `referenceProvider`    | The provider slot for library reference lists (below) | v3 (implemented) |
 
 ## 9. Consumers and contributors
 
@@ -291,6 +293,25 @@ Policy decisions it still carries, all small:
 `CitationResolver` in `src-tauri/src/library/mod.rs` — a one-method trait with a
 single implementation — remains the template for any genuinely synchronous
 provider slot, if one is ever needed. None is needed for OCR.
+
+**The first provider slot: reference lists.** The library's citation graph
+needed something to cut every library paper's bibliography into entries, so a
+title can be matched when an entry prints no identifier. That is parsing, the
+engine had grown its own parser for it, and that was the wrong place: it moved
+into the built-in References extension, and the extension gained the slot it
+needed — `referenceProvider`, under `library:contributeReferences`. It keeps
+the batch-contributor shape above rather than becoming a synchronous provider:
+the window asks the engine for documents the provider has not read, invokes
+the provider's command at idle, one document at a time, with
+`{ document: <opaque token>, text }`, and the provider answers with
+`references.contribute { document, entries }` before `done`. Nothing renders
+or resolves while waiting on it, so the timeout (20 s per document) is a
+budget, not a latency. Precedence is the simplest rule that works: the first
+enabled extension declaring one is the provider, and only its results are
+read — results are stamped with its id and version, so disabling it switches
+title matching off and a new version re-reads the library. The engine keeps
+the identifier rules (explicit DOIs and arXiv ids, the APS journal→DOI rule)
+and the matching, so DOI, arXiv and APS edges survive with no provider at all.
 
 ## 10. Message protocol
 
@@ -508,7 +529,10 @@ _Capability_
 
 - Custom panes: sandboxed iframe views with their own message bridge
 - Synchronous provider slots (citation resolution, metadata) with timeouts and
-  precedence — only if something actually needs them; OCR does not
+  precedence — only if something actually needs them; OCR does not.
+  _Implemented for one:_ `referenceProvider` (library reference lists), as an
+  idle batch contributor with a 20 s budget per document and first-enabled
+  precedence — see section 9
 - `network` with a manifest host allowlist, install-time consent, and a live
   in-app indicator
 - `filesystem:read`/`write`, user-chosen paths only, through a picker

@@ -22,6 +22,7 @@ import {
   parseExtensionMessage,
   type CallMessage,
   type HostMessage,
+  type ReferenceRequest,
 } from './protocol';
 
 export type HostStatus = 'stopped' | 'starting' | 'running' | 'failed';
@@ -140,7 +141,13 @@ export class ExtensionHost {
    */
   async invoke(
     command: string,
-    extra?: { value?: string; reason?: 'command' | 'panel' }
+    extra?: {
+      value?: string | ReferenceRequest;
+      reason?: 'command' | 'panel';
+      /** Overrides the invoke timeout for this one call: a reference
+       * provider's document gets `REFERENCE_PROVIDER_TIMEOUT_MS`. */
+      timeoutMs?: number;
+    }
   ): Promise<void> {
     await this.start();
     const worker = this.worker;
@@ -148,13 +155,14 @@ export class ExtensionHost {
       throw new Error('extension is not running');
     }
     const requestId = this.nextRequestId++;
+    const timeout = extra?.timeoutMs ?? this.timeout();
     return new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(requestId);
         // Deliberately not a crash: a slow command is not a broken extension,
         // and killing the worker would lose any state it had built up.
-        reject(new Error(`"${command}" did not finish within ${this.timeout()}ms`));
-      }, this.timeout());
+        reject(new Error(`"${command}" did not finish within ${timeout}ms`));
+      }, timeout);
       this.pending.set(requestId, { resolve, reject, timer });
       try {
         worker.postMessage({

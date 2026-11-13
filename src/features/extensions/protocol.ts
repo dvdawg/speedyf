@@ -26,14 +26,22 @@ export interface ActivateMessage {
   permissions: readonly string[];
 }
 
+/** What a reference provider's command is invoked with: a library
+ * document, as an opaque token and its stored text. Never its path. */
+export interface ReferenceRequest {
+  document: string;
+  text: string;
+}
+
 /** Run one of the extension's contributed commands. */
 export interface InvokeMessage {
   type: 'invoke';
   requestId: number;
   /** The bare id the extension declared, not the namespaced one. */
   command: string;
-  /** Carried back from a row action, so one command can serve many rows. */
-  value?: string;
+  /** Carried back from a row action, so one command can serve many rows; a
+   * `ReferenceRequest` for a reference provider's command. */
+  value?: string | ReferenceRequest;
   /** Set when the invoke came from a panel becoming visible, so an extension
    * can tell "the user opened my panel" from "the user ran my command". */
   reason?: 'command' | 'panel';
@@ -112,6 +120,11 @@ export function parseExtensionMessage(data: unknown): ExtensionMessage | null {
  * extension — but the host stops waiting, so nothing in the UI can hang on
  * third-party code. */
 export const INVOKE_TIMEOUT_MS = 5_000;
+
+/** How long a reference provider gets for one library document. Longer than
+ * an ordinary invoke because a thesis is a lot of text to cut up, and safe to
+ * be because nothing waits on it: it runs at idle, one document at a time. */
+export const REFERENCE_PROVIDER_TIMEOUT_MS = 20_000;
 
 /** How long the host waits for a worker to acknowledge activation before
  * treating it as failed to start. */

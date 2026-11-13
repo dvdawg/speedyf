@@ -22,6 +22,7 @@ import {
   apiRefusalReason,
   canCallApi,
   readCitationArg,
+  readIdArg,
   readPageArg,
   readPlaceArg,
   readQueryArg,
@@ -34,12 +35,16 @@ import {
   toPageRuns,
   toOutline,
   toPageText,
+  toPaper,
+  toPapers,
+  toProjects,
   toResolvedCitation,
 } from './api';
 import { engine } from '../../lib/transport/engine';
 import { pdfRectToCssRect } from '../../lib/coordinates/coords';
 import { revealPlace } from '../../stores/revealStore';
 import { parseUi, type UiDescription } from './ui';
+import { ReferenceQueue, chooseProvider, idleWait, readerBusy } from './referenceProvider';
 
 export interface ExtensionKeybinding {
   command: string;
@@ -111,6 +116,9 @@ export interface ExtensionRecord {
   documentTasks: ExtensionAction[];
   settings: ExtensionSetting[];
   keybindings: ExtensionKeybinding[];
+  /** The bare command id SpeedyF invokes to read a library document's
+   * reference list, when this extension is a reference provider. */
+  referenceProvider: string | null;
   iconUrl: string | null;
   /** Why it cannot run: a bad manifest, or a worker that died. */
   error: string | null;
@@ -168,6 +176,7 @@ interface ExtensionDto {
   citationActions: ExtensionAction[];
   documentTasks: ExtensionAction[];
   settings: ExtensionSetting[];
+  referenceProvider?: string | null;
   iconUrl: string | null;
   error: string | null;
 }
@@ -190,16 +199,41 @@ export async function loadExtensions(): Promise<void> {
           iconUrl: dto.iconUrl ?? null,
           builtin: dto.builtin ?? false,
           keybindings: dto.manifest?.contributes?.keybindings ?? [],
+          referenceProvider: dto.referenceProvider ?? null,
           error: dto.error ?? null,
           log: previous.get(dto.id) ?? [],
         }));
         s.loaded = true;
       })
     );
+    syncReferenceProvider();
   } catch (err) {
     setState('loaded', true);
     console.error('could not list extensions', err);
   }
+}
+
+/** Reads library documents' reference lists through the active provider. */
+const referenceQueue = new ReferenceQueue({
+  setProvider: (provider) => invoke('library_refs_provider', { provider }),
+  pending: (limit) => invoke('library_refs_pending', { limit }),
+  store: (token, entries) => invoke('library_refs_store', { token, entries }),
+  invoke: async (choice, value, timeoutMs) => {
+    const extension = record(choice.extensionId);
+    if (!extension?.enabled) throw new Error('the reference provider is not enabled');
+    await hostFor(extension).invoke(choice.command, { value, timeoutMs });
+  },
+  busy: () => readerBusy(),
+  wait: idleWait,
+  log: (id, level, message) => appendLog(id, level, message),
+});
+
+/** Point the engine at the active reference provider: the first enabled
+ * extension declaring one. Run after every change to the extensions, so
+ * disabling References turns title matching off and enabling it (or a new
+ * version) reads the library again. */
+function syncReferenceProvider(): void {
+  void referenceQueue.setProvider(chooseProvider(state.extensions));
 }
 
 /** Batch jobs extensions offer over a whole document. */
@@ -348,6 +382,13 @@ function setError(id: string, error: string | null): void {
  * had one cannot be undone for anything already published against it.
  */
 async function handleCall(extension: ExtensionRecord, call: CallMessage): Promise<unknown> {
+  if (call.api === 'references.contribute') {
+    if (!canCallApi(extension.permissions, call.api)) {
+      throw new Error(apiRefusalReason(extension.permissions, call.api));
+    }
+    return referenceQueue.contribute(extension.id, call.args);
+  }
+
   if (call.api === 'document.contributeText') {
     if (!canCallApi(extension.permissions, call.api)) {
       throw new Error(apiRefusalReason(extension.permissions, call.api));
@@ -600,11 +641,14 @@ async function readApi(api: string, args: unknown): Promise<unknown> {
     return Array.from(new Uint8Array(bytes));
   }
 
+  // The library APIs work with nothing open — the library is not a property
+  // of the current document.
   if (api === 'library.search') {
-    // The only API that works with nothing open — the library is not a
-    // property of the current document.
     return toLibraryHits(await engine.librarySearch(readQueryArg(args), false));
   }
+  if (api === 'library.papers') return toPapers(await engine.libraryPapers({}));
+  if (api === 'library.projects') return toProjects(await engine.libraryProjects());
+  if (api === 'library.paper') return toPaper(await engine.libraryPaper(readIdArg(args)));
 
   const tab = activeTab();
   const doc = tab?.documentStore.state;
@@ -709,6 +753,9 @@ async function readApi(api: string, args: unknown): Promise<unknown> {
     }
 
     case 'citations.resolve':
+      // The engine answers with the cite key of the paper holding the file,
+      // so a panel resolving a whole bibliography makes one call per work,
+      // not two. A file the paper layer cannot place simply has none.
       return toResolvedCitation(await engine.resolveCitation(readCitationArg(args)));
 
     case 'document.contributedText':

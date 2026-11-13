@@ -42,6 +42,30 @@ rather than
 None of this guesses at the prose. Where an entry begins is the document's own
 answer, not a judgement about where a citation seems to start.
 
+## Reading your library's reference lists
+
+References is also SpeedyF's **reference provider** (`referenceProvider`,
+permission `library:contributeReferences`). While SpeedyF indexes your library
+at idle, it hands this extension each document's stored text — under an opaque
+token, never its path — and the extension answers with the document's
+reference list, entry by entry (`label`, `text`, `year`). SpeedyF keeps each
+entry's identifiers and a compact form of its text, which is how a reference
+that prints no DOI is matched to a paper in your library by its title, in the
+Paper panel's _cites_ / _cited by_ and in the graph.
+
+The parser that does this works on plain text: it finds the list after the
+last "References"/"Bibliography" heading (a line of its own, or run into the
+text after a sentence), or with no heading the longest run of `[1]`, `[2]`, …;
+cuts it at labels that count up from 1 (`[n]`, `n.`, `(n)`, superscript `n`),
+at `[AB99]`-style labels, or for author-year lists at "Surname, I." and at the
+year or URL that ends an entry; rejoins words broken at line ends; and drops
+page numbers a page break left behind. The panel uses the same parser for a
+paper with no internal links.
+
+**Turn References off and only DOIs, arXiv ids and APS journal references
+link library papers** — nothing is matched by title. Turn it back on and the
+library is read again where needed.
+
 ## What it demonstrates
 
 A worked example of most of the v2 API:
@@ -55,6 +79,7 @@ A worked example of most of the v2 API:
 | `navigate.toPage`                      | Walking the places a work is cited                  |
 | `settings`                             | Order and grouping, read fresh on each render       |
 | `storage`                              | Caching the scan so reopening is instant            |
+| `referenceProvider`                    | Reading every library paper's reference list        |
 
 Three things worth copying:
 
@@ -69,10 +94,10 @@ Three things worth copying:
 
 - **A paper with no internal links** — an older scan, or most things exported
   from a word processor — has no destinations to follow. The panel falls back
-  to listing the addresses printed in the bibliography, and says "listed on"
-  rather than "cited on", because in that case nothing in the file says where a
-  work is cited. A paper whose bibliography carries no links or identifiers
-  either will show nothing at all.
+  to reading the reference list out of the text with the parser above, and
+  failing that to listing the addresses printed in the bibliography; either
+  way it says "listed on" rather than "cited on", because nothing in the file
+  says where a work is cited.
 - **A reference nothing cites** is invisible. An entry is found by the
   citations pointing at it, so one that is listed but never cited — a
   `\nocite`, usually — has nothing pointing at it and is read as part of the

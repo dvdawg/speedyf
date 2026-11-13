@@ -38,6 +38,10 @@ import type {
   OutlineNode,
   PageLinks,
   PageTextLayout,
+  Paper,
+  PaperList,
+  PaperMeta,
+  Project,
   ResolvedCitation,
 } from '../../types/engine';
 
@@ -79,6 +83,9 @@ export interface ApiResolvedCitation {
   title: string | null;
   fileName: string | null;
   pageCount: number | null;
+  /** The paper's cite key, when the library has a record for the file. What
+   * a BibTeX extension is after; the rest of the record is `library.paper`. */
+  citeKey: string | null;
 }
 
 /** An outbound link the document carries.
@@ -158,6 +165,52 @@ export interface ApiLibraryHit {
   name: string;
   title: string | null;
   matches: number;
+}
+
+/** One paper as the Projects screen lists it: display strings, resolved. */
+export interface ApiPaper {
+  id: string;
+  title: string;
+  /** Already joined for display, the way the paper list shows it. */
+  authors: string;
+  year: number | null;
+  venue: string | null;
+  citeKey: string;
+  projectIds: string[];
+  /** Whether the scan (or the user) takes the file for a paper. A project
+   * may hold a manual filed there on purpose; its key means nothing. */
+  isPaper: boolean;
+}
+
+export interface ApiProject {
+  id: string;
+  name: string;
+  paperCount: number;
+}
+
+/** A paper's file, without its path. The name tells an extension which copy
+ * it is looking at — preprint or published — and `missing` whether the file
+ * is still there; where it is remains the user's business. */
+export interface ApiPaperFile {
+  name: string;
+  missing: boolean;
+}
+
+/** The full record, with provenance on every field, so an extension can tell
+ * a title the user typed from one a heuristic guessed. */
+export interface ApiPaperDetail {
+  id: string;
+  files: ApiPaperFile[];
+  doi: string | null;
+  arxiv: string | null;
+  meta: PaperMeta;
+  citeKey: string;
+  citeKeyPinned: boolean;
+  projectIds: string[];
+  addedAt: string;
+  updatedAt: string;
+  incomplete: string[];
+  isPaper: boolean;
 }
 
 // ---------- mapping ----------
@@ -327,16 +380,67 @@ export function toPageRuns(layout: PageTextLayout | null): ApiTextRun[] {
 }
 
 /** A resolution result. `null` — the engine's "not in your library" — becomes an
- * explicit `inLibrary: false` rather than a null the caller has to interpret. */
-export function toResolvedCitation(resolved: ResolvedCitation | null): ApiResolvedCitation {
+ * explicit `inLibrary: false` rather than a null the caller has to interpret.
+ * The cite key is a second lookup the caller makes by path; it is null when
+ * the file has no paper record, and always null for a file not in the library. */
+export function toResolvedCitation(
+  resolved: ResolvedCitation | null,
+  citeKey: string | null = resolved?.citeKey ?? null
+): ApiResolvedCitation {
   if (!resolved) {
-    return { inLibrary: false, title: null, fileName: null, pageCount: null };
+    return { inLibrary: false, title: null, fileName: null, pageCount: null, citeKey: null };
   }
   return {
     inLibrary: true,
     title: resolved.title,
     fileName: resolved.fileName,
     pageCount: resolved.pageCount,
+    citeKey,
+  };
+}
+
+/** The paper list as rows. Already free of paths; the list is the engine's
+ * display shape, and the mapping is spelled out field by field anyway so a
+ * field added to the engine's row does not leak through on its own. */
+export function toPapers(list: PaperList): { papers: ApiPaper[] } {
+  return {
+    papers: list.rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      authors: row.authors,
+      year: row.year,
+      venue: row.venue,
+      citeKey: row.citeKey,
+      projectIds: [...row.projectIds],
+      isPaper: row.isPaper,
+    })),
+  };
+}
+
+/** Projects without their synced `.bib` path, which is a filesystem location. */
+export function toProjects(projects: readonly Project[]): ApiProject[] {
+  return projects.map((project) => ({
+    id: project.id,
+    name: project.name,
+    paperCount: project.paperCount,
+  }));
+}
+
+/** The full record with its files reduced to name and presence. */
+export function toPaper(paper: Paper): ApiPaperDetail {
+  return {
+    id: paper.id,
+    files: paper.files.map((file) => ({ name: file.name, missing: file.missing })),
+    doi: paper.doi,
+    arxiv: paper.arxiv,
+    meta: paper.meta,
+    citeKey: paper.citeKey,
+    citeKeyPinned: paper.citeKeyPinned,
+    projectIds: [...paper.projectIds],
+    addedAt: paper.addedAt,
+    updatedAt: paper.updatedAt,
+    incomplete: [...paper.incomplete],
+    isPaper: paper.isPaper,
   };
 }
 
@@ -364,6 +468,11 @@ export const API_PERMISSIONS: Readonly<Record<string, string>> = {
   'document.pageRuns': 'document:read',
   'citations.resolve': 'citations:read',
   'library.search': 'library:read',
+  // The paper records behind the Projects screen. Read-only, and without the
+  // one thing a record is organised around on disk: where its files are.
+  'library.papers': 'library:read',
+  'library.projects': 'library:read',
+  'library.paper': 'library:read',
   // Navigation, so it sits under the same permission as running SpeedyF's own
   // Navigate commands. `commands.run` cannot express it: a command takes no
   // arguments, and "next page" is not what a panel row needs.
@@ -372,6 +481,10 @@ export const API_PERMISSIONS: Readonly<Record<string, string>> = {
   'render.page': 'render:read',
   'document.contributeText': 'document:contributeText',
   'document.contributedText': 'document:contributeText',
+  // A reference provider's answer for a library document it was handed. The
+  // only library write an extension has, and it can only answer what it was
+  // asked: the document is a token SpeedyF issued, never a path.
+  'references.contribute': 'library:contributeReferences',
   'clipboard.write': 'clipboard:write',
   'storage.get': 'storage',
   'storage.set': 'storage',
@@ -393,6 +506,58 @@ export function apiRefusalReason(permissions: readonly string[], api: string): s
   return `"${api}" needs the "${needed}" permission${
     permissions.length > 0 ? ` (granted: ${permissions.join(', ')})` : ''
   }`;
+}
+
+/** One reference as a provider returns it. */
+export interface ApiReferenceEntry {
+  label?: string;
+  text: string;
+  year?: number;
+}
+
+/** No paper has more references; a provider claiming more is misreading. */
+export const MAX_REFERENCE_ENTRIES = 1000;
+/** An entry's text is cut here; a real entry is shorter. */
+export const MAX_REFERENCE_TEXT = 1500;
+const MAX_REFERENCE_LABEL = 32;
+
+/** Read `references.contribute` arguments: the document token, and the
+ * entries — each an object with a non-empty string `text`, cut at 1500
+ * characters, and optionally a short string `label` and a plausible integer
+ * `year`. A malformed entry, or a malformed field of one, is dropped on its
+ * own rather than costing the provider the whole list; past 1000 entries the
+ * rest are ignored. */
+export function readReferenceEntries(args: unknown): {
+  document: string;
+  entries: ApiReferenceEntry[];
+} {
+  const { document, entries } = (args ?? {}) as { document?: unknown; entries?: unknown };
+  if (typeof document !== 'string' || document.length === 0) {
+    throw new Error('references.contribute needs the "document" it was handed');
+  }
+  if (!Array.isArray(entries)) throw new Error('references.contribute needs an "entries" array');
+  const out: ApiReferenceEntry[] = [];
+  for (const raw of entries) {
+    if (out.length >= MAX_REFERENCE_ENTRIES) break;
+    if (typeof raw !== 'object' || raw === null) continue;
+    const { label, text, year } = raw as { label?: unknown; text?: unknown; year?: unknown };
+    if (typeof text !== 'string') continue;
+    const trimmed = text.trim().slice(0, MAX_REFERENCE_TEXT);
+    if (trimmed.length === 0) continue;
+    const entry: ApiReferenceEntry = { text: trimmed };
+    if (
+      typeof label === 'string' &&
+      label.trim().length > 0 &&
+      label.length <= MAX_REFERENCE_LABEL
+    ) {
+      entry.label = label.trim();
+    }
+    if (typeof year === 'number' && Number.isInteger(year) && year >= 1400 && year <= 2100) {
+      entry.year = year;
+    }
+    out.push(entry);
+  }
+  return { document, entries: out };
 }
 
 /** Read a zero-based page argument, refusing anything that is not one.
@@ -458,6 +623,16 @@ export function readPlaceArg(
     }
   }
   return { page, boxes, y };
+}
+
+/** Read a record id. Only its shape is checked here; whether a paper with it
+ * exists is the engine's answer, and an unknown id is its error. */
+export function readIdArg(args: unknown): string {
+  const id = (args as { id?: unknown } | undefined)?.id;
+  if (typeof id !== 'string' || id.trim().length === 0) {
+    throw new Error('expected a non-empty "id"');
+  }
+  return id;
 }
 
 export function readQueryArg(args: unknown): string {

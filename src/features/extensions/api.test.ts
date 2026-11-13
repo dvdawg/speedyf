@@ -4,6 +4,7 @@ import {
   apiRefusalReason,
   canCallApi,
   readCitationArg,
+  readIdArg,
   readPageArg,
   readQueryArg,
   toBox,
@@ -15,9 +16,100 @@ import {
   toOutline,
   toPageRuns,
   toPageText,
+  toPaper,
+  toPapers,
+  toProjects,
   toResolvedCitation,
 } from './api';
-import type { LibrarySearchResult, PageLinks, PageTextLayout } from '../../types/engine';
+import type {
+  LibrarySearchResult,
+  PageLinks,
+  PageTextLayout,
+  Paper,
+  PaperList,
+  Project,
+} from '../../types/engine';
+
+const paper: Paper = {
+  id: '7c1e0b5a',
+  files: [
+    {
+      path: '/Users/someone/papers/noneq/jarzynski1997.pdf',
+      name: 'jarzynski1997.pdf',
+      size: 310221,
+      mtimeMs: 1699000000000,
+      fingerprint: 'f1a2',
+      missing: false,
+    },
+    {
+      path: '/Users/someone/papers/noneq/jarzynski1997-arxiv.pdf',
+      name: 'jarzynski1997-arxiv.pdf',
+      size: 1,
+      mtimeMs: 0,
+      fingerprint: null,
+      missing: true,
+    },
+  ],
+  doi: '10.1103/physrevlett.78.2690',
+  arxiv: null,
+  isbn: null,
+  meta: {
+    title: { value: 'Nonequilibrium Equality for Free Energy Differences', source: 'crossref' },
+    authors: { value: [{ family: 'Jarzynski', given: 'C.' }], source: 'crossref' },
+    year: { value: 1997, source: 'crossref' },
+    venue: { value: 'Physical Review Letters', source: 'crossref' },
+    volume: null,
+    issue: null,
+    pages: null,
+    publisher: null,
+    abstract: null,
+    kind: null,
+  },
+  citeKey: 'jarzynski1997nonequilibrium',
+  citeKeyPinned: true,
+  projectIds: ['3b9d'],
+  addedAt: '2026-11-11T20:00:00Z',
+  updatedAt: '2026-11-11T20:05:00Z',
+  incomplete: [],
+  isPaper: true,
+  paperReason: 'doi 10.1103/physrevlett.78.2690 on the first page',
+  paperOverride: null,
+  candidates: [],
+  mergedCount: 0,
+};
+
+const projects: Project[] = [
+  {
+    id: '3b9d',
+    name: 'Noneq stat mech',
+    order: 0,
+    paperCount: 1,
+    bibPath: '/Users/someone/papers/noneq/refs.bib',
+    incompleteCount: 0,
+    createdAt: '2026-11-11T20:00:00Z',
+  },
+];
+
+const list: PaperList = {
+  rows: [
+    {
+      id: '7c1e0b5a',
+      title: 'Nonequilibrium Equality for Free Energy Differences',
+      authors: 'Jarzynski',
+      year: 1997,
+      venue: 'Physical Review Letters',
+      citeKey: 'jarzynski1997nonequilibrium',
+      alphaLabel: 'Jar97',
+      projectIds: ['3b9d'],
+      missing: false,
+      hasIdentifier: true,
+      incompleteCount: 0,
+      isPaper: true,
+      candidateCount: 0,
+    },
+  ],
+  total: 1,
+};
 
 describe('the API catalogue', () => {
   it('requires a permission for every API it offers', () => {
@@ -35,6 +127,15 @@ describe('the API catalogue', () => {
   it('refuses an API the extension did not ask for', () => {
     expect(canCallApi(['library:read'], 'document.info')).toBe(false);
     expect(canCallApi([], 'document.info')).toBe(false);
+  });
+
+  it('puts the paper records under the library permission', () => {
+    for (const api of ['library.papers', 'library.projects', 'library.paper']) {
+      expect(canCallApi(['library:read'], api), api).toBe(true);
+      expect(canCallApi(['document:read', 'citations:read'], api), api).toBe(false);
+      expect(canCallApi([], api), api).toBe(false);
+      expect(apiRefusalReason([], api)).toContain('library:read');
+    }
   });
 
   /** A typo must be an error, never an accidental grant. */
@@ -73,6 +174,75 @@ describe('the API catalogue', () => {
     ]);
     expect(surface).not.toContain('/Users/');
     expect(surface).not.toContain('docId');
+  });
+
+  /** A paper record is organised around its files on disk, and a project may
+   * carry a synced .bib path. Neither location crosses the boundary. */
+  it('exposes no paths from the paper records', () => {
+    const surface = JSON.stringify([toPaper(paper), toPapers(list), toProjects(projects)]);
+    expect(surface).not.toContain('/Users/');
+    expect(surface).not.toContain('"path"');
+    expect(surface).not.toContain('bibPath');
+    expect(surface).not.toContain('fingerprint');
+  });
+});
+
+describe('toPaper', () => {
+  it('reduces each file to its name and whether it is still there', () => {
+    expect(toPaper(paper).files).toEqual([
+      { name: 'jarzynski1997.pdf', missing: false },
+      { name: 'jarzynski1997-arxiv.pdf', missing: true },
+    ]);
+  });
+
+  /** The provenance is the point of the full record: it is how an extension
+   * tells a title the user typed from one a heuristic guessed. */
+  it('keeps the metadata with its sources, the identifiers and the key', () => {
+    const detail = toPaper(paper);
+    expect(detail.meta.title).toEqual({
+      value: 'Nonequilibrium Equality for Free Energy Differences',
+      source: 'crossref',
+    });
+    expect(detail.doi).toBe('10.1103/physrevlett.78.2690');
+    expect(detail.citeKey).toBe('jarzynski1997nonequilibrium');
+    expect(detail.citeKeyPinned).toBe(true);
+    expect(detail.projectIds).toEqual(['3b9d']);
+    expect(detail.isPaper).toBe(true);
+  });
+
+  /** The verdict crosses, its reason and the parked lookup matches do not:
+   * the reason is the scan's working, and the matches are a question for
+   * the user, not data about the paper. */
+  it('reports the verdict and nothing of how it was reached', () => {
+    const detail = toPaper({ ...paper, isPaper: false, paperReason: 'no abstract' });
+    expect(detail.isPaper).toBe(false);
+    expect(JSON.stringify(detail)).not.toContain('paperReason');
+    expect(JSON.stringify(detail)).not.toContain('candidates');
+  });
+});
+
+describe('toPapers', () => {
+  it('reports the display row with its key and projects', () => {
+    expect(toPapers(list)).toEqual({
+      papers: [
+        {
+          id: '7c1e0b5a',
+          title: 'Nonequilibrium Equality for Free Energy Differences',
+          authors: 'Jarzynski',
+          year: 1997,
+          venue: 'Physical Review Letters',
+          citeKey: 'jarzynski1997nonequilibrium',
+          projectIds: ['3b9d'],
+          isPaper: true,
+        },
+      ],
+    });
+  });
+});
+
+describe('toProjects', () => {
+  it('reports a project by id, name and size only', () => {
+    expect(toProjects(projects)).toEqual([{ id: '3b9d', name: 'Noneq stat mech', paperCount: 1 }]);
   });
 });
 
@@ -361,7 +531,38 @@ describe('toResolvedCitation', () => {
       title: null,
       fileName: null,
       pageCount: null,
+      citeKey: null,
     });
+  });
+
+  const resolved = {
+    docId: 7,
+    title: 'A Paper',
+    pageCount: 12,
+    fileName: 'paper.pdf',
+    path: '/Users/someone/papers/paper.pdf',
+    preview: { docId: 7, src: 0, tile: { x: 0, y: 0, w: 1, h: 1 }, scaleMilli: 500, text: '' },
+  };
+
+  /** The engine folds the key into its answer, so `citations.resolve` is one
+   * engine call, not two. */
+  it('takes the cite key from the engine’s answer', () => {
+    expect(toResolvedCitation({ ...resolved, citeKey: 'zhong2024beyond' }).citeKey).toBe(
+      'zhong2024beyond'
+    );
+  });
+
+  it('carries the cite key when the library has a record', () => {
+    expect(toResolvedCitation(resolved, 'jarzynski1997nonequilibrium').citeKey).toBe(
+      'jarzynski1997nonequilibrium'
+    );
+  });
+
+  /** In the index but not yet a paper: the file is there, the key is not. */
+  it('reports a null key for a file with no paper record', () => {
+    const result = toResolvedCitation(resolved);
+    expect(result.inLibrary).toBe(true);
+    expect(result.citeKey).toBe(null);
   });
 });
 
@@ -391,6 +592,13 @@ describe('argument reading', () => {
   it('refuses a malformed citation', () => {
     for (const bad of [{}, { kind: 'doi' }, { kind: 'isbn', value: 'x' }, { value: 'x' }]) {
       expect(() => readCitationArg(bad)).toThrow();
+    }
+  });
+
+  it('reads a record id and refuses anything else', () => {
+    expect(readIdArg({ id: '7c1e0b5a' })).toBe('7c1e0b5a');
+    for (const bad of [{}, { id: '' }, { id: '  ' }, { id: 7 }, undefined]) {
+      expect(() => readIdArg(bad)).toThrow();
     }
   });
 

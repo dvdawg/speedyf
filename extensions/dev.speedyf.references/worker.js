@@ -46,8 +46,10 @@
 // What this cannot do, and what happens then: a PDF that was not typeset with
 // internal links — an older scan, most things exported from a word processor —
 // has no jumps at all, and none of the above is available. That is common
-// enough that it is a supported case rather than a failure: `scanByLinks`
-// below is the previous approach, kept whole, and the panel falls back to it.
+// enough that it is a supported case rather than a failure: the panel falls
+// back to reading the reference list out of the text (`scanByText`, the same
+// parser SpeedyF's library uses through this extension), and failing that to
+// the printed links (`scanByLinks`, the previous approach, kept whole).
 
 /** Cache namespace.
  *
@@ -58,7 +60,7 @@
  * answering from a scan made by the old code. A stale entry under an old
  * number is never read again and costs a few kilobytes until its extension is
  * removed. */
-const CACHE_VERSION = 5;
+const CACHE_VERSION = 6;
 const CACHE_PREFIX = `scan:v${CACHE_VERSION}:`;
 
 /** A page needs this many distinct destinations before it is considered part
@@ -120,6 +122,7 @@ async function handle(command, value) {
   if (command === 'goto') return goTo(value);
   if (command === 'rescan') return show({ force: true });
   if (command === 'refs') return show({ force: false });
+  if (command === 'provide') return provide(value);
   throw new Error(`unknown command "${command}"`);
 }
 
@@ -315,7 +318,8 @@ async function scan(info) {
     }
 
     const byEntry = jumpCount > 0 ? await scanByEntries(info, pages) : null;
-    const citations = byEntry ?? (await scanByLinks(info, pages));
+    const byText = byEntry ? null : await scanByText(info);
+    const citations = byEntry ?? byText ?? (await scanByLinks(info, pages));
 
     current = {
       name: info.name,
@@ -324,7 +328,7 @@ async function scan(info) {
       // answer different questions — one knows where a work is cited, the
       // other only where it is listed — and a heading that does not
       // distinguish them makes the weaker one look like the stronger one.
-      readBy: byEntry ? 'entries' : 'links',
+      readBy: byEntry ? 'entries' : byText ? 'text' : 'links',
       citations,
     };
     await writeCache(current);
@@ -1295,6 +1299,670 @@ async function scanByLinks(info, pages) {
   return [...references, ...plain.values()];
 }
 
+// ---------- reading the bibliography as text ----------
+
+/** The reference list of a document with no internal links, read out of its
+ * text with the same parser the library's reference lists are read with.
+ *
+ * Better than the bare links when it finds a list — every entry, with its
+ * authors, title and year, not only the ones that print an address — and
+ * still only "listed on": nothing in the text says where a work is cited.
+ * Null when no list of at least three entries is found, so the caller falls
+ * back to the links. */
+async function scanByText(info) {
+  const starts = [];
+  let joined = '';
+  for (let page = 0; page < info.pageCount; page++) {
+    let text = '';
+    try {
+      const value = await call('document.pageText', { page });
+      if (typeof value === 'string') text = value;
+    } catch {
+      // An unreadable page reads as empty.
+    }
+    if (page > 0) joined += '\n';
+    starts.push(joined.length);
+    joined += text;
+  }
+  const sectionAt = referenceSectionStart(joined);
+  if (sectionAt < 0) return null;
+  const entries = splitEntries(joined.slice(sectionAt));
+  if (entries.length < 3) return null;
+  const pageOf = (offset) => {
+    let page = 0;
+    while (page + 1 < starts.length && starts[page + 1] <= offset) page++;
+    return page;
+  };
+  const citations = entries.map((entry, index) => {
+    const parsed = parseEntry(entry.text);
+    return {
+      key: `text:${index}`,
+      kind: 'entry',
+      label: entry.label,
+      title: parsed.title,
+      authors: parsed.authors,
+      year: parsed.year ?? entryYear(entry.text),
+      text: entry.text,
+      pages: [pageOf(sectionAt + entry.at)],
+      citedOn: [],
+      sites: [],
+      citations: 0,
+      citation: identifierIn(entry.text),
+    };
+  });
+  await resolveAll(citations, info);
+  return citations.filter((citation) => !citation.isSelf);
+}
+
+/** The DOI or arXiv id an entry prints, for matching it to the library. */
+function identifierIn(text) {
+  const doi = text.match(/\b(10\.\d{4,9}\/[^\s"<>]+)/);
+  if (doi) return { kind: 'doi', value: doi[1].replace(/[.,;)\]]+$/, '') };
+  const arxiv = text.match(/arXiv:\s?(\d{4}\.\d{4,5})/i);
+  if (arxiv) return { kind: 'arxiv', value: arxiv[1] };
+  return null;
+}
+
+// ---------- reading a reference list out of plain text ----------
+//
+// The other half of this extension. Besides the panel for the open paper,
+// References is SpeedyF's reference provider: during idle indexing SpeedyF
+// hands it the stored text of each library document — never its path — and
+// it answers with that document's reference list, entry by entry. SpeedyF
+// keeps each entry's identifiers and a compact form of its text, and that is
+// how a reference that prints no DOI is matched to a library paper by its
+// title. Turn this extension off and only DOIs, arXiv ids and APS journal
+// references are matched.
+//
+// The text it is handed is the library's: each page's text with its
+// whitespace collapsed, pages joined by a newline. So a "line" is usually a
+// page, and the rules below never rely on a reference starting a line; the
+// line-based heading rule still applies to text that has real lines. The
+// panel uses the same parser for a paper with no internal links, on
+// `document.pageText`.
+//
+// Everything here is hand-written and tolerant: a garbled list yields fewer
+// entries or none, never an error.
+
+/** No paper has more; a list that seems to is garbage being misread. */
+const MAX_ENTRIES = 1000;
+/** An entry's text is cut here. A real entry, even one listing thirty
+ * authors, is shorter; the last entry of a list followed by an appendix
+ * would otherwise carry the whole appendix into title matching. */
+const MAX_ENTRY_CHARS = 1500;
+/** A run of `[n]` with no heading above it is taken for a reference list
+ * from this many entries on. */
+const MIN_UNHEADED_RUN = 5;
+/** A heading this close after the previous one is a running header over the
+ * same list ("ATTIAS HANNEKE RAMASWAMI References Noga Alon, …" at the top
+ * of each of its pages), not a new list. */
+const RUNNING_HEADER_GAP = 12_000;
+
+/** The headings a reference list stands under: the whole of a line, less a
+ * section number before and a colon or period after, in any case — or, run
+ * into the text, capitalized or in capitals. */
+const REFERENCE_HEADINGS = [
+  'notes and references',
+  'references',
+  'bibliography',
+  'literature cited',
+  'works cited',
+];
+
+const IS_UPPER = /^\p{Uppercase}$/u;
+const IS_LOWER = /^\p{Lowercase}$/u;
+const IS_ALPHA = /^\p{Alphabetic}$/u;
+const IS_ALNUM = /^[\p{Alphabetic}\p{Nd}\p{Nl}\p{No}]$/u;
+const IS_SPACE = /^\p{White_Space}$/u;
+
+const isUpper = (c) => c !== '' && IS_UPPER.test(c);
+const isLower = (c) => c !== '' && IS_LOWER.test(c);
+const isAlpha = (c) => c !== '' && IS_ALPHA.test(c);
+const isAlnum = (c) => c !== '' && IS_ALNUM.test(c);
+const isSpace = (c) => c !== '' && IS_SPACE.test(c);
+const isDigit = (c) => c !== undefined && c >= '0' && c <= '9';
+const isAsciiSpace = (c) => c === ' ' || c === '\t' || c === '\n' || c === '\f' || c === '\r';
+const isAsciiAlnum = (c) => c !== undefined && /^[A-Za-z0-9]$/.test(c);
+
+/** The character (code point) starting at `at`, or '' past the end. */
+function charAt(text, at) {
+  if (at >= text.length) return '';
+  return String.fromCodePoint(text.codePointAt(at));
+}
+
+/** The character (code point) ending just before `at`, or '' at the start. */
+function charBefore(text, at) {
+  if (at <= 0) return '';
+  const low = text.charCodeAt(at - 1);
+  if (low >= 0xdc00 && low <= 0xdfff && at >= 2) {
+    const high = text.charCodeAt(at - 2);
+    if (high >= 0xd800 && high <= 0xdbff) return text.slice(at - 2, at);
+  }
+  return text[at - 1];
+}
+
+/** Where `text` up to `end` ends once trailing whitespace is dropped. */
+function trimEndAt(text, end) {
+  let at = end;
+  while (at > 0) {
+    const c = charBefore(text, at);
+    if (!isSpace(c)) break;
+    at -= c.length;
+  }
+  return at;
+}
+
+/** "6", "6.", "6.1", "VI.", "(6)" — what a numbered heading starts with. */
+function isSectionNumber(word) {
+  const core = word.replace(/^[.()]+|[.()]+$/g, '');
+  return (
+    core.length > 0 &&
+    core
+      .split('.')
+      .every((part) => part.length > 0 && (/^\d+$/.test(part) || /^[ivxIVX]+$/.test(part)))
+  );
+}
+
+/** Whether a line is a reference-list heading and nothing else: the words,
+ * with a section number ("6", "6.", "VI.", "A.2") allowed before them and a
+ * colon or period after. "References are in the appendix" is prose;
+ * "References 12" is a table of contents. */
+function isReferenceHeadingLine(line) {
+  const words = line.split(/\p{White_Space}+/u).filter((word) => word.length > 0);
+  if (words.length > 0 && isSectionNumber(words[0])) words.shift();
+  const heading = words
+    .join(' ')
+    .replace(/[:.]+$/, '')
+    .toLowerCase();
+  return REFERENCE_HEADINGS.includes(heading);
+}
+
+/** Where the reference list of a document's text starts, or -1: after the
+ * last reference heading, or, with none, at the first entry of the longest
+ * run of `[1]`, `[2]`, … when it has at least five entries.
+ *
+ * A heading is either a line of its own or the words run into the text,
+ * capitalized, after the end of a sentence and right before a first entry
+ * ("… thank X. References [1] A. Author"). The last one counts: an
+ * introduction may say "References" too, and the list is at the end. */
+function referenceSectionStart(text) {
+  let lineHeading = -1;
+  let consumed = 0;
+  for (const line of text.split(/(?<=\n)/)) {
+    consumed += line.length;
+    if (isReferenceHeadingLine(line)) lineHeading = consumed;
+  }
+  const start = Math.max(lineHeading, inlineHeading(text));
+  if (start >= 0) return text.slice(start).trim().length > 0 ? start : -1;
+  const markers = numberedMarkers(text, 'bracket');
+  const chain = longestChain(markers);
+  return chain.length >= MIN_UNHEADED_RUN ? markers[chain[0]].start : -1;
+}
+
+/** The reference list of a document's text, or null. */
+function referenceSection(text) {
+  const start = referenceSectionStart(text);
+  return start < 0 ? null : text.slice(start);
+}
+
+/** The index just after the last heading run into the text, or -1; the first
+ * of a run of running headers. */
+function inlineHeading(text) {
+  const found = [];
+  for (let at = 0; at < text.length; at++) {
+    // Every heading starts with one of these, capitalized.
+    const c = text[at];
+    if (c !== 'R' && c !== 'B' && c !== 'L' && c !== 'W' && c !== 'N') continue;
+    if (isAlnum(charBefore(text, at))) continue;
+    const heading = REFERENCE_HEADINGS.find(
+      (candidate) =>
+        asciiLower(text.slice(at, at + candidate.length)) === candidate &&
+        !isAlnum(charAt(text, at + candidate.length))
+    );
+    if (!heading || !sentenceBefore(text, at)) continue;
+    let entryAt = at + heading.length;
+    while (text[entryAt] === ':' || text[entryAt] === '.') entryAt++;
+    while (entryAt < text.length && isSpace(charAt(text, entryAt))) {
+      entryAt += charAt(text, entryAt).length;
+    }
+    if (startsEntry(text, entryAt)) found.push(entryAt);
+  }
+  if (found.length === 0) return -1;
+  let last = found.pop();
+  while (found.length > 0) {
+    const previous = found[found.length - 1];
+    if (last - previous > RUNNING_HEADER_GAP) break;
+    last = previous;
+    found.pop();
+  }
+  return last;
+}
+
+function asciiLower(text) {
+  return text.replace(/[A-Z]/g, (c) => c.toLowerCase());
+}
+
+/** Whether what precedes `at` ends a sentence or a line: the start, a line
+ * break, or (past an optional section number) a character that is not a
+ * lower-case letter or a comma. "see the references [3]" is prose. */
+function sentenceBefore(text, at) {
+  let end = at;
+  while (end > 0 && (text[end - 1] === ' ' || text[end - 1] === '\t')) end--;
+  if (end === 0 || text[end - 1] === '\n') return true;
+  const endsSentence = (stop) => {
+    const c = charBefore(text, stop);
+    return c === '' || !(isLower(c) || c === ',');
+  };
+  const rest = trimEndAt(text, end);
+  if (endsSentence(rest)) return true;
+  let space = rest;
+  while (space > 0 && !isSpace(charBefore(text, space))) space -= charBefore(text, space).length;
+  if (space === 0) return isSectionNumber(text.slice(0, rest));
+  const word = text.slice(space, rest);
+  const head = space - charBefore(text, space).length;
+  return isSectionNumber(word) && endsSentence(trimEndAt(text, head));
+}
+
+/** Whether text at `at` begins like a first reference: `[1]`, `1.`, `(1)`,
+ * an `[AB99]` label, or a capitalized word (an author-year entry's name). */
+function startsEntry(text, at) {
+  if (text.startsWith('[1]', at) || text.startsWith('(1)', at) || text.startsWith('1.', at)) {
+    return true;
+  }
+  const close = text.indexOf(']', at);
+  if (close >= 0 && alphaLabelCuts(text.slice(at, close + 1)).length > 0) return true;
+  return isUpper(charAt(text, at));
+}
+
+/** The reference list cut into entries, `{ label, text }` each. Numbered
+ * lists — `[n]`, `n.`, `(n)`, or a bare superscript `n` — are cut at labels
+ * that count up by one from 1, so a number inside an entry cannot start one;
+ * the labelling that yields the longest run wins. Lists labelled by author
+ * and year (`[AB99]`, `[ACSZ23a]`) are cut at every such label where an
+ * entry can start. Otherwise an author-year list is cut where an entry ends
+ * and "Surname, I." begins, and failing that — full names first, as most
+ * machine-learning styles print them — after each "2023." that ends an
+ * entry. Lines are joined, words broken at a line end rejoined; at most 1000
+ * entries. A list with no recognizable structure yields nothing. */
+function splitEntries(section) {
+  const cuts = entryCuts(section);
+  const out = [];
+  cuts.slice(0, MAX_ENTRIES).forEach((cut, index) => {
+    const end = index + 1 < cuts.length ? cuts[index + 1].start : section.length;
+    const text = cleanEntry(section.slice(cut.text, end));
+    // `at` is where the entry starts in the section, for the panel to tell
+    // which page it is on.
+    if (text.length > 0) out.push({ label: cut.label, text, at: cut.start });
+  });
+  return out;
+}
+
+function entryCuts(section) {
+  let best = null;
+  for (const kind of ['bracket', 'dot', 'paren', 'bare']) {
+    const markers = numberedMarkers(section, kind);
+    const chain = longestChain(markers);
+    if (best === null || chain.length > best.chain.length) best = { markers, chain };
+  }
+  const { markers, chain } = best;
+  const alpha = alphaLabelCuts(section);
+  const authorYear = authorYearStarts(section);
+  const numbered =
+    chain.length >= alpha.length &&
+    (chain.length >= 5 ||
+      (chain.length >= 3 && chain.length * 2 >= authorYear.length) ||
+      (chain.length === 2 && authorYear.length < 3 && alpha.length < 3));
+  if (numbered) {
+    return chain.map((i) => ({
+      start: markers[i].start,
+      text: markers[i].end,
+      label: String(markers[i].n),
+    }));
+  }
+  if (alpha.length >= 3) return alpha;
+  const starts = authorYear.length >= 3 ? authorYear : yearEndedStarts(section);
+  if (starts.length < 2) return [];
+  return starts.map((start) => ({ start, text: start, label: null }));
+}
+
+/** `[AB99]`, `[ACSZ23a]`, `[Vap98]` where an entry can start: letters then a
+ * two-digit year, perhaps a letter after it. */
+function alphaLabelCuts(section) {
+  const cuts = [];
+  for (let at = section.indexOf('['); at >= 0; at = section.indexOf('[', at + 1)) {
+    const close = section.indexOf(']', at + 1);
+    if (close < 0) continue;
+    const label = section.slice(at + 1, close);
+    const letters = /^[A-Za-z+-]*/.exec(label)[0].length;
+    const digits = /^\d*/.exec(label.slice(letters))[0].length;
+    const suffix = label.slice(letters + digits);
+    const shaped =
+      letters >= 1 &&
+      letters <= 8 &&
+      /^[A-Z]/.test(label) &&
+      digits >= 2 &&
+      digits <= 4 &&
+      /^[a-z]?$/.test(suffix);
+    if (shaped && entryCanStart(section, at)) {
+      cuts.push({ start: at, text: close + 1, label });
+      if (cuts.length >= MAX_ENTRIES) break;
+    }
+  }
+  return cuts;
+}
+
+/** Where entries start in a list that is neither numbered nor "Surname, I.":
+ * the start, and every capitalized word after a year or a URL that ends an
+ * entry ("…, 2023. Raman Arora, …", "… URL https://….  Ishaq Aden-Ali, …"),
+ * past the back-reference page numbers some styles print there ("2023. 3, 7
+ * Martin Anthony"), unless the word goes on with the same entry (a URL, a
+ * DOI, an arXiv id, "In"). */
+function yearEndedStarts(section) {
+  const tokens = [...section.matchAll(/[^\p{White_Space}]+/gu)].map((m) => [m.index, m[0]]);
+  const starts = [0];
+  let index = 0;
+  while (index < tokens.length && starts.length < MAX_ENTRIES) {
+    const token = tokens[index][1];
+    index++;
+    if (!endsEntry(token)) continue;
+    let next = index;
+    while (
+      next < tokens.length &&
+      next - index < 8 &&
+      /^\d*$/.test(tokens[next][1].replace(/,+$/, ''))
+    ) {
+      next++;
+    }
+    if (next >= tokens.length) break;
+    const [at, word] = tokens[next];
+    const continues = ['URL', 'Url', 'DOI', 'Doi', 'doi', 'arXiv', 'Available', 'http', 'In'].some(
+      (prefix) => word.startsWith(prefix)
+    );
+    if (isUpper(charAt(word, 0)) && !continues) {
+      starts.push(at);
+      index = next;
+    }
+  }
+  return starts;
+}
+
+/** "2023.", "2023b.", "(2023).", or a URL with the entry's closing period. */
+function endsEntry(token) {
+  if (!token.endsWith('.')) return false;
+  let body = token.slice(0, -1);
+  if (body.startsWith('http') || body.startsWith('doi:')) return true;
+  body = body.replace(/^\(+/, '').replace(/\)+$/, '');
+  if (/[a-z]$/.test(body)) body = body.slice(0, -1);
+  return /^(19|20)\d\d$/.test(body);
+}
+
+/** Every label of one kind in the text, in order: `[12]` anywhere
+ * ('bracket'), and where an entry can start `12.` ('dot'), `(12)` ('paren')
+ * or a superscript `12 A. Author` ('bare'). */
+function numberedMarkers(text, kind) {
+  const out = [];
+  const open = kind === 'bracket' ? '[' : kind === 'paren' ? '(' : null;
+  let at = 0;
+  while (at < text.length) {
+    let digitsAt = at;
+    if (open !== null) {
+      if (text[at] !== open) {
+        at += 1;
+        continue;
+      }
+      digitsAt = at + 1;
+    }
+    let digits = 0;
+    while (isDigit(text[digitsAt + digits])) digits++;
+    if (digits === 0 || digits > 4) {
+      at += Math.max(digits, 1);
+      continue;
+    }
+    const after = digitsAt + digits;
+    const n = Number(text.slice(digitsAt, after));
+    let end = -1;
+    if (kind === 'bracket') {
+      if (text[after] === ']') end = after + 1;
+    } else if (kind === 'paren' || kind === 'dot') {
+      if (text[after] === (kind === 'paren' ? ')' : '.') && isAsciiSpace(text[after + 1])) {
+        end = after + 1;
+      }
+    } else {
+      let spaces = 0;
+      while (isAsciiSpace(text[after + spaces])) spaces++;
+      if (spaces > 0 && isUpper(charAt(text, after + spaces))) end = after;
+    }
+    const previous = text[at - 1];
+    const standalone =
+      at === 0 || !(isAsciiAlnum(previous) || previous === '.' || previous === ',');
+    const placed = kind === 'bracket' || entryCanStart(text, at);
+    if (end >= 0 && n > 0 && standalone && placed) {
+      out.push({ start: at, end, n });
+      at = end;
+    } else {
+      at = after;
+    }
+  }
+  return out;
+}
+
+/** The longest run of markers labelled 1, 2, 3, … in text order, as indices
+ * into `markers`: from each `1`, the first `2` after it, the first `3` after
+ * that. Ties go to the run that starts later, so a `[1]` in the body whose
+ * run jumps into the list loses to the list's own `[1]`. */
+function longestChain(markers) {
+  const byNumber = new Map();
+  markers.forEach((marker, index) => {
+    if (!byNumber.has(marker.n)) byNumber.set(marker.n, []);
+    byNumber.get(marker.n).push(index);
+  });
+  let best = [];
+  for (const first of byNumber.get(1) ?? []) {
+    const chain = [first];
+    while (chain.length < MAX_ENTRIES) {
+      const last = markers[chain[chain.length - 1]];
+      const candidates = byNumber.get(last.n + 1);
+      if (!candidates) break;
+      // The first candidate starting at or after the end of the last one.
+      let lo = 0;
+      let hi = candidates.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (markers[candidates[mid]].start < last.end) lo = mid + 1;
+        else hi = mid;
+      }
+      if (lo >= candidates.length) break;
+      chain.push(candidates[lo]);
+    }
+    if (chain.length >= best.length) best = chain;
+  }
+  return best;
+}
+
+/** Whether an entry can start at `at`: the start, a line start, or after
+ * whatever ends an entry — a period, a closing bracket, a digit. "Smith, J.,
+ * Jones, K." has no entry boundary at "Jones". */
+function entryCanStart(text, at) {
+  let end = at;
+  while (end > 0 && (text[end - 1] === ' ' || text[end - 1] === '\t' || text[end - 1] === ' ')) {
+    end--;
+  }
+  if (end === 0 || text[end - 1] === '\n') return true;
+  if (end === at) return false;
+  const c = charBefore(text, end);
+  return '.)]};"\''.includes(c) || isDigit(c);
+}
+
+/** Where each entry of an author-year list starts. */
+function authorYearStarts(section) {
+  const out = [];
+  for (let at = 0; at < section.length && out.length < MAX_ENTRIES;) {
+    const c = charAt(section, at);
+    if (
+      isUpper(c) &&
+      !isAlnum(charBefore(section, at)) &&
+      entryCanStart(section, at) &&
+      !afterInitial(section, at) &&
+      authorYearAt(section, at)
+    ) {
+      out.push(at);
+    }
+    at += c.length;
+  }
+  return out;
+}
+
+/** Whether the text before `at` ends with an initial ("A.", "H.O.",
+ * "J.-P."): the period before "Alton" in "A.K. Alton, G.R. Araujo" ends a
+ * name, not an entry. */
+function afterInitial(text, at) {
+  const end = trimEndAt(text, at);
+  let start = end;
+  while (start > 0 && !isSpace(charBefore(text, start))) start -= charBefore(text, start).length;
+  const word = text.slice(start, end);
+  return (
+    word.endsWith('.') &&
+    word
+      .split(/[.-]/)
+      .filter((part) => part.length > 0)
+      .every((part) => [...part].length === 1 && isUpper(part))
+  );
+}
+
+/** Whether text at `at` starts with "Surname, I." — a capitalized word
+ * (letters, hyphens, apostrophes), a comma, and an initial. */
+function authorYearAt(text, at) {
+  let i = at;
+  let c = charAt(text, i);
+  if (!isUpper(c)) return false;
+  i += c.length;
+  let letters = 0;
+  for (
+    c = charAt(text, i);
+    isAlpha(c) || c === '-' || c === "'" || c === '’';
+    c = charAt(text, i)
+  ) {
+    i += c.length;
+    letters++;
+  }
+  if (letters === 0 || text[i] !== ',') return false;
+  i++;
+  c = charAt(text, i);
+  if (!isSpace(c)) return false;
+  while (isSpace(charAt(text, i))) i += charAt(text, i).length;
+  c = charAt(text, i);
+  return isUpper(c) && text[i + c.length] === '.';
+}
+
+/** One entry's text with its lines joined: a word broken by a hyphen at a
+ * line end is rejoined, PDFium's soft-hyphen marks dropped, a page number
+ * that a page break left at the start of a line dropped, whitespace
+ * collapsed, and the length capped. */
+function cleanEntry(raw) {
+  const lines = raw.split('\n');
+  let joined = '';
+  for (let index = 0; index < lines.length; index++) {
+    let line = lines[index];
+    if (index > 0) {
+      // "Physical\n25 Review E": the 25 is the new page's number.
+      const digits = /^\d*/.exec(line)[0].length;
+      if (
+        digits >= 1 &&
+        digits <= 4 &&
+        line[digits] === ' ' &&
+        isAlpha(charAt(line.slice(digits).trimStart(), 0))
+      ) {
+        line = line.slice(digits).trimStart();
+      }
+    }
+    const next = lines[index + 1];
+    const broken =
+      line.trimEnd().endsWith('-') && next !== undefined && isLower(charAt(next.trimStart(), 0));
+    if (broken) {
+      joined += line.trimEnd().replace(/-+$/, '');
+      lines[index + 1] = next.trimStart();
+    } else {
+      joined += `${line} `;
+    }
+  }
+  let out = '';
+  let space = false;
+  for (const c of joined) {
+    if (c === '\u0002' || c === '­') continue;
+    if (isSpace(c)) {
+      space = out.length > 0;
+      continue;
+    }
+    if (space) {
+      out += ' ';
+      space = false;
+    }
+    out += c;
+    if (out.length >= MAX_ENTRY_CHARS) break;
+  }
+  return out.length > MAX_ENTRY_CHARS ? out.slice(0, MAX_ENTRY_CHARS).trimEnd() : out;
+}
+
+/** The year an entry was published: the last 19xx/20xx in parentheses
+ * ("(2024)", "(2024a)", "(Jan 2024)"), else one ending the entry, else the
+ * last plausible year anywhere. A number that is part of a longer one or of
+ * an arXiv id ("1901.00002") is not a year. */
+function entryYear(text) {
+  let parenthesized = null;
+  let ending = null;
+  let last = null;
+  let at = 0;
+  while (at + 4 <= text.length) {
+    const window = text.slice(at, at + 4);
+    const beforeOk = at === 0 || !(isDigit(text[at - 1]) || text[at - 1] === '.');
+    const after = text[at + 4];
+    const afterOk =
+      after === undefined ? true : after === '.' ? !isDigit(text[at + 5]) : !isDigit(after);
+    if (!(/^(19|20)\d\d$/.test(window) && beforeOk && afterOk)) {
+      at += 1;
+      continue;
+    }
+    const year = Number(window);
+    last = year;
+    const rest = text.slice(at + 4);
+    if (rest.replace(/^[a-z]*/, '').startsWith(')') || text[at - 1] === '(') parenthesized = year;
+    if (/^[\p{White_Space}.,;)]*$/u.test(rest)) ending = year;
+    at += 4;
+  }
+  return parenthesized ?? ending ?? last;
+}
+
+/** A document's reference list as the provider answers it: `{ label, text,
+ * year }` per entry. Empty when no list is found. */
+function parseReferences(text) {
+  const section = referenceSection(text);
+  if (section === null) return [];
+  return splitEntries(section).map(({ label, text: entry }) => ({
+    label,
+    text: entry,
+    year: entryYear(entry),
+  }));
+}
+
+/** Answer SpeedyF's request for a library document's references.
+ *
+ * The value is `{ document, text }`: an opaque token and the document's
+ * stored text. The answer goes back through `references.contribute` before
+ * the invoke is done; SpeedyF keeps the identifiers, not the text. */
+async function provide(value) {
+  const document = value && typeof value === 'object' ? value.document : null;
+  const text = value && typeof value === 'object' ? value.text : null;
+  if (typeof document !== 'string' || typeof text !== 'string') {
+    throw new Error('SpeedyF runs this with a library document; there is nothing to do by hand');
+  }
+  const entries = parseReferences(text).map(({ label, text: entry, year }) => ({
+    ...(label !== null ? { label } : {}),
+    text: entry,
+    ...(year !== null ? { year } : {}),
+  }));
+  await call('references.contribute', { document, entries });
+}
+
 // ---------- the library ----------
 
 /** Fill in what your library knows about each entry.
@@ -1402,7 +2070,7 @@ async function render() {
 
   const ordered = [...citations].sort(comparator(sort));
   const heading =
-    readBy === 'entries'
+    readBy !== 'links'
       ? `${citations.length} references`
       : `${citations.length} cited in ${pageCount} pages`;
 

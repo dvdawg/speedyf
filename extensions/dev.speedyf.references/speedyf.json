@@ -2,12 +2,18 @@
   "id": "dev.speedyf.references",
   "apiVersion": 1,
   "name": "References",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "description": "Every work this paper cites: its title, its authors, the pages it is cited on, and whether you already have it.",
   "author": "speedyf",
   "entry": "worker.js",
   "icon": "icon.svg",
-  "permissions": ["document:read", "citations:read", "commands:run", "storage"],
+  "permissions": [
+    "document:read",
+    "citations:read",
+    "commands:run",
+    "storage",
+    "library:contributeReferences"
+  ],
   "contributes": {
     "panels": [
       {
@@ -35,8 +41,13 @@
         "id": "goto",
         "title": "References: Go To This Citation",
         "keywords": ["navigate", "jump"]
+      },
+      {
+        "id": "provide",
+        "title": "References: Read a Library Document's Reference List"
       }
     ],
+    "referenceProvider": { "command": "provide" },
     "settings": [
       {
         "key": "sort",

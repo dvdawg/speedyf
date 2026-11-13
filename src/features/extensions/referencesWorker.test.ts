@@ -41,6 +41,8 @@ interface Jump {
   toY: number | null;
 }
 interface Page {
+  /** What `document.pageText` answers; absent reads as nothing. */
+  text?: string;
   links?: Link[];
   jumps?: Jump[];
   runs?: { text: string; box: Box }[];
@@ -189,6 +191,9 @@ function startWorker(
         break;
       case 'document.pageRuns':
         value = page?.runs ?? [];
+        break;
+      case 'document.pageText':
+        value = page?.text ?? null;
         break;
       case 'citations.resolve': {
         const title = doc?.library?.[String(args.value)];
@@ -488,6 +493,40 @@ describe('References worker: a document with no internal links', () => {
     expect(rowsIn(worker.drawn.at(-1)).map((row) => row.title)).toContain(
       'jmlr.org/papers/v20/18-598.html'
     );
+  });
+});
+
+describe('References worker: a document with no internal links but a readable list', () => {
+  /** The same parser the library's reference provider uses, on the page
+   * text: every entry, by its title, still only "listed on". */
+  const PRINTED: Doc = {
+    name: 'printed.pdf',
+    library: { '2202.00002': 'Library title' },
+    pages: [
+      { text: 'Body text cites [1] and [3].', links: [], jumps: [] },
+      {
+        text:
+          'References\n[1] A. Lovelace. On the analytical engine. Journal of Engines, 1843. ' +
+          '[2] G. Hopper. A compiler for business. ACM, 1952. ' +
+          '[3] A. Turing. Computing machinery and intelligence. Mind, arXiv:2202.00002, 1950.',
+        links: [],
+        jumps: [],
+      },
+    ],
+  };
+
+  it('lists the entries read from the text, each where it is listed', async () => {
+    const worker = startWorker({ printed: PRINTED });
+    worker.openDocument('printed');
+    await worker.invoke('refs');
+    const rows = rowsIn(worker.drawn.at(-1));
+    expect(rows.map((row) => row.title)).toEqual([
+      'On the analytical engine',
+      'A compiler for business',
+      'Computing machinery and intelligence',
+    ]);
+    for (const row of rows) expect(row.subtitle).toContain('listed on page 2');
+    expect(rows.filter((row) => row.badge === 'have it')).toHaveLength(1);
   });
 });
 
