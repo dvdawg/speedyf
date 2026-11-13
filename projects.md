@@ -540,6 +540,49 @@ count. Then the search field, then the list.
   paper in a tab, through `openInNewTabOrFocus`, exactly as the Library panel
   does today.
 
+**New.** A row under _All items_, with a muted count, present only while
+there are untriaged new items: items (`is_paper`) whose record was created
+(`addedAt`) in the last 7 days and after the library first loaded with this
+build (`review.since`, so items already there never count). Selecting it
+lists them flat, newest first, whatever the sort. On the focused row a digit
+1-9 files the item into the Nth project of the left column (the digits show,
+muted, at the end of the project rows only in this scope), D or Backspace
+marks it done, Enter opens; a quiet _Done_ per row and _All done_ in the
+header do the same with the mouse, and a drag onto a project files and
+triages. When the last one is triaged the row goes and the view falls back
+to _All items_. Palette: _Show New Items_.
+
+**Health.** A row below _Other PDFs_, with a muted count, present only while
+there are findings (`library_health`, `library/health.rs`). The middle
+column lists them under group headers, each row the item, one muted reason
+and text buttons on the right; a row selects the item, double-click opens it.
+Groups, each only when non-empty: _Likely duplicates or versions_ (the
+duplicate groups, with version pairs; _Merge..._ opens the merge
+confirmation), _Year may be wrong_ (the year hint; _Use 2021_ writes the
+floor as a user edit), _Missing files_ (every file gone: for how long, and
+when it leaves the library; a drive not connected says so), _Weak metadata_
+(no title beyond the file name, no authors, or incomplete for BibTeX in a
+project that syncs a `.bib`; _Look up_ only when lookups are on), _Title
+mismatch_ (a confident first-page title sharing too little with a recorded
+title the user did not type: not one inside the other and similarity below
+0.3; _Use page title_). Every finding has _Show_ and _Ignore_; Ignore is
+kept per item and kind and the finding never returns. Offline, no file read:
+the duplicate groups are computed once per `library:changed` (a generation
+counter) and shared with the duplicate line. Palette: _Show Library Health_.
+
+`library.json` carries both decisions in one versioned section:
+`"review": { "version": 1, "since", "reviewed": [ids], "ignored": [{ "paperId", "kind" }] }`;
+reviewed ids past the 7-day window are dropped as it is rewritten.
+
+**Sort.** A quiet _Sort: Default_ text button in the list's header line
+cycles Default (the engine's order) | Year (newest first, undated last) |
+Title | Cited here, kept across sessions (`speedyf-list-sort-v1`). _Cited
+here_ counts the items of the scope that cite each one (in a project, its
+members; under _All items_, every item), from the graph's edges in one pass
+(`library_cited_here`), most first, ties by year then title; only then does
+the meta line say "cited by 5 here". Under _All items_ it sorts within each
+group.
+
 **Export bundle (.zip)...** (the project's menu, beside Export .bib..., and the
 palette's _Export Project Bundle..._) writes one zip through the save
 dialog: `<project name>.bib`, rendered as Export .bib renders it and its
@@ -832,6 +875,11 @@ library_set_project_bib { projectId, path | null }
 library_lookup { paperId, mode }     -> applied | [candidate]        (phase 2)
 library_related_items { paperId }    -> [{ row, score, sharedRefs, coCited, reason }]  (phase 4)
 library_data_dir / library_move_data { dir }
+library_health                       -> [{ kind, label, findings }]
+library_health_ignore { paperId, kind }
+library_new_items { query }          -> [row], newest first
+library_mark_reviewed { paperIds }
+library_cited_here { filter }        -> { id: count }
 ```
 
 ### Frontend
