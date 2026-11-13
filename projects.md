@@ -82,6 +82,18 @@ file marked missing: the paper stays in its projects and its `.bib`, the UI
 dims it and says so, and the next file that matches by identifier or
 fingerprint reattaches.
 
+**While the app runs** (`library/watch.rs`) the folders are watched, so a
+rename reattaches at once rather than at the next launch: the watcher's
+removed path marks its file missing now (`missingSince` set) and the new
+path is scanned and reconciled, which finds the paper by its fingerprint
+and moves the row to the new path. A file moved to a Trash (`.Trash`,
+`.Trashes`, any hidden folder below a root) counts as removed and is never
+reattached there. A cloud placeholder (macOS `SF_DATALESS`: iCloud Drive,
+Dropbox or OneDrive evicted it) is never opened, since any read downloads
+it: the scan takes its name and stamp only, the text pass skips it, and it
+is not missing; once downloaded it has no fingerprint yet, so the next scan
+reads it properly.
+
 **Automatic merging.** Two item records that are plainly one work become
 one, through the ordinary merge (snapshots, so Split restores them):
 
@@ -195,6 +207,27 @@ the sidecars are rebuilt from the folders; `library.json` is the only file
 that holds something the user did, and the only one that moves when they
 choose a different data folder. Default: the app data dir. **Settings -> Library
 data folder** moves it, copying the file and then reading from the new place.
+
+**Live folder watching** (`library/watch.rs`, the `notify` crate: FSEvents
+on macOS, inotify on Linux, ReadDirectoryChangesW on Windows). Every root is
+watched recursively from launch, re-armed when roots change and when an
+unmounted volume comes back (checked every minute; a root under an
+unmounted `/Volumes/X` is not watched). Events only name paths: a path is
+looked at once it has been quiet for 1.5 s, and a file is taken once its
+size and mtime agree across two looks 0.5 s apart, so a download still
+arriving is not read. Non-PDFs, hidden files and folders, our own data
+folders and partial downloads (`.crdownload`, `.part`, Safari's
+`.download` bundles) are ignored; the full scan skips the same. A gone
+path marks its files missing; a settled PDF is scanned at idle (no OCR,
+nothing copied) and reconciled (`LibraryWatchNext`, one file per job). A
+burst is one batch, saved and announced (`library:changed`) at most once
+a second while it drains and once at the end; text, cites and OCR follow
+through the usual idle chain. A download shows up about 2-3 s after it
+finishes. **Safety net:** every 10 minutes, unless a scan is running, a
+stat-only pass compares the folders with the index and queues only what is
+new, changed or gone - for coalesced FSEvents, network volumes, sleep,
+and roots the watcher could not arm (logged once, never an error the user
+sees).
 
 Written atomically: serialize to a temp file in the same directory, then
 rename over the old one. The existing index is written with a plain
