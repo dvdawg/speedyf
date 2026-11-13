@@ -14,6 +14,7 @@ vi.mock('../features/projects/activePaper', () => ({
 
 const libraryBibtex = vi.fn(async (_ids: string[]) => '@article{jarzynski1997nonequilibrium}');
 const libraryLookup = vi.fn(async () => ({ kind: 'applied' as const }));
+const libraryPinKeys = vi.fn(async (_ids: string[]) => {});
 vi.mock('../lib/transport/engine', async (importOriginal) => {
   const actual = await importOriginal<typeof engineModule>();
   return {
@@ -22,6 +23,7 @@ vi.mock('../lib/transport/engine', async (importOriginal) => {
       ...actual.engine,
       libraryBibtex: (...args: unknown[]) => libraryBibtex(...(args as [string[]])),
       libraryLookup: (...args: unknown[]) => libraryLookup(...(args as [])),
+      libraryPinKeys: (...args: unknown[]) => libraryPinKeys(...(args as [string[]])),
     },
   };
 });
@@ -351,6 +353,21 @@ describe('library commands', () => {
     runCommand('library.copyCiteKey', { tab: fakeTab({}).tab });
     await vi.waitFor(() => expect(ui.sidebarMode).toBe('paper'));
     expect(writeText).not.toHaveBeenCalled();
+  });
+
+  /** No Projects list on screen: the open document's item, pinned after. */
+  it('copies \\cite for the open item when there is no list selection', async () => {
+    cache.paper = paper;
+    cache.known = true;
+    expect(commandById('library.copyCiteSelection')!.enabled(empty)).toBe(false);
+    expect(runCommand('library.copyCiteSelection', { tab: fakeTab({}).tab })).toBe(true);
+    await vi.waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith('\\cite{jarzynski1997nonequilibrium}')
+    );
+    await vi.waitFor(() => expect(libraryPinKeys).toHaveBeenCalledWith(['paper-1']));
+    expect(writeText.mock.invocationCallOrder[0]!).toBeLessThan(
+      libraryPinKeys.mock.invocationCallOrder[0]!
+    );
   });
 
   it('asks the engine for the BibTeX entry and copies it', async () => {

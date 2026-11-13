@@ -44,6 +44,7 @@ import type {
   PaperList,
   Paperness,
   Project,
+  ProjectSuggestion,
 } from '../../types/engine';
 import type { EditPlan } from '../../features/document/documentStore';
 
@@ -189,6 +190,9 @@ export interface EngineApi {
   libraryFileIntoInbox(path: string, inboxDir: string): Promise<Paper>;
   /** BibTeX for these papers, in this order. */
   libraryBibtex(paperIds: string[]): Promise<string>;
+  /** Pins these papers' cite keys, as copying BibTeX does, without
+   * rendering anything: what a copied \cite{} calls after the write. */
+  libraryPinKeys(paperIds: string[]): Promise<void>;
   libraryExportBib(projectId: string, path: string): Promise<void>;
   librarySetProjectBib(projectId: string, path: string | null): Promise<void>;
   libraryLookup(paperId: string, mode: LookupMode): Promise<LookupResult>;
@@ -215,6 +219,9 @@ export interface EngineApi {
     minCitedBy: number,
     focus?: GraphFocus
   ): Promise<MissingWork[]>;
+  /** Projects the item is not in that the citation graph ties it to: at
+   * most three, strongest first. Empty for an id that names no item. */
+  librarySuggestProjects(paperId: string): Promise<ProjectSuggestion[]>;
   /** Groups of records the engine suspects are one work. */
   libraryDuplicates(): Promise<DuplicateGroup[]>;
   /** Merges `mergeIds` into `keepId`: files, memberships, identifiers, best
@@ -295,6 +302,7 @@ export const engine: EngineApi = {
   libraryClassifyDocument: (docId) => invoke('library_classify_document', { docId }),
   libraryFileIntoInbox: (path, inboxDir) => invoke('library_file_into_inbox', { path, inboxDir }),
   libraryBibtex: (paperIds) => invoke('library_bibtex', { paperIds }),
+  libraryPinKeys: (paperIds) => invoke('library_pin_keys', { paperIds }),
   libraryExportBib: (projectId, path) => invoke('library_export_bib', { projectId, path }),
   librarySetProjectBib: (projectId, path) => invoke('library_set_project_bib', { projectId, path }),
   libraryLookup: (paperId, mode) => invoke('library_lookup', { paperId, mode }),
@@ -319,6 +327,7 @@ export const engine: EngineApi = {
       focus: focus?.paperId ?? null,
       depth: focus?.depth ?? null,
     }),
+  librarySuggestProjects: (paperId) => invoke('library_suggest_projects', { paperId }),
   libraryDuplicates: () => invoke('library_duplicates'),
   libraryMergePapers: (keepId, mergeIds) => invoke('library_merge_papers', { keepId, mergeIds }),
   libraryUnmerge: (paperId) => invoke('library_unmerge', { paperId }),

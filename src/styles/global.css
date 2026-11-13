@@ -4903,6 +4903,29 @@ textarea.paper-field-input {
   color: var(--text);
 }
 
+/* A project the citation graph suggests: one quiet line under the
+   project checkboxes, in the reader's panel and the detail column. */
+.project-suggestion {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.paper-section .paper-detail-suggestion {
+  grid-column: 2;
+  margin-top: 0;
+}
+
+.project-suggestion-text {
+  flex: 1 1 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .paper-files {
   margin: 0;
   padding: 3px 0 0;
@@ -5867,7 +5890,8 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   margin-top: 8px;
 }
 
-.paper-merge-btn {
+.paper-merge-btn,
+.paper-cite-btn {
   flex: none;
 }
 

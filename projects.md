@@ -406,6 +406,17 @@ hover preview costs. Beneath it the metadata, each field editable in place
 **Copy BibTeX**, **Look up** (when lookup is on), **Find by title** (when the
 paper has no identifier).
 
+**Copy \cite{}.** With one or more rows selected (click, shift-click,
+cmd/ctrl-click: the same selection a drag carries), the list header offers
+**Copy \cite{}** beside _Merge N items_. It writes `\cite{key1,key2,...}`
+with the keys in the list's visible order, each once, from the rows already
+in memory, so the write lands inside the click; then `library_pin_keys`
+pins the keys, as copying BibTeX does (a key that changes under a
+manuscript breaks the `\cite`). The Library command _Copy \cite for
+Selection_ (Cmd/Ctrl+Option/Alt+C, matched on the physical key) does the
+same for the list's selection, and with no list on screen copies
+`\cite{key}` for the open document's item.
+
 **Drag and drop** is done with pointer events, not HTML5 drag and drop. The
 app keeps Tauri's native file drop on so a PDF from Finder arrives with its
 path, and Tauri's runtime answers every drag itself, so the webview never
@@ -451,6 +462,20 @@ scan gets one quiet line and the same button in its secondary style. Adding
 copies the file into the inbox folder and then shows the panel proper.
 Later it also lists which of your papers this one cites and which cite it
 (section 8).
+
+**Project suggestions.** Under the project checkboxes, in this panel and in
+the Projects screen's detail column, at most one quiet line: "Add to
+Thesis? (cites 2 papers in it)" with **Add** and **Not now**. It comes from
+`library_suggest_projects`, which, for each project the item is not in,
+counts the members the item cites, the members citing it, and the works
+both the item and some member cite (by library record, identifier, or the
+missing-works reference-text key). Score: `2 * (cites + cited_by) +
+min(shared, 10)`, divided by the square root of the project's size so a
+big project does not win on size alone; a project needs a citation either
+way or at least 3 shared references; at most three, strongest first. Not
+now is per item and project for the session, and the next suggestion takes
+its place. Re-read on item change and on `library:changed`. Nothing is ever
+filed without the click.
 
 New commands, in a new `Library` group in `commands.ts`: _Copy Cite Key_,
 _Copy BibTeX_, _Add to Project…_, _Look Up Metadata_, _Switch Launch Screen_.

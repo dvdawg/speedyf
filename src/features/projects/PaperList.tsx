@@ -26,6 +26,7 @@ import {
   Index,
   Match,
   on,
+  onCleanup,
   Show,
   Switch,
 } from 'solid-js';
@@ -34,6 +35,7 @@ import { libraryStore } from '../citations/libraryStore';
 import { settings } from '../../stores/settings';
 import type { LookupBatch, PaperRow, Project } from '../../types/engine';
 import { baseName, exportBib, syncBib } from './bibActions';
+import { copyCite, registerCiteSelection } from './citeSelection';
 import { projectRowAt, setDropHover } from './dnd';
 import { searchFullText } from './fullTextHandoff';
 import GraphView from './GraphView';
@@ -204,6 +206,45 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
     }
     store.select(row.id);
   };
+
+  /** The multi-selection as rows, in the order the list shows them, each
+   * once; a selected row folded away under a collapsed group comes after,
+   * in list order. What Copy \cite writes. */
+  const selectedRows = (): PaperRow[] => {
+    const ids = new Set(multi());
+    if (ids.size === 0) return [];
+    const out: PaperRow[] = [];
+    const seen = new Set<string>();
+    const take = (row: PaperRow) => {
+      if (ids.has(row.id) && !seen.has(row.id)) {
+        seen.add(row.id);
+        out.push(row);
+      }
+    };
+    for (const item of items()) if (item.kind === 'row') take(item.row);
+    for (const row of store.state.rows) take(row);
+    return out;
+  };
+  const [citeCopied, setCiteCopied] = createSignal(false);
+  let citeTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(citeTimer));
+  const citeFailed = () =>
+    store.reportError('Could not write to the clipboard; press Copy \\cite{} again');
+  const copySelectionCite = async () => {
+    if (!(await copyCite(selectedRows()))) {
+      citeFailed();
+      return;
+    }
+    setCiteCopied(true);
+    clearTimeout(citeTimer);
+    citeTimer = setTimeout(() => setCiteCopied(false), 1_200);
+  };
+  // The Library command reads the selection from here while the list shows:
+  // read on demand at the key press, never tracked, which is the point.
+  onCleanup(
+    // eslint-disable-next-line solid/reactivity -- read on demand, not tracked
+    registerCiteSelection(() => (view() === 'list' ? selectedRows() : []), citeFailed)
+  );
 
   /** The rows a drag from this row carries: the multi-selection when the
    * row is in it, else the row alone. */
@@ -465,6 +506,16 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
                 </button>
               </Show>
             </div>
+            <Show when={multi().length >= 1 && !merging()}>
+              <button
+                type="button"
+                class="secondary-btn paper-cite-btn"
+                title={"Copy \\cite{...} with the selected items' keys, in list order"}
+                onClick={() => void copySelectionCite()}
+              >
+                {citeCopied() ? 'Copied' : 'Copy \\cite{}'}
+              </button>
+            </Show>
             <Show when={multi().length >= 2 && !merging()}>
               <button
                 type="button"

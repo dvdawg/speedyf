@@ -492,3 +492,19 @@ export interface MissingWork {
   /** the items in the view that cite it, in list order */
   citedBy: string[];
 }
+
+/** A project the item might belong in, read off the citation graph. */
+export interface ProjectSuggestion {
+  projectId: string;
+  name: string;
+  /** higher is stronger; normalized by the project's size */
+  score: number;
+  /** members the item cites */
+  cites: number;
+  /** members citing the item */
+  citedBy: number;
+  /** works the item and at least one member both cite */
+  sharedRefs: number;
+  /** in plain words: "cites 2 papers in it, shares 4 references with it" */
+  reason: string;
+}

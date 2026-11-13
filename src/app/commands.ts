@@ -34,6 +34,7 @@ import {
 } from '../features/projects/activePaper';
 import { engine } from '../lib/transport/engine';
 import { openQuickOpen } from '../features/palette/quickOpenStore';
+import { citeSelection, copyCite, copyListSelection } from '../features/projects/citeSelection';
 import { setUi, ui, type SidebarMode } from '../stores/uiStore';
 import { tabsStore, type TabRecord } from '../stores/tabsStore';
 import type { Paper } from '../types/engine';
@@ -180,6 +181,17 @@ async function copyFromPaper(text: (paper: Paper) => string | Promise<string>): 
   } catch {
     showPaperPanel();
   }
+}
+
+/** \cite{} for the Projects list's selection when the list is showing
+ * and has one, else for the open document's item. The selection's keys are
+ * in memory, so that write lands inside the key press; the open item's goes
+ * through `paperForActiveTab` as Copy Cite Key does. Keys are pinned after
+ * the write (citeSelection.ts). */
+async function copyCiteSelection(ctx: CommandCtx): Promise<void> {
+  if (ctx.tab === null && copyListSelection()) return;
+  const paper = await paperForActiveTab();
+  if (!paper || !(await copyCite([paper]))) showPaperPanel();
 }
 
 async function lookUpActivePaper(): Promise<void> {
@@ -479,6 +491,16 @@ export const COMMANDS: readonly Command[] = [
     keywords: ['citation', 'bibtex', 'key', 'clipboard', 'latex'],
     enabled: loaded,
     run: () => void copyFromPaper((paper) => paper.citeKey),
+  },
+  {
+    id: 'library.copyCiteSelection',
+    title: 'Copy \\cite for Selection',
+    group: 'Library',
+    shortcut: 'mod+alt+c',
+    keywords: ['citation', 'cite', 'key', 'keys', 'clipboard', 'latex', 'selected', 'items'],
+    enabled: (ctx) => (ctx.tab === null && citeSelection().length > 0) || loaded(ctx),
+    disabledReason: 'needs items selected on the Projects screen, or an open document',
+    run: (ctx) => void copyCiteSelection(ctx),
   },
   {
     id: 'library.copyBibtex',

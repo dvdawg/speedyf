@@ -28,6 +28,9 @@ interface Binding {
   mod?: boolean;
   /** `undefined` matches with or without Shift. */
   shift?: boolean;
+  /** Option on macOS, Alt elsewhere. Matched on the physical key
+   * (`KeyboardEvent.code`), since Option turns C into a cedilla in `key`. */
+  alt?: boolean;
   id: string;
   /** Fires even while a text field has focus. */
   whileTyping?: boolean;
@@ -86,6 +89,16 @@ const BINDINGS: readonly Binding[] = [
   // ⌘⇧L is the group's initial. Both claim only their shifted form, so an
   // extension can still take the plain key the way Scratchpad takes ⌘K.
   { key: 'c', mod: true, shift: true, id: 'library.copyCiteKey', preventAlways: true },
+  // The key's sibling: Option instead of Shift, for a whole \cite{} of the
+  // Projects selection (or the open item).
+  {
+    key: 'c',
+    mod: true,
+    shift: false,
+    alt: true,
+    id: 'library.copyCiteSelection',
+    preventAlways: true,
+  },
   { key: 'l', mod: true, shift: true, id: 'library.showPaperPanel', preventAlways: true },
 
   // Unmodified keys only swallow the event when they actually act.
@@ -111,18 +124,19 @@ const REDO_Y: Binding = { key: 'y', mod: true, id: 'edit.redo', preventAlways: t
  */
 export function reservedChords(): ReadonlySet<string> {
   const reserved = new Set<string>();
-  const add = (key: string, mod: boolean, shift: boolean) =>
+  const add = (key: string, mod: boolean, shift: boolean, alt = false) =>
     reserved.add(
-      canonicalChord({ key: key.length === 1 ? key.toLowerCase() : key, mod, shift, alt: false })
+      canonicalChord({ key: key.length === 1 ? key.toLowerCase() : key, mod, shift, alt })
     );
 
   for (const binding of [...BINDINGS, REDO_Y]) {
     const mod = binding.mod ?? false;
+    const alt = binding.alt ?? false;
     if (binding.shift === undefined) {
-      add(binding.key, mod, false);
-      add(binding.key, mod, true);
+      add(binding.key, mod, false, alt);
+      add(binding.key, mod, true, alt);
     } else {
-      add(binding.key, mod, binding.shift);
+      add(binding.key, mod, binding.shift, alt);
     }
   }
 
@@ -145,8 +159,15 @@ function isTypingTarget(t: EventTarget | null): boolean {
 }
 
 function matches(binding: Binding, event: KeyboardEvent, mod: boolean): boolean {
-  const key = binding.key.length === 1 ? event.key.toLowerCase() : event.key;
-  if (key !== binding.key) return false;
+  if (binding.alt) {
+    if (!event.altKey) return false;
+    const physical =
+      /^[a-z]$/.test(binding.key) && event.code === `Key${binding.key.toUpperCase()}`;
+    if (!physical && event.key.toLowerCase() !== binding.key) return false;
+  } else {
+    const key = binding.key.length === 1 ? event.key.toLowerCase() : event.key;
+    if (key !== binding.key) return false;
+  }
   if ((binding.mod ?? false) !== mod) return false;
   if (binding.shift !== undefined && binding.shift !== event.shiftKey) return false;
   return true;

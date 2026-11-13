@@ -16,6 +16,7 @@ import type {
   PaperFilter,
   PaperRow,
   Project,
+  ProjectSuggestion,
 } from '../../types/engine';
 
 const WHEN = '2026-11-11T20:00:00Z';
@@ -265,10 +266,13 @@ export const MISSING: MissingWork[] = [
 /** What the fake engine answers that a test may change, reset by `resetFixture`. */
 export const fixture = {
   duplicates: [] as DuplicateGroup[],
+  /** What `librarySuggestProjects` answers, for any item. */
+  suggestions: [] as ProjectSuggestion[],
 };
 
 export function resetFixture(): void {
   fixture.duplicates = [];
+  fixture.suggestions = [];
 }
 
 const PAPERS: Record<string, Paper> = {
@@ -637,6 +641,10 @@ export function fakeEngine() {
     libraryPreview: vi.fn(async () => null),
     libraryFileIntoInbox: vi.fn(async (): Promise<Paper> => paperFor('a')),
     libraryBibtex: vi.fn(async () => '@article{jarzynski1997nonequilibrium,}'),
+    libraryPinKeys: vi.fn(async (_ids: string[]): Promise<void> => undefined),
+    librarySuggestProjects: vi.fn(
+      async (_id: string): Promise<ProjectSuggestion[]> => fixture.suggestions
+    ),
     libraryExportBib: vi.fn(async () => {}),
     librarySetProjectBib: vi.fn(async () => {}),
     libraryLookup: vi.fn(async (): Promise<LookupResult> => ({ kind: 'nothing' })),
