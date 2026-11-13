@@ -210,6 +210,9 @@ pub struct ResolvedCitationDto {
     pub file_name: String,
     /// Canonical, root-contained path used by the normal guarded open flow.
     pub path: String,
+    /// The cite key of the paper record holding this file, if there is one,
+    /// so a caller that wants to cite what it resolved needs no second call.
+    pub cite_key: Option<String>,
     pub preview: PreviewSpecDto,
 }
 

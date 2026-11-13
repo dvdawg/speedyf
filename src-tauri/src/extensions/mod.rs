@@ -149,6 +149,10 @@ pub enum Permission {
     RenderRead,
     #[serde(rename = "document:contributeText")]
     DocumentContributeText,
+    /// Being handed the stored text of library documents during idle
+    /// indexing — never their paths — and returning their reference lists.
+    #[serde(rename = "library:contributeReferences")]
+    LibraryContributeReferences,
 }
 
 /// An action offered on something the user picked — a text selection, a
@@ -238,6 +242,15 @@ pub struct PanelContribution {
     pub title: String,
 }
 
+/// The command SpeedyF invokes to read a library document's reference list
+/// (`referenceProvider`). Needs `library:contributeReferences`.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReferenceProviderContribution {
+    /// One of this extension's declared command ids.
+    pub command: String,
+}
+
 /// Deliberately strict on both counts.
 ///
 /// `camelCase` because that is what the rest of the manifest uses, and an
@@ -270,6 +283,10 @@ pub struct Contributions {
     /// what keeps third-party code off the critical path.
     #[serde(default)]
     pub document_tasks: Vec<ActionContribution>,
+    /// Reads library documents' reference lists at idle. Only one provider
+    /// is active: the first enabled extension that declares one.
+    #[serde(default)]
+    pub reference_provider: Option<ReferenceProviderContribution>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -311,6 +328,7 @@ pub enum ManifestError {
     BadSetting(String),
     DuplicatePanel(String),
     BadPanelId(String),
+    ProviderNeedsPermission,
 }
 
 impl std::fmt::Display for ManifestError {
@@ -346,6 +364,10 @@ impl std::fmt::Display for ManifestError {
             ManifestError::BadPanelId(id) => write!(
                 f,
                 "panel id \"{id}\" must be non-empty and free of \"/\", which separates it from the extension id"
+            ),
+            ManifestError::ProviderNeedsPermission => write!(
+                f,
+                "referenceProvider needs the \"library:contributeReferences\" permission"
             ),
             ManifestError::UnknownBoundCommand(id) => write!(
                 f,
@@ -441,6 +463,17 @@ pub fn parse_manifest(source: &str) -> Result<Manifest, ManifestError> {
         }
         if action.title.trim().is_empty() {
             return Err(ManifestError::MissingField("action title"));
+        }
+    }
+    if let Some(provider) = &manifest.contributes.reference_provider {
+        if !seen.contains(provider.command.as_str()) {
+            return Err(ManifestError::UnknownBoundCommand(provider.command.clone()));
+        }
+        if !manifest
+            .permissions
+            .contains(&Permission::LibraryContributeReferences)
+        {
+            return Err(ManifestError::ProviderNeedsPermission);
         }
     }
     let mut settings = std::collections::HashSet::new();
@@ -1421,6 +1454,43 @@ mod tests {
     }
 
     // ---------- git sources ----------
+
+    #[test]
+    fn reads_a_reference_provider() {
+        let m = parse_manifest(&manifest_json(
+            r#","permissions":["library:contributeReferences"],
+               "contributes":{"commands":[{"id":"refs","title":"Read"}],
+               "referenceProvider":{"command":"refs"}}"#,
+        ))
+        .expect("valid");
+        assert_eq!(
+            m.contributes
+                .reference_provider
+                .map(|p| p.command)
+                .as_deref(),
+            Some("refs")
+        );
+    }
+
+    #[test]
+    fn a_reference_provider_needs_its_command_and_its_permission() {
+        let undeclared = parse_manifest(&manifest_json(
+            r#","permissions":["library:contributeReferences"],
+               "contributes":{"referenceProvider":{"command":"refs"}}"#,
+        ));
+        assert_eq!(
+            undeclared.unwrap_err(),
+            ManifestError::UnknownBoundCommand("refs".into())
+        );
+        let ungranted = parse_manifest(&manifest_json(
+            r#","contributes":{"commands":[{"id":"refs","title":"Read"}],
+               "referenceProvider":{"command":"refs"}}"#,
+        ));
+        assert_eq!(
+            ungranted.unwrap_err(),
+            ManifestError::ProviderNeedsPermission
+        );
+    }
 
     #[test]
     fn accepts_an_https_url() {

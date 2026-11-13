@@ -4,6 +4,7 @@
 
 use super::annots;
 use super::bubbles;
+use super::layout_text;
 use super::links;
 use super::pdfium_init;
 use super::preview::{self, CropInput, PREVIEW_SCALE_MILLI};
@@ -14,11 +15,13 @@ use super::text;
 use super::types::*;
 use super::{EngineShared, Work};
 use crate::errors::{AppError, AppResult};
+use crate::library::types::{PaperDto, PapernessDto};
 use crate::library::{self, LibraryEntry};
 use crate::search::TextLayoutData;
 use pdfium_render::prelude::*;
 use pdfium_render::prelude::{FPDF_DOCUMENT, FPDF_PAGE};
 use std::collections::HashMap;
+use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -278,6 +281,9 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         Work::PageBubbles { respond, .. } => respond(Err(err())),
         Work::PreviewRect { respond, .. } => respond(Err(err())),
         Work::ResolveCitation { respond, .. } => respond(Err(err())),
+        Work::LibraryPreview { respond, .. } => respond(Err(err())),
+        Work::ClassifyDocument { respond, .. } => respond(Err(err())),
+        Work::LibraryScanFile { respond, .. } => respond(Err(err())),
         Work::MatchRects { respond, .. } => respond(Err(err())),
         Work::Save { respond, .. } => respond(Err(err())),
         Work::BuildPrintPdf { respond, .. } => respond(Err(err())),
@@ -292,7 +298,8 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         | Work::StartIndexing { .. }
         | Work::IndexNext { .. }
         | Work::LibraryScanNext
-        | Work::LibraryTextNext => {}
+        | Work::LibraryTextNext
+        | Work::LibraryCitesNext => {}
     }
 }
 
@@ -347,6 +354,7 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
             y,
             respond,
         } => respond(do_preview_rect(state, shared, doc, src, x, y)),
+        Work::ClassifyDocument { doc, respond } => respond(do_classify_document(state, doc)),
         Work::ResolveCitation {
             id,
             main_epoch,
@@ -358,10 +366,27 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
                 respond(Ok(None));
             }
         }
+        Work::LibraryPreview {
+            path,
+            main_epoch,
+            respond,
+        } => {
+            // Same guard as a citation hover: a preview requested before the
+            // foreground document changed must not open library PDFs now.
+            if main_epoch == shared.main_epoch.load(Ordering::Acquire) {
+                respond(do_library_preview(state, shared, &path));
+            } else {
+                respond(Ok(None));
+            }
+        }
+        Work::LibraryScanFile { path, respond } => {
+            respond(do_library_scan_file(state, shared, &path))
+        }
         Work::StartIndexing { doc } => state.request_indexing(doc, shared),
         Work::IndexNext { doc, chain } => do_index_next(state, shared, meta, doc, chain),
         Work::LibraryScanNext => do_library_scan_next(state, shared),
         Work::LibraryTextNext => do_library_text_next(state, shared),
+        Work::LibraryCitesNext => do_library_cites_next(shared),
         Work::MatchRects {
             doc,
             src,
@@ -788,34 +813,83 @@ fn do_library_text_next(state: &mut WorkerState, shared: &EngineShared) {
         let library = shared.library.lock();
         (library.app_data_dir(), library.next_text_candidate())
     };
-    let Some(entry) = candidate else {
+    if let Some(entry) = candidate {
+        let pages = extract_library_text(state, &entry.path);
+        if let Some(pages) = &pages {
+            if let Err(error) = crate::search::librarytext::write_sidecar(
+                &app_data_dir,
+                &entry.path,
+                entry.mtime_ms,
+                entry.size,
+                pages,
+            ) {
+                log::warn!("cannot index {} for search: {error}", entry.path.display());
+            }
+        }
+        // The cited identifiers come from the same text while it is in
+        // hand, in the form the sidecar stores it so the backfill would read
+        // the same ones. The reference list is the reference provider's to
+        // read, from the sidecar, at idle. A document that yielded no text
+        // cites nothing, finally — as for the sidecar, it will not start
+        // being readable.
+        let cites = match pages {
+            Some(pages) => {
+                let text = pages
+                    .iter()
+                    .map(|(_, text)| crate::search::librarytext::normalized_text(text))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                library::record_citations(&entry, &text)
+            }
+            None => Vec::new(),
+        };
+        shared.refs_cache.lock().forget(&entry.path);
+        shared.library.lock().finish_text(&entry.path, cites);
+    }
+    requeue_library_text(shared);
+}
+
+/// Read one already-indexed document's cited identifiers back out of its
+/// sidecar: the backfill for entries indexed before cites were extracted
+/// with the text. No PDFium, so it is cheap; still one entry per job, so a
+/// thousand of them never hold the thread against a render.
+fn do_library_cites_next(shared: &EngineShared) {
+    let (app_data_dir, candidate) = {
+        let library = shared.library.lock();
+        (library.app_data_dir(), library.next_cites_candidate())
+    };
+    if let Some(entry) = candidate {
+        let cites = library::backfill_cites(&app_data_dir, &entry);
+        shared.refs_cache.lock().forget(&entry.path);
+        shared.library.lock().finish_cites(&entry.path, cites);
+    }
+    requeue_library_text(shared);
+}
+
+/// The idle job after a library text step: more text if any document still
+/// lacks a sidecar, else the cites backfill if any sidecar is still unread
+/// for them, else nothing. Text first: the backfill reads what it wrote.
+fn requeue_library_text(shared: &EngineShared) {
+    let (more_text, more_cites) = {
+        let library = shared.library.lock();
+        (library.has_text_work(), library.has_cites_work())
+    };
+    let work = if more_text {
+        Work::LibraryTextNext
+    } else if more_cites {
+        Work::LibraryCitesNext
+    } else {
         return;
     };
-
-    if let Some(pages) = extract_library_text(state, &entry.path) {
-        if let Err(error) = crate::search::librarytext::write_sidecar(
-            &app_data_dir,
-            &entry.path,
-            entry.mtime_ms,
-            entry.size,
-            &pages,
-        ) {
-            log::warn!("cannot index {} for search: {error}", entry.path.display());
-        }
-    }
-    shared.library.lock().finish_text(&entry.path);
-
-    if shared.library.lock().has_text_work() {
-        shared.queue.push(
-            Priority::Idle,
-            JobMeta {
-                doc: 0,
-                gen: shared.gens.current(0),
-                epoch: shared.cancels.current(0),
-            },
-            Work::LibraryTextNext,
-        );
-    }
+    shared.queue.push(
+        Priority::Idle,
+        JobMeta {
+            doc: 0,
+            gen: shared.gens.current(0),
+            epoch: shared.cancels.current(0),
+        },
+        work,
+    );
 }
 
 /// Every page's text, using the cheap extraction path — no character boxes, no
@@ -840,15 +914,200 @@ fn extract_library_text(state: &mut WorkerState, path: &Path) -> Option<Vec<(u32
     Some(pages)
 }
 
+/// The Info dictionary fields a paper record uses, and the ones the
+/// paperness classifier reads. Read through the raw bindings in the
+/// two-call pattern (length, then UTF-16LE text) so the document handle
+/// opened for the first page serves both.
+struct InfoDictionary {
+    title: Option<String>,
+    /// The Title as written, kept when the filter rejects it as a title:
+    /// an old publisher scan puts the article's PII there and nowhere else.
+    raw_title: Option<String>,
+    author: Option<String>,
+    year: Option<i32>,
+    subject: Option<String>,
+    producer: Option<String>,
+    creator: Option<String>,
+}
+
+impl InfoDictionary {
+    fn classifier_fields(&self) -> library::paperness::InfoFields<'_> {
+        library::paperness::InfoFields {
+            subject: self.subject.as_deref(),
+            producer: self.producer.as_deref(),
+            creator: self.creator.as_deref(),
+        }
+    }
+}
+
+fn read_meta_text(b: &dyn PdfiumLibraryBindings, doc: FPDF_DOCUMENT, tag: &str) -> Option<String> {
+    let text =
+        read_pdfium_utf16(|buffer, len| b.FPDF_GetMetaText(doc, tag, buffer.cast::<c_void>(), len));
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_owned())
+}
+
+/// What the open document's first pages and Info dictionary say about it
+/// being a library item. Read from the document itself rather than the
+/// library: the question only arises for a file the library does not have.
+fn do_classify_document(state: &mut WorkerState, doc: DocId) -> AppResult<PapernessDto> {
+    let raw = state.doc(doc)?.raw;
+    let b = state.bindings;
+    let info = read_info_dictionary(b, raw);
+    // A page that cannot be read classifies as unknown, not as an error: the
+    // panel's answer to "unknown" is the quiet one.
+    let (text, _) = classification_text(b, raw, &info.classifier_fields(), false);
+    Ok(library::paperness::classify(
+        &text,
+        &info.classifier_fields(),
+    ))
+}
+
+/// How many pages after the first the classifier may read when the first
+/// says too little: a thesis's title page is behind its cover, a book's
+/// copyright page behind its half-title.
+const EXTRA_CLASSIFY_PAGES: u32 = 3;
+
+/// One page's text with its word spaces repaired, uncapped; empty for a
+/// page that cannot be loaded. Positioned runs, not the raw character
+/// stream: many PDFs — LaTeX output above all — encode word gaps as
+/// position rather than as space characters, so the raw stream yields
+/// titles like "PrivateandpolynomialtimealgorithmsforlearningGaussians".
+/// Runs carry geometry, so `lines_from_runs` can put the spaces back. Same
+/// extraction as `page_text_and_title`, which keeps only enough for a
+/// hover; a publisher's footer is at the bottom of the page.
+///
+/// With `layout`, the page's typeset lines are also read, while it is
+/// open, for the title and authors printed on it (`library::firstpage`).
+fn repaired_page_text(
+    b: &dyn PdfiumLibraryBindings,
+    raw: FPDF_DOCUMENT,
+    index: u32,
+    layout: bool,
+) -> (String, Option<library::firstpage::FirstPage>) {
+    let page = b.FPDF_LoadPage(raw, index as i32);
+    if page.is_null() {
+        return (String::new(), None);
+    }
+    let [w, h] = render::page_display_size(b, raw, index as i32).unwrap_or([612.0, 792.0]);
+    let extracted = text::extract_page(b, page, w, h);
+    let first_page = layout.then(|| {
+        let lines = layout_text::extract_lines(b, page, w, h);
+        library::firstpage::extract(&lines, w, h)
+    });
+    b.FPDF_ClosePage(page);
+    // `extracted.boxes` are `[x, y, w, h]` but `lines_from_chars` reads `[l, b, r, t]`, so its gap repair finds no advance and falls back to PDFium's own lines.
+    let text = library::text_from_page(&extracted.raw, &extracted.boxes);
+    (text, first_page)
+}
+
+/// The text the classifier reads: the first page and, when that says
+/// little — a sparse cover, or nothing the classifier recognizes — the
+/// next `EXTRA_CLASSIFY_PAGES` pages after it, joined in order. The scan
+/// reads its identifiers and ISBN from the same text, so a book's ISBN is
+/// found on its copyright page. This costs the character boxes for one
+/// page per document, and four for the few that need them.
+///
+/// With `layout`, also the first page's printed title and authors.
+fn classification_text(
+    b: &dyn PdfiumLibraryBindings,
+    raw: FPDF_DOCUMENT,
+    info: &library::paperness::InfoFields,
+    layout: bool,
+) -> (String, Option<library::firstpage::FirstPage>) {
+    let (mut text, first_page) = repaired_page_text(b, raw, 0, layout);
+    if library::paperness::needs_more_pages(&text, info) {
+        let count = b.FPDF_GetPageCount(raw).max(0) as u32;
+        for index in 1..count.min(1 + EXTRA_CLASSIFY_PAGES) {
+            text.push('\n');
+            text.push_str(&repaired_page_text(b, raw, index, false).0);
+        }
+    }
+    (text, first_page)
+}
+
+fn read_info_dictionary(b: &dyn PdfiumLibraryBindings, doc: FPDF_DOCUMENT) -> InfoDictionary {
+    let raw_title = read_meta_text(b, doc, "Title");
+    let title = raw_title
+        .clone()
+        .filter(|title| library::plausible_info_title(title));
+    // CreationDate is the paper's year only in a PDF the publisher made,
+    // and a publisher's PDF carries a real Title. A scan of a 1988 paper has
+    // no usable Title and a CreationDate of whenever it was scanned, which
+    // would otherwise outrank the first page and turn up in the cite key.
+    let year = title
+        .is_some()
+        .then(|| read_meta_text(b, doc, "CreationDate"))
+        .flatten()
+        .and_then(|date| library::year_from_pdf_date(&date));
+    InfoDictionary {
+        title,
+        raw_title,
+        author: read_meta_text(b, doc, "Author"),
+        year,
+        subject: read_meta_text(b, doc, "Subject"),
+        producer: read_meta_text(b, doc, "Producer"),
+        creator: read_meta_text(b, doc, "Creator"),
+    }
+}
+
+/// Everything the scan learns about one file: identifiers from the file
+/// name and the first page (or the first few, when the first says little),
+/// a DOI derived from an Elsevier PII when there is no other, the arXiv
+/// stamp's category, the first-page title, the Info dictionary, the XMP
+/// packet, an ISBN, whether it looks like a paper, a thesis or a book at
+/// all, and the content fingerprint. The file name used to short-circuit the whole
+/// read; now every file is opened once, because a paper record wants a
+/// title and an author for `arXiv-2401.12345.pdf` as much as for any other.
+///
+/// A file PDFium cannot open is still fingerprinted and still searched for
+/// an XMP packet (plain bytes, no parser), and classified from nothing:
+/// `Unknown`, which puts it among the other PDFs until the user says
+/// otherwise.
 fn scan_library_candidate(
     state: &mut WorkerState,
     candidate: &library::ScanCandidate,
 ) -> LibraryEntry {
-    if let Some(entry) = library::entry_from_filename(candidate) {
-        return entry;
-    }
+    let fingerprint = library::content_fingerprint(&candidate.path);
+    let named = library::entry_from_filename(candidate);
+    let xmp = library::xmp::read_xmp(&candidate.path);
+    let finish = |mut entry: LibraryEntry, info: Option<InfoDictionary>, text: &str| {
+        // The file name is the more deliberate statement of identity; the
+        // first page fills in what it does not say. The source goes with
+        // the value, so the record knows the name said it.
+        if let Some(named) = &named {
+            if named.doi.is_some() {
+                entry.doi = named.doi.clone();
+                entry.doi_source = named.doi_source;
+            }
+            if named.arxiv.is_some() {
+                entry.arxiv = named.arxiv.clone();
+                entry.arxiv_source = named.arxiv_source;
+            }
+        }
+        entry.fingerprint = fingerprint.clone();
+        let paperness = library::paperness::classify(
+            text,
+            &info
+                .as_ref()
+                .map(InfoDictionary::classifier_fields)
+                .unwrap_or_default(),
+        );
+        entry.paper_verdict = Some(paperness.verdict);
+        entry.paper_reason = Some(paperness.reason);
+        entry.paper_kind = paperness.kind;
+        entry.xmp = xmp.clone();
+        let raw_title = info.as_ref().and_then(|info| info.raw_title.clone());
+        if let Some(info) = info {
+            entry.info_title = info.title;
+            entry.info_author = info.author;
+            entry.info_year = info.year;
+        }
+        library::derive_from_identifiers(&mut entry, text, raw_title.as_deref());
+        entry
+    };
     let Some(path) = candidate.path.to_str() else {
-        return library::entry_from_first_page(candidate, "");
+        return finish(library::entry_from_first_page(candidate, ""), None, "");
     };
     let raw = match render::open_document(state.bindings, path, None) {
         Ok(raw) => raw,
@@ -857,40 +1116,37 @@ fn scan_library_candidate(
                 "cannot scan library PDF {}: {error}",
                 candidate.path.display()
             );
-            return library::entry_from_first_page(candidate, "");
+            return finish(library::entry_from_first_page(candidate, ""), None, "");
         }
     };
-    let page = state.bindings.FPDF_LoadPage(raw, 0);
-    // Positioned runs, not the raw character stream. Many PDFs — LaTeX output
-    // above all — encode word gaps as position rather than as space
-    // characters, so the raw stream yields titles like
-    // "PrivateandpolynomialtimealgorithmsforlearningGaussians". Runs carry
-    // geometry, so `lines_from_runs` can put the spaces back. This costs the
-    // character boxes for one page per document, during a background scan.
-    let text = if page.is_null() {
-        String::new()
-    } else {
-        let [w, h] = render::page_display_size(state.bindings, raw, 0).unwrap_or([612.0, 792.0]);
-        let extracted = text::extract_page(state.bindings, page, w, h);
-        state.bindings.FPDF_ClosePage(page);
-        library::text_from_page(&extracted.raw, &extracted.boxes)
-    };
+    let info = read_info_dictionary(state.bindings, raw);
+    let (text, first_page) =
+        classification_text(state.bindings, raw, &info.classifier_fields(), true);
     state.bindings.FPDF_CloseDocument(raw);
-    library::entry_from_first_page(candidate, &text)
+    finish(
+        library::entry_from_page(candidate, &text, first_page.as_ref()),
+        Some(info),
+        &text,
+    )
 }
 
 fn do_library_scan_next(state: &mut WorkerState, shared: &EngineShared) {
     let candidate = shared.library.lock().next_candidate();
-    let Some(candidate) = candidate else {
-        return;
-    };
-    let entry = (!candidate.unchanged).then(|| scan_library_candidate(state, &candidate));
-    shared.library.lock().finish_candidate(&candidate, entry);
-    let (more_scan, more_text) = {
-        let library = shared.library.lock();
-        (library.has_scan_work(), library.has_text_work())
-    };
-    let requeue = |work| {
+    if let Some(candidate) = candidate {
+        let scanned = (!candidate.unchanged).then(|| scan_library_candidate(state, &candidate));
+        // An unchanged file still gets reconciled, from its stored entry:
+        // a library.json that starts empty would otherwise never get papers
+        // for the files indexed before it existed.
+        let entry = scanned
+            .clone()
+            .or_else(|| shared.library.lock().entry_for_path(&candidate.path));
+        if shared.library.lock().finish_candidate(&candidate, scanned) {
+            if let Some(entry) = entry {
+                shared.reconcile_library_entry(&entry);
+            }
+        }
+    }
+    if shared.library.lock().has_scan_work() {
         shared.queue.push(
             Priority::Idle,
             JobMeta {
@@ -898,16 +1154,49 @@ fn do_library_scan_next(state: &mut WorkerState, shared: &EngineShared) {
                 gen: shared.gens.current(0),
                 epoch: shared.cancels.current(0),
             },
-            work,
+            Work::LibraryScanNext,
         );
-    };
-    if more_scan {
-        requeue(Work::LibraryScanNext);
-    } else if more_text {
-        // The metadata pass is what discovers files, so the text pass starts
-        // once it has nothing left to find.
-        requeue(Work::LibraryTextNext);
+        return;
     }
+    // The index is complete: settle the paper records against it.
+    shared.finish_library_scan();
+    // The metadata pass is what discovers files, so the text pass (and the
+    // cites backfill behind it) starts once it has nothing left to find.
+    requeue_library_text(shared);
+}
+
+/// Scan one file outside the idle scan — just copied into the inbox — put
+/// it in the index and the paper records, and answer with its paper.
+fn do_library_scan_file(
+    state: &mut WorkerState,
+    shared: &EngineShared,
+    path: &Path,
+) -> AppResult<PaperDto> {
+    let (mtime_ms, size) = library::file_stamp(path)
+        .ok_or_else(|| AppError::Io(format!("cannot read {}", path.display())))?;
+    let candidate = library::ScanCandidate {
+        path: path.to_path_buf(),
+        mtime_ms,
+        size,
+        epoch: 0,
+        unchanged: false,
+    };
+    let entry = scan_library_candidate(state, &candidate);
+    shared.library.lock().upsert_entry(entry.clone());
+    let paper = {
+        let mut papers = shared.papers.lock();
+        papers.reconcile_file(&entry);
+        papers.flush(true)?;
+        papers.paper_for_path(path).ok_or_else(|| {
+            AppError::Internal(format!(
+                "no paper record for {} after scanning it",
+                path.display()
+            ))
+        })?
+    };
+    shared.notify_library_changed();
+    requeue_library_text(shared);
+    Ok(paper)
 }
 
 fn open_library_document(
@@ -1023,8 +1312,35 @@ fn do_resolve_citation(
     let Some(path) = path else {
         return Ok(None);
     };
-    let metadata = shared.library.lock().entry_for_path(&path);
     let doc_id = open_library_document(state, shared, &path)?;
+    resolved_library_document(state, shared, doc_id, &path).map(Some)
+}
+
+/// A library file's first page for the Projects screen. The same shape a
+/// citation hover gets, through the same document pool.
+fn do_library_preview(
+    state: &mut WorkerState,
+    shared: &EngineShared,
+    path: &Path,
+) -> AppResult<Option<ResolvedCitationDto>> {
+    // Re-checked here, not only in the command: the roots can change while
+    // the job waits in the queue.
+    let Some(path) = shared.library.lock().contains(path) else {
+        return Ok(None);
+    };
+    let doc_id = open_library_document(state, shared, &path)?;
+    resolved_library_document(state, shared, doc_id, &path).map(Some)
+}
+
+/// The preview spec and first-page text of an open library document, as a
+/// citation resolve answers it.
+fn resolved_library_document(
+    state: &mut WorkerState,
+    shared: &EngineShared,
+    doc_id: DocId,
+    path: &Path,
+) -> AppResult<ResolvedCitationDto> {
+    let metadata = shared.library.lock().entry_for_path(path);
     let page_count = state.doc(doc_id)?.page_count;
     let [page_w, page_h] = state.display_size(doc_id, 0)?;
     let tile = TileRect {
@@ -1049,12 +1365,14 @@ fn do_resolve_citation(
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.to_string_lossy().into_owned());
-    Ok(Some(ResolvedCitationDto {
+    let cite_key = shared.papers.lock().cite_key_for_path(path);
+    Ok(ResolvedCitationDto {
         doc_id,
         title: metadata.and_then(|entry| entry.title).or(extracted_title),
         page_count,
         file_name,
         path: path.to_string_lossy().into_owned(),
+        cite_key,
         preview: PreviewSpecDto {
             doc_id,
             src: 0,
@@ -1062,7 +1380,7 @@ fn do_resolve_citation(
             scale_milli: PREVIEW_SCALE_MILLI,
             text,
         },
-    }))
+    })
 }
 
 fn emit_progress(shared: &EngineShared, doc: DocId, indexed: u32, total: u32, truncated: bool) {

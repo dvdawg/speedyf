@@ -219,6 +219,28 @@ pub fn run() {
                 );
             }));
 
+            // Papers and projects changed: every window's store re-reads.
+            // No payload — the store is the source of truth, not the event.
+            let emitter = app.handle().clone();
+            engine.set_library_changed_callback(Box::new(move || {
+                let _ = emitter.emit("library:changed", ());
+            }));
+
+            // An online lookup started, a batch moved on, or the last one
+            // ended: the status bar shows that something is leaving the
+            // machine, and how far a batch has got.
+            let emitter = app.handle().clone();
+            engine.set_lookup_activity_callback(Box::new(move |progress| {
+                let _ = emitter.emit(
+                    "library:lookup",
+                    serde_json::json!({
+                        "active": progress.active,
+                        "done": progress.done,
+                        "total": progress.total,
+                    }),
+                );
+            }));
+
             app.manage(EngineState(engine));
 
             // Which windows exist and what each has open. Read before
@@ -398,6 +420,41 @@ pub fn run() {
             commands::bump_generation,
             commands::cancel_renders,
             commands::open_external_url,
+            commands::library::library_papers,
+            commands::library::library_counts,
+            commands::library::library_paper,
+            commands::library::library_paper_for_path,
+            commands::library::library_update_paper,
+            commands::library::library_projects,
+            commands::library::library_create_project,
+            commands::library::library_rename_project,
+            commands::library::library_delete_project,
+            commands::library::library_reorder_projects,
+            commands::library::library_set_membership,
+            commands::library::library_preview,
+            commands::library::library_classify_document,
+            commands::library::library_file_into_inbox,
+            commands::library::library_set_project_bib,
+            commands::library::library_set_lookup,
+            commands::library::library_data_dir,
+            commands::library::library_move_data,
+            commands::library::library_bibtex,
+            commands::library::library_export_bib,
+            commands::library::library_lookup,
+            commands::library::library_apply_candidate,
+            commands::library::library_discard_candidates,
+            commands::library::library_lookup_project,
+            commands::library::library_lookup_all,
+            commands::library::library_citation_links,
+            commands::library::library_graph,
+            commands::library::library_missing_works,
+            commands::library::library_duplicates,
+            commands::library::library_merge_papers,
+            commands::library::library_unmerge,
+            commands::library::library_not_duplicates,
+            commands::library::library_refs_provider,
+            commands::library::library_refs_pending,
+            commands::library::library_refs_store,
         ])
         .build(tauri::generate_context!())
         .expect("error while building SpeedyF")

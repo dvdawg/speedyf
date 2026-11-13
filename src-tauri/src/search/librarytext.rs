@@ -95,6 +95,22 @@ pub fn sidecar_path(app_data_dir: &Path, document: &Path) -> PathBuf {
     app_data_dir.join("text").join(format!("{hash:016x}.json"))
 }
 
+/// Where a document's parsed reference list lives (`library::references`).
+pub fn refs_path(app_data_dir: &Path, document: &Path) -> PathBuf {
+    sidecar_path(app_data_dir, document).with_extension("refs.json")
+}
+
+/// One page's text as a sidecar stores it — NFKC, quotes straightened,
+/// whitespace collapsed — for a reader that must see what a later read of
+/// the sidecar would.
+pub fn normalized_text(raw: &str) -> String {
+    let count = raw.chars().count().min(u32::MAX as usize) as u32;
+    PageEntry::new_indexed(raw, count)
+        .indexed_parts()
+        .0
+        .to_owned()
+}
+
 /// Write a document's extracted text beside the library index.
 ///
 /// `pages` arrives as the raw PDFium stream; normalizing here means every
@@ -232,12 +248,35 @@ fn parse_sidecar(
     })
 }
 
+/// A document's indexed text, every page joined with a newline, for a reader
+/// that wants the words and not the matching — the citation backfill. The
+/// same checks as a search: nothing comes back for bytes the sidecar does not
+/// describe.
+pub fn read_sidecar_text(
+    app_data_dir: &Path,
+    document: &Path,
+    mtime_ms: u64,
+    size: u64,
+) -> Option<String> {
+    let bytes = read_sidecar_bytes(app_data_dir, document)?;
+    let indexed = parse_sidecar(&bytes, document, mtime_ms, size)?;
+    Some(
+        indexed
+            .pages
+            .iter()
+            .map(|(_, entry)| entry.indexed_parts().0)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
+
 /// Delete a document's sidecar. Best effort: a leftover only wastes disk, and
 /// is rejected on load anyway once its fingerprint stops matching.
 pub fn remove_sidecar(app_data_dir: &Path, document: &Path) {
     let _ = std::fs::remove_file(sidecar_path(app_data_dir, document));
     let _ = std::fs::remove_file(filter_path(app_data_dir, document));
     let _ = std::fs::remove_file(scan_path(app_data_dir, document));
+    let _ = std::fs::remove_file(refs_path(app_data_dir, document));
 }
 
 /// Matches within one document.

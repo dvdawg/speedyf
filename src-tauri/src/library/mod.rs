@@ -2,16 +2,37 @@
 //! and persistence are thread-safe, while PDF parsing is deliberately left to
 //! the engine worker that owns PDFium.
 
-use crate::engine::citation::{citation_from_filename, find_explicit_citations};
+use crate::engine::citation::{citation_from_filename, find_explicit_citations, fold_arxiv_doi};
 use crate::engine::types::{CitationIdDto, LibraryStatusDto};
 use crate::errors::{AppError, AppResult};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
+
+pub mod bibtex;
+pub mod chain;
+pub mod citekey;
+pub mod filing;
+pub mod firstpage;
+pub mod identifiers;
+pub mod lookup;
+pub mod merge;
+pub mod missing;
+pub mod paperness;
+pub mod papers;
+pub mod projects;
+pub mod ratelimit;
+pub mod references;
+pub mod sources;
+pub mod store;
+pub mod titlematch;
+pub mod types;
+pub mod xmp;
 
 const INDEX_FILE: &str = "library-index.json";
 const ROOT_FILE: &str = "library-root.json";
@@ -33,12 +54,110 @@ pub struct LibraryEntry {
     /// existed still loads — it simply reports nothing indexed yet.
     #[serde(default)]
     pub text_indexed: bool,
+    /// Size plus a hash of the first and last 64 KiB: how a paper record
+    /// recognizes its file after a rename. Absent in an index written before
+    /// paper records existed, which `next_candidate` treats as "rescan".
+    #[serde(default)]
+    pub fingerprint: Option<String>,
+    /// The Info dictionary's Title, when it is a title rather than a file
+    /// name or "Untitled"; Author as written; the year of CreationDate.
+    /// These rank above the first-page guess and below any lookup.
+    #[serde(default)]
+    pub info_title: Option<String>,
+    #[serde(default)]
+    pub info_author: Option<String>,
+    #[serde(default)]
+    pub info_year: Option<i32>,
+    /// Every DOI and arXiv id the full text cites, less the file's own
+    /// (projects.md §8). `None` until extracted — the text pass fills it in,
+    /// and a backfill job reads it out of the sidecar for entries indexed
+    /// before it existed.
+    #[serde(default)]
+    pub cites: Option<Vec<CitationIdDto>>,
+    /// Whether the file looks like a paper, and why (`paperness::classify`
+    /// over the first page and the Info dictionary). `None` in an index
+    /// written before the scan classified, until the rescan reaches it.
+    #[serde(default)]
+    pub paper_verdict: Option<types::PapernessVerdict>,
+    #[serde(default)]
+    pub paper_reason: Option<String>,
+    /// What kind of item the classifier took it for — a thesis, a book, an
+    /// article — when it could tell. Offered to the record's `kind` at
+    /// first-page rank.
+    #[serde(default)]
+    pub paper_kind: Option<types::PaperKind>,
+    /// What the file's XMP packet said, when it has one worth keeping.
+    #[serde(default)]
+    pub xmp: Option<xmp::XmpFields>,
+    /// An ISBN printed on the first page, checksum-valid, digits only.
+    #[serde(default)]
+    pub isbn: Option<String>,
+    /// The primary category off the arXiv stamp down the first page's
+    /// margin (`cs.CL`, `hep-th`), which tells the lookup chain whether
+    /// the paper is physics or computer science before any service has
+    /// been asked.
+    #[serde(default)]
+    pub arxiv_category: Option<String>,
+    /// Where `doi` and `arxiv` were read: `FirstPage` for the head of the
+    /// first page, `Filename` for the file's name, `Identifier` for a DOI
+    /// made from a PII. The paper record keeps the source beside the
+    /// identifier, which is how it tells the scan's own (re-derived every
+    /// rescan) from a lookup's or the user's (kept). `None` in an index
+    /// written before the scan recorded it, read as the scan's.
+    #[serde(default)]
+    pub doi_source: Option<types::MetaSource>,
+    #[serde(default)]
+    pub arxiv_source: Option<types::MetaSource>,
+    /// The authors printed under the title on the first page, read from
+    /// its layout (`firstpage`), and whether the title and the authors
+    /// were read with confidence: a page that looked like a paper's title
+    /// page and parsed cleanly. A reading without confidence is offered
+    /// only when the Info dictionary and XMP say nothing.
+    #[serde(default)]
+    pub first_page_authors: Vec<types::Author>,
+    #[serde(default)]
+    pub first_page_title_confident: bool,
+    #[serde(default)]
+    pub first_page_authors_confident: bool,
 }
 
 /// The shape written to disk today. Both persisted files carry a version now:
 /// they had none, and an unrecognized shape was silently discarded along with
 /// the whole index.
-const FORMAT_VERSION: u32 = 2;
+/// v3: the scan reads the Info dictionary and fingerprints files. An older
+/// index is loaded but every entry is rescanned once (see `read_index`), so
+/// changes to what the scan extracts reach papers that were indexed before.
+/// v4: the scan classifies each file as a paper or not, reads its XMP
+/// packet and looks for an ISBN. Same one-time rescan.
+/// v5: the classifier takes theses and books for library items, records the
+/// kind, and reads a few more pages when the first says little. Same
+/// one-time rescan, so the theses and books already indexed get their kind.
+/// v6: the scan derives a DOI from an Elsevier PII and reads the arXiv
+/// stamp's category (`identifiers`). Same one-time rescan, so the old
+/// scans already indexed gain the DOI that makes them lookable-up.
+/// v7: the scan reads the file's own identifiers from the head of the
+/// first page only, takes an arXiv id for the file's own only off the
+/// stamp, and records where each came from. Same one-time rescan, so a
+/// paper that was filed under the first work it cites is put right.
+/// v8: a document's reference list is cut into entries and kept in a refs
+/// sidecar (`references`), and `cites` gains the DOIs APS journal
+/// references stand for. No rescan: an older index's `cites` are cleared,
+/// so the cheap backfill re-derives both from the text sidecars already on
+/// disk, without PDFium.
+/// v9: the reference list is read by the reference provider extension, not
+/// the engine; `cites` are explicit identifiers and APS journal DOIs found
+/// anywhere in the text. Cleared and backfilled again, the same way, so
+/// identifiers the engine's own entry parser used to add are dropped and
+/// the provider is handed every document (v1 refs sidecars are ignored).
+/// v10: the scan reads the first page's layout for its title and authors
+/// (`firstpage`). Rescanned once, since that needs PDFium; same bytes keep
+/// their text, cites and refs sidecars, so only the metadata pass repeats.
+const FORMAT_VERSION: u32 = 10;
+/// Indexes older than this are rescanned on upgrade: what changed after
+/// it is re-derived from the text sidecars instead.
+const RESCAN_BELOW_VERSION: u32 = 10;
+/// Indexes older than this have their `cites` re-derived by the backfill.
+const CITES_SINCE_VERSION: u32 = 9;
 
 #[derive(Serialize, Deserialize)]
 struct RootConfig {
@@ -82,6 +201,9 @@ pub struct LibraryState {
     total: u32,
     scanning: bool,
     scan_epoch: u64,
+    /// Backfilled entries since the index was last written; see
+    /// `finish_cites`.
+    cites_unsaved: u32,
 }
 
 impl LibraryState {
@@ -122,7 +244,7 @@ impl LibraryState {
             .into_iter()
             .filter(|entry| {
                 contained_in_any(&configured, &entry.path)
-                    .and_then(|path| file_fingerprint(&path).map(|fingerprint| (path, fingerprint)))
+                    .and_then(|path| file_stamp(&path).map(|fingerprint| (path, fingerprint)))
                     .is_some_and(|(path, (mtime_ms, size))| {
                         path == entry.path && mtime_ms == entry.mtime_ms && size == entry.size
                     })
@@ -139,6 +261,7 @@ impl LibraryState {
             total: 0,
             scanning: false,
             scan_epoch: 0,
+            cites_unsaved: 0,
         };
         state.schedule_scan();
         state
@@ -237,14 +360,17 @@ impl LibraryState {
 
     pub fn next_candidate(&mut self) -> Option<ScanCandidate> {
         while let Some(path) = self.pending.pop_front() {
-            let Some((mtime_ms, size)) = file_fingerprint(&path) else {
+            let Some((mtime_ms, size)) = file_stamp(&path) else {
                 self.processed = self.processed.saturating_add(1);
                 continue;
             };
-            let unchanged = self
-                .entries
-                .get(&path)
-                .is_some_and(|entry| entry.mtime_ms == mtime_ms && entry.size == size);
+            // An entry without a fingerprint was written before paper
+            // records existed, so the first run after that upgrade rescans
+            // everything once, at idle priority, to fingerprint it and read
+            // its Info dictionary. After that the stamp decides as before.
+            let unchanged = self.entries.get(&path).is_some_and(|entry| {
+                entry.mtime_ms == mtime_ms && entry.size == size && entry.fingerprint.is_some()
+            });
             return Some(ScanCandidate {
                 path,
                 mtime_ms,
@@ -258,16 +384,33 @@ impl LibraryState {
         None
     }
 
-    pub fn finish_candidate(&mut self, candidate: &ScanCandidate, entry: Option<LibraryEntry>) {
+    /// Record a scanned candidate. Returns whether it was taken: a candidate
+    /// from a scan that has since been restarted is dropped, and the caller
+    /// should not act on it either.
+    pub fn finish_candidate(
+        &mut self,
+        candidate: &ScanCandidate,
+        entry: Option<LibraryEntry>,
+    ) -> bool {
         if candidate.epoch != self.scan_epoch {
-            return;
+            return false;
         }
-        if let Some(entry) = entry {
+        if let Some(mut entry) = entry {
             // A re-scanned file is a changed file: whatever text was extracted
             // from the old bytes no longer describes it. The sidecar would be
-            // rejected on load anyway once the fingerprint stops matching, but
+            // rejected on load anyway once the stamp stops matching, but
             // deleting it now keeps the index from growing a copy per edit.
-            crate::search::librarytext::remove_sidecar(&self.app_data_dir, &entry.path);
+            // The one exception is the fingerprint-only rescan after the
+            // upgrade: same bytes, so the sidecar still describes them.
+            match self.entries.get(&entry.path) {
+                Some(existing)
+                    if existing.mtime_ms == entry.mtime_ms && existing.size == entry.size =>
+                {
+                    entry.text_indexed = existing.text_indexed;
+                    entry.cites = existing.cites.clone();
+                }
+                _ => crate::search::librarytext::remove_sidecar(&self.app_data_dir, &entry.path),
+            }
             self.entries.insert(entry.path.clone(), entry);
         }
         self.processed = self.processed.saturating_add(1).min(self.total);
@@ -278,6 +421,29 @@ impl LibraryState {
             self.scanning = false;
             self.persist_index();
         }
+        true
+    }
+
+    /// Put one file into the index outside a scan: a file just copied into
+    /// the inbox, which the caller wants a paper for now rather than when the
+    /// next idle scan reaches it. Same bytes as before keep their sidecar.
+    pub fn upsert_entry(&mut self, mut entry: LibraryEntry) {
+        match self.entries.get(&entry.path) {
+            Some(existing)
+                if existing.mtime_ms == entry.mtime_ms && existing.size == entry.size =>
+            {
+                entry.text_indexed = existing.text_indexed;
+                entry.cites = existing.cites.clone();
+            }
+            _ => crate::search::librarytext::remove_sidecar(&self.app_data_dir, &entry.path),
+        }
+        self.entries.insert(entry.path.clone(), entry);
+        self.persist_index();
+    }
+
+    /// Every path in the index, for marking paper files missing.
+    pub fn paths(&self) -> std::collections::HashSet<PathBuf> {
+        self.entries.keys().cloned().collect()
     }
 
     pub fn has_scan_work(&self) -> bool {
@@ -305,15 +471,47 @@ impl LibraryState {
     /// Record that a document's text is now on disk — or that extracting it
     /// failed, which is also final: a file that cannot be read will not start
     /// reading, and retrying it forever would stall every document behind it.
-    pub fn finish_text(&mut self, path: &Path) {
+    /// `cites` is what the same text cited, so the backfill never has to
+    /// read back a sidecar this pass just wrote.
+    pub fn finish_text(&mut self, path: &Path, cites: Vec<CitationIdDto>) {
         if let Some(entry) = self.entries.get_mut(path) {
             entry.text_indexed = true;
+            entry.cites = Some(cites);
         }
         self.persist_index();
     }
 
     pub fn has_text_work(&self) -> bool {
         self.entries.values().any(|entry| !entry.text_indexed)
+    }
+
+    /// The next document whose text is on disk but whose cited identifiers
+    /// were never read out of it: indexed before cites existed.
+    pub fn next_cites_candidate(&self) -> Option<LibraryEntry> {
+        self.all_entries()
+            .into_iter()
+            .find(|e| e.text_indexed && e.cites.is_none())
+    }
+
+    pub fn has_cites_work(&self) -> bool {
+        self.entries
+            .values()
+            .any(|entry| entry.text_indexed && entry.cites.is_none())
+    }
+
+    /// Record a backfilled entry's cites. Written through every 25 entries
+    /// and when none are left, as the scan does: a backfill touches a
+    /// thousand entries in seconds, and writing the whole index for each
+    /// would cost more than the reading did.
+    pub fn finish_cites(&mut self, path: &Path, cites: Vec<CitationIdDto>) {
+        if let Some(entry) = self.entries.get_mut(path) {
+            entry.cites = Some(cites);
+        }
+        self.cites_unsaved += 1;
+        if self.cites_unsaved % 25 == 0 || !self.has_cites_work() {
+            self.cites_unsaved = 0;
+            self.persist_index();
+        }
     }
 
     fn persist_root(&self) {
@@ -383,7 +581,25 @@ fn read_index(bytes: &[u8]) -> Vec<LibraryEntry> {
             return Vec::new();
         }
         if !file.entries.is_empty() || file.version > 0 {
-            return file.entries;
+            let mut entries = file.entries;
+            if file.version < RESCAN_BELOW_VERSION {
+                // The scan learns more than it did when this index was
+                // written. Without a fingerprint `next_candidate` treats an
+                // entry as changed, so the whole library is read once more
+                // at idle priority; sidecars carry over.
+                for entry in &mut entries {
+                    entry.fingerprint = None;
+                }
+            }
+            if file.version < CITES_SINCE_VERSION {
+                // What is read out of the text grew (the reference list,
+                // the journal DOIs): the backfill reads it again out of
+                // the sidecars, which are still good.
+                for entry in &mut entries {
+                    entry.cites = None;
+                }
+            }
+            return entries;
         }
     }
     match serde_json::from_slice::<Vec<LibraryEntry>>(bytes) {
@@ -519,44 +735,450 @@ pub fn entry_from_filename(candidate: &ScanCandidate) -> Option<LibraryEntry> {
         CitationIdDto::Doi(value) => (Some(value), None),
         CitationIdDto::ArXiv(value) => (None, Some(value)),
     };
+    let source = |value: &Option<String>| value.as_ref().map(|_| types::MetaSource::Filename);
     Some(LibraryEntry {
         path: candidate.path.clone(),
         mtime_ms: candidate.mtime_ms,
         size: candidate.size,
+        doi_source: source(&doi),
+        arxiv_source: source(&arxiv),
         doi,
         arxiv,
         title: None,
         text_indexed: false,
+        fingerprint: None,
+        info_title: None,
+        info_author: None,
+        info_year: None,
+        cites: None,
+        paper_verdict: None,
+        paper_reason: None,
+        paper_kind: None,
+        xmp: None,
+        isbn: None,
+        arxiv_category: None,
+        first_page_authors: Vec::new(),
+        first_page_title_confident: false,
+        first_page_authors_confident: false,
     })
 }
 
-pub fn entry_from_first_page(candidate: &ScanCandidate, text: &str) -> LibraryEntry {
-    let mut doi = None;
-    let mut arxiv = None;
-    for occurrence in find_explicit_citations(text) {
-        match occurrence.id {
-            CitationIdDto::Doi(value) if doi.is_none() => doi = Some(value),
-            CitationIdDto::ArXiv(value) if arxiv.is_none() => arxiv = Some(value),
-            _ => {}
+/// The headings a reference list stands under: the whole of a line, less
+/// a section number before and a colon or period after, in any case.
+const REFERENCE_HEADINGS: &[&str] = &[
+    "references",
+    "notes and references",
+    "bibliography",
+    "literature cited",
+    "works cited",
+];
+
+/// The part of a page's text above its reference list: everything before
+/// the first line that is just "References", "Bibliography", "Literature
+/// cited" or "Works cited", numbered or not. The document's own
+/// identifiers are read from here and nowhere else, because a reference
+/// list is a list of other people's: a short paper whose references start
+/// on the first page was being filed under the first work it cites. A
+/// page without the heading is all head, which is most first pages.
+pub fn page_head(text: &str) -> &str {
+    let mut consumed = 0;
+    for line in text.split_inclusive('\n') {
+        if is_reference_heading(line) {
+            return &text[..consumed];
         }
-        if doi.is_some() && arxiv.is_some() {
-            break;
-        }
+        consumed += line.len();
     }
-    let title = text
-        .lines()
-        .map(str::trim)
-        .find(|line| line.chars().count() > 12)
-        .map(|line| line.chars().take(300).collect());
+    text
+}
+
+/// Whether a line is a reference-list heading and nothing else: the
+/// words, with a section number ("6", "6.", "VI.", "A.2") allowed before
+/// them and a colon or period after. "References are in the appendix" is
+/// prose; "References 12" is a table of contents.
+fn is_reference_heading(line: &str) -> bool {
+    let mut words = line.split_whitespace().peekable();
+    if words.peek().is_some_and(|first| is_section_number(first)) {
+        words.next();
+    }
+    let heading = words
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim_end_matches([':', '.'])
+        .to_lowercase();
+    REFERENCE_HEADINGS.contains(&heading.as_str())
+}
+
+/// "6", "6.", "6.1", "VI.", "(6)" — what a numbered heading starts with.
+fn is_section_number(word: &str) -> bool {
+    let core = word.trim_matches(|c: char| matches!(c, '.' | ')' | '('));
+    !core.is_empty()
+        && core.split('.').all(|part| {
+            !part.is_empty()
+                && (part.chars().all(|c| c.is_ascii_digit())
+                    || part
+                        .chars()
+                        .all(|c| matches!(c, 'i' | 'v' | 'x' | 'I' | 'V' | 'X')))
+        })
+}
+
+/// What the pages the classifier read say: the first page, or the first
+/// few when the first says little, so a book's ISBN is found on its
+/// copyright page.
+///
+/// The file's own DOI and ISBN are read from the head of the page, above
+/// any reference list (`page_head`). Its own arXiv id is only ever the
+/// stamp arXiv prints down the margin (`identifiers::arxiv_stamp`): a bare
+/// `arXiv:ID` in running text is a citation, wherever it stands. The stamp
+/// is looked for on the whole page, since arXiv lays it over the page
+/// after the body and PDFium reads it out last — below a reference list,
+/// when the page has one — and its bracketed category makes it
+/// unmistakable anyway.
+pub fn entry_from_first_page(candidate: &ScanCandidate, text: &str) -> LibraryEntry {
+    entry_from_page(candidate, text, None)
+}
+
+/// `entry_from_first_page`, with the title and authors the first page's
+/// layout gave (`firstpage::extract`), when the page could be laid out.
+/// Its title replaces the "first long line" guess, which stays as the
+/// fallback, unconfident, for a page without one.
+pub fn entry_from_page(
+    candidate: &ScanCandidate,
+    text: &str,
+    layout: Option<&firstpage::FirstPage>,
+) -> LibraryEntry {
+    let head = page_head(text);
+    let doi = find_explicit_citations(head)
+        .into_iter()
+        .find_map(|occurrence| match occurrence.id {
+            CitationIdDto::Doi(value) => Some(value),
+            CitationIdDto::ArXiv(_) => None,
+        });
+    let arxiv = identifiers::arxiv_stamp(text).map(|stamp| stamp.id);
+    let laid_out = layout.and_then(|page| page.title.clone());
+    let title_confident = laid_out.is_some()
+        && layout.is_some_and(|page| page.title_confidence == firstpage::Confidence::High);
+    let title = laid_out.or_else(|| {
+        text.lines()
+            .map(str::trim)
+            .find(|line| line.chars().count() > 12)
+            .map(|line| line.chars().take(300).collect())
+    });
+    let first_page_authors = layout.map(|page| page.authors.clone()).unwrap_or_default();
+    let first_page_authors_confident = !first_page_authors.is_empty()
+        && layout.is_some_and(|page| page.authors_confidence == firstpage::Confidence::High);
+    let source = |value: &Option<String>| value.as_ref().map(|_| types::MetaSource::FirstPage);
     LibraryEntry {
         path: candidate.path.clone(),
         mtime_ms: candidate.mtime_ms,
         size: candidate.size,
+        doi_source: source(&doi),
+        arxiv_source: source(&arxiv),
         doi,
         arxiv,
         title,
         text_indexed: false,
+        fingerprint: None,
+        info_title: None,
+        info_author: None,
+        info_year: None,
+        cites: None,
+        paper_verdict: None,
+        paper_reason: None,
+        paper_kind: None,
+        xmp: None,
+        isbn: find_isbn(head),
+        arxiv_category: None,
+        first_page_authors,
+        first_page_title_confident: title_confident,
+        first_page_authors_confident,
     }
+}
+
+/// What the file's identifiers say on their own (projects.md §4), once the
+/// file name and the pages have had their say. An Elsevier PII — printed
+/// in the head of the page, or left in an Info Title the scan rejected as
+/// a title ("PII: 0022-0000(88)90028-1") — becomes the article's DOI when
+/// there is no other, but only when its ISSN checks out: a PII is as good
+/// an identity as a printed DOI, and a mis-OCR'd one would merge two
+/// articles. The arXiv stamp's category is kept for the lookup chain when
+/// the stamp names this file's own id (the file name may say otherwise).
+pub fn derive_from_identifiers(entry: &mut LibraryEntry, text: &str, info_title: Option<&str>) {
+    if entry.doi.is_none() {
+        entry.doi = [Some(page_head(text)), info_title]
+            .into_iter()
+            .flatten()
+            .filter_map(identifiers::find_pii)
+            .find(|pii| identifiers::pii_has_valid_issn(pii))
+            .map(|pii| identifiers::doi_from_pii(&pii));
+        entry.doi_source = entry.doi.as_ref().map(|_| types::MetaSource::Identifier);
+    }
+    entry.arxiv_category = identifiers::arxiv_stamp(text)
+        .filter(|stamp| entry.arxiv.as_deref().is_none_or(|id| id == stamp.id))
+        .and_then(|stamp| stamp.category);
+}
+
+/// The separators an ISBN is printed with. Hyphens of every kind and
+/// spaces, including the non-breaking one a typesetter uses to keep the
+/// number on one line.
+fn is_isbn_separator(c: char) -> bool {
+    matches!(
+        c,
+        '-' | ' ' | '\u{a0}' | '\u{2010}' | '\u{2011}' | '\u{2012}' | '\u{2013}'
+    )
+}
+
+/// Is `digits` (10 or 13 characters, digits with a possible trailing X) a
+/// real ISBN? ISBN-10 is a weighted sum mod 11 with X for ten; ISBN-13 is
+/// the EAN mod-10 check.
+fn isbn_checksum_ok(digits: &str) -> bool {
+    let values: Vec<u32> = digits
+        .chars()
+        .map(|c| match c {
+            'X' => 10,
+            _ => c.to_digit(10).unwrap_or(99),
+        })
+        .collect();
+    if values.contains(&99) {
+        return false;
+    }
+    match values.len() {
+        10 => {
+            if values[..9].contains(&10) {
+                return false;
+            }
+            let sum: u32 = values
+                .iter()
+                .enumerate()
+                .map(|(index, value)| (10 - index as u32) * value)
+                .sum();
+            sum % 11 == 0
+        }
+        13 => {
+            if values.contains(&10) {
+                return false;
+            }
+            let sum: u32 = values
+                .iter()
+                .enumerate()
+                .map(|(index, value)| if index % 2 == 0 { *value } else { 3 * value })
+                .sum();
+            sum % 10 == 0
+        }
+        _ => false,
+    }
+}
+
+/// An ISBN as written — `978-0-306-40615-7`, `0 306 40615 2`,
+/// `0306406152`, with a trailing `x` — normalized to its digits (and a
+/// trailing `X`), or `None` when it is not 10 or 13 long or its checksum
+/// fails.
+pub fn normalize_isbn(raw: &str) -> Option<String> {
+    let digits: String = raw
+        .trim()
+        .chars()
+        .filter(|c| !is_isbn_separator(*c))
+        .map(|c| c.to_ascii_uppercase())
+        .collect();
+    isbn_checksum_ok(&digits).then_some(digits)
+}
+
+/// The first valid ISBN announced as one in `text`: "ISBN" (with or
+/// without "-10" / "-13" and a colon), then the number, hyphenated or
+/// spaced or neither. A copyright page lists several — hardcover, eBook —
+/// and the first that checks out is the one.
+pub fn find_isbn(text: &str) -> Option<String> {
+    let lower = text.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(at) = lower[from..].find("isbn") {
+        let after = from + at + "isbn".len();
+        from = after;
+        // "isbn" inside a word ("misbnorm") is not the label.
+        if text[..after - "isbn".len()]
+            .chars()
+            .next_back()
+            .is_some_and(char::is_alphanumeric)
+        {
+            continue;
+        }
+        if let Some(found) = isbn_after_label(&text[after..]) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// The number following an "ISBN" label, tried with the "-13"/"-10" form
+/// marker stripped first and as written second, so "ISBN-13: 978…" and
+/// "ISBN 1056…" both read right.
+fn isbn_after_label(rest: &str) -> Option<String> {
+    fn skip_leading(s: &str) -> &str {
+        s.trim_start_matches(|c: char| is_isbn_separator(c) || c == ':')
+    }
+    let unmarked = skip_leading(rest);
+    let stripped = ["13", "10"].iter().find_map(|marker| {
+        let after = unmarked.strip_prefix(marker)?;
+        let next = after.chars().next();
+        (next.is_none() || next.is_some_and(|c| is_isbn_separator(c) || c == ':'))
+            .then(|| skip_leading(after))
+    });
+    stripped
+        .and_then(isbn_at_start)
+        .or_else(|| isbn_at_start(unmarked))
+}
+
+/// An ISBN at the very start of `s`: digits run together or separated by
+/// one kind of separator, at most 13 of them, a final X allowed in the
+/// tenth place. The 13-digit reading is tried first, then the first ten.
+fn isbn_at_start(s: &str) -> Option<String> {
+    let mut digits = String::new();
+    let mut separator: Option<char> = None;
+    let mut last_was_separator = false;
+    for c in s.chars() {
+        if c.is_ascii_digit() || ((c == 'X' || c == 'x') && digits.len() == 9) {
+            digits.push(c.to_ascii_uppercase());
+            last_was_separator = false;
+            if digits.len() == 13 || digits.ends_with('X') {
+                break;
+            }
+        } else if is_isbn_separator(c) && !digits.is_empty() && !last_was_separator {
+            // One separator per number: "0-306-40615-2 2004" ends at the
+            // space, "0 306 40615 2" does not.
+            let kind = if c == ' ' || c == '\u{a0}' { ' ' } else { '-' };
+            match separator {
+                Some(known) if known != kind => break,
+                _ => separator = Some(kind),
+            }
+            last_was_separator = true;
+        } else {
+            break;
+        }
+    }
+    if digits.len() >= 13 && isbn_checksum_ok(&digits[..13]) {
+        return Some(digits[..13].to_owned());
+    }
+    if digits.len() >= 10 && isbn_checksum_ok(&digits[..10]) {
+        return Some(digits[..10].to_owned());
+    }
+    None
+}
+
+/// The identifiers a document's full text cites, in first-seen order,
+/// without repeats and without the document's own: an arXiv paper carries
+/// its id in every page header, and a journal article prints its DOI on the
+/// first page. arXiv DOIs (`10.48550/arXiv.…`) are folded to the arXiv id,
+/// as citation resolution does, so a reference list that cites the same
+/// preprint both ways yields one edge.
+pub fn cited_identifiers(
+    text: &str,
+    own_doi: Option<&str>,
+    own_arxiv: Option<&str>,
+) -> Vec<CitationIdDto> {
+    let own_doi = own_doi.map(str::to_ascii_lowercase);
+    let mut seen: HashSet<CitationIdDto> = HashSet::new();
+    let mut out = Vec::new();
+    for occurrence in find_explicit_citations(text) {
+        let id = fold_arxiv_doi(occurrence.id);
+        let own = match &id {
+            CitationIdDto::Doi(value) => own_doi.as_deref() == Some(value.as_str()),
+            CitationIdDto::ArXiv(value) => own_arxiv == Some(value.as_str()),
+        };
+        if own || !seen.insert(id.clone()) {
+            continue;
+        }
+        out.push(id);
+    }
+    out
+}
+
+/// What a document's text cites: every explicit DOI and arXiv id in it
+/// (`cited_identifiers`) plus the DOIs its APS journal references stand
+/// for, wherever they are printed (`references::journal_dois`), the
+/// document's own left out — for `LibraryEntry::cites`. Identifiers only:
+/// cutting the reference list into entries is the reference provider
+/// extension's job (`references`), and with no provider these are all the
+/// edges there are. `text` is the sidecar's form
+/// (`librarytext::normalized_text`, pages joined by newlines), so the text
+/// pass and the backfill read the same identifiers out of the same
+/// document.
+pub fn record_citations(entry: &LibraryEntry, text: &str) -> Vec<CitationIdDto> {
+    let own_doi = entry.doi.as_deref();
+    let own_arxiv = entry.arxiv.as_deref();
+    let mut cites = cited_identifiers(text, own_doi, own_arxiv);
+    let own_doi = own_doi.map(str::to_ascii_lowercase);
+    for doi in references::journal_dois(text) {
+        if own_doi.as_deref() == Some(doi.as_str()) {
+            continue;
+        }
+        let id = CitationIdDto::Doi(doi);
+        if !cites.contains(&id) {
+            cites.push(id);
+        }
+    }
+    cites
+}
+
+/// The cited identifiers of a document indexed before they were kept (or
+/// before the current way of reading them), read back out of its sidecar.
+/// A sidecar that is missing or describes other bytes yields nothing, and
+/// that is final for the same reason a text pass that fails is: the next
+/// scan of changed bytes starts it over.
+pub fn backfill_cites(app_data_dir: &Path, entry: &LibraryEntry) -> Vec<CitationIdDto> {
+    crate::search::librarytext::read_sidecar_text(
+        app_data_dir,
+        &entry.path,
+        entry.mtime_ms,
+        entry.size,
+    )
+    .map(|text| record_citations(entry, &text))
+    .unwrap_or_default()
+}
+
+/// An Info-dictionary Title worth keeping. Authoring tools fill the field
+/// with the source file's name or "Untitled" often enough that the rule is
+/// needed: those would otherwise outrank the first-page title.
+pub fn plausible_info_title(title: &str) -> bool {
+    let title = title.trim();
+    if title.is_empty() || title.eq_ignore_ascii_case("untitled") {
+        return false;
+    }
+    let lower = title.to_lowercase();
+    if [".pdf", ".tex", ".dvi", ".doc", ".docx", ".ps"]
+        .iter()
+        .any(|extension| lower.ends_with(extension))
+    {
+        return false;
+    }
+    // Publisher scans fill Title with the article's identifier: "PII:
+    // S0022-0000(88)90028-1", "doi:10.1103/PhysRevLett.78.2690". The first
+    // page carries the real title; this would only replace it with a number.
+    if [
+        "pii:", "pii ", "doi:", "doi ", "arxiv:", "issn", "isbn", "10.",
+    ]
+    .iter()
+    .any(|prefix| lower.starts_with(prefix))
+    {
+        return false;
+    }
+    // A title has letters in it. Identifiers and page labels do not, or have
+    // only one or two among the digits.
+    if title.chars().filter(|c| c.is_alphabetic()).count() < 3 {
+        return false;
+    }
+    // "jarzynski_1997" or "paper-final": a file stem, not a title.
+    title.contains(char::is_whitespace) || !title.contains(['_', '-'])
+}
+
+/// The year of a PDF date string, `D:YYYYMMDDHHmmSS...`. Only the year is
+/// wanted, and only when it is one a paper could carry.
+pub fn year_from_pdf_date(date: &str) -> Option<i32> {
+    let digits = date.trim().trim_start_matches("D:");
+    let year: String = digits.chars().take(4).collect();
+    if year.len() < 4 || !year.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    year.parse::<i32>()
+        .ok()
+        .filter(|year| (1800..=2100).contains(year))
 }
 
 fn canonical_directory(path: &Path) -> AppResult<PathBuf> {
@@ -579,7 +1201,9 @@ pub fn contained_canonical_path(root: &Path, candidate: &Path) -> Option<PathBuf
         .then_some(canonical_candidate)
 }
 
-fn file_fingerprint(path: &Path) -> Option<(u64, u64)> {
+/// (mtime in ms, size): the cheap "has this file changed" check the index
+/// runs on every scan.
+pub fn file_stamp(path: &Path) -> Option<(u64, u64)> {
     let metadata = fs::metadata(path).ok()?;
     if !metadata.is_file() {
         return None;
@@ -592,6 +1216,46 @@ fn file_fingerprint(path: &Path) -> Option<(u64, u64)> {
         .as_millis()
         .min(u64::MAX as u128) as u64;
     Some((mtime_ms, metadata.len()))
+}
+
+/// Bytes read from each end of a file for its content fingerprint.
+const FINGERPRINT_EDGE: u64 = 64 * 1024;
+
+/// `{size:x}-{hash:016x}`: the size and an FNV-1a 64 hash of the first and
+/// last 64 KiB (the whole file when it is no longer than both). Stable across
+/// renames and moves, different the moment the file is re-saved — cheap
+/// enough to compute during the scan, which is why it is the identity a
+/// paper record falls back on when there is no identifier (projects.md §2).
+pub fn content_fingerprint(path: &Path) -> Option<String> {
+    let mut file = fs::File::open(path).ok()?;
+    let size = file.metadata().ok()?.len();
+    // Every empty file hashes the same, and a fingerprint match merges files
+    // into one paper for good. A failed download has no identity yet.
+    if size == 0 {
+        return None;
+    }
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut buffer = vec![0_u8; FINGERPRINT_EDGE as usize];
+    if size <= 2 * FINGERPRINT_EDGE {
+        let mut whole = Vec::with_capacity(size as usize);
+        file.read_to_end(&mut whole).ok()?;
+        hash = fnv1a(hash, &whole);
+    } else {
+        file.read_exact(&mut buffer).ok()?;
+        hash = fnv1a(hash, &buffer);
+        file.seek(SeekFrom::End(-(FINGERPRINT_EDGE as i64))).ok()?;
+        file.read_exact(&mut buffer).ok()?;
+        hash = fnv1a(hash, &buffer);
+    }
+    Some(format!("{size:x}-{hash:016x}"))
+}
+
+fn fnv1a(mut hash: u64, bytes: &[u8]) -> u64 {
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }
 
 fn collect_pdfs(root: &Path) -> Vec<PathBuf> {
@@ -629,6 +1293,418 @@ fn collect_pdfs(root: &Path) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    pub(crate) fn indexed_entry(path: &Path, mtime_ms: u64, size: u64) -> LibraryEntry {
+        LibraryEntry {
+            path: path.to_path_buf(),
+            mtime_ms,
+            size,
+            doi: None,
+            arxiv: None,
+            title: None,
+            text_indexed: true,
+            fingerprint: Some("fp".into()),
+            info_title: None,
+            info_author: None,
+            info_year: None,
+            cites: None,
+            paper_verdict: None,
+            paper_reason: None,
+            paper_kind: None,
+            xmp: None,
+            isbn: None,
+            arxiv_category: None,
+            first_page_authors: Vec::new(),
+            first_page_title_confident: false,
+            first_page_authors_confident: false,
+            doi_source: None,
+            arxiv_source: None,
+        }
+    }
+
+    #[test]
+    fn isbns_are_found_checked_and_normalized() {
+        // ISBN-10, hyphenated, spaced, bare, and with the X check digit.
+        assert_eq!(
+            find_isbn("ISBN 0-306-40615-2").as_deref(),
+            Some("0306406152")
+        );
+        assert_eq!(
+            find_isbn("ISBN: 0 306 40615 2").as_deref(),
+            Some("0306406152")
+        );
+        assert_eq!(find_isbn("isbn 0306406152").as_deref(), Some("0306406152"));
+        assert_eq!(
+            find_isbn("ISBN 0-8044-2957-X").as_deref(),
+            Some("080442957X")
+        );
+        assert_eq!(
+            find_isbn("ISBN 0-8044-2957-x (pbk.)").as_deref(),
+            Some("080442957X")
+        );
+        // ISBN-13, with and without the form marker.
+        assert_eq!(
+            find_isbn("ISBN 978-0-306-40615-7").as_deref(),
+            Some("9780306406157")
+        );
+        assert_eq!(
+            find_isbn("ISBN-13: 978-0-306-40615-7").as_deref(),
+            Some("9780306406157")
+        );
+        assert_eq!(
+            find_isbn("ISBN 13: 978 0 306 40615 7").as_deref(),
+            Some("9780306406157")
+        );
+        assert_eq!(
+            find_isbn("ISBN-10: 0-306-40615-2").as_deref(),
+            Some("0306406152")
+        );
+        assert_eq!(
+            find_isbn("ISBN\u{a0}978\u{2011}0\u{2011}13\u{2011}468599\u{2011}1").as_deref(),
+            Some("9780134685991")
+        );
+        // Bad checksums are refused; the next valid one on the page wins.
+        assert!(find_isbn("ISBN 0-306-40615-3").is_none());
+        assert!(find_isbn("ISBN 978-0-306-40615-8").is_none());
+        assert_eq!(
+            find_isbn("ISBN 978-0-306-40615-8 (hardcover)\nISBN 978-0-13-468599-1 (eBook)")
+                .as_deref(),
+            Some("9780134685991")
+        );
+        // Text after the number does not run into it.
+        assert_eq!(
+            find_isbn("ISBN 0-306-40615-2 2004 Springer").as_deref(),
+            Some("0306406152")
+        );
+        assert_eq!(
+            find_isbn("ISBN 0306406152. Printed in 2004").as_deref(),
+            Some("0306406152")
+        );
+        // Not announced, not a number, inside a word: nothing.
+        assert!(find_isbn("0-306-40615-2").is_none());
+        assert!(find_isbn("ISBN pending").is_none());
+        assert!(find_isbn("ISBN").is_none());
+        assert!(find_isbn("the misbn0306406152 code").is_none());
+        assert!(find_isbn("").is_none());
+
+        assert_eq!(
+            normalize_isbn(" 978-0-306-40615-7 ").as_deref(),
+            Some("9780306406157")
+        );
+        assert_eq!(normalize_isbn("080442957x").as_deref(), Some("080442957X"));
+        assert!(normalize_isbn("978-0-306-40615-7-1").is_none(), "14 digits");
+        assert!(normalize_isbn("X306406152").is_none(), "X only at the end");
+        assert!(normalize_isbn("978030640615X").is_none(), "no X in ISBN-13");
+        assert!(normalize_isbn("").is_none());
+    }
+
+    #[test]
+    fn an_index_without_the_classification_fields_still_loads() {
+        let entries = read_index(
+            serde_json::json!({
+                "version": FORMAT_VERSION,
+                "entries": [{
+                    "path": "/lib/a.pdf", "mtime_ms": 1, "size": 2,
+                    "fingerprint": "2-abc", "text_indexed": true,
+                    "info_title": "A paper"
+                }]
+            })
+            .to_string()
+            .as_bytes(),
+        );
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert!(entry.paper_verdict.is_none());
+        assert!(entry.paper_reason.is_none());
+        assert!(entry.xmp.is_none());
+        assert!(entry.isbn.is_none());
+        assert!(entry.arxiv_category.is_none());
+        assert!(entry.doi_source.is_none());
+        assert!(entry.arxiv_source.is_none());
+        assert_eq!(entry.info_title.as_deref(), Some("A paper"));
+        assert!(entry.first_page_authors.is_empty());
+        assert!(!entry.first_page_title_confident);
+        assert!(!entry.first_page_authors_confident);
+
+        // The fields round-trip once written.
+        let mut written = entry.clone();
+        written.doi_source = Some(types::MetaSource::Identifier);
+        written.arxiv_source = Some(types::MetaSource::Filename);
+        written.paper_verdict = Some(types::PapernessVerdict::Likely);
+        written.paper_reason = Some("has an abstract".into());
+        written.paper_kind = Some(types::PaperKind::Thesis);
+        written.xmp = Some(xmp::XmpFields {
+            doi: Some("10.1/x".into()),
+            ..xmp::XmpFields::default()
+        });
+        written.isbn = Some("9780306406157".into());
+        written.arxiv_category = Some("cs.CL".into());
+        let text = serde_json::to_string(&IndexFile {
+            version: FORMAT_VERSION,
+            entries: vec![written.clone()],
+        })
+        .unwrap();
+        let back = read_index(text.as_bytes());
+        assert_eq!(back[0].paper_verdict, written.paper_verdict);
+        assert_eq!(back[0].paper_reason, written.paper_reason);
+        assert_eq!(back[0].paper_kind, written.paper_kind);
+        assert_eq!(back[0].xmp, written.xmp);
+        assert_eq!(back[0].isbn, written.isbn);
+        assert_eq!(back[0].arxiv_category, written.arxiv_category);
+        assert_eq!(back[0].doi_source, written.doi_source);
+        assert_eq!(back[0].arxiv_source, written.arxiv_source);
+    }
+
+    fn candidate(path: &str) -> ScanCandidate {
+        ScanCandidate {
+            path: PathBuf::from(path),
+            mtime_ms: 1,
+            size: 2,
+            epoch: 0,
+            unchanged: false,
+        }
+    }
+
+    /// The user's old Elsevier scans: no DOI anywhere, an Info Title of
+    /// "PII: …" that is no title, and nothing to look up with — until the
+    /// PII is read as the DOI it stands for.
+    #[test]
+    fn a_pii_stands_in_for_a_missing_doi_once_its_issn_checks_out() {
+        let page = "JOURNAL OF COMPUTER AND SYSTEM SCIENCES 37, 130-143 (1988)\nA Paper Title";
+        const INFO_TITLE: &str = "PII: 0022-0000(88)90028-1";
+        let title = Some(INFO_TITLE);
+        assert!(!plausible_info_title(INFO_TITLE));
+        let mut entry = entry_from_first_page(&candidate("/lib/old.pdf"), page);
+        assert!(entry.doi.is_none());
+        derive_from_identifiers(&mut entry, page, title);
+        assert_eq!(
+            entry.doi.as_deref(),
+            Some("10.1016/0022-0000(88)90028-1"),
+            "from the Info Title the title filter rejected"
+        );
+        assert_eq!(entry.doi_source, Some(types::MetaSource::Identifier));
+        assert!(entry.arxiv_category.is_none());
+
+        // Printed on the page, with the S the newer scheme prints.
+        let page = "Physics Letters B 400 (1997) 1-8\nPII: S0370-2693(97)00412-1\nA title";
+        let mut entry = entry_from_first_page(&candidate("/lib/new.pdf"), page);
+        derive_from_identifiers(&mut entry, page, None);
+        assert_eq!(entry.doi.as_deref(), Some("10.1016/S0370-2693(97)00412-1"));
+
+        // A DOI the page or the name gave is left alone.
+        let page = "doi:10.1103/PhysRevLett.78.2690\nPII: S0370-2693(97)00412-1";
+        let mut entry = entry_from_first_page(&candidate("/lib/doi.pdf"), page);
+        derive_from_identifiers(&mut entry, page, None);
+        assert_eq!(entry.doi.as_deref(), Some("10.1103/physrevlett.78.2690"));
+        assert_eq!(entry.doi_source, Some(types::MetaSource::FirstPage));
+
+        // A PII whose ISSN fails its check digit is a mis-read, not an
+        // identity: the page's bad one is passed over for the title's good
+        // one, and a file with only the bad one keeps no DOI.
+        let page = "PII: 0022-0001(88)90028-1";
+        let mut entry = entry_from_first_page(&candidate("/lib/ocr.pdf"), page);
+        derive_from_identifiers(&mut entry, page, title);
+        assert_eq!(entry.doi.as_deref(), Some("10.1016/0022-0000(88)90028-1"));
+        let mut entry = entry_from_first_page(&candidate("/lib/ocr.pdf"), page);
+        derive_from_identifiers(&mut entry, page, None);
+        assert!(entry.doi.is_none());
+    }
+
+    #[test]
+    fn the_stamps_category_is_kept_when_it_names_the_files_own_id() {
+        let page = "arXiv:1706.03762v5 [cs.CL] 6 Dec 2017\nAttention Is All You Need";
+        let mut entry = entry_from_first_page(&candidate("/lib/a.pdf"), page);
+        assert_eq!(entry.arxiv.as_deref(), Some("1706.03762"));
+        derive_from_identifiers(&mut entry, page, None);
+        assert_eq!(entry.arxiv_category.as_deref(), Some("cs.CL"));
+
+        // The file name named another id: the stamp is not this file's.
+        entry.arxiv = Some("2401.00001".into());
+        derive_from_identifiers(&mut entry, page, None);
+        assert!(entry.arxiv_category.is_none());
+
+        // No stamp, no category — and a rescan takes it back.
+        let mut entry = entry_from_first_page(&candidate("/lib/b.pdf"), "A title only");
+        entry.arxiv_category = Some("stale".into());
+        derive_from_identifiers(&mut entry, "A title only", None);
+        assert!(entry.arxiv_category.is_none());
+    }
+
+    #[test]
+    fn cited_identifiers_are_deduped_folded_and_never_the_documents_own() {
+        let text = "arXiv:2401.00001v2 [cond-mat.stat-mech] 3 Jan 2024\n\
+            Physical Review Letters 78, 2690 doi:10.1000/own\n\
+            [1] C. Jarzynski, doi:10.1103/PhysRevLett.78.2690.\n\
+            [2] the same, https://doi.org/10.1103/physrevlett.78.2690\n\
+            [3] a preprint, doi:10.48550/arXiv.1901.00002\n\
+            [4] the same preprint, arxiv.org/abs/1901.00002v1\n\
+            [5] ourselves again, arXiv:2401.00001";
+        let cites = cited_identifiers(text, Some("10.1000/OWN"), Some("2401.00001"));
+        assert_eq!(
+            cites,
+            vec![
+                CitationIdDto::Doi("10.1103/physrevlett.78.2690".into()),
+                CitationIdDto::ArXiv("1901.00002".into()),
+            ]
+        );
+        assert!(cited_identifiers("no identifiers here", None, None).is_empty());
+    }
+
+    #[test]
+    fn the_backfill_reads_cites_out_of_an_existing_sidecar() {
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("a.pdf");
+        fs::write(&path, b"%PDF-1.7\n").expect("pdf");
+        let (mtime_ms, size) = file_stamp(&path).expect("stamp");
+        crate::search::librarytext::write_sidecar(
+            dir.path(),
+            &path,
+            mtime_ms,
+            size,
+            &[
+                (
+                    0,
+                    "Ours: arXiv:2401.00009. See doi:10.1000/x and".to_string(),
+                ),
+                (
+                    3,
+                    "also arXiv:2401.00003 and doi:10.1000/x again".to_string(),
+                ),
+            ],
+        )
+        .expect("sidecar");
+        let mut entry = indexed_entry(&path, mtime_ms, size);
+        entry.arxiv = Some("2401.00009".into());
+        let expected = vec![
+            CitationIdDto::Doi("10.1000/x".into()),
+            CitationIdDto::ArXiv("2401.00003".into()),
+        ];
+        assert_eq!(backfill_cites(dir.path(), &entry), expected);
+
+        // A sidecar for other bytes is not trusted: nothing, finally.
+        let mut stale = entry.clone();
+        stale.size += 1;
+        assert!(backfill_cites(dir.path(), &stale).is_empty());
+
+        // The bookkeeping: only indexed entries without cites are handed
+        // out, and none once they are filled in.
+        let mut state = LibraryState::load(dir.path().to_path_buf());
+        let other = dir.path().join("b.pdf");
+        state.entries.insert(path.clone(), entry);
+        let mut unindexed = indexed_entry(&other, 1, 1);
+        unindexed.text_indexed = false;
+        state.entries.insert(other.clone(), unindexed);
+        assert!(state.has_cites_work());
+        assert_eq!(state.next_cites_candidate().expect("candidate").path, path);
+        state.finish_cites(&path, expected.clone());
+        assert!(
+            !state.has_cites_work(),
+            "an unindexed entry is the text pass's"
+        );
+        assert_eq!(state.entries[&path].cites, Some(expected.clone()));
+
+        // The text pass records cites with the text, so there is nothing to
+        // backfill behind it.
+        state.finish_text(&other, Vec::new());
+        assert!(state.entries[&other].text_indexed);
+        assert_eq!(state.entries[&other].cites, Some(Vec::new()));
+        assert!(!state.has_cites_work());
+
+        // A rescan of the same bytes keeps what was extracted; new bytes
+        // start over, like the sidecar.
+        let same = ScanCandidate {
+            path: path.clone(),
+            mtime_ms,
+            size,
+            epoch: state.scan_epoch,
+            unchanged: false,
+        };
+        assert!(state.finish_candidate(&same, Some(indexed_entry(&path, mtime_ms, size))));
+        assert_eq!(state.entries[&path].cites, Some(expected));
+        let changed = ScanCandidate {
+            size: size + 1,
+            ..same
+        };
+        state.finish_candidate(&changed, Some(indexed_entry(&path, mtime_ms, size + 1)));
+        assert_eq!(state.entries[&path].cites, None);
+        assert!(state.has_cites_work());
+    }
+
+    /// The re-derivation an upgrade relies on: an index older than v9 has
+    /// its cites cleared, and the backfill rebuilds them from the text
+    /// sidecar alone, without PDFium — explicit identifiers and APS journal
+    /// references wherever they are printed, and no refs sidecar, which is
+    /// the reference provider's to write.
+    #[test]
+    fn the_backfill_reads_identifiers_and_journal_dois_and_leaves_refs_to_the_provider() {
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("2512.24540v3.pdf");
+        fs::write(&path, b"%PDF-1.7\n").expect("pdf");
+        let (mtime_ms, size) = file_stamp(&path).expect("stamp");
+        crate::search::librarytext::write_sidecar(
+            dir.path(),
+            &path,
+            mtime_ms,
+            size,
+            &[
+                (
+                    0,
+                    "Higher-order response theory. Published as Phys. Rev. E 99, 000001. See [1] and [2]."
+                        .to_string(),
+                ),
+                (
+                    9,
+                    "Acknowledgments. We thank X. References [1] A. Zhong and M. R. DeWeese, Beyond linear response:\n\
+                     Equivalence between thermodynamic geometry and optimal transport,\n\
+                     Phys. Rev. Lett. 133, 057102 (2024). [2] B. Two, arXiv:2401.00003 (2024)."
+                        .to_string(),
+                ),
+            ],
+        )
+        .expect("sidecar");
+
+        let old = read_index(
+            serde_json::json!({
+                "version": 8,
+                "entries": [{
+                    "path": path, "mtime_ms": mtime_ms, "size": size,
+                    "fingerprint": "fp", "text_indexed": true, "doi": "10.1103/physreve.99.000001",
+                    "cites": [{ "scheme": "arXiv", "value": "2401.00003" }]
+                }]
+            })
+            .to_string()
+            .as_bytes(),
+        );
+        assert_eq!(old[0].cites, None, "re-derived");
+        assert_eq!(
+            old[0].fingerprint, None,
+            "and rescanned once, for the first page's layout (v10)"
+        );
+
+        let mut state = LibraryState::load(dir.path().to_path_buf());
+        state.entries.insert(path.clone(), old[0].clone());
+        let entry = state.next_cites_candidate().expect("backfill work");
+        let cites = backfill_cites(dir.path(), &entry);
+        assert_eq!(
+            cites,
+            vec![
+                CitationIdDto::ArXiv("2401.00003".into()),
+                CitationIdDto::Doi("10.1103/physrevlett.133.057102".into()),
+            ],
+            "never its own journal reference"
+        );
+        state.finish_cites(&path, cites);
+        assert!(!state.has_cites_work());
+        assert!(
+            !crate::search::librarytext::refs_path(dir.path(), &path).exists(),
+            "no refs sidecar without the provider"
+        );
+
+        // Removing the text sidecar removes a provider's refs with it.
+        references::write_refs(dir.path(), &path, mtime_ms, size, "p@1", &[]).expect("refs");
+        crate::search::librarytext::remove_sidecar(dir.path(), &path);
+        assert!(!crate::search::librarytext::refs_path(dir.path(), &path).exists());
+    }
 
     #[test]
     fn rejects_paths_outside_the_selected_root() {
@@ -761,16 +1837,103 @@ mod tests {
             epoch: 3,
             unchanged: false,
         };
+        // The arXiv id must be the stamp's: a bare one is a citation.
         let entry = entry_from_first_page(
             &candidate,
-            "A sufficiently descriptive paper title\ndoi:10.1000/ABC\narXiv:2401.12345v2",
+            "A sufficiently descriptive paper title\ndoi:10.1000/ABC\narXiv:2401.12345v2 [cs.LG] 20 Jan 2024",
         );
         assert_eq!(
             entry.title.as_deref(),
             Some("A sufficiently descriptive paper title")
         );
         assert_eq!(entry.doi.as_deref(), Some("10.1000/abc"));
+        assert_eq!(entry.doi_source, Some(types::MetaSource::FirstPage));
         assert_eq!(entry.arxiv.as_deref(), Some("2401.12345"));
+        assert_eq!(entry.arxiv_source, Some(types::MetaSource::FirstPage));
+    }
+
+    #[test]
+    fn the_head_of_a_page_ends_at_its_reference_list() {
+        let body = "A Title Long Enough\ndoi:10.1000/own\nAbstract\n";
+        for heading in [
+            "References",
+            "REFERENCES",
+            "References:",
+            "6. References",
+            "6 References",
+            "VI. References",
+            "Bibliography",
+            "Literature Cited",
+            "Works cited",
+            "  References  ",
+        ] {
+            let text = format!("{body}{heading}\n[1] doi:10.1000/cited");
+            assert_eq!(page_head(&text), body, "{heading:?}");
+        }
+        // No heading: the whole page. A line that only contains the word,
+        // or carries a page number, is not the heading.
+        for text in [
+            "A Title\ndoi:10.1000/own\nReferences are listed at the end.\n[1] doi:10.1000/cited",
+            "Contents\nReferences 231\nIndex 240",
+            "A Title\nSee the references in [1].",
+            "",
+        ] {
+            assert_eq!(page_head(text), text, "{text:?}");
+        }
+        // The first heading wins, and a heading on the first line leaves
+        // nothing.
+        assert_eq!(page_head("Head\nReferences\nBibliography\nmore"), "Head\n");
+        assert_eq!(page_head("References\n[1] x"), "");
+    }
+
+    /// The demo library's bug: a one-page paper whose own DOI is in the
+    /// head and whose reference list cites a preprint by its arXiv id was
+    /// filed under the preprint, and the citation extractor then dropped
+    /// the preprint as a self-citation.
+    #[test]
+    fn own_identifiers_come_from_the_head_and_an_arxiv_id_only_from_the_stamp() {
+        let page = "A Demonstration of Library Scanning\nJ. Doe\nDOI: 10.5555/speedyf.001\nAbstract\nWe cite things.\nReferences\n[1] A. Vaswani et al. Attention is all you need. arXiv:1706.03762, 2017.\n[2] Someone. doi:10.1000/cited";
+        let entry = entry_from_first_page(&candidate("/lib/demo.pdf"), page);
+        assert_eq!(entry.doi.as_deref(), Some("10.5555/speedyf.001"));
+        assert_eq!(entry.arxiv, None, "a cited id is not the paper's");
+        assert_eq!(
+            cited_identifiers(page, entry.doi.as_deref(), entry.arxiv.as_deref()),
+            vec![
+                CitationIdDto::ArXiv("1706.03762".into()),
+                CitationIdDto::Doi("10.1000/cited".into()),
+            ],
+            "and it is cited, not self"
+        );
+
+        // A bare arXiv id anywhere — even in the head — is a citation; the
+        // stamp, wherever PDFium puts it, is the file's own.
+        let cited_in_head = "A Title Long Enough\nWe build on arXiv:1706.03762 here.\nAbstract";
+        assert_eq!(
+            entry_from_first_page(&candidate("/lib/a.pdf"), cited_in_head).arxiv,
+            None
+        );
+        let stamped_last = "A Title Long Enough\nAbstract\nReferences\n[1] arXiv:1111.11111\narXiv:2401.00001v2 [cs.CL] 3 Jan 2024";
+        let entry = entry_from_first_page(&candidate("/lib/b.pdf"), stamped_last);
+        assert_eq!(entry.arxiv.as_deref(), Some("2401.00001"));
+        assert_eq!(entry.arxiv_source, Some(types::MetaSource::FirstPage));
+
+        // A DOI, a PII or an ISBN below the heading is someone else's.
+        let below = "A Title Long Enough\nReferences\n[1] doi:10.1000/cited\n[2] PII: S0370-2693(97)00412-1\n[3] ISBN 0-306-40615-2";
+        let mut entry = entry_from_first_page(&candidate("/lib/c.pdf"), below);
+        derive_from_identifiers(&mut entry, below, None);
+        assert_eq!(entry.doi, None);
+        assert_eq!(entry.doi_source, None);
+        assert_eq!(entry.isbn, None);
+
+        // The file name's say is recorded as the name's.
+        let named = entry_from_filename(&candidate("/lib/arXiv-2401.12345v2.pdf")).unwrap();
+        assert_eq!(named.arxiv.as_deref(), Some("2401.12345"));
+        assert_eq!(named.arxiv_source, Some(types::MetaSource::Filename));
+        assert_eq!(named.doi_source, None);
+        let named = entry_from_filename(&candidate("/lib/10.1145_1234567.pdf")).unwrap();
+        assert_eq!(named.doi.as_deref(), Some("10.1145/1234567"));
+        assert_eq!(named.doi_source, Some(types::MetaSource::Filename));
+        assert!(entry_from_filename(&candidate("/lib/notes.pdf")).is_none());
     }
 
     #[test]
@@ -824,6 +1987,155 @@ mod tests {
     }
 
     #[test]
+    fn an_older_index_loads_but_is_rescanned_once() {
+        let entries = read_index(
+            serde_json::json!({
+                "version": 2,
+                "entries": [{
+                    "path": "/lib/a.pdf", "mtime_ms": 1, "size": 2,
+                    "fingerprint": "2-abc", "text_indexed": true
+                }]
+            })
+            .to_string()
+            .as_bytes(),
+        );
+        assert_eq!(entries.len(), 1);
+        assert!(
+            entries[0].fingerprint.is_none(),
+            "no fingerprint means rescan"
+        );
+        assert!(entries[0].text_indexed, "the sidecar is still good");
+
+        let current = read_index(
+            serde_json::json!({
+                "version": FORMAT_VERSION,
+                "entries": [{ "path": "/lib/a.pdf", "mtime_ms": 1, "size": 2, "fingerprint": "2-abc" }]
+            })
+            .to_string()
+            .as_bytes(),
+        );
+        assert_eq!(current[0].fingerprint.as_deref(), Some("2-abc"));
+    }
+
+    fn layout_of(
+        title: Option<&str>,
+        authors: &[(&str, &str)],
+        high: bool,
+    ) -> firstpage::FirstPage {
+        let confidence = if high {
+            firstpage::Confidence::High
+        } else {
+            firstpage::Confidence::Low
+        };
+        firstpage::FirstPage {
+            title: title.map(str::to_owned),
+            authors: authors
+                .iter()
+                .map(|(given, family)| types::Author {
+                    given: (*given).into(),
+                    family: (*family).into(),
+                })
+                .collect(),
+            title_confidence: confidence,
+            authors_confidence: confidence,
+        }
+    }
+
+    /// The layout's title replaces the "first long line" guess, which
+    /// stays as the unconfident fallback; its authors ride along.
+    #[test]
+    fn the_first_page_layout_supplies_title_and_authors() {
+        let page = "PHYSICAL REVIEW LETTERS 133, 057102 (2024)\nBeyond Linear Response";
+        let layout = layout_of(
+            Some("Beyond Linear Response"),
+            &[("Adrianne", "Zhong"), ("Michael R.", "DeWeese")],
+            true,
+        );
+        let entry = entry_from_page(&candidate("/lib/a.pdf"), page, Some(&layout));
+        assert_eq!(entry.title.as_deref(), Some("Beyond Linear Response"));
+        assert!(entry.first_page_title_confident);
+        assert!(entry.first_page_authors_confident);
+        assert_eq!(entry.first_page_authors.len(), 2);
+
+        let without = entry_from_page(
+            &candidate("/lib/a.pdf"),
+            page,
+            Some(&layout_of(None, &[], true)),
+        );
+        assert_eq!(
+            without.title.as_deref(),
+            Some("PHYSICAL REVIEW LETTERS 133, 057102 (2024)"),
+            "the old rule, as a fallback"
+        );
+        assert!(!without.first_page_title_confident);
+        assert!(
+            !without.first_page_authors_confident,
+            "no authors, no confidence"
+        );
+        assert_eq!(
+            entry_from_first_page(&candidate("/lib/a.pdf"), page).title,
+            without.title
+        );
+    }
+
+    /// v10 rescans every entry once for the first page's layout. The bytes
+    /// have not changed, so the text, cites and refs sidecars all survive
+    /// and only the metadata pass repeats.
+    #[test]
+    fn the_v10_rescan_keeps_text_cites_and_refs() {
+        let app_data = tempfile::tempdir().expect("app data");
+        let root = tempfile::tempdir().expect("root");
+        let pdf = root.path().join("paper.pdf");
+        fs::write(&pdf, b"fixture").unwrap();
+        let pdf = pdf.canonicalize().unwrap();
+        let (mtime_ms, size) = file_stamp(&pdf).unwrap();
+        crate::search::librarytext::write_sidecar(
+            app_data.path(),
+            &pdf,
+            mtime_ms,
+            size,
+            &[(0, "Some text".to_owned())],
+        )
+        .expect("sidecar");
+        references::write_refs(app_data.path(), &pdf, mtime_ms, size, "p@1", &[]).expect("refs");
+        fs::write(
+            app_data.path().join(ROOT_FILE),
+            serde_json::json!({ "version": 2, "roots": [root.path()] }).to_string(),
+        )
+        .unwrap();
+        fs::write(
+            app_data.path().join(INDEX_FILE),
+            serde_json::json!({ "version": 9, "entries": [{
+                "path": pdf, "mtime_ms": mtime_ms, "size": size, "fingerprint": "fp",
+                "title": "A paper", "text_indexed": true,
+                "cites": [{ "scheme": "arXiv", "value": "2401.00003" }]
+            }]})
+            .to_string(),
+        )
+        .unwrap();
+
+        let mut state = LibraryState::load(app_data.path().to_path_buf());
+        let loaded = state.entry_for_path(&pdf).unwrap();
+        assert!(loaded.cites.is_some(), "v9 cites are current");
+        let candidate = state.next_candidate().expect("queued");
+        assert!(!candidate.unchanged, "v9: rescanned once");
+        let layout = layout_of(Some("A Paper Title"), &[("Ann", "Barker")], true);
+        let mut scanned = entry_from_page(&candidate, "", Some(&layout));
+        scanned.fingerprint = Some("fp".into());
+        assert!(state.finish_candidate(&candidate, Some(scanned)));
+        let stored = state.entry_for_path(&pdf).unwrap();
+        assert!(stored.text_indexed, "same bytes keep their text sidecar");
+        assert_eq!(
+            stored.cites,
+            Some(vec![CitationIdDto::ArXiv("2401.00003".into())]),
+            "and their cites"
+        );
+        assert!(crate::search::librarytext::refs_path(app_data.path(), &pdf).exists());
+        assert_eq!(stored.first_page_authors.len(), 1);
+        assert_eq!(stored.title.as_deref(), Some("A Paper Title"));
+    }
+
+    #[test]
     fn a_bare_array_index_still_loads() {
         // What every existing install has on disk right now.
         let app_data = tempfile::tempdir().expect("app data");
@@ -835,7 +2147,7 @@ mod tests {
         // /var/... which canonicalizes to /private/var/..., so a fixture that
         // skipped this would look like a file that had moved away.
         let pdf = pdf.canonicalize().expect("canonical");
-        let (mtime_ms, size) = file_fingerprint(&pdf).expect("fingerprint");
+        let (mtime_ms, size) = file_stamp(&pdf).expect("fingerprint");
         fs::write(
             app_data.path().join(ROOT_FILE),
             serde_json::json!({ "root": root.path() }).to_string(),
@@ -883,7 +2195,7 @@ mod tests {
         // Pretend both were scanned.
         for (name, dir) in [("a.pdf", first.path()), ("b.pdf", second.path())] {
             let path = dir.join(name);
-            let (mtime_ms, size) = file_fingerprint(&path).expect("fingerprint");
+            let (mtime_ms, size) = file_stamp(&path).expect("fingerprint");
             state.entries.insert(
                 path.clone(),
                 LibraryEntry {
@@ -894,6 +2206,22 @@ mod tests {
                     arxiv: None,
                     title: None,
                     text_indexed: true,
+                    fingerprint: None,
+                    info_title: None,
+                    info_author: None,
+                    info_year: None,
+                    cites: None,
+                    paper_verdict: None,
+                    paper_reason: None,
+                    paper_kind: None,
+                    xmp: None,
+                    isbn: None,
+                    arxiv_category: None,
+                    first_page_authors: Vec::new(),
+                    first_page_title_confident: false,
+                    first_page_authors_confident: false,
+                    doi_source: None,
+                    arxiv_source: None,
                 },
             );
         }
@@ -921,5 +2249,127 @@ mod tests {
         state.add_root(root.path().to_path_buf()).expect("add");
         assert!(state.contains(&root.path().join("in.pdf")).is_some());
         assert!(state.contains(&outside.path().join("out.pdf")).is_none());
+    }
+
+    #[test]
+    fn content_fingerprint_survives_a_rename_and_not_an_edit() {
+        let dir = tempfile::tempdir().expect("dir");
+        let small = dir.path().join("small.pdf");
+        fs::write(&small, b"%PDF small").unwrap();
+        let moved = dir.path().join("renamed.pdf");
+        fs::copy(&small, &moved).unwrap();
+        let fingerprint = content_fingerprint(&small).expect("fingerprint");
+        assert_eq!(
+            content_fingerprint(&moved).as_deref(),
+            Some(fingerprint.as_str())
+        );
+        assert!(fingerprint.starts_with("a-"), "{fingerprint}");
+        fs::write(&moved, b"%PDF smalL").unwrap();
+        assert_ne!(content_fingerprint(&moved).unwrap(), fingerprint);
+
+        // Large files hash only their ends: a change in the middle is not
+        // seen, a change at either end is.
+        let big = dir.path().join("big.pdf");
+        let mut bytes = vec![7_u8; 3 * FINGERPRINT_EDGE as usize];
+        fs::write(&big, &bytes).unwrap();
+        let before = content_fingerprint(&big).unwrap();
+        bytes[FINGERPRINT_EDGE as usize + 10] = 8;
+        fs::write(&big, &bytes).unwrap();
+        assert_eq!(content_fingerprint(&big).unwrap(), before);
+        let last = bytes.len() - 1;
+        bytes[last] = 8;
+        fs::write(&big, &bytes).unwrap();
+        assert_ne!(content_fingerprint(&big).unwrap(), before);
+        assert!(content_fingerprint(&dir.path().join("nope.pdf")).is_none());
+    }
+
+    #[test]
+    fn info_titles_that_are_file_names_are_ignored() {
+        assert!(plausible_info_title(
+            "Nonequilibrium Equality for Free Energy Differences"
+        ));
+        assert!(plausible_info_title("Entropy"));
+        assert!(!plausible_info_title(""));
+        assert!(!plausible_info_title("  Untitled "));
+        assert!(!plausible_info_title("jarzynski1997.pdf"));
+        assert!(!plausible_info_title("main.tex"));
+        assert!(!plausible_info_title("Microsoft Word - draft.docx"));
+        assert!(!plausible_info_title("jarzynski_1997"));
+        assert!(!plausible_info_title("paper-final"));
+        assert!(plausible_info_title("A self-contained proof"));
+        assert!(!plausible_info_title("PII: 0022-0000(88)90028-1"));
+        assert!(!plausible_info_title("doi:10.1103/PhysRevLett.78.2690"));
+        assert!(!plausible_info_title("10.1016/j.cell.2020.01.001"));
+        assert!(!plausible_info_title("2401.12345"));
+        assert!(!plausible_info_title("p. 17"));
+    }
+
+    #[test]
+    fn pdf_dates_yield_a_year() {
+        assert_eq!(year_from_pdf_date("D:19970415120000Z"), Some(1997));
+        assert_eq!(year_from_pdf_date("20231103"), Some(2023));
+        assert_eq!(year_from_pdf_date("D:0000"), None);
+        assert_eq!(year_from_pdf_date("D:abcd"), None);
+        assert_eq!(year_from_pdf_date(""), None);
+    }
+
+    #[test]
+    fn an_index_without_fingerprints_is_rescanned_once() {
+        let app_data = tempfile::tempdir().expect("app data");
+        let root = tempfile::tempdir().expect("root");
+        let pdf = root.path().join("paper.pdf");
+        fs::write(&pdf, b"fixture").unwrap();
+        let pdf = pdf.canonicalize().unwrap();
+        let (mtime_ms, size) = file_stamp(&pdf).unwrap();
+        fs::write(
+            app_data.path().join(ROOT_FILE),
+            serde_json::json!({ "version": 2, "roots": [root.path()] }).to_string(),
+        )
+        .unwrap();
+        fs::write(
+            app_data.path().join(INDEX_FILE),
+            serde_json::json!({ "version": 2, "entries": [{
+                "path": pdf, "mtime_ms": mtime_ms, "size": size,
+                "doi": null, "arxiv": null, "title": "A paper", "text_indexed": true
+            }]})
+            .to_string(),
+        )
+        .unwrap();
+
+        let mut state = LibraryState::load(app_data.path().to_path_buf());
+        let candidate = state.next_candidate().expect("queued");
+        assert!(!candidate.unchanged, "no fingerprint yet: rescan");
+        let mut entry = state.entry_for_path(&pdf).unwrap();
+        entry.fingerprint = content_fingerprint(&pdf);
+        assert!(state.finish_candidate(&candidate, Some(entry)));
+        assert!(
+            state.entry_for_path(&pdf).unwrap().text_indexed,
+            "same bytes keep their sidecar"
+        );
+
+        state.add_root(root.path().to_path_buf()).unwrap();
+        let candidate = state.next_candidate().expect("queued again");
+        assert!(candidate.unchanged, "fingerprinted: the stamp decides");
+        // A candidate from a superseded scan is refused.
+        state.add_root(root.path().to_path_buf()).unwrap();
+        assert!(!state.finish_candidate(&candidate, None));
+
+        // Upserting outside a scan takes effect at once.
+        let mut fresh = entry_from_first_page(
+            &ScanCandidate {
+                path: pdf.clone(),
+                mtime_ms,
+                size: size + 1,
+                epoch: 0,
+                unchanged: false,
+            },
+            "",
+        );
+        fresh.fingerprint = Some("x".into());
+        state.upsert_entry(fresh);
+        let stored = state.entry_for_path(&pdf).unwrap();
+        assert_eq!(stored.size, size + 1);
+        assert!(!stored.text_indexed, "different bytes: the sidecar goes");
+        assert!(state.paths().contains(&pdf));
     }
 }

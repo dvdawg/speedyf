@@ -7,6 +7,8 @@ use crate::engine::{EngineHandle, Work};
 use crate::errors::{AppError, AppResult};
 use std::path::PathBuf;
 
+pub mod library;
+
 pub struct EngineState(pub EngineHandle);
 
 #[derive(serde::Serialize)]
@@ -601,6 +603,9 @@ pub struct ExtensionDto {
     /// Settings the extension declared, for the panel to render.
     pub settings: Vec<crate::extensions::SettingContribution>,
     pub document_tasks: Vec<ActionDto>,
+    /// The bare command id SpeedyF invokes to read a library document's
+    /// reference list, when the extension is a reference provider.
+    pub reference_provider: Option<String>,
     /// `speedyf-ext://` URL for the extension's icon, when it ships one.
     pub icon_url: Option<String>,
     /// Why this extension cannot run, if it cannot.
@@ -667,11 +672,19 @@ fn panels(manifest: &Manifest) -> Vec<PanelDto> {
         .collect()
 }
 
+/// Commands for the palette: every declared command but a reference
+/// provider's, which SpeedyF invokes with a document and the user cannot.
 fn palette_commands(manifest: &Manifest) -> Vec<PaletteCommandDto> {
+    let provider = manifest
+        .contributes
+        .reference_provider
+        .as_ref()
+        .map(|provider| provider.command.as_str());
     manifest
         .contributes
         .commands
         .iter()
+        .filter(|c| Some(c.id.as_str()) != provider)
         .map(|c| PaletteCommandDto {
             id: extensions::qualified_command_id(&manifest.id, &c.id),
             local_id: c.id.clone(),
@@ -735,6 +748,7 @@ fn describe(root: &std::path::Path, installed: InstalledExtension, builtin: bool
         citation_actions: Vec::new(),
         settings: Vec::new(),
         document_tasks: Vec::new(),
+        reference_provider: None,
         icon_url: None,
         error: None,
         builtin,
@@ -765,6 +779,11 @@ fn describe(root: &std::path::Path, installed: InstalledExtension, builtin: bool
         citation_actions: actions(&manifest, &manifest.contributes.citation_actions),
         settings: manifest.contributes.settings.clone(),
         document_tasks: actions(&manifest, &manifest.contributes.document_tasks),
+        reference_provider: manifest
+            .contributes
+            .reference_provider
+            .as_ref()
+            .map(|provider| provider.command.clone()),
         icon_url: manifest
             .icon
             .as_ref()

@@ -14,6 +14,7 @@ pub mod figures;
 pub mod formal;
 pub mod forms;
 pub mod invert;
+pub mod layout_text;
 pub mod links;
 pub mod pdfium_init;
 pub mod preview;
@@ -27,7 +28,12 @@ pub mod worker;
 
 use crate::cache::ByteLru;
 use crate::errors::{AppError, AppResult};
-use crate::library::{CitationResolver, LibraryState, LocalLibraryResolver};
+use crate::library::chain::ChainShared;
+use crate::library::lookup::{self, LookupCache};
+use crate::library::ratelimit::HostLimiter;
+use crate::library::store::PaperStore;
+use crate::library::types::{PaperDto, PapernessDto};
+use crate::library::{CitationResolver, LibraryEntry, LibraryState, LocalLibraryResolver};
 use crate::search::gramindex::GramIndex;
 use crate::search::{query_pages, SearchStore, TextLayoutCache};
 use parking_lot::Mutex;
@@ -37,8 +43,30 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use types::*;
 
+/// Whether online metadata lookup may run, and whom to identify as to the
+/// polite pools (projects.md §4). Set from the frontend's settings at startup
+/// and on every change, like low memory; off until the user turns it on.
+pub use crate::library::lookup::LookupSettings;
+
 pub type RespondBytes = Box<dyn FnOnce(AppResult<Arc<Vec<u8>>>) + Send>;
 pub type Respond<T> = Box<dyn FnOnce(AppResult<T>) + Send>;
+/// Fired after any write to papers or projects, so every window refreshes.
+pub type LibraryChangedCallback = Box<dyn Fn() + Send + Sync>;
+/// What the status bar shows of online lookups: whether any is running,
+/// and for a batch how far it has got (`done` of `total`; both zero for a
+/// single lookup or none).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LookupProgress {
+    pub active: bool,
+    pub done: u32,
+    pub total: u32,
+}
+
+/// Fired with `active: true` when the first online lookup starts, with each
+/// step of a batch, and with `active: false` when the last one ends: the
+/// status bar's indicator that something is leaving the machine
+/// (projects.md §4).
+pub type LookupActivityCallback = Box<dyn Fn(LookupProgress) + Send + Sync>;
 
 pub enum Work {
     Open {
@@ -92,6 +120,27 @@ pub enum Work {
         main_epoch: u64,
         respond: Respond<Option<ResolvedCitationDto>>,
     },
+    /// The first page of a library file for the Projects screen, through the
+    /// same document pool and in the same shape as a citation hover, so it
+    /// costs what a hover costs.
+    LibraryPreview {
+        path: PathBuf,
+        main_epoch: u64,
+        respond: Respond<Option<ResolvedCitationDto>>,
+    },
+    /// Whether the open document looks like a paper, from its first page and
+    /// Info dictionary. The reader asks before offering to file a PDF that is
+    /// not in the library; a manual gets no offer.
+    ClassifyDocument {
+        doc: DocId,
+        respond: Respond<PapernessDto>,
+    },
+    /// Scan one file just copied into the inbox, now, so the caller gets its
+    /// paper back rather than waiting for the next idle scan to reach it.
+    LibraryScanFile {
+        path: PathBuf,
+        respond: Respond<PaperDto>,
+    },
     /// Register a document as wanting text indexing. The worker runs exactly
     /// one indexing chain at a time (foreground document first), so opening
     /// many tabs at once cannot stampede the engine thread.
@@ -110,6 +159,10 @@ pub enum Work {
     /// one document per job, so a background library index can never outrank
     /// a page the reader is looking at.
     LibraryTextNext,
+    /// Read the identifiers one already-indexed document cites back out of
+    /// its sidecar (projects.md §8). Only for entries indexed before cites
+    /// were extracted alongside the text; no PDFium, one entry per job.
+    LibraryCitesNext,
     MatchRects {
         doc: DocId,
         src: u32,
@@ -212,6 +265,33 @@ pub struct EngineShared {
     pub text_layouts: Mutex<TextLayoutCache>,
     pub link_cache: Mutex<links::LinkCache>,
     pub library: Arc<Mutex<LibraryState>>,
+    /// Papers, projects and memberships: `library.json`. One owner for every
+    /// window, since every write goes through here.
+    pub papers: Arc<Mutex<PaperStore>>,
+    pub library_changed: Mutex<Option<LibraryChangedCallback>>,
+    /// Read live by every running chain, so turning lookup off stops them.
+    pub lookup_settings: Arc<Mutex<LookupSettings>>,
+    /// One client for every lookup; `reqwest::Client` is an `Arc` inside.
+    pub http: reqwest::Client,
+    /// Paces every lookup request per host, so no service sees a burst and
+    /// a rate-limit answer pauses the queue rather than failing the lookup.
+    pub limiter: Arc<HostLimiter>,
+    /// What the lookup services answered, so a repeated lookup costs
+    /// nothing. Saved to `app_data_dir` after every insert; disposable.
+    pub lookup_cache: Arc<Mutex<LookupCache>>,
+    /// Papers whose citation edges a background task is fetching, so a
+    /// second batch does not queue them again.
+    pub edges_in_flight: Arc<Mutex<std::collections::HashSet<CitationIdDto>>>,
+    /// Every document's parsed reference list, as last read from its refs
+    /// sidecar, so a citation query does not re-read them all. The text
+    /// pass and the backfill forget a document when they rewrite it.
+    pub refs_cache: Mutex<crate::library::references::RefsCache>,
+    /// The reference provider extension's side of the engine: which one is
+    /// active, and the opaque tokens its documents were handed out under.
+    pub refs_provider: Mutex<crate::library::references::RefsProvider>,
+    /// Where the scan index, the sidecars and the lookup cache live.
+    pub app_data_dir: PathBuf,
+    pub lookup_activity: LookupGauge,
     pub citation_resolver: Mutex<Option<Box<dyn CitationResolver>>>,
     pub metrics: Metrics,
     /// Changes only when the user-facing main document changes. Citation
@@ -234,6 +314,131 @@ impl EngineShared {
     pub fn is_render_stale(&self, meta: &JobMeta) -> bool {
         self.gens.is_stale(meta) || self.cancels.is_stale_at(meta.doc, meta.epoch)
     }
+
+    /// Tell every window that papers or projects changed. Called after the
+    /// write has reached the disk, never while the store is locked: the
+    /// windows answer by reading it back.
+    pub fn notify_library_changed(&self) {
+        if let Some(cb) = self.library_changed.lock().as_ref() {
+            cb();
+        }
+    }
+
+    /// Fold one scanned file into the paper records. Saves and notifies at
+    /// most once a second across a scan; `finish_library_scan` settles the
+    /// rest when the scan ends.
+    pub fn reconcile_library_entry(&self, entry: &LibraryEntry) {
+        let flushed = {
+            let mut papers = self.papers.lock();
+            papers.reconcile_file(entry);
+            papers.flush(false)
+        };
+        self.after_flush(flushed);
+    }
+
+    /// The index is complete: every paper file the index does not list is
+    /// missing, and everything unsaved goes to disk now.
+    pub fn finish_library_scan(&self) {
+        let present = self.library.lock().paths();
+        let flushed = {
+            let mut papers = self.papers.lock();
+            papers.mark_missing(&present);
+            papers.flush(true)
+        };
+        self.after_flush(flushed);
+    }
+
+    fn after_flush(&self, flushed: AppResult<bool>) {
+        match flushed {
+            Ok(true) => self.notify_library_changed(),
+            Ok(false) => {}
+            Err(error) => log::warn!("cannot save the paper library: {error}"),
+        }
+    }
+}
+
+/// Lookups in flight, and the status-bar indicator that follows them. The
+/// indicator follows the count's edges, not the lookups: a project batch and
+/// a single lookup overlapping light it once and put it out once. A batch
+/// reports its progress through [`LookupGauge::progress`] while it runs.
+#[derive(Default)]
+pub struct LookupGauge {
+    in_flight: Mutex<u32>,
+    callback: Mutex<Option<LookupActivityCallback>>,
+}
+
+impl LookupGauge {
+    pub fn set_callback(&self, cb: LookupActivityCallback) {
+        *self.callback.lock() = Some(cb);
+    }
+
+    /// Count a lookup as running until the returned guard drops. A guard
+    /// drops on an early return and on an error alike, so the indicator can
+    /// never stick on.
+    pub fn start(&self) -> LookupActivity<'_> {
+        self.begin();
+        LookupActivity { gauge: self }
+    }
+
+    /// Where a batch has got to: `done` of `total` papers. Sent as is, with
+    /// the indicator lit; `(0, 0)` says only that something is running.
+    pub fn progress(&self, done: u32, total: u32) {
+        self.emit(LookupProgress {
+            active: true,
+            done,
+            total,
+        });
+    }
+
+    fn begin(&self) {
+        let mut in_flight = self.in_flight.lock();
+        *in_flight += 1;
+        if *in_flight == 1 {
+            self.emit(LookupProgress {
+                active: true,
+                done: 0,
+                total: 0,
+            });
+        }
+    }
+
+    fn end(&self) {
+        let mut in_flight = self.in_flight.lock();
+        *in_flight = in_flight.saturating_sub(1);
+        if *in_flight == 0 {
+            self.emit(LookupProgress::default());
+        }
+    }
+
+    fn emit(&self, progress: LookupProgress) {
+        if let Some(cb) = self.callback.lock().as_ref() {
+            cb(progress);
+        }
+    }
+}
+
+/// One running lookup, counted while it lives. See `LookupGauge::start`.
+pub struct LookupActivity<'a> {
+    gauge: &'a LookupGauge,
+}
+
+impl Drop for LookupActivity<'_> {
+    fn drop(&mut self) {
+        self.gauge.end();
+    }
+}
+
+/// The same, owning its engine handle, for a lookup that outlives the
+/// command that started it — the citation edges fetched in the background
+/// after a lookup has answered. See `EngineHandle::hold_lookup`.
+pub struct OwnedLookupActivity {
+    engine: EngineHandle,
+}
+
+impl Drop for OwnedLookupActivity {
+    fn drop(&mut self) {
+        self.engine.0.lookup_activity.end();
+    }
 }
 
 #[derive(Clone)]
@@ -251,7 +456,12 @@ impl EngineHandle {
         let app_data_dir = app_data_dir.unwrap_or_else(|| {
             std::env::temp_dir().join(format!("speedyf-library-{}", std::process::id()))
         });
-        let library = Arc::new(Mutex::new(LibraryState::load(app_data_dir)));
+        let papers = Arc::new(Mutex::new(PaperStore::load(app_data_dir.clone())));
+        let library = Arc::new(Mutex::new(LibraryState::load(app_data_dir.clone())));
+        let lookup_cache = LookupCache::load(&app_data_dir);
+        if !lookup_cache.is_empty() {
+            log::debug!("{} cached metadata lookups", lookup_cache.len());
+        }
         let resolver: Option<Box<dyn CitationResolver>> = (!library.lock().roots().is_empty())
             .then(|| Box::new(LocalLibraryResolver::new(Arc::clone(&library))) as Box<_>);
         let shared = Arc::new(EngineShared {
@@ -265,6 +475,17 @@ impl EngineHandle {
             text_layouts: Mutex::new(TextLayoutCache::new(budgets.text_layouts)),
             link_cache: Mutex::new(links::LinkCache::new(budgets.links)),
             library,
+            papers,
+            library_changed: Mutex::new(None),
+            lookup_settings: Arc::new(Mutex::new(LookupSettings::default())),
+            http: lookup::client(),
+            limiter: Arc::new(HostLimiter::new()),
+            lookup_cache: Arc::new(Mutex::new(lookup_cache)),
+            edges_in_flight: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            refs_cache: Mutex::new(Default::default()),
+            refs_provider: Mutex::new(Default::default()),
+            app_data_dir,
+            lookup_activity: LookupGauge::default(),
             citation_resolver: Mutex::new(resolver),
             metrics: Metrics::default(),
             main_epoch: AtomicU64::new(0),
@@ -279,12 +500,19 @@ impl EngineHandle {
             .spawn(move || worker::run(worker_shared, hints))
             .expect("failed to spawn engine thread");
         let handle = EngineHandle(shared);
-        if handle.0.library.lock().has_scan_work() {
-            handle.submit(Priority::Idle, 0, Work::LibraryScanNext);
-        }
+        // Unconditionally: with nothing to scan the job only reconciles the
+        // paper records against the index, marking files missing whose
+        // folder is gone, which no later scan would otherwise do.
+        handle.submit(Priority::Idle, 0, Work::LibraryScanNext);
         // Text extraction resumes from wherever it stopped: the sidecars from
         // previous runs are still on disk, so this only picks up what is new.
-        if handle.0.library.lock().has_text_work() {
+        // The job also hands over to the cites backfill once nothing is left
+        // to extract, so it is submitted when only that remains too.
+        let (text_work, cites_work) = {
+            let library = handle.0.library.lock();
+            (library.has_text_work(), library.has_cites_work())
+        };
+        if text_work || cites_work {
             handle.submit(Priority::Idle, 0, Work::LibraryTextNext);
         }
         handle
@@ -348,6 +576,48 @@ impl EngineHandle {
 
     pub fn set_progress_callback(&self, cb: ProgressCallback) {
         *self.0.progress.lock() = Some(cb);
+    }
+
+    pub fn set_library_changed_callback(&self, cb: LibraryChangedCallback) {
+        *self.0.library_changed.lock() = Some(cb);
+    }
+
+    pub fn set_lookup_activity_callback(&self, cb: LookupActivityCallback) {
+        self.0.lookup_activity.set_callback(cb);
+    }
+
+    /// Count a lookup as running until the returned guard drops, for work
+    /// that runs on after its command has answered.
+    pub fn hold_lookup(&self) -> OwnedLookupActivity {
+        self.0.lookup_activity.begin();
+        OwnedLookupActivity {
+            engine: self.clone(),
+        }
+    }
+
+    /// The lookup settings as last set, for a request about to be built.
+    pub fn lookup_settings(&self) -> LookupSettings {
+        self.0.lookup_settings.lock().clone()
+    }
+
+    /// What a lookup chain shares with the engine.
+    pub fn chain_shared(&self) -> ChainShared {
+        ChainShared {
+            client: self.0.http.clone(),
+            limiter: Arc::clone(&self.0.limiter),
+            settings: Arc::clone(&self.0.lookup_settings),
+            cache: Arc::clone(&self.0.lookup_cache),
+            cache_dir: self.0.app_data_dir.clone(),
+            edges_in_flight: Arc::clone(&self.0.edges_in_flight),
+        }
+    }
+
+    pub fn set_lookup_settings(&self, enabled: bool, contact: String, s2_key: String) {
+        *self.0.lookup_settings.lock() = LookupSettings {
+            enabled,
+            contact: contact.trim().to_owned(),
+            s2_key: s2_key.trim().to_owned(),
+        };
     }
 
     pub fn set_low_memory(&self, low: bool) {
@@ -418,8 +688,12 @@ impl EngineHandle {
             Box::new(LocalLibraryResolver::new(Arc::clone(&self.0.library)))
                 as Box<dyn CitationResolver>
         });
+        // The scan's end marks the removed folder's papers missing. With
+        // nothing left to scan there is no end to wait for, so do it now.
         if should_scan {
             self.submit(Priority::Idle, 0, Work::LibraryScanNext);
+        } else {
+            self.0.finish_library_scan();
         }
         self.submit(Priority::Idle, 0, Work::LibraryTextNext);
         Ok(())
@@ -593,5 +867,96 @@ impl EngineHandle {
         }));
         self.submit(prio, doc, work);
         rx.recv().map_err(|_| AppError::EngineUnavailable)?
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A gauge whose callback appends to a shared log.
+    fn gauge_with_log() -> (LookupGauge, Arc<Mutex<Vec<LookupProgress>>>) {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let gauge = LookupGauge::default();
+        let sink = Arc::clone(&log);
+        gauge.set_callback(Box::new(move |progress| sink.lock().push(progress)));
+        (gauge, log)
+    }
+
+    fn on() -> LookupProgress {
+        LookupProgress {
+            active: true,
+            done: 0,
+            total: 0,
+        }
+    }
+
+    fn off() -> LookupProgress {
+        LookupProgress::default()
+    }
+
+    fn at(done: u32, total: u32) -> LookupProgress {
+        LookupProgress {
+            active: true,
+            done,
+            total,
+        }
+    }
+
+    #[test]
+    fn the_indicator_follows_the_first_start_and_the_last_end() {
+        let (gauge, log) = gauge_with_log();
+        {
+            let _one = gauge.start();
+            assert_eq!(*log.lock(), vec![on()], "0 → 1 lights it");
+        }
+        assert_eq!(*log.lock(), vec![on(), off()], "1 → 0 puts it out");
+    }
+
+    #[test]
+    fn overlapping_lookups_emit_once_each_way() {
+        let (gauge, log) = gauge_with_log();
+        let outer = gauge.start();
+        let inner = gauge.start();
+        assert_eq!(*log.lock(), vec![on()], "a second start is silent");
+        drop(inner);
+        assert_eq!(*log.lock(), vec![on()], "still one running");
+        drop(outer);
+        assert_eq!(*log.lock(), vec![on(), off()]);
+        // And it can go round again.
+        drop(gauge.start());
+        assert_eq!(*log.lock(), vec![on(), off(), on(), off()]);
+    }
+
+    #[test]
+    fn a_batch_reports_each_step_between_the_edges() {
+        let (gauge, log) = gauge_with_log();
+        let batch = gauge.start();
+        let total = 3;
+        gauge.progress(0, total);
+        for done in 1..=total {
+            gauge.progress(done, total);
+        }
+        // The edge phase after the papers: lit, no count.
+        gauge.progress(0, 0);
+        drop(batch);
+        assert_eq!(
+            *log.lock(),
+            vec![on(), at(0, 3), at(1, 3), at(2, 3), at(3, 3), on(), off()]
+        );
+        assert_eq!(
+            log.lock().iter().filter(|p| p.total > 0).count(),
+            4,
+            "one report per step plus the start"
+        );
+    }
+
+    #[test]
+    fn a_gauge_without_a_callback_still_counts() {
+        let gauge = LookupGauge::default();
+        let first = gauge.start();
+        assert_eq!(*gauge.in_flight.lock(), 1);
+        drop(first);
+        assert_eq!(*gauge.in_flight.lock(), 0);
     }
 }

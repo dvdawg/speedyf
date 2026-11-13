@@ -252,7 +252,7 @@ pub fn parse_citation_id(input: &str) -> Option<CitationIdDto> {
 
 /// Rewrite an arXiv DOI as the arXiv id it stands for, leaving anything else
 /// untouched.
-fn fold_arxiv_doi(id: CitationIdDto) -> CitationIdDto {
+pub fn fold_arxiv_doi(id: CitationIdDto) -> CitationIdDto {
     let CitationIdDto::Doi(value) = &id else {
         return id;
     };
