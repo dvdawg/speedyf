@@ -248,6 +248,11 @@ export interface ApiGlyph {
 export interface ApiGlyphs {
   page: number;
   glyphs: ApiGlyph[];
+  /** `[x, y, w, h]` of each 2-D stack the page's pixels show: a fraction
+   * with its numerator and denominator, an operator with its limits. */
+  groups: [number, number, number, number][];
+  /** `[x, y, w, h]` of each line of ink, top down. */
+  lines: [number, number, number, number][];
 }
 
 /** A tagged-PDF Formula element. */
@@ -503,41 +508,56 @@ export function toPaper(paper: Paper): ApiPaperDetail {
   };
 }
 
+type EngineBox = readonly [number, number, number, number];
+const toBox4 = (b: EngineBox): [number, number, number, number] => [b[0], b[1], b[2], b[3]];
+
 /** Glyphs as the engine reports them, copied field by field so a field the
  * engine adds later does not leak into the contract on its own. */
 export function toGlyphs(
   page: number,
-  glyphs: readonly {
-    text: string;
-    code: number;
-    font: string;
-    size: number;
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-    baseline: number;
-    bold: boolean;
-    italic: boolean;
-    ink?: readonly [number, number, number, number] | null;
-  }[]
+  layout: {
+    glyphs: readonly EngineGlyph[];
+    groups?: readonly EngineBox[];
+    lines?: readonly EngineBox[];
+  }
 ): ApiGlyphs {
   return {
     page,
-    glyphs: glyphs.map((g) => ({
-      text: g.text,
-      code: g.code,
-      font: g.font,
-      size: g.size,
-      x: g.x,
-      y: g.y,
-      w: g.w,
-      h: g.h,
-      baseline: g.baseline,
-      bold: g.bold,
-      italic: g.italic,
-      ink: g.ink ? [g.ink[0], g.ink[1], g.ink[2], g.ink[3]] : null,
-    })),
+    glyphs: layout.glyphs.map(toGlyph),
+    groups: (layout.groups ?? []).map(toBox4),
+    lines: (layout.lines ?? []).map(toBox4),
+  };
+}
+
+interface EngineGlyph {
+  text: string;
+  code: number;
+  font: string;
+  size: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  baseline: number;
+  bold: boolean;
+  italic: boolean;
+  ink?: EngineBox | null;
+}
+
+function toGlyph(g: EngineGlyph): ApiGlyph {
+  return {
+    text: g.text,
+    code: g.code,
+    font: g.font,
+    size: g.size,
+    x: g.x,
+    y: g.y,
+    w: g.w,
+    h: g.h,
+    baseline: g.baseline,
+    bold: g.bold,
+    italic: g.italic,
+    ink: g.ink ? toBox4(g.ink) : null,
   };
 }
 

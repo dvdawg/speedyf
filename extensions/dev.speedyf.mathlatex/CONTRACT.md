@@ -36,8 +36,8 @@ this, the extension consumes exactly this.
 
 | API                    | Args                                                                                                                           | Returns                                                                                                             | Needs                         |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| `selection.glyphs`     | none                                                                                                                           | `{ page, glyphs: Glyph[] } \| null` (current text selection)                                                        | document:layout               |
-| `region.glyphs`        | `{ page, bbox }`                                                                                                               | `{ page, glyphs: Glyph[] }`                                                                                         | document:layout               |
+| `selection.glyphs`     | none                                                                                                                           | `{ page, glyphs, groups, lines } \| null` (current text selection)                                                  | document:layout               |
+| `region.glyphs`        | `{ page, bbox }`                                                                                                               | `{ page, glyphs, groups, lines }` (the equation at `bbox`, grown to all of it)                                      | document:layout               |
 | `document.mathTags`    | `{ page }`                                                                                                                     | `[{ bbox, alt: string \| null, actualText: string \| null, mathml: string \| null }]` (tagged-PDF Formula elements) | document:layout               |
 | `document.identifiers` | none                                                                                                                           | `{ doi: string \| null, arxiv: string \| null, arxivVersion: number \| null }`                                      | document:read                 |
 | `net.fetch`            | `{ url, as: 'text' \| 'bytes', maxBytes?: number }`                                                                            | `{ status, contentType, body: string \| number[] }`                                                                 | network (host must be listed) |
@@ -68,6 +68,18 @@ a font, so it says nothing about how tall a delimiter or big operator is.
 mapping: `code` is the raw code only when `text` is empty, and otherwise the
 Unicode scalar. A character outside the Basic Multilingual Plane (𝑌 from an
 OpenType math font) is one glyph, its `text` the full character.
+
+`region.glyphs` treats `bbox` as an equation's block: any glyph whose ink
+touches it is taken, then the glyphs on the same baselines next to those
+(a left-hand side) and those stacked right on a bar taken (a numerator, a
+denominator). The host renders the page and reads its layout with classical
+image analysis: `ink` comes from the connected components each glyph
+covers; a bar the PDF did not draw as a path (found as a long thin run of
+ink) is added as a `__rule` glyph; `groups` (`[x, y, w, h][]`) are the 2-D
+stacks a small vertical dilation fuses, a fraction with its numerator and
+denominator, an operator with its limits; `lines` (`[x, y, w, h][]`, top
+down) are the strips of ink joined through those stacks. Both are empty when
+the page could not be rendered.
 
 Rules lines/rects that form fraction bars and radicals are returned as
 glyphs with `font: '__rule'`, `text: ''`, `code: 0` (thin horizontal boxes).

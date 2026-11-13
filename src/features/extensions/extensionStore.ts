@@ -909,24 +909,27 @@ async function readApi(api: string, args: unknown): Promise<unknown> {
       if (!geometry || geometry.docId !== doc.docId) return null;
       const src = doc.pages[geometry.page]?.srcIndex;
       if (src === undefined || src === null) return null;
-      const glyphs = await invoke<Parameters<typeof toGlyphs>[1]>('get_page_glyphs', {
+      const layout = await invoke<Parameters<typeof toGlyphs>[1]>('get_page_glyphs', {
         docId: doc.docId,
         src,
         rects: geometry.rects,
       });
-      return toGlyphs(geometry.page, glyphs);
+      return toGlyphs(geometry.page, layout);
     }
 
     case 'region.glyphs': {
       const { page, bbox } = readRegionArg(args, doc.pages.length);
       const src = doc.pages[page]?.srcIndex;
       if (src === undefined || src === null) return { page, glyphs: [] };
-      const glyphs = await invoke<Parameters<typeof toGlyphs>[1]>('get_page_glyphs', {
+      // An equation's block: the engine grows it to everything attached
+      // (numerators over bars, the left-hand side on its baseline).
+      const layout = await invoke<Parameters<typeof toGlyphs>[1]>('get_page_glyphs', {
         docId: doc.docId,
         src,
         rects: [bbox],
+        grow: true,
       });
-      return toGlyphs(page, glyphs);
+      return toGlyphs(page, layout);
     }
 
     case 'document.mathTags': {

@@ -20,6 +20,7 @@ use crate::engine::layout_text::{char_matrix, font_info, is_bold_font_name};
 use crate::engine::render::{apply, compose, Matrix, FPDF_PAGEOBJ_FORM, IDENTITY, MAX_FORM_DEPTH};
 use crate::engine::tagged::{chars_by_mcid, element_type, utf16_string};
 use crate::engine::text::{is_math_font, DispMapper};
+use crate::engine::vision;
 use pdfium_render::prelude::{
     PdfiumLibraryBindings, FPDF_PAGE, FPDF_PAGEOBJECT, FPDF_STRUCTELEMENT, FPDF_TEXTPAGE,
     FS_MATRIX, FS_RECTF,
@@ -114,11 +115,28 @@ pub struct EquationBlockDto {
 // Glyphs
 // ---------------------------------------------------------------------------
 
-/// Strip a subset tag: exactly six uppercase ASCII letters and a `+`.
+/// Strip a subset tag: exactly six uppercase ASCII letters and a `+`; or
+/// the tag Springer's tools run into the name, two random capitalised
+/// six-letter words ("PwkwqfRgwrxjMTMI", "CylqyyWbfffhTimes-Roman").
 pub fn strip_subset_prefix(name: &str) -> &str {
     match name.split_once('+') {
         Some((tag, rest)) if tag.len() == 6 && tag.bytes().all(|b| b.is_ascii_uppercase()) => rest,
-        _ => name,
+        _ => {
+            let mut rest = name;
+            loop {
+                let b = rest.as_bytes();
+                let word = |at: usize| {
+                    b.len() > at + 6
+                        && b[at].is_ascii_uppercase()
+                        && b[at + 1..at + 6].iter().all(u8::is_ascii_lowercase)
+                };
+                if b.len() > 12 && word(0) && word(6) && b[12].is_ascii_uppercase() {
+                    rest = &rest[12..];
+                } else {
+                    return rest;
+                }
+            }
+        }
     }
 }
 
@@ -700,6 +718,8 @@ pub fn is_math_font_name(name: &str) -> bool {
     upper.contains("MATH")
         || [
             "EUFM", "EUSM", "EUEX", "RSFS", "CMBSY", "STMARY", "ESINT", "MTEXTRA", "MT-EXTRA",
+            // MathTime (Springer, and RMTMI in some LaTeX journals).
+            "MTMI", "MTSY", "MTEX", "RMTMI",
         ]
         .iter()
         .any(|family| upper.starts_with(family))
@@ -1469,6 +1489,814 @@ pub fn equation_blocks(glyphs: &[GlyphDto], page_w: f32, _page_h: f32) -> Vec<Eq
         .collect()
 }
 
+// ---------------------------------------------------------------------------
+// Displays from the page's pixels
+// ---------------------------------------------------------------------------
+
+/// A line of a column as the raster shows it: strips joined through their
+/// stacks, its ink box (points), and what the glyphs in it say.
+#[derive(Clone, Debug)]
+struct InkLine {
+    /// `[x, y, w, h]` of the ink, without an equation number.
+    bbox: [f32; 4],
+    number: Option<String>,
+    display: bool,
+    /// Mathematics by what it holds, display or not.
+    mathy: bool,
+    /// The median size of its glyphs.
+    size: f32,
+}
+
+/// Where a glyph is drawn: its ink box when PDFium gave one, else its loose
+/// box held to the band around its baseline.
+fn drawn(g: &GlyphDto) -> [f32; 4] {
+    g.ink.unwrap_or_else(|| outline_box(g))
+}
+
+fn centre_of(r: &[f32; 4]) -> (f32, f32) {
+    (r[0] + r[2] / 2.0, r[1] + r[3] / 2.0)
+}
+
+fn inside(p: (f32, f32), r: &[f32; 4]) -> bool {
+    p.0 >= r[0] && p.0 <= r[0] + r[2] && p.1 >= r[1] && p.1 <= r[1] + r[3]
+}
+
+fn union_pt(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    let (l, t) = (a[0].min(b[0]), a[1].min(b[1]));
+    let (r, bo) = (
+        (a[0] + a[2]).max(b[0] + b[2]),
+        (a[1] + a[3]).max(b[1] + b[3]),
+    );
+    [l, t, r - l, bo - t]
+}
+
+fn overlaps_pt(a: &[f32; 4], b: &[f32; 4]) -> bool {
+    a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3]
+}
+
+/// Characters that make a line mathematics whatever font sets them.
+fn is_math_char(c: char) -> bool {
+    "=+<>\u{2212}\u{00B1}\u{00D7}\u{00F7}\u{2211}\u{220F}\u{222B}\u{221A}\u{221E}\u{2202}\u{2207}\u{2264}\u{2265}\u{2260}\u{2248}\u{2261}\u{2208}\u{2209}\u{2282}\u{2286}\u{2192}\u{21D2}\u{2200}\u{2203}\u{22C5}"
+        .contains(c)
+        || ('\u{0391}'..='\u{03F6}').contains(&c)
+        || ('\u{1D400}'..='\u{1D7FF}').contains(&c)
+}
+
+/// The displays of a page read from its raster, with the glyphs saying
+/// which lines are mathematics.
+///
+/// Recursive XY-cut finds the columns and their strips of ink; strips are
+/// joined into lines through fraction stacks and nested accents and limits
+/// ([`vision::logical_lines`]). A line is a display when it is
+/// mathematics (math fonts, operators, Greek, a bar; few words) and sits
+/// apart from the column's text: indented from both edges, or numbered at
+/// the right margin, or flush left (`fleqn`) with space above and below.
+/// Consecutive display lines with no prose between them are one display,
+/// unless each has its own number.
+pub fn raster_displays(glyphs: &[GlyphDto], raster: &vision::PageRaster) -> Vec<EquationBlockDto> {
+    displays_from_lines(glyphs, &ink_lines(glyphs, raster))
+}
+
+/// The lines of running text the raster found, `[x, y, w, h]`.
+fn text_lines(lines: &[(vision::PxBox, Vec<InkLine>)], page_em: f32) -> Vec<[f32; 4]> {
+    // Full-size and long: a label under a brace or a limit is small, a
+    // "for all x" beside a formula short.
+    lines
+        .iter()
+        .flat_map(|(_, ls)| {
+            ls.iter()
+                .filter(|l| {
+                    !l.display && !l.mathy && l.size >= 0.9 * page_em && l.bbox[2] >= 15.0 * page_em
+                })
+                .map(|l| l.bbox)
+        })
+        .collect()
+}
+
+fn displays_from_lines(
+    glyphs: &[GlyphDto],
+    lines: &[(vision::PxBox, Vec<InkLine>)],
+) -> Vec<EquationBlockDto> {
+    let lines = lines.to_vec();
+    let mut out: Vec<EquationBlockDto> = Vec::new();
+    let mut current: Option<(EquationBlockDto, f32)> = None;
+    let page_em = median(
+        glyphs
+            .iter()
+            .filter(|g| !g.is_rule())
+            .map(|g| g.size)
+            .collect(),
+    )
+    .max(1.0);
+    for (column, column_lines) in lines {
+        let _ = column;
+        for line in column_lines {
+            if !line.display {
+                if let Some((b, _)) = current.take() {
+                    out.push(b);
+                }
+                continue;
+            }
+            let bottom = line.bbox[1] + line.bbox[3];
+            match current.as_mut() {
+                Some((b, prev_bottom))
+                    if line.bbox[1] - *prev_bottom <= 1.5 * page_em
+                        && !(b.number.is_some() && line.number.is_some()) =>
+                {
+                    b.bbox = union_pt(b.bbox, line.bbox);
+                    if b.number.is_none() {
+                        b.number = line.number.clone();
+                    }
+                    *prev_bottom = bottom;
+                }
+                _ => {
+                    if let Some((b, _)) = current.take() {
+                        out.push(b);
+                    }
+                    current = Some((
+                        EquationBlockDto {
+                            bbox: line.bbox,
+                            number: line.number.clone(),
+                        },
+                        bottom,
+                    ));
+                }
+            }
+        }
+        if let Some((b, _)) = current.take() {
+            out.push(b);
+        }
+    }
+    out.sort_by(|a, b| a.bbox[1].total_cmp(&b.bbox[1]));
+    out
+}
+
+/// The lines of each column, top down, classified.
+fn ink_lines(
+    glyphs: &[GlyphDto],
+    raster: &vision::PageRaster,
+) -> Vec<(vision::PxBox, Vec<InkLine>)> {
+    let chars: Vec<&GlyphDto> = glyphs
+        .iter()
+        .filter(|g| !g.is_rule() && g.w > 0.0 && (g.text.is_empty() || !g.text.trim().is_empty()))
+        .collect();
+    if chars.is_empty() {
+        return Vec::new();
+    }
+    let em = median(chars.iter().map(|g| g.size).collect()).max(1.0);
+    let em_px = raster.px(em);
+    let bits = &raster.bits;
+    let page = vision::PxBox::new(0, 0, bits.w, bits.h);
+    let strips = vision::xy_cut(
+        bits,
+        page,
+        vision::CutOptions {
+            min_gutter: raster.px(1.2 * em),
+            min_gutter_height: raster.px(2.5 * em),
+            band_gap: raster.px(1.5 * em),
+            min_column_width: raster.px(10.0 * em),
+        },
+    );
+    // The PDF's own rules, and long thin runs in the raster.
+    let mut rules: Vec<vision::PxBox> = glyphs
+        .iter()
+        .filter(|g| g.is_rule())
+        .map(|g| raster.to_px([g.x, g.y, g.w, g.h.max(0.5)]))
+        .collect();
+    // Raster rules that are a glyph's own strokes (the bar of an E, a
+    // minus sign) are not bars.
+    let inks: Vec<vision::PxBox> = chars.iter().map(|g| raster.to_px(drawn(g))).collect();
+    for s in &strips {
+        rules.extend(
+            vision::horizontal_rules(
+                bits,
+                s.bbox,
+                raster.px(0.5 * em),
+                raster.px(0.12 * em).max(2) + 1,
+            )
+            .into_iter()
+            .filter(|r| {
+                !inks
+                    .iter()
+                    .any(|i| i.intersection_area(r) * 2 >= r.w() * r.h())
+            }),
+        );
+    }
+    // Columns: the XY-cut finds them band by band; the bands' columns at
+    // the same place across the page are one column.
+    let tol = raster.px(2.0 * em);
+    let mut columns: Vec<vision::PxBox> = Vec::new();
+    let mut key_of: Vec<usize> = Vec::with_capacity(strips.len());
+    for s in &strips {
+        let c = s.column;
+        let at = columns
+            .iter()
+            .position(|k| k.x0.abs_diff(c.x0) <= tol && k.x1.abs_diff(c.x1) <= tol);
+        match at {
+            Some(at) => {
+                columns[at] = columns[at].union(&c);
+                key_of.push(at);
+            }
+            None => {
+                columns.push(c);
+                key_of.push(columns.len() - 1);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for (key, &column) in columns.iter().enumerate() {
+        let col_strips: Vec<vision::PxBox> = strips
+            .iter()
+            .zip(&key_of)
+            .filter(|(_, &k)| k == key)
+            .map(|(s, _)| s.bbox)
+            .collect();
+        let groups = vision::logical_lines(
+            &col_strips,
+            &rules,
+            em_px,
+            raster.px(0.7 * em),
+            raster.px(0.35 * em),
+        );
+        let boxes: Vec<vision::PxBox> = groups
+            .iter()
+            .map(|g| {
+                g.iter()
+                    .map(|&i| col_strips[i])
+                    .reduce(|a, b| a.union(&b))
+                    .expect("a line has a strip")
+            })
+            .collect();
+        // The column's text edges: where its wide lines start and end.
+        let widest = boxes.iter().map(|b| b.w()).max().unwrap_or(0);
+        let wide: Vec<&vision::PxBox> = boxes.iter().filter(|b| b.w() * 10 >= widest * 6).collect();
+        let col_left = median(wide.iter().map(|b| b.x0 as f32).collect()) / raster.scale;
+        let col_right = median(wide.iter().map(|b| b.x1 as f32).collect()) / raster.scale;
+        let mut lines: Vec<InkLine> = Vec::new();
+        for (k, b) in boxes.iter().enumerate() {
+            let pt = raster.to_pt(b);
+            let members: Vec<&GlyphDto> = chars
+                .iter()
+                .copied()
+                .filter(|g| inside(centre_of(&drawn(g)), &pt))
+                .collect();
+            let gap_above = if k > 0 {
+                (b.y0 as f32 - boxes[k - 1].y1 as f32) / raster.scale
+            } else {
+                f32::MAX
+            };
+            let gap_below = if k + 1 < boxes.len() {
+                (boxes[k + 1].y0 as f32 - b.y1 as f32) / raster.scale
+            } else {
+                f32::MAX
+            };
+            let has_rule = rules
+                .iter()
+                .any(|r| r.intersection_area(b) > 0 && r.w() > em_px / 2);
+            lines.push(classify_line(
+                pt, &members, has_rule, col_left, col_right, em, gap_above, gap_below,
+            ));
+        }
+        out.push((column, lines));
+    }
+    out
+}
+
+/// What a line of a column is: its ink without a trailing equation number,
+/// the number, and whether it is a display.
+#[allow(clippy::too_many_arguments)]
+fn classify_line(
+    pt: [f32; 4],
+    members: &[&GlyphDto],
+    has_rule: bool,
+    col_left: f32,
+    col_right: f32,
+    em: f32,
+    gap_above: f32,
+    gap_below: f32,
+) -> InkLine {
+    let mut bbox = pt;
+    // A trailing "(n)" set apart at the right: the number.
+    let mut sorted: Vec<&GlyphDto> = members.to_vec();
+    sorted.sort_by(|a, b| a.x.total_cmp(&b.x));
+    let mut number = None;
+    if let Some(at) = sorted.iter().rposition(|g| g.text == "(") {
+        let tail: String = sorted[at..].iter().map(|g| g.text.as_str()).collect();
+        let before = sorted[..at]
+            .iter()
+            .map(|g| g.x + g.w)
+            .fold(f32::MIN, f32::max);
+        let level = sorted[at..]
+            .iter()
+            .all(|g| (g.baseline - sorted[at].baseline).abs() < 0.1 * em);
+        if let (Some(n), true) = (equation_number(&tail), level) {
+            if at > 0 && sorted[at].x - before >= 0.8 * em && pt[0] + pt[2] >= col_right - em {
+                number = Some(n);
+                let keep: Vec<[f32; 4]> = sorted[..at].iter().map(|g| drawn(g)).collect();
+                if let Some(u) = keep.into_iter().reduce(union_pt) {
+                    // Only narrow the ink to the left of the number.
+                    let right = u[0] + u[2];
+                    bbox[2] = (right - bbox[0]).max(0.0);
+                }
+            }
+        }
+    }
+    // Or a leading one at the left margin (`leqno`).
+    if number.is_none() {
+        if let Some(close) = sorted.iter().position(|g| g.text == ")") {
+            let head: String = sorted[..=close].iter().map(|g| g.text.as_str()).collect();
+            let after = sorted.get(close + 1).map(|g| g.x);
+            let level = sorted[..=close]
+                .iter()
+                .all(|g| (g.baseline - sorted[0].baseline).abs() < 0.1 * em);
+            if let (Some(n), Some(next), true) = (equation_number(&head), after, level) {
+                let end = sorted[close].x + sorted[close].w;
+                if next - end >= 0.8 * em && pt[0] <= col_left + em {
+                    number = Some(n);
+                    let keep: Vec<[f32; 4]> =
+                        sorted[close + 1..].iter().map(|g| drawn(g)).collect();
+                    if let Some(u) = keep.into_iter().reduce(union_pt) {
+                        let right = bbox[0] + bbox[2];
+                        bbox[0] = u[0].max(bbox[0]);
+                        bbox[2] = (right - bbox[0]).max(0.0);
+                    }
+                }
+            }
+        }
+    }
+    let body: Vec<&&GlyphDto> = sorted
+        .iter()
+        .filter(|g| g.x + g.w <= bbox[0] + bbox[2] + 0.5 && g.x >= bbox[0] - 0.5)
+        .collect();
+    let n = body.len().max(1) as f32;
+    let math = body
+        .iter()
+        .filter(|g| {
+            is_math_font_name(&g.font) || g.text.is_empty() || g.text.chars().any(is_math_char)
+        })
+        .count();
+    let wordy = |g: &GlyphDto| {
+        !is_math_font_name(&g.font)
+            && g.text
+                .chars()
+                .any(|c| c.is_alphabetic() && !is_math_char(c))
+    };
+    let words = body.iter().filter(|g| wordy(g)).count() as f32 / n;
+    // Letters in long words (five letters or more, run together on one
+    // baseline): prose. Operator names (ln, exp, err, diam) are short.
+    let mut prose_letters = 0usize;
+    let mut run: Vec<&GlyphDto> = Vec::new();
+    let mut flush_run = |run: &mut Vec<&GlyphDto>| {
+        if run.len() >= 5 {
+            prose_letters += run.len();
+        }
+        run.clear();
+    };
+    for g in body.iter().map(|g| **g) {
+        let joins = run.last().is_some_and(|p: &&GlyphDto| {
+            (p.baseline - g.baseline).abs() < 0.1 * em && g.x - (p.x + p.w) < 0.15 * em
+        });
+        if wordy(g) {
+            if !joins {
+                flush_run(&mut run);
+            }
+            run.push(g);
+        } else {
+            flush_run(&mut run);
+        }
+    }
+    flush_run(&mut run);
+    let prose = prose_letters as f32 / n;
+    let alnum = body
+        .iter()
+        .filter(|g| g.text.chars().any(char::is_alphanumeric))
+        .count();
+    let left = bbox[0] - col_left;
+    let right = col_right - (bbox[0] + bbox[2]);
+    let inset = left > 1.5 * em && right > 1.5 * em;
+    let mathy = (math > 0 || has_rule)
+        && body.len() >= 2
+        && alnum > 0
+        && words <= if inset { 0.8 } else { 0.5 }
+        && prose <= if inset { 0.35 } else { 0.25 };
+    // Ending in a colon, a line introduces what follows.
+    let colon = body.last().is_some_and(|g| g.text == ":");
+    let apart = gap_above > 0.45 * em && gap_below > 0.45 * em;
+    let display = mathy
+        && !colon
+        && (inset
+            || (number.is_some() && left > -0.5 * em)
+            || (apart && left.abs() < 0.5 * em && right > 3.0 * em && words <= 0.2));
+    InkLine {
+        bbox,
+        number,
+        display,
+        mathy,
+        size: median(body.iter().map(|g| g.size).collect()),
+    }
+}
+
+/// Display equations of a page, from its glyphs and, when there is one,
+/// its raster. The raster's displays are taken whole: their extent comes
+/// from the ink, numerators, limits and every line of the display
+/// included. A block found from the glyphs alone is kept where the raster
+/// has no display of its own over it.
+pub fn equation_blocks_with_raster(
+    glyphs: &[GlyphDto],
+    raster: Option<&vision::PageRaster>,
+    page_w: f32,
+    page_h: f32,
+) -> Vec<EquationBlockDto> {
+    let from_glyphs = equation_blocks(glyphs, page_w, page_h);
+    let Some(raster) = raster else {
+        return from_glyphs;
+    };
+    let lines = ink_lines(glyphs, raster);
+    let page_em = median(
+        glyphs
+            .iter()
+            .filter(|g| !g.is_rule())
+            .map(|g| g.size)
+            .collect(),
+    )
+    .max(1.0);
+    let prose = text_lines(&lines, page_em);
+    let mut out = displays_from_lines(glyphs, &lines);
+    for mut b in from_glyphs {
+        // A line of prose the raster saw is no part of a display: the
+        // glyphs' outline is cut back from it, or dropped if inside one.
+        for t in &prose {
+            let x_share = (b.bbox[0] + b.bbox[2]).min(t[0] + t[2]) - b.bbox[0].max(t[0]);
+            if !overlaps_pt(&b.bbox, t) || x_share < 0.5 * b.bbox[2].min(t[2]) {
+                continue;
+            }
+            let (top, bottom) = (b.bbox[1], b.bbox[1] + b.bbox[3]);
+            let (t_top, t_bottom) = (t[1], t[1] + t[3]);
+            // Most of the block inside the "prose": the raster has run the
+            // display into a line of text; trust the glyphs.
+            if t_bottom.min(bottom) - t_top.max(top) > 0.5 * b.bbox[3] {
+                continue;
+            }
+            if t_top - top > bottom - t_bottom {
+                // The prose is in the lower part: end at its upper edge (a
+                // little into it, where a limit tucked against it ends).
+                b.bbox[3] = (t_top + 0.2 * page_em - top).max(0.0);
+            } else {
+                let new_top = t_bottom - 0.2 * page_em;
+                b.bbox[3] = (bottom - new_top).max(0.0);
+                b.bbox[1] = new_top;
+            }
+        }
+        if b.bbox[3] <= 0.0 {
+            continue;
+        }
+        // Where both found it, the union: the raster adds what the glyphs'
+        // outline cut off, the glyphs a line the raster judged otherwise.
+        // A glyph block over several raster lines (an `align` numbered line
+        // by line) makes them one.
+        let (hit, mut rest): (Vec<EquationBlockDto>, Vec<EquationBlockDto>) =
+            out.into_iter().partition(|r| overlaps_pt(&r.bbox, &b.bbox));
+        let mut merged = b;
+        let mut numbers = Vec::new();
+        for r in hit {
+            merged.bbox = union_pt(merged.bbox, r.bbox);
+            numbers.push((r.bbox[1], r.number));
+        }
+        if merged.number.is_none() {
+            numbers.sort_by(|a, b| a.0.total_cmp(&b.0));
+            merged.number = numbers.into_iter().find_map(|(_, n)| n);
+        }
+        rest.push(merged);
+        out = rest;
+    }
+    out.sort_by(|a, b| a.bbox[1].total_cmp(&b.bbox[1]));
+    out
+}
+
+// ---------------------------------------------------------------------------
+// The glyphs of a region, grown and measured on the raster
+// ---------------------------------------------------------------------------
+
+/// Glyphs for a selection or an equation, with what the raster says of
+/// their layout.
+#[derive(Serialize, Clone, Debug, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GlyphLayoutDto {
+    /// The glyphs, with `ink` measured from the raster where it could be,
+    /// and bars the raster found that the PDF did not draw as paths added
+    /// as `__rule` glyphs.
+    pub glyphs: Vec<GlyphDto>,
+    /// `[x, y, w, h]` of each 2-D stack: a fraction (numerator, bar and
+    /// denominator) or an operator with its limits, fused by dilation.
+    pub groups: Vec<[f32; 4]>,
+    /// `[x, y, w, h]` of each line, top down: strips of ink joined through
+    /// their stacks. More than one is a multi-line display.
+    pub lines: Vec<[f32; 4]>,
+}
+
+/// The glyphs of an equation whose block is `bbox`, tolerantly: any glyph
+/// whose ink touches it; then, until nothing changes, the glyphs on the
+/// same baseline as one already taken and next to it (the left-hand side
+/// an outline missed), and those stacked on a bar already taken (its
+/// numerator and denominator).
+pub fn grow_region(all: &[GlyphDto], bbox: [f32; 4]) -> Vec<GlyphDto> {
+    // The block's rows: the baselines of the glyphs drawn inside it.
+    let rows: Vec<(f32, f32)> = all
+        .iter()
+        .filter(|g| !g.is_rule() && inside(centre_of(&drawn(g)), &bbox))
+        .map(|g| (g.baseline, g.size.max(1.0)))
+        .collect();
+    let in_rows = |g: &GlyphDto| rows.iter().any(|&(b, s)| (g.baseline - b).abs() < 0.15 * s);
+    let mut taken: Vec<bool> = all
+        .iter()
+        .map(|g| {
+            if g.is_rule() {
+                overlaps_pt(&[g.x, g.y, g.w, g.h.max(0.1)], &bbox)
+            } else {
+                let d = drawn(g);
+                inside(centre_of(&d), &bbox) || (overlaps_pt(&d, &bbox) && in_rows(g))
+            }
+        })
+        .collect();
+    for _ in 0..6 {
+        let mut grew = false;
+        for (i, g) in all.iter().enumerate() {
+            if taken[i] || g.is_rule() {
+                continue;
+            }
+            let em = g.size.max(1.0);
+            let d = drawn(g);
+            // Its band must meet the block's: a line of text above or below
+            // is not grown into.
+            if d[1] > bbox[1] + bbox[3] + em || d[1] + d[3] < bbox[1] - em {
+                continue;
+            }
+            let joins = all.iter().enumerate().any(|(j, o)| {
+                if !taken[j] {
+                    return false;
+                }
+                if o.is_rule() {
+                    // Stacked on a bar: over or under it, within its length.
+                    let (cx, _) = centre_of(&d);
+                    let gap = (o.y - (d[1] + d[3])).max(d[1] - (o.y + o.h));
+                    let stacked =
+                        cx >= o.x && cx <= o.x + o.w && gap <= 0.45 * em && o.w >= 0.4 * em;
+                    // Or on the line the bar sits on (its axis a quarter em
+                    // over the baseline), beside it: "l =" before a fraction.
+                    let beside = (d[0] - (o.x + o.w)).max(o.x - (d[0] + d[2])) <= 1.0 * em;
+                    let on_axis = g.baseline >= o.y && g.baseline - o.y <= 0.6 * em;
+                    return stacked || (beside && on_axis && o.w >= 0.4 * em);
+                }
+                let od = drawn(o);
+                let level = (o.baseline - g.baseline).abs() < 0.15 * em;
+                let gap = (od[0] - (d[0] + d[2])).max(d[0] - (od[0] + od[2]));
+                level && gap <= 1.0 * em
+            });
+            if joins {
+                taken[i] = true;
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    all.iter()
+        .zip(&taken)
+        .filter(|(_, &t)| t)
+        .map(|(g, _)| g.clone())
+        .collect()
+}
+
+/// The layout of a region on the raster: every glyph's ink from the
+/// connected components it covers, bars found by run-length analysis,
+/// stacks by dilation, lines from the strips.
+pub fn region_layout(mut glyphs: Vec<GlyphDto>, raster: &vision::PageRaster) -> GlyphLayoutDto {
+    let chars: Vec<usize> = (0..glyphs.len())
+        .filter(|&i| !glyphs[i].is_rule())
+        .collect();
+    if chars.is_empty() {
+        return GlyphLayoutDto {
+            glyphs,
+            ..GlyphLayoutDto::default()
+        };
+    }
+    let em = median(chars.iter().map(|&i| glyphs[i].size).collect()).max(1.0);
+    let region = glyphs
+        .iter()
+        .map(|g| {
+            if g.is_rule() {
+                [g.x, g.y, g.w, g.h]
+            } else {
+                drawn(g)
+            }
+        })
+        .reduce(union_pt)
+        .expect("glyphs");
+    let pad = 0.3 * em;
+    let region_px = raster.to_px([
+        region[0] - pad,
+        region[1] - pad,
+        region[2] + 2.0 * pad,
+        region[3] + 2.0 * pad,
+    ]);
+    let comps = vision::components(&raster.bits, region_px);
+    // Each component to the glyph whose drawn box it overlaps most.
+    let boxes: Vec<vision::PxBox> = chars
+        .iter()
+        .map(|&i| raster.to_px(drawn(&glyphs[i])))
+        .collect();
+    let mut ink: Vec<Option<vision::PxBox>> = vec![None; chars.len()];
+    let mut loose_parts: Vec<vision::PxBox> = Vec::new();
+    let grown = |b: &vision::PxBox| {
+        vision::PxBox::new(
+            b.x0.saturating_sub(1),
+            b.y0.saturating_sub(1),
+            b.x1 + 1,
+            b.y1 + 1,
+        )
+    };
+    for c in &comps {
+        let best = boxes
+            .iter()
+            .enumerate()
+            .map(|(k, b)| (k, grown(b).intersection_area(&c.bbox)))
+            .filter(|&(_, a)| a > 0)
+            .max_by_key(|&(_, a)| a);
+        // A component is a glyph's ink when it lies mostly in the glyph's
+        // box, or holds the glyph's box (a minus sign whose PDF box is a
+        // hairline); one reaching far outside it is not (a bar under a
+        // letter, a radical's sign).
+        let holds = |k: usize| {
+            let b = boxes[k];
+            let (cx, cy) = ((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2);
+            cx >= c.bbox.x0
+                && cx < c.bbox.x1 + 1
+                && cy + 1 >= c.bbox.y0
+                && cy < c.bbox.y1 + 1
+                && c.bbox.w() <= b.w() + 4
+        };
+        match best {
+            Some((k, a)) if a * 2 >= c.bbox.w() * c.bbox.h() || holds(k) => {
+                ink[k] = Some(ink[k].map_or(c.bbox, |b| b.union(&c.bbox)));
+            }
+            _ => loose_parts.push(c.bbox),
+        }
+    }
+    for (k, &i) in chars.iter().enumerate() {
+        if let Some(b) = ink[k] {
+            glyphs[i].ink = Some(raster.to_pt(&b));
+        }
+    }
+    // Bars: thin wide components no glyph claims, and long thin runs; not
+    // where the PDF already has a rule.
+    let thin = raster.px(0.15 * em).max(2) + 1;
+    let mut bars: Vec<vision::PxBox> = loose_parts
+        .iter()
+        .copied()
+        .filter(|b| b.h() <= thin && b.w() >= 4 * b.h() && b.w() >= raster.px(0.4 * em))
+        .collect();
+    let char_inks: Vec<vision::PxBox> = chars
+        .iter()
+        .map(|&i| raster.to_px(drawn(&glyphs[i])))
+        .collect();
+    for r in vision::horizontal_rules(&raster.bits, region_px, raster.px(0.5 * em), thin) {
+        // A bar is a component of its own: a run that is the foot of a ∑
+        // or the bar of a letter belongs to a taller shape.
+        let part_of_shape = comps.iter().any(|c| {
+            c.bbox.x0 <= r.x0
+                && c.bbox.x1 >= r.x1
+                && c.bbox.y0 <= r.y0
+                && c.bbox.y1 >= r.y1
+                && c.bbox.h() > thin + 1
+        });
+        let in_glyph =
+            part_of_shape || char_inks.iter().any(|i| grown(i).intersection_area(&r) > 0);
+        if !in_glyph && !bars.iter().any(|b| b.intersection_area(&r) > 0) {
+            bars.push(r);
+        }
+    }
+    let existing: Vec<vision::PxBox> = glyphs
+        .iter()
+        .filter(|g| g.is_rule())
+        .map(|g| raster.to_px([g.x, g.y, g.w, g.h.max(0.5)]))
+        .collect();
+    // A bar has something under it, a denominator or what it overlines,
+    // among the glyphs; a stray stroke at the region's edge does not.
+    let inner = raster.to_px(region);
+    bars.retain(|b| {
+        b.y0 >= inner.y0
+            && b.y1 <= inner.y1
+            && char_inks
+                .iter()
+                .any(|i| i.x_overlap(b) > 0 && i.y0 >= b.y1 && i.y0 - b.y1 <= raster.px(0.8 * em))
+    });
+    for b in &bars {
+        let dup = existing.iter().any(|e| {
+            e.x_overlap(b) * 2 >= b.w().min(e.w()) && e.y0 <= b.y1 + 2 && b.y0 <= e.y1 + 2
+        });
+        if !dup {
+            let [x, y, w, h] = raster.to_pt(b);
+            if let Some(rule) = rule_glyph(x, y, w, h.min(RULE_MAX_THICKNESS - 0.01)) {
+                glyphs.push(rule);
+            }
+        }
+    }
+    // Stacks: a small vertical dilation fuses a numerator, its bar and its
+    // denominator, an operator and its limits; only groups holding a bar
+    // or a tall symbol are stacks.
+    let all_boxes: Vec<vision::PxBox> = comps
+        .iter()
+        .map(|c| c.bbox)
+        .chain(bars.iter().copied())
+        .collect();
+    let ids = vision::group_by_dilation(&all_boxes, 1, raster.px(0.3 * em));
+    let tall = raster.px(1.3 * em);
+    let mut groups: Vec<(vision::PxBox, bool, usize)> = Vec::new();
+    for (k, b) in all_boxes.iter().enumerate() {
+        let id = ids[k];
+        if groups.len() <= id {
+            groups.resize(id + 1, (*b, false, 0));
+        }
+        let g = &mut groups[id];
+        g.0 = if g.2 == 0 { *b } else { g.0.union(b) };
+        g.2 += 1;
+        let is_bar = b.h() <= thin && b.w() >= 4 * b.h() && b.w() >= raster.px(0.4 * em);
+        g.1 |= is_bar || b.h() >= tall;
+    }
+    let groups: Vec<[f32; 4]> = groups
+        .into_iter()
+        .filter(|(b, stack, n)| *stack && *n >= 2 && b.h() >= raster.px(1.2 * em))
+        .map(|(b, _, _)| raster.to_pt(&b))
+        .collect();
+    // Lines: strips between blank rows, joined through stacks.
+    let rows = vision::valleys(&vision::row_profile(&raster.bits, region_px), 1);
+    let mut strips = Vec::new();
+    let mut y = region_px.y0;
+    for (s0, e0) in rows
+        .iter()
+        .map(|&(s0, e0)| (region_px.y0 + s0, region_px.y0 + e0))
+    {
+        if let Some(t) = vision::trim(
+            &raster.bits,
+            vision::PxBox::new(region_px.x0, y, region_px.x1, s0),
+        ) {
+            strips.push(t);
+        }
+        y = e0;
+    }
+    if let Some(t) = vision::trim(
+        &raster.bits,
+        vision::PxBox::new(region_px.x0, y, region_px.x1, region_px.y1),
+    ) {
+        strips.push(t);
+    }
+    let rule_boxes: Vec<vision::PxBox> = existing.iter().chain(bars.iter()).copied().collect();
+    let lines = vision::logical_lines(
+        &strips,
+        &rule_boxes,
+        raster.px(em),
+        raster.px(0.7 * em),
+        raster.px(0.35 * em),
+    )
+    .into_iter()
+    .map(|l| {
+        let b = l
+            .iter()
+            .map(|&i| strips[i])
+            .reduce(|a, b| a.union(&b))
+            .expect("a strip");
+        raster.to_pt(&b)
+    })
+    .collect();
+    GlyphLayoutDto {
+        glyphs,
+        groups,
+        lines,
+    }
+}
+
+/// The glyphs in `rects` (a selection) or, with `grow`, of the equation
+/// whose block is `rects[0]`, laid out on the raster when there is one.
+pub fn glyph_layout(
+    all: &[GlyphDto],
+    raster: Option<&vision::PageRaster>,
+    rects: &[[f32; 4]],
+    grow: bool,
+) -> GlyphLayoutDto {
+    let glyphs = match (grow, rects.first()) {
+        (true, Some(&bbox)) => grow_region(all, bbox),
+        _ => select_in_rects(all, rects),
+    };
+    match raster {
+        Some(r) if !rects.is_empty() && !glyphs.is_empty() => region_layout(glyphs, r),
+        _ => GlyphLayoutDto {
+            glyphs,
+            ..GlyphLayoutDto::default()
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1518,6 +2346,16 @@ mod tests {
     fn strips_only_a_real_subset_tag() {
         assert_eq!(strip_subset_prefix("EWJNXA+CMMI10"), "CMMI10");
         assert_eq!(strip_subset_prefix("CMMI10"), "CMMI10");
+        assert_eq!(strip_subset_prefix("PwkwqfRgwrxjMTMI"), "MTMI");
+        assert_eq!(
+            strip_subset_prefix("CylqyyWbfffhTimes-Roman"),
+            "Times-Roman"
+        );
+        assert_eq!(strip_subset_prefix("TimesNewRoman"), "TimesNewRoman");
+        assert_eq!(
+            strip_subset_prefix("XnmylnHcvjmcSvysrsSfgwymAdvPSSym"),
+            "AdvPSSym"
+        );
         assert_eq!(strip_subset_prefix("abcdef+CMMI10"), "abcdef+CMMI10");
         assert_eq!(strip_subset_prefix("ABCDE+CMMI10"), "ABCDE+CMMI10");
         assert_eq!(
@@ -1853,6 +2691,115 @@ mod tests {
         glyphs.extend(body_line(190.0));
         let blocks = equation_blocks(&glyphs, 612.0, 792.0);
         assert_eq!(blocks.len(), 1, "{blocks:?}");
+    }
+
+    /// A raster at 2 px/pt with every glyph's box inked (a glyph's ink is
+    /// its band from 0.7 em above the baseline to the baseline), and these
+    /// extra point boxes, bars drawn as no PDF path.
+    fn raster_of(glyphs: &[GlyphDto], extra: &[[f32; 4]], w: f32, h: f32) -> vision::PageRaster {
+        let scale = 2.0;
+        let mut bits = vision::Bits::new((w * scale) as usize, (h * scale) as usize);
+        let mut paint = |r: [f32; 4]| {
+            let x0 = (r[0] * scale) as usize;
+            let y0 = (r[1] * scale) as usize;
+            let x1 = (((r[0] + r[2]) * scale).ceil() as usize).min(bits.w);
+            let y1 = (((r[1] + r[3]) * scale).ceil() as usize).min(bits.h);
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    bits.set(x, y, true);
+                }
+            }
+        };
+        for g in glyphs {
+            if g.is_rule() {
+                paint([g.x, g.y, g.w, g.h.max(0.5)]);
+            } else {
+                // Letters with a little space between them.
+                paint([
+                    g.x + 0.5,
+                    g.baseline - 0.7 * g.size,
+                    (g.w - 1.0).max(0.5),
+                    0.7 * g.size,
+                ]);
+            }
+        }
+        for r in extra {
+            paint(*r);
+        }
+        vision::PageRaster { bits, scale }
+    }
+
+    #[test]
+    fn an_equation_grows_to_its_numerators_and_left_hand_side() {
+        // l = (a+b) / c, the bar a PDF rule.
+        let mut glyphs = set("l=", "CMMI10", 100.0, 200.0);
+        glyphs.extend(set("a+b", "CMMI10", 120.0, 192.0));
+        glyphs.push(rule_glyph(118.0, 196.0, 18.0, 0.4).unwrap());
+        glyphs.extend(set("c", "CMMI10", 125.0, 208.0));
+        // A text line well above.
+        glyphs.extend(set("text", "Times-Roman", 100.0, 170.0));
+        // The block as an outline clamped to the bar's band would give it.
+        let grown = grow_region(&glyphs, [117.0, 195.0, 20.0, 15.0]);
+        let texts: String = grown.iter().map(|g| g.text.as_str()).collect();
+        assert!(
+            texts.contains("l=") && texts.contains("a+b") && texts.contains('c'),
+            "{texts}"
+        );
+        assert!(!texts.contains("text"), "{texts}");
+    }
+
+    #[test]
+    fn region_layout_measures_ink_finds_a_bar_and_the_stack() {
+        let mut glyphs = set("x=", "CMMI10", 100.0, 200.0);
+        glyphs.extend(set("ab", "CMMI10", 120.0, 192.0));
+        glyphs.extend(set("c", "CMMI10", 123.0, 208.0));
+        // The bar is drawn, but not as a path: only the raster has it.
+        let raster = raster_of(&glyphs, &[[118.0, 195.5, 14.0, 0.5]], 300.0, 300.0);
+        let layout = region_layout(glyphs.clone(), &raster);
+        let rules: Vec<&GlyphDto> = layout.glyphs.iter().filter(|g| g.is_rule()).collect();
+        assert_eq!(rules.len(), 1, "{rules:?}");
+        assert!(
+            (rules[0].x - 118.0).abs() < 1.0 && (rules[0].w - 14.0).abs() < 1.5,
+            "{rules:?}"
+        );
+        // Ink from the raster: the letter's band.
+        let a = layout.glyphs.iter().find(|g| g.text == "a").unwrap();
+        let [_, iy, _, ih] = a.ink.unwrap();
+        assert!(
+            (iy - 185.0).abs() < 1.0 && (ih - 7.0).abs() < 1.0,
+            "{:?}",
+            a.ink
+        );
+        // One stack: numerator, bar, denominator.
+        assert_eq!(layout.groups.len(), 1, "{:?}", layout.groups);
+        let [gx, gy, gw, gh] = layout.groups[0];
+        assert!(gx <= 118.5 && gx + gw >= 131.5 && gy <= 185.5 && gy + gh >= 207.5);
+        assert_eq!(layout.lines.len(), 1, "{:?}", layout.lines);
+    }
+
+    #[test]
+    fn raster_displays_find_a_two_line_display_whole() {
+        // A column of text, then two centred lines of a display, the second
+        // with a fraction, then text again.
+        let mut glyphs = Vec::new();
+        for i in 0..5 {
+            glyphs.extend(body_line(100.0 + 12.0 * i as f32));
+        }
+        glyphs.extend(set("lnx+lnN=y", "CMMI10", 250.0, 172.0));
+        glyphs.extend(set("l=", "CMMI10", 240.0, 194.0));
+        glyphs.extend(set("lnN", "CMMI10", 262.0, 187.0));
+        glyphs.push(rule_glyph(260.0, 191.0, 20.0, 0.4).unwrap());
+        glyphs.extend(set("k", "CMMI10", 268.0, 202.0));
+        for i in 0..4 {
+            glyphs.extend(body_line(224.0 + 12.0 * i as f32));
+        }
+        let raster = raster_of(&glyphs, &[], 612.0, 400.0);
+        let blocks = raster_displays(&glyphs, &raster);
+        assert_eq!(blocks.len(), 1, "{blocks:?}");
+        let [x, y, w, h] = blocks[0].bbox;
+        // From the first line's top to the denominator's foot, "l =" included.
+        assert!(y <= 166.0 && y + h >= 201.0, "{:?}", blocks[0].bbox);
+        assert!(x <= 241.0 && x + w >= 279.0, "{:?}", blocks[0].bbox);
     }
 
     #[test]

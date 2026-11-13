@@ -40,21 +40,25 @@ const tauriInvoke = vi.fn(async (command: string, args?: Record<string, unknown>
         pendingFetch.resolve = resolve;
       });
     case 'get_page_glyphs':
-      return [
-        {
-          text: 'x',
-          code: 120,
-          font: 'CMMI10',
-          size: 10,
-          x: 1,
-          y: 2,
-          w: 3,
-          h: 4,
-          baseline: 5,
-          bold: false,
-          italic: true,
-        },
-      ];
+      return {
+        groups: [],
+        lines: [],
+        glyphs: [
+          {
+            text: 'x',
+            code: 120,
+            font: 'CMMI10',
+            size: 10,
+            x: 1,
+            y: 2,
+            w: 3,
+            h: 4,
+            baseline: 5,
+            bold: false,
+            italic: true,
+          },
+        ],
+      };
     default:
       void args;
       return null;
@@ -191,6 +195,7 @@ describe('layout APIs', () => {
       docId: 7,
       src: 5,
       rects: [[10, 20, 30, 40]],
+      grow: true,
     });
     expect(out.page).toBe(1);
     expect(out.glyphs[0]!.font).toBe('CMMI10');

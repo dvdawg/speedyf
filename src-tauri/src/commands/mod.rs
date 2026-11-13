@@ -564,14 +564,16 @@ pub async fn bump_generation(
 
 // ---------- glyph geometry (document:layout) ----------
 
-use crate::engine::glyphs::{EquationBlockDto, GlyphDto, MathTagDto};
+use crate::engine::glyphs::{EquationBlockDto, GlyphLayoutDto, MathTagDto};
 
 /// Most regions one glyph request may name: a selection over a long
 /// paragraph is a few dozen runs, never hundreds.
 const MAX_GLYPH_RECTS: usize = 64;
 
 /// A page's glyphs and rules inside `rects` (`[x, y, w, h]` in display
-/// points from the top-left; empty for the whole page). Idle priority: an
+/// points from the top-left; empty for the whole page), with their layout
+/// read from the page's raster. With `grow`, `rects[0]` is an equation's
+/// block and everything attached to it is taken. Idle priority: an
 /// extension's read never competes with the reader's scrolling.
 #[tauri::command]
 pub async fn get_page_glyphs(
@@ -579,7 +581,8 @@ pub async fn get_page_glyphs(
     doc_id: DocId,
     src: u32,
     rects: Vec<[f32; 4]>,
-) -> AppResult<Vec<GlyphDto>> {
+    grow: Option<bool>,
+) -> AppResult<GlyphLayoutDto> {
     if rects.len() > MAX_GLYPH_RECTS {
         return Err(AppError::Malformed(format!(
             "at most {MAX_GLYPH_RECTS} regions can be read at once"
@@ -594,6 +597,7 @@ pub async fn get_page_glyphs(
             doc: doc_id,
             src,
             rects,
+            grow: grow.unwrap_or(false),
             respond,
         })
         .await

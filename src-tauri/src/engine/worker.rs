@@ -16,6 +16,7 @@ use super::render;
 use super::save;
 use super::text;
 use super::types::*;
+use super::vision;
 use super::{EngineShared, Work};
 use crate::errors::{AppError, AppResult};
 use crate::library::ocrtext::{self, OcrCache, PageProbe};
@@ -56,6 +57,8 @@ struct DocState {
     /// Display equations found per page (`glyphs::equation_blocks`), keyed
     /// by page in the file, so hovering a page twice costs nothing.
     equation_blocks: HashMap<u32, Vec<glyphs::EquationBlockDto>>,
+    /// Pages rendered for layout analysis (`vision`), a few at a time.
+    rasters: HashMap<u32, std::sync::Arc<vision::PageRaster>>,
 }
 
 struct WorkerState<'a> {
@@ -414,8 +417,9 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
             doc,
             src,
             rects,
+            grow,
             respond,
-        } => respond(do_page_glyphs(state, doc, src, &rects)),
+        } => respond(do_page_glyphs(state, doc, src, &rects, grow)),
         Work::MathTags { doc, src, respond } => respond(do_math_tags(state, doc, src)),
         Work::EquationBlocks { doc, src, respond } => respond(do_equation_blocks(state, doc, src)),
         Work::PreviewRect {
@@ -549,6 +553,7 @@ fn do_open(
             formal_envs: None,
             ocr_cache: None,
             equation_blocks: HashMap::new(),
+            rasters: HashMap::new(),
         },
     );
     Ok(DocMetaDto {
@@ -808,14 +813,46 @@ fn all_page_glyphs(
     ))
 }
 
+/// Pages whose rasters a document keeps for layout analysis.
+const RASTER_CACHE_PAGES: usize = 4;
+
+/// The page rendered and binarized for layout analysis, cached.
+fn page_raster(
+    state: &mut WorkerState,
+    doc: DocId,
+    src: u32,
+) -> AppResult<Option<std::sync::Arc<vision::PageRaster>>> {
+    if let Some(r) = state.doc(doc)?.rasters.get(&src) {
+        return Ok(Some(r.clone()));
+    }
+    let [w, h] = state.display_size(doc, src)?;
+    let page = state.page_handle(doc, src)?;
+    let Some(raster) = vision::render_raster(state.bindings, page, w, h) else {
+        return Ok(None);
+    };
+    let raster = std::sync::Arc::new(raster);
+    let cache = &mut state.doc(doc)?.rasters;
+    if cache.len() >= RASTER_CACHE_PAGES {
+        cache.clear();
+    }
+    cache.insert(src, raster.clone());
+    Ok(Some(raster))
+}
+
 fn do_page_glyphs(
     state: &mut WorkerState,
     doc: DocId,
     src: u32,
     rects: &[[f32; 4]],
-) -> AppResult<Vec<glyphs::GlyphDto>> {
+    grow: bool,
+) -> AppResult<glyphs::GlyphLayoutDto> {
     let (all, _) = all_page_glyphs(state, doc, src)?;
-    Ok(glyphs::select_in_rects(&all, rects))
+    let raster = if rects.is_empty() {
+        None
+    } else {
+        page_raster(state, doc, src)?
+    };
+    Ok(glyphs::glyph_layout(&all, raster.as_deref(), rects, grow))
 }
 
 fn do_math_tags(
@@ -848,7 +885,8 @@ fn do_equation_blocks(
         return Ok(cached.clone());
     }
     let (all, [w, h]) = all_page_glyphs(state, doc, src)?;
-    let blocks = glyphs::equation_blocks(&all, w, h);
+    let raster = page_raster(state, doc, src)?;
+    let blocks = glyphs::equation_blocks_with_raster(&all, raster.as_deref(), w, h);
     let cache = &mut state.doc(doc)?.equation_blocks;
     if cache.len() >= EQUATION_CACHE_PAGES {
         cache.clear();
@@ -2034,6 +2072,7 @@ fn open_library_document(
             formal_envs: None,
             ocr_cache: None,
             equation_blocks: HashMap::new(),
+            rasters: HashMap::new(),
         },
     );
     state.library_docs.push(id);
@@ -2309,6 +2348,7 @@ fn do_save(
                                 formal_envs: None,
                                 ocr_cache: None,
                                 equation_blocks: HashMap::new(),
+                                rasters: HashMap::new(),
                             },
                         );
                     }

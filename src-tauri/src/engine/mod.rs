@@ -27,6 +27,7 @@ pub mod save;
 pub mod tagged;
 pub mod text;
 pub mod types;
+pub mod vision;
 pub mod worker;
 
 use crate::cache::ByteLru;
@@ -112,12 +113,15 @@ pub enum Work {
         respond: Respond<PageBubblesDto>,
     },
     /// A page's glyphs and rules inside `rects` (top-left `[x, y, w, h]`;
-    /// none means the whole page), for `document:layout` extensions.
+    /// none means the whole page), laid out on the page's raster, for
+    /// `document:layout` extensions.
     PageGlyphs {
         doc: DocId,
         src: u32,
         rects: Vec<[f32; 4]>,
-        respond: Respond<Vec<glyphs::GlyphDto>>,
+        /// An equation's block (`rects[0]`), grown to everything attached.
+        grow: bool,
+        respond: Respond<glyphs::GlyphLayoutDto>,
     },
     /// A tagged page's `Formula` elements.
     MathTags {

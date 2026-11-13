@@ -51,7 +51,10 @@ interface Snippet {
 }
 interface Ext {
   decodeGlyph(g: Glyph): Atom;
-  reconstruct(glyphs: Glyph[]): { latex: string; confidence: string; rows: number };
+  reconstruct(
+    glyphs: Glyph[],
+    layout?: { groups?: number[][] }
+  ): { latex: string; confidence: string; rows: number };
   dropNumber(glyphs: Glyph[], number: string): Glyph[];
   parseSource(files: { name: string; text: string }[]): Snippet[];
   collectMacros(text: string): Map<string, string>;
@@ -74,6 +77,8 @@ interface Case {
   what: string;
   number: string | null;
   latex: string;
+  /** The 2-D stacks the host's raster analysis found. */
+  groups: number[][];
   glyphs: string[];
 }
 
@@ -111,9 +116,36 @@ describe('real equations', () => {
       let glyphs = c.glyphs.map(unpack);
       // As the equation action does: the region may clip the number.
       if (c.number) glyphs = ext.dropNumber(glyphs, c.number);
-      expect(ext.reconstruct(glyphs).latex).toBe(c.latex);
+      expect(ext.reconstruct(glyphs, { groups: c.groups }).latex).toBe(c.latex);
     });
   }
+});
+
+describe('the two-line display a user reported', () => {
+  const vapnik = FIXTURES.cases.find((c) => c.source.startsWith('Vapnik'))!;
+
+  it('reads both lines, both numerators and the left-hand side', () => {
+    const r = ext.reconstruct(vapnik.glyphs.map(unpack), { groups: vapnik.groups });
+    expect(r.latex).toBe(
+      '\\begin{gathered} l\\ln(1 - \\varkappa) + \\ln N = \\ln\\eta, \\\\ ' +
+        'l = \\frac{\\ln N - \\ln\\eta}{-\\ln(1 - \\varkappa)} \\approx ' +
+        '\\frac{\\ln N - \\ln\\eta}{\\varkappa}. \\end{gathered}'
+    );
+    expect(r.confidence).toBe('high');
+  });
+
+  it('is low confidence when the numerators were cut off, as the old outline did', () => {
+    // The block the old outline gave, [174, 152, 111, 18], selected by the
+    // centre of each glyph's loose box: what the user's popover showed.
+    const clipped = vapnik.glyphs.map(unpack).filter((g) => {
+      if (g.font === '__rule') return true;
+      const [cx, cy] = [g.x + g.w / 2, g.y + g.h / 2];
+      return cx >= 174 && cx <= 285 && cy >= 152 && cy <= 170;
+    });
+    const r = ext.reconstruct(clipped);
+    expect(r.latex).toBe('\\frac{-}{-\\ln(1 - \\varkappa)} \\approx \\frac{-}{\\varkappa}');
+    expect(r.confidence).toBe('low');
+  });
 });
 
 /** A glyph the way PDFium reports one from a font with a ToUnicode map:
@@ -158,6 +190,25 @@ describe('glyphs with Unicode text', () => {
     expect(ext.decodeGlyph(mapped('RSFS10', 'F', 0, 10)).tex).toBe('\\mathscr{F}');
     // An italic letter from the math font stays a plain letter.
     expect(ext.decodeGlyph(mapped('CMMI10', 'x', 0, 10))).toMatchObject({ tex: 'x' });
+  });
+
+  it("reads MathTime fonts behind Springer's random name tags, and MSBM's varkappa", () => {
+    expect(ext.decodeGlyph(mapped('PwkwqfRgwrxjMTMI', '(', 0, 10)).tex).toBe('(');
+    const alpha = { ...mapped('PwkwqfRgwrxjMTMI', '', 0, 10), code: 11 };
+    expect(ext.decodeGlyph(alpha).tex).toBe('\\alpha');
+    expect(ext.decodeGlyph(mapped('JdhtvdFtvmrpMSBM10', 'κ', 0, 10)).tex).toBe('\\varkappa');
+    expect(ext.decodeGlyph(mapped('CMMI10', 'ϰ', 0, 10)).tex).toBe('\\varkappa');
+    expect(ext.decodeGlyph(mapped('CMMI10', 'κ', 0, 10)).tex).toBe('\\kappa');
+    for (const [c, tex] of [
+      ['ε', '\\varepsilon'],
+      ['ϑ', '\\vartheta'],
+      ['ϖ', '\\varpi'],
+      ['ϱ', '\\varrho'],
+      ['ς', '\\varsigma'],
+      ['φ', '\\varphi'],
+    ]) {
+      expect(ext.decodeGlyph(mapped('CMMI10', c!, 0, 10)).tex).toBe(tex);
+    }
   });
 
   it('reads an unmapped glyph by its code, U+0000 included', () => {

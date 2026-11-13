@@ -884,17 +884,23 @@ function classOf(tex) {
 
 /** What a font name says about how to read its codes. */
 function fontKind(name) {
-  const raw = String(name ?? '').replace(/^[A-Z]{6}\+/, '');
+  // Subset tags: "ABCDEF+", or Springer's two random capitalised words run
+  // into the name ("PwkwqfRgwrxjMTMI").
+  const raw = String(name ?? '')
+    .replace(/^[A-Z]{6}\+/, '')
+    .replace(/^(?:(?:[A-Z][a-z]{5}){2})+(?=[A-Z])/, '');
   if (raw === '__rule') return { enc: 'rule', style: '' };
   const n = raw.toLowerCase().replace(/[-_ ,]/g, '');
   if (n.length === 0) return { enc: 'none', style: '' };
   if (/^(cmmib|lmmathitalic\d*bold|eurb)/.test(n)) return { enc: 'OML', style: '\\boldsymbol' };
-  if (/^(cmmi|lmmathitalic|lmmi\d|n?txmi|n?pxmi|eurm)/.test(n)) return { enc: 'OML', style: '' };
+  if (/^(cmmi|lmmathitalic|lmmi\d|n?txmi|n?pxmi|eurm|r?mtmi)/.test(n))
+    return { enc: 'OML', style: '' };
   if (/^(cmbsy|lmmathsymbols\d*bold)/.test(n)) return { enc: 'OMS', style: '\\boldsymbol' };
-  if (/^(cmsy|lmmathsymbols|lmsy\d|n?txsy(?![ab])|n?pxsy(?![ab]))/.test(n)) {
+  if (/^(cmsy|lmmathsymbols|lmsy\d|n?txsy(?![ab])|n?pxsy(?![ab])|r?mtsy)/.test(n)) {
     return { enc: 'OMS', style: '' };
   }
-  if (/^(cmex|lmmathextension|lmex\d|n?txex|n?pxex)/.test(n)) return { enc: 'OMX', style: '' };
+  if (/^(cmex|lmmathextension|lmex\d|n?txex|n?pxex|r?mtex)/.test(n))
+    return { enc: 'OMX', style: '' };
   if (/^(msam|n?txsya|n?pxsya)/.test(n)) return { enc: 'MSAM', style: '' };
   if (/^(msbm|n?txsyb|n?pxsyb)/.test(n)) return { enc: 'MSBM', style: '' };
   if (/^(eufm|eufb)/.test(n)) return { enc: 'ALPHA', style: '\\mathfrak' };
@@ -1115,6 +1121,8 @@ function decodeGlyph(g) {
     }
   } else {
     id = fromUnicode(text);
+    // MSBM's \varkappa (code 0x7B) is mapped to plain κ.
+    if (font.enc === 'MSBM' && text === 'κ') id = { tex: '\\varkappa', kind: 'ord' };
     const letter = /^[A-Za-z]$/.test(text);
     if (id && letter) {
       const styled = {
@@ -1281,8 +1289,11 @@ function maxSize(items) {
 
 /** Reconstruct LaTeX from glyphs. Returns `{ latex, confidence, rows,
  * decoded, undecoded }`. */
-function reconstruct(glyphs) {
+function reconstruct(glyphs, layout = null) {
   const flags = { undecoded: 0, ambiguous: 0 };
+  // What the host read from the page's pixels: 2-D stacks (a fraction
+  // with its numerator and denominator, an operator with its limits).
+  const groups = (Array.isArray(layout?.groups) ? layout.groups : []).map(toBox).filter(Boolean);
   let atoms = fixSymbolFonts(glyphs).map(decodeGlyph);
   const real = atoms.filter((a) => a.kind !== 'rule');
   flags.undecoded = real.filter((a) => !a.ok).length;
@@ -1295,15 +1306,32 @@ function reconstruct(glyphs) {
   atoms = braces.atoms;
   atoms = mergePieces(atoms, flags);
   atoms = attachAccents(atoms, flags);
-  atoms = applyRules(atoms, flags);
+  atoms = applyRules(atoms, flags, groups);
   atoms = applyBraces(atoms, braces.braces, flags);
   const ctx = { flags, rows: 1 };
   const latex = tidy(layoutBlock(atoms, 0, ctx, true));
   const decoded = real.length - flags.undecoded;
+  // An empty group (a fraction part, a script, a radicand) or one that is
+  // only an operator means something was cut off or misread; a glyph that
+  // could not be read was dropped. Either is low; other doubt is medium.
   let confidence = 'high';
-  if (flags.undecoded > 0 || flags.ambiguous > 0) confidence = 'medium';
-  if (decoded === 0 || flags.undecoded > real.length / 4 || flags.ambiguous > 2) confidence = 'low';
+  if (flags.ambiguous > 0) confidence = 'medium';
+  if (decoded === 0 || flags.undecoded > 0 || flags.ambiguous > 2 || hasEmptyGroup(latex)) {
+    confidence = 'low';
+  }
   return { latex, confidence, rows: ctx.rows, decoded, undecoded: flags.undecoded };
+}
+
+/** Whether LaTeX has a group that should not be empty: \frac{}{…}, x_{},
+ * \sqrt{}, or a fraction part that is a lone operator (\frac{-}{…}). */
+function hasEmptyGroup(tex) {
+  return (
+    /\\(?:frac|sqrt|overline|underline|underbrace|overbrace)(?:\[[^\]]*\])?\{\s*\}/.test(tex) ||
+    /\\frac\{[^{}]*\}\{\s*\}/.test(tex) ||
+    /[_^]\{\s*\}/.test(tex) ||
+    /\\frac\{\s*(?:[-+=<>]|\\(?:cdot|times|pm|mp|leq|geq|approx))\s*\}/.test(tex) ||
+    /\\frac\{[^{}]*\}\{\s*(?:[-+=<>]|\\(?:cdot|times|pm|mp))\s*\}/.test(tex)
+  );
 }
 
 /** Pieces of an extensible delimiter, stacked in one column, are one
@@ -1491,7 +1519,7 @@ function attachAccents(atoms, flags) {
 
 /** Rules, narrowest first, so a fraction inside a fraction is read before
  * the one that contains it. */
-function applyRules(atoms, flags) {
+function applyRules(atoms, flags, groups = []) {
   const rules = atoms.filter((a) => a.kind === 'rule' && a.w > a.h * 2);
   let rest = atoms.filter((a) => a.kind !== 'rule');
   const pending = [...rules].sort((a, b) => a.w - b.w);
@@ -1550,7 +1578,33 @@ function applyRules(atoms, flags) {
       continue;
     }
 
-    const side = (above) => gatherSide(rest, rule, above, S, blockers, inX);
+    // A fraction is what its stack holds: when the raster found the
+    // stack the bar is in, nothing outside it is numerator or denominator.
+    // The stack is this bar's own: about as wide as the bar, not a larger
+    // fraction this one sits inside.
+    const stack = groups.find(
+      (g) =>
+        cx(rule) >= g.x &&
+        cx(rule) <= right(g) &&
+        cy(rule) >= g.y &&
+        cy(rule) <= bottom(g) &&
+        g.w <= rule.w + 1.5 * S
+    );
+    const inStack = (b) =>
+      !stack ||
+      (cx(b) >= stack.x - 0.3 * S &&
+        cx(b) <= right(stack) + 0.3 * S &&
+        cy(b) >= stack.y - 0.3 * S &&
+        cy(b) <= bottom(stack) + 0.3 * S);
+    const side = (above) =>
+      gatherSide(
+        rest.filter((b) => inStack(b)),
+        rule,
+        above,
+        S,
+        blockers,
+        inX
+      );
     const num = side(true);
     const den = side(false);
     if (num.length > 0 && den.length > 0) {
@@ -3946,16 +4000,19 @@ async function copyMath(request) {
 
   let page = Number.isInteger(request.page) ? request.page : null;
   let glyphs = null;
+  let layout = null;
   let bbox = toBox(request.bbox);
   if (request.kind === 'equation') {
     if (page !== null && bbox) {
       const r = await tryCall('region.glyphs', { page, bbox: [bbox.x, bbox.y, bbox.w, bbox.h] });
       glyphs = Array.isArray(r?.glyphs) ? r.glyphs : null;
+      layout = r;
     }
   } else {
     const r = await tryCall('selection.glyphs');
     if (r && Array.isArray(r.glyphs)) {
       glyphs = r.glyphs;
+      layout = r;
       if (Number.isInteger(r.page)) page = r.page;
       if (glyphs.length > 0)
         bbox = union(glyphs.map((g) => ({ x: num(g.x), y: num(g.y), w: num(g.w), h: num(g.h) })));
@@ -3969,7 +4026,7 @@ async function copyMath(request) {
 
   // A scan is refused before anything else: there is nothing in it to read.
   if (glyphs && looksLikeScan(glyphs)) return refuseScan();
-  const fonts = glyphs && glyphs.length > 0 ? reconstruct(glyphs) : null;
+  const fonts = glyphs && glyphs.length > 0 ? reconstruct(glyphs, layout) : null;
   if (fonts && fonts.decoded === 0 && glyphs.some((g) => g.font !== '__rule')) return refuseScan();
 
   const display =

@@ -99,7 +99,12 @@ describe('mapping', () => {
       ink: [1, 2.5, 3, 2] as const,
       internal: 'leak',
     };
-    const out = toGlyphs(3, [engineGlyph]);
+    const out = toGlyphs(3, {
+      glyphs: [engineGlyph],
+      groups: [[1, 2, 3, 4]],
+      lines: [[0, 1, 9, 5]],
+      internal: 'leak',
+    } as Parameters<typeof toGlyphs>[1]);
     expect(out.page).toBe(3);
     expect(out.glyphs[0]).toEqual({
       text: 'x',
@@ -116,7 +121,15 @@ describe('mapping', () => {
       ink: [1, 2.5, 3, 2],
     });
     // A rule, or a glyph PDFium cannot measure, has none.
-    expect(toGlyphs(0, [{ ...engineGlyph, ink: null }]).glyphs[0]?.ink).toBeNull();
+    expect(out.groups).toEqual([[1, 2, 3, 4]]);
+    expect(out.lines).toEqual([[0, 1, 9, 5]]);
+    expect(Object.keys(out).sort()).toEqual(['glyphs', 'groups', 'lines', 'page']);
+    // A rule, or a glyph PDFium cannot measure, has none; an engine that
+    // reads no layout gives no stacks or lines.
+    const bare = toGlyphs(0, { glyphs: [{ ...engineGlyph, ink: null }] });
+    expect(bare.glyphs[0]?.ink).toBeNull();
+    expect(bare.groups).toEqual([]);
+    expect(bare.lines).toEqual([]);
   });
 
   it('fills absent math tag fields with null', () => {
