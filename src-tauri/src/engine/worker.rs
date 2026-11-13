@@ -5,6 +5,7 @@
 use super::annots;
 use super::bubbles;
 use super::glyphs;
+use super::hovers;
 use super::layout_text;
 use super::links;
 use super::ocr::{self, OcrLine};
@@ -93,6 +94,8 @@ struct WorkerState<'a> {
     scan_waiting: Option<library::ScanCandidate>,
     /// The library text pass, waiting for a page's OCR.
     text_waiting: Option<TextWaiting>,
+    /// Hover spans per open document (`hovers`).
+    hovers: HashMap<DocId, hovers::DocHovers>,
 }
 
 impl<'a> WorkerState<'a> {
@@ -118,6 +121,7 @@ impl<'a> WorkerState<'a> {
             ocr_in_flight: HashSet::new(),
             scan_waiting: None,
             text_waiting: None,
+            hovers: HashMap::new(),
         }
     }
 
@@ -177,6 +181,9 @@ impl<'a> WorkerState<'a> {
         shared.search.lock().remove_doc(id);
         shared.text_layouts.lock().remove_doc(id);
         shared.link_cache.lock().remove_doc(id);
+        if let Some(hovers) = self.hovers.remove(&id) {
+            hovers.fail_waiting();
+        }
         self.library_docs.retain(|candidate| *candidate != id);
     }
 
@@ -358,7 +365,11 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         Work::Figures { respond, .. } => respond(Err(err())),
         Work::Annotations { respond, .. } => respond(Err(err())),
         Work::ImageSize { respond, .. } => respond(Err(err())),
-        Work::Close { .. }
+        Work::PageHovers { respond, .. } => respond(Err(err())),
+        Work::SetHoverTerms { respond, .. } => respond(Err(err())),
+        Work::HoverPreview { respond, .. } => respond(Err(err())),
+        Work::HoverIndexNext { .. }
+        | Work::Close { .. }
         | Work::SetActiveDocument { .. }
         | Work::StartIndexing { .. }
         | Work::IndexNext { .. }
@@ -492,6 +503,20 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
             respond(result)
         }
         Work::Annotations { doc, respond } => respond(do_annotations(state, shared, doc)),
+        Work::PageHovers { doc, src, respond } => do_page_hovers(state, shared, doc, src, respond),
+        Work::HoverIndexNext { doc } => do_hover_index_next(state, shared, doc),
+        Work::SetHoverTerms {
+            doc,
+            terms,
+            respond,
+        } => respond(do_set_hover_terms(state, doc, terms)),
+        Work::HoverPreview {
+            doc,
+            src,
+            kind,
+            region,
+            respond,
+        } => respond(do_hover_preview(state, doc, src, &kind, region)),
         Work::ImageSize { path, respond } => respond(
             image::image_dimensions(&path)
                 .map(|(w, h)| [w, h])
@@ -3103,6 +3128,241 @@ fn decode_pdfium_utf16(units: &[u16]) -> String {
     String::from_utf16_lossy(&units[..end])
 }
 
+// ---------------------------------------------------------------------------
+// Hover spans (`engine::hovers`)
+// ---------------------------------------------------------------------------
+
+/// How long one step of the hover index may read before yielding.
+const HOVER_STEP: std::time::Duration = std::time::Duration::from_millis(25);
+
+/// A page's hover spans, now if the document's index is read, otherwise
+/// once it is - starting the read if nothing has.
+fn do_page_hovers(
+    state: &mut WorkerState,
+    shared: &EngineShared,
+    doc: DocId,
+    src: u32,
+    respond: super::Respond<hovers::PageHoversDto>,
+) {
+    let (page_count, path) = match state.doc(doc) {
+        Ok(d) => (d.page_count, d.path.clone()),
+        Err(error) => return respond(Err(error)),
+    };
+    if src >= page_count {
+        return respond(Err(AppError::Malformed(format!(
+            "page {src} is out of range"
+        ))));
+    }
+    let entry = state.hovers.entry(doc).or_default();
+    if entry.result.is_some() {
+        return respond(hover_page(state, shared, doc, src));
+    }
+    entry.waiting.push((src, respond));
+    if entry.builder.is_some() {
+        return;
+    }
+    let fingerprint = library::content_fingerprint(Path::new(&path));
+    if let Some(result) = fingerprint.as_deref().and_then(hovers::recall) {
+        entry.result = Some(result);
+        return flush_hovers(state, shared, doc);
+    }
+    entry.fingerprint = fingerprint;
+    entry.builder = Some(hovers::IndexBuilder::new(page_count));
+    queue_hover_step(shared, doc);
+}
+
+fn queue_hover_step(shared: &EngineShared, doc: DocId) {
+    shared.queue.push(
+        Priority::Prefetch,
+        JobMeta {
+            doc,
+            gen: shared.gens.current(doc),
+            epoch: shared.cancels.current(doc),
+        },
+        Work::HoverIndexNext { doc },
+    );
+}
+
+fn read_hover_page(state: &mut WorkerState, doc: DocId, src: u32) -> Option<hovers::page::Page> {
+    let [w, h] = state.display_size(doc, src).ok()?;
+    let handle = state.page_handle(doc, src).ok()?;
+    Some(hovers::page::Page::new(hovers::extract::extract(
+        state.bindings,
+        handle,
+        w,
+        h,
+    )))
+}
+
+/// Read pages of the index for a bounded time, then yield to whatever else
+/// is queued - a page the reader scrolled to renders before the next step.
+fn do_hover_index_next(state: &mut WorkerState, shared: &EngineShared, doc: DocId) {
+    let Some(mut builder) = state.hovers.get_mut(&doc).and_then(|h| h.builder.take()) else {
+        return;
+    };
+    let started = Instant::now();
+    while let Some(src) = builder.next_page() {
+        let page = read_hover_page(state, doc, src);
+        builder.add_page(page);
+        if started.elapsed() >= HOVER_STEP {
+            break;
+        }
+    }
+    let Some(entry) = state.hovers.get_mut(&doc) else {
+        return;
+    };
+    if builder.next_page().is_some() {
+        entry.builder = Some(builder);
+        return queue_hover_step(shared, doc);
+    }
+    let result = Arc::new(builder.finish());
+    if let Some(fingerprint) = entry.fingerprint.take() {
+        hovers::remember(fingerprint, result.clone());
+    }
+    entry.result = Some(result);
+    flush_hovers(state, shared, doc);
+}
+
+fn flush_hovers(state: &mut WorkerState, shared: &EngineShared, doc: DocId) {
+    let waiting = state
+        .hovers
+        .get_mut(&doc)
+        .map(|h| std::mem::take(&mut h.waiting))
+        .unwrap_or_default();
+    for (src, respond) in waiting {
+        respond(hover_page(state, shared, doc, src));
+    }
+}
+
+/// A page read for terms (or for footnotes past the index), from the cache
+/// when it was read recently.
+fn hover_model(
+    state: &mut WorkerState,
+    doc: DocId,
+    src: u32,
+    start: hovers::regions::RegionState,
+) -> Option<Arc<hovers::page::Page>> {
+    if let Some(page) = state.hovers.get_mut(&doc)?.model(src) {
+        return Some(page);
+    }
+    let page = Arc::new(hovers::prepare_page(
+        read_hover_page(state, doc, src)?,
+        start,
+    ));
+    state.hovers.get_mut(&doc)?.keep_model(src, page.clone());
+    Some(page)
+}
+
+fn hover_page(
+    state: &mut WorkerState,
+    shared: &EngineShared,
+    doc: DocId,
+    src: u32,
+) -> AppResult<hovers::PageHoversDto> {
+    let (result, terms) = {
+        let entry = state.hovers.get(&doc).ok_or(AppError::DocumentNotFound)?;
+        (entry.result.clone(), entry.terms.clone())
+    };
+    let page_count = state.doc(doc)?.page_count;
+    let beyond = result.as_ref().is_none_or(|r| src >= r.indexed);
+    let start = result
+        .as_ref()
+        .map(|r| r.region_start(src))
+        .unwrap_or_default();
+    let model = if beyond || !terms.is_empty() {
+        hover_model(state, doc, src, start)
+    } else {
+        None
+    };
+    // Whether the page's last footnote runs on is only asked past the index.
+    let next = if beyond && src + 1 < page_count {
+        hover_model(state, doc, src + 1, Default::default())
+    } else {
+        None
+    };
+    let links: Vec<[f32; 4]> = do_page_links(state, shared, doc, src)
+        .map(|l| l.links.iter().map(|link| link.rect).collect())
+        .unwrap_or_default();
+    let spans = hovers::page_spans(
+        src,
+        result.as_deref(),
+        model.as_deref().map(|m| (m, next.as_deref())),
+        &terms,
+        &links,
+    );
+    Ok(hovers::PageHoversDto { src, spans })
+}
+
+fn do_set_hover_terms(
+    state: &mut WorkerState,
+    doc: DocId,
+    terms: Vec<hovers::terms::TermInput>,
+) -> AppResult<u32> {
+    let page_count = state.doc(doc)?.page_count;
+    let terms: Vec<_> = hovers::terms::sanitize(terms)
+        .into_iter()
+        .filter(|t| t.target_page < page_count)
+        .collect();
+    let count = terms.len() as u32;
+    state.hovers.entry(doc).or_default().terms = terms;
+    Ok(count)
+}
+
+/// The crop a span previews. An equation's region comes from its text
+/// lines; the display the page raster finds there adds what text cannot
+/// see - fraction bars, radicals, big delimiters.
+fn do_hover_preview(
+    state: &mut WorkerState,
+    doc: DocId,
+    src: u32,
+    kind: &str,
+    region: [f32; 4],
+) -> AppResult<PreviewSpecDto> {
+    let [w, h] = state.display_size(doc, src)?;
+    if !region.iter().all(|v| v.is_finite()) || region[2] <= 0.0 || region[3] <= 0.0 {
+        return Err(AppError::Malformed("bad preview region".into()));
+    }
+    let clamp = |r: [f32; 4]| {
+        let x0 = r[0].clamp(0.0, w);
+        let y0 = r[1].clamp(0.0, h);
+        let x1 = (r[0] + r[2]).clamp(0.0, w);
+        let y1 = (r[1] + r[3]).clamp(0.0, h);
+        [x0, y0, (x1 - x0).max(1.0), (y1 - y0).max(1.0)]
+    };
+    let mut rect = clamp(region);
+    if kind == "equation" {
+        if let Ok(blocks) = do_equation_blocks(state, doc, src) {
+            for block in blocks {
+                // top-left origin to y-up
+                let b = [
+                    block.bbox[0],
+                    h - block.bbox[1] - block.bbox[3],
+                    block.bbox[2],
+                    block.bbox[3],
+                ];
+                let shared_h = (b[1] + b[3]).min(rect[1] + rect[3]) - b[1].max(rect[1]);
+                let shared_w = (b[0] + b[2]).min(rect[0] + rect[2]) - b[0].max(rect[0]);
+                if shared_w > 0.0 && shared_h >= 0.5 * b[3].min(rect[3]) {
+                    let x0 = rect[0].min(b[0] - 2.0);
+                    let y0 = rect[1].min(b[1] - 2.0);
+                    let x1 = (rect[0] + rect[2]).max(b[0] + b[2] + 2.0);
+                    let y1 = (rect[1] + rect[3]).max(b[1] + b[3] + 2.0);
+                    if y1 - y0 <= 220.0 {
+                        rect = clamp([x0, y0, x1 - x0, y1 - y0]);
+                    }
+                }
+            }
+        }
+    }
+    Ok(PreviewSpecDto {
+        doc_id: doc,
+        src,
+        tile: preview::rect_to_tile(rect, h, PREVIEW_SCALE_MILLI),
+        scale_milli: PREVIEW_SCALE_MILLI,
+        text: String::new(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3734,6 +3994,129 @@ mod tests {
             &unsure,
             false
         ));
+    }
+
+    /// Two pages of Helvetica: each a list of `(y, text)` lines.
+    fn lines_pdf(pdfium: &Pdfium, path: &Path, pages: &[&[(f32, &str)]]) {
+        let mut document = pdfium.create_new_pdf().unwrap();
+        let font = document.fonts_mut().helvetica();
+        for lines in pages {
+            let mut page = document
+                .pages_mut()
+                .create_page_at_end(PdfPagePaperSize::Custom(
+                    PdfPoints::new(400.0),
+                    PdfPoints::new(500.0),
+                ))
+                .unwrap();
+            for (y, line) in lines.iter() {
+                let mut text =
+                    PdfPageTextObject::new(&document, line, font, PdfPoints::new(10.0)).unwrap();
+                text.translate(PdfPoints::new(40.0), PdfPoints::new(*y))
+                    .unwrap();
+                page.objects_mut().add_text_object(text).unwrap();
+            }
+        }
+        document.save_to_file(path).unwrap();
+    }
+
+    #[test]
+    fn hover_spans_wait_for_the_index_and_resolve_across_pages() {
+        let _guard = pdfium_init::test_guard();
+        let dir = tempfile::tempdir().unwrap();
+        let pdfium = Pdfium::new(pdfium_init::init_bindings(&[]).unwrap());
+        let pdf = dir.path().join("xref.pdf");
+        lines_pdf(
+            &pdfium,
+            &pdf,
+            &[
+                &[(400.0, "The result is shown in Fig. 1 below.")],
+                &[
+                    (400.0, "More text before the caption."),
+                    (300.0, "Figure 1: The caption of the figure."),
+                ],
+            ],
+        );
+        let shared = test_shared(dir.path());
+        let mut state = quiet_state(&pdfium);
+        let doc = do_open(&mut state, pdf.to_str().unwrap().into(), None)
+            .unwrap()
+            .doc_id;
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        handle_work(
+            &mut state,
+            &shared,
+            idle(),
+            Work::PageHovers {
+                doc,
+                src: 0,
+                respond: Box::new(move |result| {
+                    let _ = tx.send(result);
+                }),
+            },
+        );
+        // Nothing until the whole document has been read...
+        assert!(rx.try_recv().is_err());
+        while !shared.queue.is_empty() {
+            let (meta, work) = shared.queue.pop_blocking().unwrap();
+            assert!(matches!(work, Work::HoverIndexNext { .. }));
+            handle_work(&mut state, &shared, meta, work);
+        }
+        // ...then the mention on page 0 points at the caption on page 1.
+        let page = rx.recv().unwrap().unwrap();
+        assert_eq!(page.spans.len(), 1);
+        assert_eq!(page.spans[0].kind, "figure");
+        assert_eq!(page.spans[0].target.page, 1);
+
+        // A later request is answered at once.
+        let (tx, rx) = std::sync::mpsc::channel();
+        handle_work(
+            &mut state,
+            &shared,
+            idle(),
+            Work::PageHovers {
+                doc,
+                src: 1,
+                respond: Box::new(move |result| {
+                    let _ = tx.send(result);
+                }),
+            },
+        );
+        assert!(rx.try_recv().unwrap().unwrap().spans.is_empty());
+    }
+
+    #[test]
+    fn closing_a_document_answers_hover_requests_still_waiting() {
+        let _guard = pdfium_init::test_guard();
+        let dir = tempfile::tempdir().unwrap();
+        let pdfium = Pdfium::new(pdfium_init::init_bindings(&[]).unwrap());
+        let pdf = dir.path().join("wait.pdf");
+        lines_pdf(&pdfium, &pdf, &[&[(400.0, "Nothing here.")]]);
+        let shared = test_shared(dir.path());
+        let mut state = quiet_state(&pdfium);
+        let doc = do_open(&mut state, pdf.to_str().unwrap().into(), None)
+            .unwrap()
+            .doc_id;
+        let (tx, rx) = std::sync::mpsc::channel();
+        handle_work(
+            &mut state,
+            &shared,
+            idle(),
+            Work::PageHovers {
+                doc,
+                src: 0,
+                respond: Box::new(move |result| {
+                    let _ = tx.send(result);
+                }),
+            },
+        );
+        handle_work(&mut state, &shared, idle(), Work::Close { doc });
+        assert!(rx.try_recv().unwrap().is_err());
+        // The step left queued finds no document and does nothing.
+        while !shared.queue.is_empty() {
+            let (meta, work) = shared.queue.pop_blocking().unwrap();
+            handle_work(&mut state, &shared, meta, work);
+        }
     }
 
     #[test]
