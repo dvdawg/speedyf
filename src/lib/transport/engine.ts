@@ -48,6 +48,7 @@ import type {
   Paperness,
   Project,
   ProjectSuggestion,
+  RelatedItem,
 } from '../../types/engine';
 import type { EditPlan } from '../../features/document/documentStore';
 
@@ -227,6 +228,9 @@ export interface EngineApi {
   /** Projects the item is not in that the citation graph ties it to: at
    * most three, strongest first. Empty for an id that names no item. */
   librarySuggestProjects(paperId: string): Promise<ProjectSuggestion[]>;
+  /** The items most related to this one by the citation graph, offline: at
+   * most five, strongest first. Empty for an id that names no item. */
+  libraryRelatedItems(paperId: string): Promise<RelatedItem[]>;
   /** Groups of records the engine suspects are one work. */
   libraryDuplicates(): Promise<DuplicateGroup[]>;
   /** Merges `mergeIds` into `keepId`: files, memberships, identifiers, best
@@ -341,6 +345,7 @@ export const engine: EngineApi = {
       depth: focus?.depth ?? null,
     }),
   librarySuggestProjects: (paperId) => invoke('library_suggest_projects', { paperId }),
+  libraryRelatedItems: (paperId) => invoke('library_related_items', { paperId }),
   libraryDuplicates: () => invoke('library_duplicates'),
   libraryMergePapers: (keepId, mergeIds) => invoke('library_merge_papers', { keepId, mergeIds }),
   libraryUnmerge: (paperId) => invoke('library_unmerge', { paperId }),

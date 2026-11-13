@@ -547,3 +547,17 @@ export interface ProjectSuggestion {
   /** in plain words: "cites 2 papers in it, shares 4 references with it" */
   reason: string;
 }
+
+/** Another item the citation graph ties to one: works both cite, items
+ * citing both. */
+export interface RelatedItem {
+  row: PaperRow;
+  /** higher is more related; normalized so size alone does not win */
+  score: number;
+  /** works both cite */
+  sharedRefs: number;
+  /** items citing both */
+  coCited: number;
+  /** in plain words: "shares 6 references, cited together by 3 items" */
+  reason: string;
+}

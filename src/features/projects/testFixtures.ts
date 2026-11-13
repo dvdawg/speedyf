@@ -17,6 +17,7 @@ import type {
   PaperRow,
   Project,
   ProjectSuggestion,
+  RelatedItem,
 } from '../../types/engine';
 
 const WHEN = '2026-11-11T20:00:00Z';
@@ -268,11 +269,14 @@ export const fixture = {
   duplicates: [] as DuplicateGroup[],
   /** What `librarySuggestProjects` answers, for any item. */
   suggestions: [] as ProjectSuggestion[],
+  /** What `libraryRelatedItems` answers, for any item. */
+  related: [] as RelatedItem[],
 };
 
 export function resetFixture(): void {
   fixture.duplicates = [];
   fixture.suggestions = [];
+  fixture.related = [];
 }
 
 const PAPERS: Record<string, Paper> = {
@@ -645,6 +649,7 @@ export function fakeEngine() {
     librarySuggestProjects: vi.fn(
       async (_id: string): Promise<ProjectSuggestion[]> => fixture.suggestions
     ),
+    libraryRelatedItems: vi.fn(async (_id: string): Promise<RelatedItem[]> => fixture.related),
     libraryExportBib: vi.fn(async () => {}),
     librarySetProjectBib: vi.fn(async () => {}),
     libraryLookup: vi.fn(async (): Promise<LookupResult> => ({ kind: 'nothing' })),
