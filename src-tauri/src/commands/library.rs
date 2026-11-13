@@ -920,6 +920,26 @@ pub async fn library_suggest_projects(
     .map_err(|error| AppError::Internal(format!("library task failed: {error}")))?
 }
 
+/// The items most related to this one by the citation graph - works both
+/// cite, items citing both - at most five, strongest first
+/// (`PaperStore::related_items`). Empty for an id that names no item.
+/// Read-only and offline, against the same snapshots as
+/// `library_citation_links`.
+#[tauri::command]
+pub async fn library_related_items(
+    state: tauri::State<'_, EngineState>,
+    paper_id: String,
+) -> AppResult<Vec<crate::library::types::RelatedItemDto>> {
+    let engine = state.0.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (entries, refs, network) = citation_inputs(&engine);
+        let store = engine.0.papers.lock();
+        Ok(store.related_items(&paper_id, &entries, &refs, &network))
+    })
+    .await
+    .map_err(|error| AppError::Internal(format!("library task failed: {error}")))?
+}
+
 /* ---- Duplicates and merging (projects.md sec. 2) ---- */
 
 /// Groups of items that look like one work. The lookup cache supplies

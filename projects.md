@@ -645,6 +645,24 @@ matches entries to library titles. Disable References and no refs sidecar is
 read: DOI, arXiv and APS-journal edges remain (the engine finds those in the
 whole text itself), title-only edges go.
 
+**Related items.** Below _Cited by_ in the Library panel, and after the
+projects in the detail column, a _Related_ list: at most five other items tied
+to this one by what both cite (bibliographic coupling) and by the items citing
+both (co-citation), each row with why ("shares 6 references, cited together
+by 3 items") and opening that item like a cites row. Works are the keys
+`suggest` already uses (a resolved item, else DOI, arXiv id or exact reference
+text), folded so one work read twice counts once. Score: shared works over
+`sqrt(|works a| * |works b|)` plus co-citations over
+`sqrt(|citers a| * |citers b|)` (Salton), so a review with a huge
+bibliography or a much-cited classic does not win on size. An item needs at
+least 2 shared works or 2 co-citations; an item one cites or is cited by
+must qualify the same way and then counts at half its score, since Cites and
+Cited by already show it. Never listed: the item, anything sharing one of its
+identifiers (aliases, unmerged twins) or a file fingerprint. Ties break by
+id. Computed per request from the same snapshots as citation links, offline;
+about 0.1 s on 3000 items with 80 citations each (release). No list, no
+heading.
+
 ---
 
 ## 9. Surfaces
@@ -676,6 +694,7 @@ library_bibtex { paperIds }          -> string
 library_export_bib { projectId, path }
 library_set_project_bib { projectId, path | null }
 library_lookup { paperId, mode }     -> applied | [candidate]        (phase 2)
+library_related_items { paperId }    -> [{ row, score, sharedRefs, coCited, reason }]  (phase 4)
 library_data_dir / library_move_data { dir }
 ```
 

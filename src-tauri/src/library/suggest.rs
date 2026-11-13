@@ -29,7 +29,7 @@ pub const MIN_SHARED: u32 = 3;
 
 /// Each paper's citations as works, a work being its keys in preference
 /// order. Indexed like `PaperStore::papers`.
-fn works_by_paper(
+pub(super) fn works_by_paper(
     store: &PaperStore,
     tables: &CitationTables<'_>,
     entries: &[LibraryEntry],
