@@ -1,7 +1,7 @@
 /** Left panel shell: a small mode toggle (page thumbnails, table of contents,
- * formal environments, figures, or your own notes) plus whichever content is
- * currently selected. */
-import { For, Show } from 'solid-js';
+ * formal environments, figures, your own notes, or the paper's place in your
+ * library) plus whichever content is currently selected. */
+import { createEffect, For, Show } from 'solid-js';
 import IconButton from './IconButton';
 import { IconFigure, IconList, IconNote, IconPages, IconQed } from './icons';
 import { ui, setUi, extensionPanelId, resetSidebarWidth, setSidebarWidth } from '../stores/uiStore';
@@ -13,6 +13,8 @@ import Outline from '../features/outline/Outline';
 import FormalEnvs from '../features/outline/FormalEnvs';
 import Figures from '../features/outline/Figures';
 import NotesPanel from '../features/annotations/NotesPanel';
+import PaperPanel from '../features/projects/PaperPanel';
+import { IconPaper } from '../features/projects/paperIcons';
 
 export default function Sidebar() {
   let aside!: HTMLElement;
@@ -53,6 +55,17 @@ export default function Sidebar() {
     e.preventDefault();
   };
 
+  let strip!: HTMLDivElement;
+  // Keep the active mode's button in view when the strip scrolls sideways.
+  createEffect(() => {
+    void ui.sidebarMode;
+    queueMicrotask(() =>
+      strip
+        ?.querySelector<HTMLElement>('[aria-pressed="true"], .is-active')
+        ?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    );
+  });
+
   return (
     <aside
       class="sidebar"
@@ -60,7 +73,19 @@ export default function Sidebar() {
       ref={aside}
       style={{ width: `${ui.sidebarWidth}px` }}
     >
-      <div class="sidebar-mode-toggle" role="tablist" aria-label="Sidebar view">
+      <div
+        class="sidebar-mode-toggle"
+        role="tablist"
+        aria-label="Sidebar view"
+        ref={strip}
+        onWheel={(e) => {
+          // A plain wheel over a sideways strip should move it sideways.
+          if (strip.scrollWidth <= strip.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY))
+            return;
+          strip.scrollLeft += e.deltaY;
+          e.preventDefault();
+        }}
+      >
         <IconButton
           label="Pages"
           active={ui.sidebarMode === 'pages'}
@@ -96,6 +121,13 @@ export default function Sidebar() {
         >
           <IconNote />
         </IconButton>
+        <IconButton
+          label="Library"
+          active={ui.sidebarMode === 'paper'}
+          onClick={() => setUi('sidebarMode', 'paper')}
+        >
+          <IconPaper />
+        </IconButton>
         {/* Contributed panels sit after every built-in, so installing an
             extension never moves a control the user already knows. */}
         <For each={extensionPanels()}>
@@ -124,6 +156,9 @@ export default function Sidebar() {
       </Show>
       <Show when={ui.sidebarMode === 'notes'}>
         <NotesPanel />
+      </Show>
+      <Show when={ui.sidebarMode === 'paper'}>
+        <PaperPanel />
       </Show>
       <For each={extensionPanels()}>
         {(panel) => (

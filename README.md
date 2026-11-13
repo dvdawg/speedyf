@@ -23,6 +23,15 @@ manual QA before a public release.
 - Selectable PDF text and incremental, normalized search
 - Hover previews for internal PDF links and DOI/arXiv citations, with optional
   local-library first-page previews
+- Projects: a second launch screen (Home / Projects toggle) that groups the
+  library's items (papers, theses, books) into projects, each with its own cite keys and a BibTeX
+  file SpeedyF exports or keeps in sync. The scan tells papers from the other
+  PDFs in your folders; metadata comes from the PDF itself (text, Info
+  dictionary, XMP) and, only if you turn it on, from Crossref, DataCite,
+  OpenAlex, arXiv, Semantic Scholar, INSPIRE, DBLP and Open Library, queued
+  per service so no rate limit is tripped. A Paper panel in the reader files
+  the open document and shows which of your papers it cites and which cite it.
+  See `projects.md`
 - Highlights, freehand ink, rectangle annotations, text boxes, and notes
 - Annotation select, move, resize, delete, undo, and redo
 - Annotations already in a file are read back and stay editable across saves,
@@ -223,12 +232,14 @@ performance model.
 - `src-tauri/src/engine/` — PDFium worker, queue, rendering, text, and save
 - `src-tauri/src/cache/` — encoded-byte-cost, stale-first LRU implementation
 - `src-tauri/src/search/` — incremental NFKC search index and source offsets
-- `src-tauri/src/library/` — contained local-library index and citation resolver
+- `src-tauri/src/library/` — local-library index, citation resolver, paper
+  records, projects, cite keys, BibTeX, and the opt-in metadata lookup
 - `src-tauri/src/lib.rs` — Tauri app, custom protocol, and command registration
 - `src/features/viewer/` — virtualization, progressive raster, tiles, text layer
 - `src/features/document/` — document model, undo/redo, EditPlan, workflows
 - `src/features/annotations/` — pointer mapping and vector edit overlays
 - `src/features/citations/` — link hotspots, dwell state machine, and popover
+- `src/features/projects/` — the Projects launch screen and the reader's Paper panel
 - `src/lib/coordinates/` — the only page/PDF/CSS rotation conversion layer
 - `src/lib/transport/engine.ts` — the frontend’s typed engine boundary
 

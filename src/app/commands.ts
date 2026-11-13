@@ -27,11 +27,32 @@ import { setActiveTool, type Tool } from '../features/annotations/toolStore';
 import { beginPrint } from '../features/print/printStore';
 import { settings, updateSettings } from '../stores/settings';
 import { forgetContributedText } from '../features/extensions/extensionStore';
+import {
+  activePaper,
+  activePaperKnown,
+  refreshActivePaper,
+} from '../features/projects/activePaper';
+import { engine } from '../lib/transport/engine';
 import { setUi, ui, type SidebarMode } from '../stores/uiStore';
 import { tabsStore, type TabRecord } from '../stores/tabsStore';
+import type { Paper } from '../types/engine';
 
-export type CommandGroup =
-  'File' | 'Edit' | 'Tools' | 'Page' | 'View' | 'Panels' | 'Settings' | 'Search' | 'Navigate';
+/** Listed rather than only typed so a test can check every group is used —
+ * an empty heading is a palette section nobody can reach. */
+export const COMMAND_GROUPS = [
+  'File',
+  'Edit',
+  'Tools',
+  'Page',
+  'View',
+  'Panels',
+  'Library',
+  'Settings',
+  'Search',
+  'Navigate',
+] as const;
+
+export type CommandGroup = (typeof COMMAND_GROUPS)[number];
 
 /** What a command is allowed to know. Everything else is reachable through the
  * tab, so this stays one field rather than a snapshot that can drift. */
@@ -138,6 +159,78 @@ function panel(id: string, title: string, mode: SidebarMode, keywords: string[])
     enabled: (ctx) => ctx.tab !== null,
     run: () => setUi({ sidebarOpen: true, sidebarMode: mode }),
   };
+}
+
+/** Open the Paper panel, where the cite key and the BibTeX entry are visible
+ * with Copy buttons of their own. The fallback for every Library command that
+ * could not finish: there is no status-bar API for ad hoc text, and the worst
+ * outcome of a copy is a silent one. */
+function showPaperPanel(): void {
+  setUi({ sidebarOpen: true, sidebarMode: 'paper' });
+}
+
+const hasIdentifier = (paper: Paper | null) =>
+  paper !== null && (paper.doi !== null || paper.arxiv !== null);
+
+/** What a lookup can be run for: a record the scan (or the user) takes for a
+ * paper, with something to send. A manual in the library has neither. */
+const lookupable = (paper: Paper | null) => hasIdentifier(paper) && paper!.isPaper;
+
+/** The active document's paper record: the cached one when the Paper panel
+ * has fetched it, otherwise a round trip. Null when the file is outside the
+ * library or the engine could not say. */
+async function paperForActiveTab(): Promise<Paper | null> {
+  if (activePaperKnown()) return activePaper();
+  try {
+    return await refreshActivePaper();
+  } catch {
+    return null;
+  }
+}
+
+/** Copy something derived from the active paper.
+ *
+ * A clipboard write only succeeds inside the user gesture that asked for it,
+ * and WebKit's window for that is shorter than a round trip to the engine
+ * (EXTENSIONS.md, "Clipboard timing"). So the common path is synchronous: the
+ * Paper panel keeps the record cached and the key is written at once. When
+ * nothing is cached — the panel has never been shown for this document — or
+ * when the text itself needs the engine, as BibTeX does, the write lands after
+ * an await and may be refused. That case, and a file with no record at all,
+ * both end in the Paper panel, where the same text can be copied by hand.
+ */
+async function copyFromPaper(text: (paper: Paper) => string | Promise<string>): Promise<void> {
+  const paper = await paperForActiveTab();
+  if (!paper) {
+    showPaperPanel();
+    return;
+  }
+  let value: string;
+  try {
+    value = await text(paper);
+  } catch {
+    showPaperPanel();
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(value);
+  } catch {
+    showPaperPanel();
+  }
+}
+
+async function lookUpActivePaper(): Promise<void> {
+  const paper = await paperForActiveTab();
+  if (!paper || !lookupable(paper)) {
+    showPaperPanel();
+    return;
+  }
+  try {
+    // The result arrives as a change event; nothing to show here.
+    await engine.libraryLookup(paper.id, 'id');
+  } catch {
+    showPaperPanel();
+  }
 }
 
 function rotate(id: string, title: string, delta: 90 | 270): Command {
@@ -407,6 +500,70 @@ export const COMMANDS: readonly Command[] = [
   // Markdown export lives on this panel's own button, so the command that
   // reaches it is the panel itself rather than a duplicate of its logic.
   panel('panel.notes', 'Notes & Annotations', 'notes', ['export', 'markdown', 'comments']),
+
+  // ---- Library -------------------------------------------------------
+  {
+    id: 'library.copyCiteKey',
+    title: 'Copy Cite Key',
+    group: 'Library',
+    shortcut: 'mod+shift+c',
+    keywords: ['citation', 'bibtex', 'key', 'clipboard', 'latex'],
+    enabled: loaded,
+    run: () => void copyFromPaper((paper) => paper.citeKey),
+  },
+  {
+    id: 'library.copyBibtex',
+    title: 'Copy BibTeX',
+    group: 'Library',
+    keywords: ['citation', 'entry', 'clipboard', 'latex', 'reference'],
+    enabled: loaded,
+    run: () => void copyFromPaper((paper) => engine.libraryBibtex([paper.id])),
+  },
+  {
+    id: 'library.showPaperPanel',
+    title: 'Show Library Panel',
+    group: 'Library',
+    shortcut: 'mod+shift+l',
+    keywords: ['library', 'projects', 'cite key', 'bibtex', 'sidebar', 'metadata'],
+    enabled: (ctx) => ctx.tab !== null,
+    run: showPaperPanel,
+  },
+  {
+    id: 'library.lookup',
+    title: 'Look Up Metadata',
+    group: 'Library',
+    keywords: ['crossref', 'arxiv', 'doi', 'online', 'fetch', 'authors', 'year'],
+    // Optimistic while the record is unknown: refusing would hide the command
+    // from everyone who has not opened the Paper panel yet, and the run ends
+    // in that panel anyway when the file turns out to be no paper or to have
+    // no identifier.
+    enabled: (ctx) =>
+      settings.onlineLookup && loaded(ctx) && (!activePaperKnown() || lookupable(activePaper())),
+    disabledReason: 'needs an open paper with a DOI or arXiv id, and online lookup on in Settings',
+    run: () => void lookUpActivePaper(),
+  },
+  {
+    id: 'library.goToProjects',
+    title: 'Go to Projects',
+    group: 'Library',
+    keywords: ['launch', 'screen', 'papers', 'library', 'bib'],
+    enabled: () => true,
+    run: () => {
+      updateSettings({ launchScreen: 'projects' });
+      goHome();
+    },
+  },
+  {
+    id: 'library.switchLaunchScreen',
+    title: 'Switch Launch Screen',
+    group: 'Library',
+    keywords: ['home', 'projects', 'toggle', 'start', 'recents'],
+    enabled: () => true,
+    run: () => {
+      updateSettings({ launchScreen: settings.launchScreen === 'projects' ? 'home' : 'projects' });
+      goHome();
+    },
+  },
 
   // ---- Settings ------------------------------------------------------
   {

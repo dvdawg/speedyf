@@ -46,6 +46,7 @@ const GROUP_ORDER = [
   'View',
   'Panels',
   'Search',
+  'Library',
   'Settings',
   // Last on purpose: what SpeedyF does itself should outrank what was added
   // to it when scores do not already decide the order.

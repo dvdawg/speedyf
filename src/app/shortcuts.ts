@@ -63,6 +63,11 @@ const BINDINGS: readonly Binding[] = [
   // ⌘0's fit-page.
   { key: '0', mod: true, shift: false, id: 'view.fitPage', preventAlways: true },
   { key: '0', mod: true, shift: true, id: 'view.actualSize', preventAlways: true },
+  // Library. ⌘⇧C sits beside the webview's own ⌘C — copy, but the key — and
+  // ⌘⇧L is the group's initial. Both claim only their shifted form, so an
+  // extension can still take the plain key the way Scratchpad takes ⌘K.
+  { key: 'c', mod: true, shift: true, id: 'library.copyCiteKey', preventAlways: true },
+  { key: 'l', mod: true, shift: true, id: 'library.showPaperPanel', preventAlways: true },
 
   // Unmodified keys only swallow the event when they actually act.
   { key: 'Delete', id: 'edit.deleteSelection' },

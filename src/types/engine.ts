@@ -125,6 +125,8 @@ export interface ResolvedCitation {
   pageCount: number;
   fileName: string;
   path: string;
+  /** The cite key of the paper record holding the file, when there is one. */
+  citeKey?: string | null;
   preview: PreviewSpec;
 }
 
@@ -225,4 +227,263 @@ export interface SaveResult {
   path: string;
   bytes: number;
   durationMs: number;
+}
+
+/* ---------- projects and paper records (mirrors src-tauri/src/library/types.rs) ---------- */
+
+/** Where a metadata value came from. A value never loses to a weaker source:
+ * user > crossref > arxiv > openalex > pdf-info > first-page > filename. */
+export type MetaSource =
+  | 'user'
+  | 'crossref'
+  | 'inspire'
+  | 'datacite'
+  | 'arxiv'
+  | 'semantic-scholar'
+  | 'dblp'
+  | 'openalex'
+  | 'open-library'
+  | 'xmp'
+  | 'identifier'
+  | 'pdf-info'
+  | 'first-page'
+  | 'filename';
+
+export interface MetaField<T> {
+  value: T;
+  source: MetaSource;
+}
+
+export interface Author {
+  family: string;
+  given: string;
+}
+
+export type PaperKind = 'article' | 'inproceedings' | 'book' | 'thesis' | 'misc';
+
+export interface PaperMeta {
+  title: MetaField<string> | null;
+  authors: MetaField<Author[]> | null;
+  year: MetaField<number> | null;
+  venue: MetaField<string> | null;
+  volume: MetaField<string> | null;
+  issue: MetaField<string> | null;
+  pages: MetaField<string> | null;
+  publisher: MetaField<string> | null;
+  abstract: MetaField<string> | null;
+  kind: MetaField<PaperKind> | null;
+}
+
+export interface PaperFile {
+  path: string;
+  name: string;
+  size: number;
+  mtimeMs: number;
+  fingerprint: string | null;
+  missing: boolean;
+}
+
+/** The full record, for the detail column and the Paper panel. */
+export interface Paper {
+  id: string;
+  files: PaperFile[];
+  doi: string | null;
+  arxiv: string | null;
+  /** for books: the ISBN found on the first pages, digits only */
+  isbn: string | null;
+  meta: PaperMeta;
+  citeKey: string;
+  citeKeyPinned: boolean;
+  projectIds: string[];
+  addedAt: string;
+  updatedAt: string;
+  /** What a BibTeX entry needs and this paper lacks: 'authors', 'year',
+   * 'title', 'venue'. Empty when the entry would be complete. */
+  incomplete: string[];
+  /** the user's override when there is one, else the scan's verdict */
+  isPaper: boolean;
+  /** why, in a few words: the scan's reason, or "marked by you" */
+  paperReason: string;
+  /** null means the scan decides */
+  paperOverride: boolean | null;
+  /** title-search matches parked for the user to pick from */
+  candidates: LookupCandidate[];
+  /** how many records were merged into this one; non-zero means it can be split */
+  mergedCount: number;
+}
+
+/** One row of the paper list: display strings, already resolved. */
+export interface PaperRow {
+  id: string;
+  title: string;
+  authors: string;
+  year: number | null;
+  venue: string | null;
+  citeKey: string;
+  /** BibTeX alpha-style label from every author and the year: "Jar97",
+   * "ZD24", "ABC+19". Not unique; the graph suffixes repeats. */
+  alphaLabel: string;
+  projectIds: string[];
+  /** every file is missing */
+  missing: boolean;
+  hasIdentifier: boolean;
+  incompleteCount: number;
+  isPaper: boolean;
+  /** parked title-search matches waiting for the user */
+  candidateCount: number;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  order: number;
+  paperCount: number;
+  bibPath: string | null;
+  incompleteCount: number;
+  createdAt: string;
+}
+
+export interface PaperFilter {
+  /** only papers in this project */
+  project?: string | null;
+  /** only papers in no project; ignored when `project` is set */
+  unfiled?: boolean;
+  /** only records that are not papers; ignored when `project` is set.
+   * Without it, and without `project`, non-papers are left out. */
+  others?: boolean;
+  /** matched against title, authors, year and cite key */
+  query?: string;
+}
+
+export interface PaperList {
+  rows: PaperRow[];
+  total: number;
+}
+
+/** A user edit. A field left out is untouched; `null` clears it. Every field
+ * set here is recorded as `user` and never overwritten afterwards. */
+export interface MetaPatch {
+  title?: string | null;
+  authors?: Author[] | null;
+  year?: number | null;
+  venue?: string | null;
+  volume?: string | null;
+  issue?: string | null;
+  pages?: string | null;
+  publisher?: string | null;
+  abstract?: string | null;
+  kind?: PaperKind | null;
+  doi?: string | null;
+  arxiv?: string | null;
+  isbn?: string | null;
+  /** setting a key pins it; `null` unpins and regenerates */
+  citeKey?: string | null;
+  /** true/false overrides the scan's verdict; null hands it back */
+  isPaper?: boolean | null;
+}
+
+export interface LookupCandidate {
+  source: MetaSource;
+  title: string;
+  authors: Author[];
+  year: number | null;
+  venue: string | null;
+  volume: string | null;
+  issue: string | null;
+  pages: string | null;
+  publisher: string | null;
+  abstract: string | null;
+  kind: PaperKind | null;
+  doi: string | null;
+  arxiv: string | null;
+  isbn: string | null;
+}
+
+export type LookupResult =
+  | { kind: 'applied'; paper: Paper }
+  | { kind: 'candidates'; candidates: LookupCandidate[] }
+  | { kind: 'nothing' };
+
+export type LookupMode = 'id' | 'title';
+
+export interface CitationLinks {
+  cites: PaperRow[];
+  citedBy: PaperRow[];
+  /** identifiers this paper cites that match no paper in the library */
+  unresolved: number;
+}
+
+export interface LibraryDataInfo {
+  dir: string;
+  isDefault: boolean;
+}
+
+/** Counts for the two fixed rows of the projects column. */
+export interface LibraryCounts {
+  all: number;
+  unfiled: number;
+  /** records the scan does not take for papers (and the user has not) */
+  others: number;
+}
+
+/** What a whole-project lookup did. Papers without an identifier are
+ * skipped, never searched by title. */
+export interface LookupBatch {
+  attempted: number;
+  applied: number;
+  skipped: number;
+  failed: number;
+  /** title searches that found something but nothing sure enough to apply */
+  parked: number;
+}
+
+/** Whether an open PDF looks like a paper. The reader only offers to file
+ * what does; a manual or a scan gets a quiet note instead. */
+export type PapernessVerdict = 'paper' | 'likely' | 'unknown';
+
+export interface Paperness {
+  verdict: PapernessVerdict;
+  /** why, in a few words; empty for 'unknown' */
+  reason: string;
+  /** what kind of item it looks like, when the signals say */
+  kind: PaperKind | null;
+  doi: string | null;
+  arxiv: string | null;
+  isbn: string | null;
+}
+
+/** One citation between two items: `from` cites `to`. */
+export interface GraphEdge {
+  from: string;
+  to: string;
+}
+
+/** The citation graph of a project, or of the whole library. */
+export interface Graph {
+  nodes: PaperRow[];
+  /** edges between nodes only; citations leaving the set are counted in `external` */
+  edges: GraphEdge[];
+  external: number;
+  /** nodes whose text is not indexed yet, so their citations are unknown */
+  unindexed: number;
+}
+
+/** Records the engine suspects are one work. */
+export interface DuplicateGroup {
+  paperIds: string[];
+  /** why, in a few words */
+  reason: string;
+}
+
+/** A work cited by items in the view but not in the library. */
+export interface MissingWork {
+  /** stable within one answer; the ghost node's id */
+  key: string;
+  /** the reference as printed */
+  text: string | null;
+  year: number | null;
+  doi: string | null;
+  arxiv: string | null;
+  /** the items in the view that cite it, in list order */
+  citedBy: string[];
 }

@@ -2,13 +2,16 @@ import { createSignal, onCleanup, onMount, Show } from 'solid-js';
 import { activeTab } from '../stores/tabsStore';
 import { applyLowMemory, effectiveTheme, settings, updateSettings } from '../stores/settings';
 import { engine } from '../lib/transport/engine';
-import type { EngineMetrics } from '../lib/transport/engine';
+import type { EngineMetrics, LookupActivity } from '../lib/transport/engine';
 import { libraryStore } from '../features/citations/libraryStore';
 
 export default function StatusBar() {
   const doc = () => activeTab()?.documentStore.state;
   const s = () => activeTab()?.searchStore.state;
   const [metrics, setMetrics] = createSignal<EngineMetrics | null>(null);
+  // The one moment SpeedyF talks to a server. Shown for as long as any
+  // lookup is in flight, never hidden behind a setting.
+  const [lookingUp, setLookingUp] = createSignal<LookupActivity | null>(null);
 
   onMount(() => {
     let disposed = false;
@@ -36,6 +39,13 @@ export default function StatusBar() {
       if (hidden() || !libraryStore.state.library.scanning) return;
       await libraryStore.refreshLibraryStatus();
     };
+    let unlistenLookup: (() => void) | undefined;
+    void engine
+      .onLookupActivity((status) => setLookingUp(status.active ? status : null))
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else unlistenLookup = unlisten;
+      });
     void refresh();
     const timer = window.setInterval(() => void refresh(), 1_500);
     const libraryTimer = window.setInterval(() => void refreshLibrary(), 1_200);
@@ -49,6 +59,7 @@ export default function StatusBar() {
     document.addEventListener('visibilitychange', onVisibility);
     onCleanup(() => {
       disposed = true;
+      unlistenLookup?.();
       window.clearInterval(timer);
       window.clearInterval(libraryTimer);
       document.removeEventListener('visibilitychange', onVisibility);
@@ -87,6 +98,17 @@ export default function StatusBar() {
           <span class="sb-warn" title={libraryStore.state.libraryError ?? undefined}>
             citation library error
           </span>
+        </Show>
+        <Show when={lookingUp()}>
+          {(status) => (
+            <span
+              class="sb-dim"
+              title="Fetching paper metadata from the lookup services you turned on"
+            >
+              looking up metadata online
+              {status().total > 0 ? ` ${status().done}/${status().total}` : ''}…
+            </span>
+          )}
         </Show>
         <Show when={s()?.truncated}>
           <span class="sb-warn" title="Text index reached its memory budget">

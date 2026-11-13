@@ -4,6 +4,7 @@ import { createStore } from 'solid-js/store';
 import { engine } from '../lib/transport/engine';
 
 export type ThemePref = 'system' | 'light' | 'dark';
+export type LaunchScreen = 'home' | 'projects';
 
 interface Settings {
   theme: ThemePref;
@@ -17,6 +18,20 @@ interface Settings {
   /** Hosts the user chose not to be asked about again before following a
    * document's link out to the browser. Exact hosts only — see lib/links. */
   trustedLinkHosts: string[];
+  /** Which screen shows when no document is open. See projects.md §5. */
+  launchScreen: LaunchScreen;
+  /** The library folder a PDF from outside the library is copied into when
+   * it is added to a project. Null until the user picks one. */
+  libraryInbox: string | null;
+  /** Whether SpeedyF may fetch paper metadata from Crossref, arXiv and
+   * OpenAlex. Off by default: it is the only network access SpeedyF has. */
+  onlineLookup: boolean;
+  /** Optional contact address sent in the User-Agent of lookups, which
+   * Crossref rewards with better service. Empty by default. */
+  lookupContact: string;
+  /** Optional Semantic Scholar API key: a better rate limit, nothing else.
+   * Empty by default. */
+  s2Key: string;
 }
 
 const KEY = 'speedyf-settings';
@@ -40,6 +55,11 @@ function load(): Settings {
         trustedLinkHosts: Array.isArray(parsed.trustedLinkHosts)
           ? parsed.trustedLinkHosts.filter((host): host is string => typeof host === 'string')
           : [],
+        launchScreen: parsed.launchScreen === 'projects' ? 'projects' : 'home',
+        libraryInbox: typeof parsed.libraryInbox === 'string' ? parsed.libraryInbox : null,
+        onlineLookup: parsed.onlineLookup === true,
+        lookupContact: typeof parsed.lookupContact === 'string' ? parsed.lookupContact : '',
+        s2Key: typeof parsed.s2Key === 'string' ? parsed.s2Key : '',
       };
     }
   } catch {
@@ -51,6 +71,11 @@ function load(): Settings {
     lowMemory: false,
     libraryRoots: [],
     trustedLinkHosts: [],
+    launchScreen: 'home',
+    libraryInbox: null,
+    onlineLookup: false,
+    lookupContact: '',
+    s2Key: '',
   };
 }
 
@@ -69,6 +94,11 @@ export function updateSettings(patch: Partial<Settings>) {
         lowMemory: settings.lowMemory,
         libraryRoots: settings.libraryRoots,
         trustedLinkHosts: settings.trustedLinkHosts,
+        launchScreen: settings.launchScreen,
+        libraryInbox: settings.libraryInbox,
+        onlineLookup: settings.onlineLookup,
+        lookupContact: settings.lookupContact,
+        s2Key: settings.s2Key,
       })
     );
   } catch {

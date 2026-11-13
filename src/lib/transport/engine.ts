@@ -27,7 +27,40 @@ import type {
   SaveResult,
   SearchQueryResult,
 } from '../../types/engine';
+import type {
+  CitationLinks,
+  DuplicateGroup,
+  Graph,
+  LibraryCounts,
+  LibraryDataInfo,
+  LookupBatch,
+  LookupCandidate,
+  LookupMode,
+  LookupResult,
+  MetaPatch,
+  MissingWork,
+  Paper,
+  PaperFilter,
+  PaperList,
+  Paperness,
+  Project,
+} from '../../types/engine';
 import type { EditPlan } from '../../features/document/documentStore';
+
+/** What the status bar shows while lookups run: whether any is in flight,
+ * and for a batch, how far along it is (both 0 for a single lookup). */
+export interface LookupActivity {
+  active: boolean;
+  done: number;
+  total: number;
+}
+
+/** A graph around one item across the whole library: what it cites and what
+ * cites it, `depth` steps out (1 or 2). Overrides the project. */
+export interface GraphFocus {
+  paperId: string;
+  depth: 1 | 2;
+}
 
 export interface SearchProgress {
   docId: number;
@@ -124,6 +157,78 @@ export interface EngineApi {
   /** Hands a prepared job to the printer. Re-validates every field. */
   submitPrint(job: PrintJob, path: string): Promise<void>;
   onSearchProgress(cb: (p: SearchProgress) => void): Promise<() => void>;
+
+  /* ---- projects and paper records (see projects.md) ---- */
+  libraryPapers(filter: PaperFilter): Promise<PaperList>;
+  libraryCounts(): Promise<LibraryCounts>;
+  libraryPaper(id: string): Promise<Paper>;
+  /** The paper whose file is at this path, or null when the path is not in
+   * the library. */
+  libraryPaperForPath(path: string): Promise<Paper | null>;
+  libraryUpdatePaper(id: string, patch: MetaPatch): Promise<Paper>;
+  libraryProjects(): Promise<Project[]>;
+  libraryCreateProject(name: string): Promise<Project>;
+  libraryRenameProject(id: string, name: string): Promise<void>;
+  libraryDeleteProject(id: string): Promise<void>;
+  libraryReorderProjects(ids: string[]): Promise<void>;
+  librarySetMembership(paperId: string, projectId: string, member: boolean): Promise<void>;
+  /** Opens the paper's first file as a library document for a first-page
+   * render; the same shape a citation hover gets. Null when every file is
+   * missing. */
+  libraryPreview(paperId: string): Promise<ResolvedCitation | null>;
+  /** Whether the open document looks like a paper, from its first page and
+   * Info dictionary. */
+  libraryClassifyDocument(docId: number): Promise<Paperness>;
+  /** Copies a PDF from outside the library into `inboxDir`, scans the copy
+   * and returns its paper. */
+  libraryFileIntoInbox(path: string, inboxDir: string): Promise<Paper>;
+  /** BibTeX for these papers, in this order. */
+  libraryBibtex(paperIds: string[]): Promise<string>;
+  libraryExportBib(projectId: string, path: string): Promise<void>;
+  librarySetProjectBib(projectId: string, path: string | null): Promise<void>;
+  libraryLookup(paperId: string, mode: LookupMode): Promise<LookupResult>;
+  libraryApplyCandidate(paperId: string, candidate: LookupCandidate): Promise<Paper>;
+  /** Looks up every paper in the project that has an identifier, by
+   * identifier only, applying each result. Sequential and cache-first. */
+  libraryLookupProject(projectId: string): Promise<LookupBatch>;
+  /** Tells the engine whether online lookup is allowed and whom to identify
+   * as. Called at startup and whenever the setting changes, like low memory. */
+  librarySetLookup(enabled: boolean, contact: string, s2Key: string): Promise<void>;
+  /** Looks up every paper in the library: by identifier where there is one,
+   * by title otherwise. Sequential and cache-first; non-papers are skipped. */
+  libraryLookupAll(): Promise<LookupBatch>;
+  /** Drops the parked title-search candidates on a paper. */
+  libraryDiscardCandidates(paperId: string): Promise<void>;
+  libraryCitationLinks(paperId: string): Promise<CitationLinks>;
+  /** The citation graph of a project (its members) or, with null, of every
+   * item in the library. One call; edges only between the returned nodes. */
+  libraryGraph(projectId: string | null, focus?: GraphFocus): Promise<Graph>;
+  /** Works cited by at least `minCitedBy` items of the view (a project, the
+   * library, or a focus neighbourhood) that are not in the library. */
+  libraryMissingWorks(
+    projectId: string | null,
+    minCitedBy: number,
+    focus?: GraphFocus
+  ): Promise<MissingWork[]>;
+  /** Groups of records the engine suspects are one work. */
+  libraryDuplicates(): Promise<DuplicateGroup[]>;
+  /** Merges `mergeIds` into `keepId`: files, memberships, identifiers, best
+   * metadata. Returns the merged record. Files on disk are untouched. */
+  libraryMergePapers(keepId: string, mergeIds: string[]): Promise<Paper>;
+  /** Undoes every merge into this record, restoring the records as they were. */
+  libraryUnmerge(paperId: string): Promise<Paper[]>;
+  /** Records that these are not one work, so they are never suggested
+   * (or joined through a third record) again. */
+  libraryNotDuplicates(paperIds: string[]): Promise<void>;
+  libraryDataDir(): Promise<LibraryDataInfo>;
+  libraryMoveData(dir: string): Promise<LibraryDataInfo>;
+  /** Fires after any write to papers or projects, in every window. */
+  onLibraryChanged(cb: () => void): Promise<() => void>;
+  /** Fires when an online metadata lookup starts (`true`) and when the last
+   * one in flight finishes (`false`). The status bar shows an indicator for
+   * as long as it is true, so the user can always tell the app is talking
+   * to a server (projects.md §4). */
+  onLookupActivity(cb: (status: LookupActivity) => void): Promise<() => void>;
 }
 
 export const engine: EngineApi = {
@@ -164,6 +269,58 @@ export const engine: EngineApi = {
   printerOptions: (printer) => invoke('printer_options', { printer }),
   submitPrint: (job, path) => invoke('submit_print', { job, path }),
   onSearchProgress: async (cb) => listen<SearchProgress>('search:progress', (e) => cb(e.payload)),
+
+  libraryPapers: (filter) => invoke('library_papers', { filter }),
+  libraryCounts: () => invoke('library_counts'),
+  libraryPaper: (id) => invoke('library_paper', { id }),
+  libraryPaperForPath: (path) => invoke('library_paper_for_path', { path }),
+  libraryUpdatePaper: (id, patch) => invoke('library_update_paper', { id, patch }),
+  libraryProjects: () => invoke('library_projects'),
+  libraryCreateProject: (name) => invoke('library_create_project', { name }),
+  libraryRenameProject: (id, name) => invoke('library_rename_project', { id, name }),
+  libraryDeleteProject: (id) => invoke('library_delete_project', { id }),
+  libraryReorderProjects: (ids) => invoke('library_reorder_projects', { ids }),
+  librarySetMembership: (paperId, projectId, member) =>
+    invoke('library_set_membership', { paperId, projectId, member }),
+  libraryPreview: (paperId) => invoke('library_preview', { paperId }),
+  libraryClassifyDocument: (docId) => invoke('library_classify_document', { docId }),
+  libraryFileIntoInbox: (path, inboxDir) => invoke('library_file_into_inbox', { path, inboxDir }),
+  libraryBibtex: (paperIds) => invoke('library_bibtex', { paperIds }),
+  libraryExportBib: (projectId, path) => invoke('library_export_bib', { projectId, path }),
+  librarySetProjectBib: (projectId, path) => invoke('library_set_project_bib', { projectId, path }),
+  libraryLookup: (paperId, mode) => invoke('library_lookup', { paperId, mode }),
+  libraryApplyCandidate: (paperId, candidate) =>
+    invoke('library_apply_candidate', { paperId, candidate }),
+  libraryLookupProject: (projectId) => invoke('library_lookup_project', { projectId }),
+  librarySetLookup: (enabled, contact, s2Key) =>
+    invoke('library_set_lookup', { enabled, contact, s2Key }),
+  libraryLookupAll: () => invoke('library_lookup_all'),
+  libraryDiscardCandidates: (paperId) => invoke('library_discard_candidates', { paperId }),
+  libraryCitationLinks: (paperId) => invoke('library_citation_links', { paperId }),
+  libraryGraph: (projectId, focus) =>
+    invoke('library_graph', {
+      projectId,
+      focus: focus?.paperId ?? null,
+      depth: focus?.depth ?? null,
+    }),
+  libraryMissingWorks: (projectId, minCitedBy, focus) =>
+    invoke('library_missing_works', {
+      projectId,
+      minCitedBy,
+      focus: focus?.paperId ?? null,
+      depth: focus?.depth ?? null,
+    }),
+  libraryDuplicates: () => invoke('library_duplicates'),
+  libraryMergePapers: (keepId, mergeIds) => invoke('library_merge_papers', { keepId, mergeIds }),
+  libraryUnmerge: (paperId) => invoke('library_unmerge', { paperId }),
+  libraryNotDuplicates: (paperIds) => invoke('library_not_duplicates', { paperIds }),
+  libraryDataDir: () => invoke('library_data_dir'),
+  libraryMoveData: (dir) => invoke('library_move_data', { dir }),
+  onLibraryChanged: async (cb) => listen('library:changed', () => cb()),
+  onLookupActivity: async (cb) =>
+    listen<LookupActivity>('library:lookup', (e) =>
+      cb({ active: e.payload.active, done: e.payload.done ?? 0, total: e.payload.total ?? 0 })
+    ),
 };
 
 /** Error shape produced by the Rust AppError serializer. */

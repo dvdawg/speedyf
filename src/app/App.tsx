@@ -21,7 +21,10 @@ import { clearImagePreviews } from '../features/editor/editorActions';
 import { clearFormFields } from '../features/forms/formStore';
 import PreviewPopover from '../features/citations/PreviewPopover';
 import HomeScreen from '../features/home/HomeScreen';
+import ProjectsScreen from '../features/projects/ProjectsScreen';
 import { libraryStore } from '../features/citations/libraryStore';
+import { dropOverlayText, projectsDropTarget } from '../features/projects/dnd';
+import { addDroppedPdfs, isPdf } from '../features/projects/fileDrop';
 import { activeTab, tabsStore } from '../stores/tabsStore';
 import {
   claimActiveDocument,
@@ -33,7 +36,9 @@ import { trackWindowFocus } from '../stores/windowStore';
 import { TabContext } from './TabContext';
 
 export default function App() {
-  const [dropActive, setDropActive] = createSignal(false);
+  /** What the overlay says while a file is held over the window; null when
+   * none is. The text depends on what is under the pointer. */
+  const [dropOverlay, setDropOverlay] = createSignal<string | null>(null);
 
   onMount(() => void loadExtensions());
 
@@ -95,16 +100,30 @@ export default function App() {
         else unlistenOpen = unlisten;
       });
 
-    // native file drag-drop always opens a new tab (or focuses an existing one)
+    // Native file drag-drop. A PDF let go over the Projects screen is copied
+    // into the library — and filed, when let go on a project row; anywhere
+    // else it opens in a tab (or focuses the one it is in). The position is
+    // physical pixels relative to the webview; the DOM hit-test wants CSS
+    // pixels.
     let unlistenDrop: (() => void) | undefined;
     void getCurrentWebview()
       .onDragDropEvent((event) => {
-        const t = event.payload.type;
-        if (t === 'over') setDropActive(true);
-        else if (t === 'leave') setDropActive(false);
-        else if (t === 'drop') {
-          setDropActive(false);
-          const pdf = event.payload.paths.find((p) => p.toLowerCase().endsWith('.pdf'));
+        const payload = event.payload;
+        if (payload.type === 'leave') {
+          setDropOverlay(null);
+          return;
+        }
+        const scale = window.devicePixelRatio || 1;
+        const target = projectsDropTarget(payload.position.x / scale, payload.position.y / scale);
+        if (payload.type !== 'drop') {
+          setDropOverlay(dropOverlayText(target));
+          return;
+        }
+        setDropOverlay(null);
+        if (target) {
+          void addDroppedPdfs(payload.paths, target);
+        } else {
+          const pdf = payload.paths.find(isPdf);
           if (pdf) void openInNewTabOrFocus(pdf);
         }
       })
@@ -137,6 +156,8 @@ export default function App() {
 
     // apply persisted low-memory budget at startup
     if (settings.lowMemory) void engine.setLowMemory(true);
+    // The engine decides whether a lookup may go out; the setting lives here.
+    void engine.librarySetLookup(settings.onlineLookup, settings.lookupContact, settings.s2Key);
     void libraryStore.initializeLibrary();
     void restoreSession();
 
@@ -154,7 +175,7 @@ export default function App() {
   });
 
   return (
-    <div class="app-shell" classList={{ 'drop-active': dropActive() }}>
+    <div class="app-shell" classList={{ 'drop-active': dropOverlay() !== null }}>
       <TabStrip />
       <Toolbar />
       <div class="content-area">
@@ -195,14 +216,18 @@ export default function App() {
           </div>
         </Show>
         <Show when={tabsStore.state.activeId === null}>
-          <HomeScreen />
+          <Show when={settings.launchScreen === 'projects'} fallback={<HomeScreen />}>
+            <ProjectsScreen />
+          </Show>
         </Show>
       </div>
       <StatusBar />
-      <Show when={dropActive()}>
-        <div class="drop-overlay" aria-hidden="true">
-          <div class="drop-card">Drop PDF to open</div>
-        </div>
+      <Show when={dropOverlay()}>
+        {(text) => (
+          <div class="drop-overlay" aria-hidden="true">
+            <div class="drop-card">{text()}</div>
+          </div>
+        )}
       </Show>
       <Modals />
       <CommandPalette />

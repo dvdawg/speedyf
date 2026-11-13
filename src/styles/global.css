@@ -86,6 +86,7 @@ body {
   color: var(--text);
   font-size: 13px;
   -webkit-font-smoothing: antialiased;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -821,12 +822,23 @@ textarea:focus-visible {
   gap: 2px;
   padding: 6px;
   border-bottom: 1px solid var(--border);
-  /* Wraps because contributed panels share this strip. Five built-ins need
-     148px of the 176px available; each extension panel adds 30px, so three of
-     them overflow by more than a third of the width. Wrapping is a stopgap —
-     the strip is single-select navigation and was never meant to hold an
-     unbounded number of things. */
-  flex-wrap: wrap;
+  /* One row, scrolling sideways when contributed panels overflow it.
+     Wrapping left a lone extension button on a second row under six
+     built-ins, which read as broken. The active button is scrolled into view
+     by Sidebar.tsx. */
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.sidebar-mode-toggle::-webkit-scrollbar {
+  display: none;
+}
+
+.sidebar-mode-toggle > * {
+  flex: none;
 }
 
 .sidebar-scroll {
@@ -1063,6 +1075,7 @@ textarea:focus-visible {
 .page-img {
   object-fit: fill;
   pointer-events: none;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -1095,6 +1108,7 @@ textarea:focus-visible {
 .page-tile {
   position: absolute;
   pointer-events: none;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -1130,6 +1144,7 @@ textarea:focus-visible {
 .text-layer {
   position: absolute;
   inset: 0;
+  -webkit-user-select: text;
   user-select: text;
   cursor: text;
 }
@@ -1458,6 +1473,7 @@ textarea:focus-visible {
 .annot-layer.is-drawing {
   pointer-events: auto;
   cursor: crosshair;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -1549,6 +1565,7 @@ textarea:focus-visible {
 .annot-text-content {
   white-space: pre-wrap;
   line-height: 1.3;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -2704,6 +2721,7 @@ textarea:focus-visible {
 .empty-card {
   text-align: center;
   color: var(--text-dim);
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -2794,6 +2812,7 @@ textarea:focus-visible {
 .modal p {
   margin: 0 0 14px;
   color: var(--text-dim);
+  -webkit-user-select: text;
   user-select: text;
 }
 
@@ -3585,6 +3604,7 @@ textarea:focus-visible {
    that strays over the document selects text on the way past. */
 body.is-resizing-sidebar {
   cursor: col-resize;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -3670,4 +3690,2149 @@ body.is-resizing-sidebar * {
 
 .form-widget.is-checked.is-radio::after {
   content: none;
+}
+
+/* ---------- paper panel ---------- */
+
+/* The strip now holds six built-ins, which need 191px (see
+   DEFAULT_SIDEBAR_WIDTH). The width is set inline from uiStore; this only
+   keeps the pre-hydration frame from wrapping the sixth button. */
+.sidebar {
+  width: 191px;
+}
+
+.paper-panel {
+  padding: 6px 0 12px;
+  font-size: 12px;
+}
+
+.paper-panel-head,
+.paper-panel-key-row,
+.paper-panel-warn,
+.paper-panel-note,
+.paper-panel-section,
+.paper-panel-actions,
+.paper-panel-error,
+.paper-panel > .paper-panel-link {
+  margin: 6px 10px;
+}
+
+.paper-panel-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.paper-panel-authors {
+  margin-top: 2px;
+  line-height: 1.35;
+}
+
+.paper-panel-meta,
+.paper-panel-dim {
+  color: var(--text-dim);
+  line-height: 1.35;
+}
+
+.paper-panel-key-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The key is what gets pasted into a manuscript, so it is selectable as one
+   unit and never wraps: a key broken across two lines looks like two keys. */
+.paper-panel-key {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: var(--bg-inset);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  -webkit-user-select: all;
+  user-select: all;
+}
+
+.paper-panel-warn {
+  color: var(--warn);
+  line-height: 1.35;
+}
+
+.paper-panel-error {
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.paper-panel-note {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--bg-inset);
+  color: var(--text-dim);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.paper-panel-section-title {
+  margin-bottom: 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.paper-panel-subhead {
+  margin: 6px 0 2px;
+  font-weight: 500;
+}
+
+.paper-panel-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  cursor: pointer;
+}
+
+.paper-panel-check input {
+  margin: 0;
+}
+
+.paper-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* The house buttons at a size that fits a 190px column beside each other. */
+.paper-panel .secondary-btn.paper-panel-btn {
+  height: 24px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.paper-panel-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.paper-panel-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.paper-panel-link:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.paper-panel-link:disabled {
+  color: var(--text-dim);
+  cursor: default;
+}
+
+/* Cites / cited-by rows: the paper list's row shape, at the sidebar's size. */
+.paper-panel-link-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 5px 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.paper-panel-link-row:hover:not(:disabled) {
+  background: var(--bg-inset);
+}
+
+.paper-panel-link-row:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.paper-panel-link-title {
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.paper-panel-link-meta {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+/* Settings rows for the library: a path and the buttons that change it, in
+   the control column of the standard `.home-setting` row. */
+.library-setting-value {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex: none;
+  min-width: 0;
+  max-width: 260px;
+}
+
+.library-setting-path {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.library-setting-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.library-setting-actions .secondary-btn {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.library-setting-error {
+  color: var(--danger);
+  font-size: 12px;
+  text-align: right;
+}
+
+.library-setting-contact {
+  width: 220px;
+}
+
+/* ---------- projects screen ---------- */
+
+/* Fills the content area like .home-screen. A column, not a grid: the header
+ * and the error bar sit above the three columns, and the columns take what
+ * is left. Nothing here scrolls except the three column bodies. */
+.projects-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.projects-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 62px;
+  padding: 22px 28px 10px;
+}
+
+.projects-head h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 400;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.projects-head-count {
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.projects-head-spacer {
+  flex: 1;
+}
+
+/* Home | Projects. A segmented control: the chosen half is raised to the
+ * elevated surface, the other sits in the inset one. */
+.projects-launch-toggle {
+  display: inline-flex;
+  flex: none;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-inset);
+}
+
+.projects-launch-toggle button {
+  height: 24px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.projects-launch-toggle button.is-active {
+  background: var(--bg-elev);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(15, 20, 26, 0.12);
+}
+
+.projects-launch-toggle button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* On Home the toggle floats over the sticky panel head, which keeps its own
+ * action clear of it with extra right padding. */
+.home-screen .home-launch-toggle {
+  position: absolute;
+  top: 24px;
+  right: 28px;
+  z-index: 2;
+}
+
+.home-screen .home-panel-head {
+  padding-right: 200px;
+}
+
+/* The store's one error, in the warning voice the status bar uses. */
+.projects-error {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 28px 10px;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--warn) 50%, transparent);
+  border-radius: 6px;
+  color: var(--warn);
+  font-size: 12px;
+}
+
+.projects-error-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projects-error-dismiss {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.projects-error-dismiss:hover {
+  background: var(--bg-inset);
+}
+
+.projects-error-dismiss:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.projects-columns {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr) 340px;
+  border-top: 1px solid var(--border);
+}
+
+.projects-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.projects-col + .projects-col {
+  border-left: 1px solid var(--border);
+}
+
+/* The one scrolling region per column. */
+.projects-col-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* ---- left: projects ---- */
+.projects-list {
+  padding: 10px 8px 4px;
+}
+
+.projects-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--text);
+  cursor: default;
+}
+
+.projects-row:hover {
+  background: var(--bg-inset);
+}
+
+.projects-row.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.projects-row.is-drop-target {
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+.projects-row:focus-visible,
+.paper-row:focus-visible,
+.paper-group-head:focus-visible,
+.paper-fulltext:focus-visible,
+.paper-candidate:focus-visible,
+.paper-field-value:focus-visible,
+.paper-mini-btn:focus-visible,
+.projects-row-menu:focus-visible,
+.projects-new:focus-visible,
+.projects-menu-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.projects-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projects-row-count {
+  flex: none;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.projects-row.is-active .projects-row-count {
+  color: inherit;
+  opacity: 0.8;
+}
+
+/* Only the row under the pointer, or the active one, shows its menu button;
+ * a column of dots is clutter. The count steps aside for it. */
+.projects-row-menu {
+  flex: none;
+  display: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  margin-right: -4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.projects-row:hover .projects-row-menu,
+.projects-row:focus-within .projects-row-menu,
+.projects-row-menu[aria-expanded='true'] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.projects-row.is-project:hover .projects-row-count,
+.projects-row.is-project:focus-within .projects-row-count {
+  display: none;
+}
+
+.projects-row-menu:hover {
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.projects-rule {
+  height: 1px;
+  margin: 8px 8px;
+  background: var(--border);
+}
+
+.projects-inline-input {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--bg-elev);
+  color: var(--text);
+  font: inherit;
+}
+
+.projects-inline-input:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Delete asks inside the row, which grows to fit the question. */
+.projects-row.is-confirming {
+  flex-wrap: wrap;
+  padding: 6px 8px;
+}
+
+.projects-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.projects-confirm-text {
+  width: 100%;
+}
+
+.projects-confirm-yes,
+.projects-confirm-no {
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-elev);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.projects-confirm-yes {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.projects-menu {
+  position: absolute;
+  top: 100%;
+  right: 4px;
+  z-index: 5;
+  min-width: 160px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  box-shadow: var(--shadow);
+}
+
+.projects-menu-item {
+  height: 28px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.projects-menu-item:hover {
+  background: var(--accent-soft);
+}
+
+.projects-menu-item.is-danger {
+  color: var(--danger);
+}
+
+.projects-new-row {
+  flex: none;
+  display: flex;
+  padding: 4px 8px 10px;
+}
+
+.projects-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.projects-new:hover {
+  background: var(--bg-inset);
+  color: var(--text);
+}
+
+/* ---- middle: papers ---- */
+.paper-list-head {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px 10px;
+}
+
+.paper-list-project {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.paper-list-bib {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, Menlo, monospace;
+}
+
+.paper-list-bib.is-none {
+  font-family: inherit;
+  font-style: italic;
+}
+
+.paper-list-spacer {
+  flex: 1;
+}
+
+.paper-list-project .secondary-btn {
+  flex: none;
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.paper-search {
+  height: 34px;
+}
+
+.paper-search input {
+  font-size: 13px;
+}
+
+.paper-list {
+  padding: 0 8px 8px;
+}
+
+.paper-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 24px 8px;
+}
+
+.paper-group-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  margin-top: 6px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: default;
+}
+
+.paper-group-head:hover {
+  color: var(--text);
+}
+
+.paper-group-head svg {
+  flex: none;
+}
+
+.paper-group-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paper-group-count {
+  flex: none;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.paper-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: default;
+}
+
+.paper-row:hover {
+  background: var(--bg-inset);
+}
+
+.paper-row.is-multi {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.paper-row.is-selected {
+  background: var(--accent-soft);
+}
+
+.paper-row.is-missing .paper-row-main {
+  opacity: 0.5;
+}
+
+.paper-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.paper-row-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.paper-row-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+/* The key is there when you look for it and gone when you do not: on hover,
+ * on focus, on the selected row. */
+.paper-row-key {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  opacity: 0;
+}
+
+.paper-row:hover .paper-row-key,
+.paper-row:focus-visible .paper-row-key,
+.paper-row.is-selected .paper-row-key {
+  opacity: 1;
+}
+
+.paper-fulltext {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 7px 8px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.paper-fulltext:hover {
+  background: var(--bg-inset);
+  color: var(--text);
+}
+
+.paper-fulltext svg {
+  flex: none;
+}
+
+/* ---- right: the paper ---- */
+.paper-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px 16px 20px;
+}
+
+.paper-preview {
+  position: relative;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--page-bg);
+  overflow: hidden;
+}
+
+.paper-preview-skeleton {
+  height: auto;
+  aspect-ratio: 8.5 / 11;
+}
+
+.paper-preview-image {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.paper-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.paper-field,
+.paper-citekey,
+.paper-section {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.paper-citekey,
+.paper-section {
+  margin-top: 4px;
+}
+
+.paper-field-label {
+  padding-top: 5px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.paper-field-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  min-width: 0;
+}
+
+/* The value is a button: it looks like text until pointed at, then like
+ * something that can be changed. Buttons also get Enter for free. */
+.paper-field-value {
+  max-width: 100%;
+  min-height: 26px;
+  margin: 0;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  line-height: 18px;
+  text-align: left;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  cursor: text;
+}
+
+.paper-field-value:hover {
+  background: var(--bg-inset);
+  border-color: var(--border);
+}
+
+.paper-field-value.is-empty,
+.paper-field-value.is-dim {
+  color: var(--text-dim);
+  font-style: italic;
+  cursor: pointer;
+}
+
+.paper-field-value.is-mono,
+.paper-field-input.is-mono {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px;
+}
+
+.paper-field-input {
+  flex: 1 1 100%;
+  min-width: 0;
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  color: var(--text);
+  font: inherit;
+  line-height: 18px;
+}
+
+textarea.paper-field-input {
+  resize: vertical;
+}
+
+.paper-field-input:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.paper-field-input[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+
+.paper-field-select {
+  height: 26px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-inset);
+  color: var(--text);
+  font: inherit;
+}
+
+/* Provenance: dim, small, and never in the way of the value. */
+.paper-field-source {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.paper-inline-error {
+  flex: 1 1 100%;
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.paper-notice {
+  margin: -6px 0 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.paper-citekey-body {
+  padding-top: 3px;
+}
+
+.paper-citekey-value {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.paper-mini-btn {
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-inset);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.paper-mini-btn:hover {
+  color: var(--text);
+}
+
+.paper-files {
+  margin: 0;
+  padding: 3px 0 0;
+  list-style: none;
+}
+
+.paper-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  line-height: 20px;
+}
+
+.paper-file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paper-file.is-missing .paper-file-name {
+  color: var(--text-dim);
+  text-decoration: line-through;
+}
+
+.paper-badge {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  color: var(--warn);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.paper-projects {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 3px;
+}
+
+.paper-project-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.paper-project-check input {
+  margin: 0;
+}
+
+.paper-project-check span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paper-dim {
+  padding-top: 5px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.paper-incomplete {
+  margin: 0;
+  font-size: 12px;
+}
+
+.paper-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.paper-candidates {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.paper-candidates-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.paper-candidate {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.paper-candidate:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.paper-candidate-meta {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+/* ---- narrow windows: the detail column folds behind a button ---- */
+@media (max-width: 900px) {
+  .projects-columns {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+
+  .projects-col-detail {
+    display: none;
+  }
+
+  .projects-screen.is-details-open .projects-col-detail {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 3;
+    display: flex;
+    width: 340px;
+    max-width: 85%;
+    background: var(--bg);
+    box-shadow: var(--shadow);
+  }
+}
+
+.paper-list-batch {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* ---------- other pdfs and candidates ---------- */
+
+/* Why a record is or is not a paper, under the first page. The reason is the
+   scan's, in its own words; the buttons are the override and its undo. */
+.paper-verdict {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.paper-verdict-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.paper-verdict.is-other .paper-verdict-text {
+  font-style: italic;
+}
+
+.paper-verdict-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.paper-verdict-link:hover {
+  color: var(--text);
+}
+
+/* A record that is not a paper, in a project or under Other PDFs: the title
+   is a file name and reads like one. */
+.paper-row.is-other .paper-row-title {
+  color: var(--text-dim);
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px;
+}
+
+/* Matches a title search parked on a paper, at the right of its row. Unlike
+   the cite key it never hides: it is a question waiting for an answer. */
+.paper-row-matches {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+/* The parked matches themselves, above the fields so what they would
+   replace is right below. */
+.paper-parked {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.paper-parked-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  text-align: left;
+}
+
+.paper-parked-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+/* The reader's note for a file the scan did not take for a paper. */
+.paper-panel-verdict {
+  color: var(--text-dim);
+}
+
+/* ---------- pointer drag ---------- */
+/* The Projects screen's drags are pointer events, not HTML5 drag and drop
+   (pointerDrag.ts says why), so the browser draws no ghost and shows no
+   drag cursor: both are done here. WebKit reads only the -webkit- form of
+   user-select, so the unprefixed one on body above never reached it: the
+   rows say it in both forms, for good, and the columns and everything else
+   say it while a drag is on. Rows are buttons; a title is copied from the
+   detail column, not selected here. */
+.paper-row,
+.paper-group-head,
+.projects-row {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.projects-inline-input {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+body.is-dragging,
+body.is-dragging .projects-col,
+body.is-dragging .projects-col-scroll {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+body.is-dragging * {
+  cursor: grabbing;
+}
+
+/* While a drag is on, the only things that change are the ghost and the one
+   project row under the pointer: rows passed over keep their resting look,
+   with no hover background, no cite key fading in, no menu button taking
+   the count's place. Selected and active rows keep what they had. */
+body.is-dragging .paper-row:not(.is-selected):not(.is-multi):hover,
+body.is-dragging .projects-row:not(.is-active):hover {
+  background: transparent;
+}
+
+body.is-dragging .paper-group-head:hover {
+  color: inherit;
+}
+
+body.is-dragging .paper-row:not(.is-selected):hover .paper-row-key {
+  opacity: 0;
+}
+
+body.is-dragging .projects-row:hover .projects-row-menu:not([aria-expanded='true']) {
+  display: none;
+}
+
+body.is-dragging .projects-row.is-project:hover .projects-row-count {
+  display: inline;
+}
+
+.drag-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  max-width: 280px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  color: var(--text);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  z-index: 60;
+}
+
+/* A reorder lands before or after the row under the pointer; the line says
+   which. A row taking a drop keeps its existing is-drop-target ring. */
+.projects-row.is-drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.projects-row.is-drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* ---------- graph view ---------- */
+/* List | Graph shares the search's row and the segmented look of
+   Home | Projects. Under the graph the search field is gone: it filters
+   rows, and the graph is the whole scope. */
+.paper-list-view {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.paper-list-view .paper-search {
+  flex: 1;
+  min-width: 0;
+}
+
+.paper-view-toggle {
+  flex: none;
+}
+
+/* "also in Thesis, Noneq": a row's other projects, dim, before the key. */
+.paper-row-also {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.graph-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The notes under the toggle: citations leaving the set, items not indexed. */
+.graph-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 16px 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.graph-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 16px 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.graph-error .secondary-btn {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+/* The drawing surface: an elevated card inside the column, like a page. */
+.graph-canvas {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin: 0 8px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  overflow: hidden;
+}
+
+.graph-canvas.is-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.graph-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: grab;
+}
+
+.graph-canvas.is-panning .graph-svg,
+.graph-canvas.is-dragging .graph-svg,
+.graph-canvas.is-dragging .graph-node {
+  cursor: grabbing;
+}
+
+.graph-backdrop {
+  fill: transparent;
+}
+
+/* "older ← → newer" in the bottom corners: a hint that time leans left
+ * to right, quiet enough to ignore. */
+.graph-time-hint {
+  fill: var(--text-dim);
+  opacity: 0.55;
+  font-size: 10px;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.graph-time-hint.is-end {
+  text-anchor: end;
+}
+
+.graph-skeleton {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-height: 240px;
+  margin: auto;
+  opacity: 0.6;
+}
+
+.graph-skeleton line {
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.graph-skeleton circle {
+  fill: var(--bg-inset);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+/* Edges at rest: faint, thin, no arrowheads; time says which way they
+   run. Fainter still when there are many, and when something is selected. */
+.graph-edge {
+  fill: none;
+  stroke: var(--text-dim);
+  stroke-width: 1;
+  stroke-opacity: 0.3;
+}
+
+.graph-canvas.is-dense .graph-edge {
+  stroke-opacity: 0.16;
+}
+
+.graph-canvas.has-focus .graph-edge {
+  stroke-opacity: 0.07;
+}
+
+/* The selection's own edges: what it cites solid in the accent, what
+   cites it dashed in the text colour. Dash and colour both differ, so
+   neither alone carries the meaning. */
+.graph-edge-lit {
+  fill: none;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+
+.graph-edge-lit.is-out {
+  stroke: var(--accent);
+  stroke-width: 1.6;
+}
+
+.graph-edge-lit.is-in {
+  stroke: var(--text);
+  stroke-opacity: 0.7;
+  stroke-width: 1.3;
+  stroke-dasharray: 4 3;
+}
+
+.graph-arrow.is-out path {
+  fill: var(--accent);
+}
+
+.graph-arrow.is-in path {
+  fill: var(--text);
+  fill-opacity: 0.7;
+}
+
+.graph-node {
+  cursor: pointer;
+  outline: none;
+}
+
+.graph-node-dot {
+  fill: var(--bg-elev);
+  stroke: color-mix(in srgb, var(--text-dim) 80%, transparent);
+  stroke-width: 1.25;
+}
+
+.graph-node.is-neighbour .graph-node-dot {
+  stroke: var(--text);
+}
+
+.graph-node.is-selected .graph-node-dot {
+  fill: var(--accent);
+  stroke: var(--accent);
+}
+
+/* A missing file: the outline is there, the paper is not. */
+.graph-node.is-missing .graph-node-dot {
+  stroke-dasharray: 2 2;
+}
+
+/* In more than one project: a thin second ring just outside the dot. */
+.graph-node-ring {
+  fill: none;
+  stroke: var(--text-dim);
+  stroke-opacity: 0.45;
+  stroke-width: 1;
+}
+
+/* Hover, keyboard focus and a drag share one quiet ring; the keyboard's
+   is heavier, so it is never mistaken for the pointer's. */
+.graph-node-halo {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  opacity: 0;
+}
+
+.graph-node.is-hover .graph-node-halo,
+.graph-node.is-dragged .graph-node-halo {
+  opacity: 0.5;
+}
+
+.graph-node:focus-visible .graph-node-halo {
+  opacity: 1;
+  stroke-width: 2;
+}
+
+/* With a selection, what is not part of it steps back. */
+.graph-canvas.has-focus .graph-node:not(.is-selected, .is-neighbour, .is-hover) {
+  opacity: 0.32;
+}
+
+/* A halo in the canvas colour keeps a label legible across an edge. */
+.graph-node-label {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  fill: var(--text-dim);
+  paint-order: stroke;
+  stroke: var(--bg-elev);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+  opacity: 0;
+  visibility: hidden;
+}
+
+.graph-node.is-label-on .graph-node-label {
+  opacity: 1;
+  visibility: visible;
+}
+
+.graph-node.is-selected .graph-node-label,
+.graph-node.is-neighbour .graph-node-label,
+.graph-node.is-hover .graph-node-label {
+  fill: var(--text);
+}
+
+.graph-node.is-selected .graph-node-label {
+  font-weight: 600;
+}
+
+/* Controls, top right: one joined strip, quieter than a toolbar. */
+.graph-controls {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  overflow: hidden;
+}
+
+.graph-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.graph-control + .graph-control {
+  border-left: 1px solid var(--border);
+}
+
+.graph-control.is-text {
+  padding: 0 8px;
+}
+
+.graph-control:hover:not(:disabled) {
+  background: var(--bg-inset);
+  color: var(--text);
+}
+
+.graph-control:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.graph-control:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.graph-control svg path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+/* Items with no citations in the set: one count, top left, not a cloud
+   of loose dots. */
+.graph-chip {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.graph-canvas.is-empty .graph-chip {
+  position: static;
+}
+
+.graph-chip:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--text-dim) 60%, transparent);
+}
+
+.graph-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* The key to the selection's edges, only while there is one. */
+.graph-legend {
+  position: absolute;
+  right: 8px;
+  bottom: 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-elev) 88%, transparent);
+  color: var(--text-dim);
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.graph-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.graph-legend-dot {
+  fill: var(--accent);
+}
+
+.graph-legend-out {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+
+.graph-legend-in {
+  stroke: var(--text);
+  stroke-opacity: 0.7;
+  stroke-width: 1.3;
+  stroke-dasharray: 3 2;
+}
+
+.graph-legend-head.is-out {
+  fill: var(--accent);
+}
+
+.graph-legend-head.is-in {
+  fill: var(--text);
+  fill-opacity: 0.7;
+}
+
+/* The hover card: small, quiet, never in the pointer's way. */
+.graph-card {
+  position: absolute;
+  z-index: 3;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  line-height: 1.4;
+  pointer-events: none;
+}
+
+.graph-card-title {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.graph-card-authors {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  margin-top: 3px;
+}
+
+.graph-card-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 1px;
+  color: var(--text-dim);
+}
+
+.graph-card-meta > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graph-card-kind {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--bg-inset);
+  font-size: 11px;
+}
+
+.graph-card-alpha {
+  flex: none;
+  color: var(--text-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  opacity: 0.8;
+}
+
+.graph-card-abstract {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  margin: 6px 0 0;
+  color: var(--text-dim);
+}
+
+.graph-card-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.graph-card-missing {
+  color: var(--warn);
+}
+
+/* Motion answers the user: a fade where something changed, nothing more,
+   and nothing at all under reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+  .graph-node,
+  .graph-node-halo,
+  .graph-node-label,
+  .graph-edge {
+    transition:
+      opacity 160ms ease,
+      stroke-opacity 160ms ease,
+      visibility 160ms;
+  }
+
+  .graph-card {
+    animation: graph-card-in 120ms ease-out;
+  }
+
+  .graph-card-abstract,
+  .graph-legend {
+    animation: graph-fade-in 160ms ease-out;
+  }
+}
+
+@keyframes graph-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+}
+
+@keyframes graph-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* ---------- merge, missing works, focus ---------- */
+
+/* "duplicate?" at the right of a row the engine suspects: a question, so
+   dim and small, nothing to click. */
+.paper-row-dup {
+  flex: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-style: italic;
+  white-space: nowrap;
+  opacity: 0.8;
+}
+
+/* The duplicate and merged lines read like the verdict above them. */
+.paper-dup-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.paper-dup-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The two-step confirmation: plain text and the buttons under it, inside
+   the column, never a dialog. */
+.merge-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.merge-confirm-text {
+  margin: 0;
+}
+
+.merge-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.merge-confirm-actions .secondary-btn {
+  height: 24px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.merge-confirm-spacer {
+  flex: 1;
+}
+
+.paper-list-head .merge-confirm {
+  margin-top: 8px;
+}
+
+.paper-merge-btn {
+  flex: none;
+}
+
+/* A missing work: the outline of a paper that is not there. Dashed, no
+   fill, a little fainter than an item. */
+.graph-node.is-ghost .graph-node-dot {
+  fill: none;
+  stroke: var(--text-dim);
+  stroke-opacity: 0.75;
+  stroke-dasharray: 2 2;
+}
+
+.graph-node.is-ghost.is-selected .graph-node-dot {
+  stroke: var(--accent);
+  stroke-opacity: 1;
+}
+
+.graph-node.is-ghost .graph-node-label {
+  font-family: inherit;
+  font-style: italic;
+}
+
+/* The item a focused graph is drawn around, when the selection has moved
+   on: its outline stays in the accent. */
+.graph-node.is-centre:not(.is-selected) .graph-node-dot {
+  stroke: var(--accent);
+  stroke-width: 1.75;
+}
+
+.graph-control.is-on {
+  background: var(--bg-inset);
+  color: var(--text);
+}
+
+/* "− cited by ≥ 2 +", one segment of the controls strip. */
+.graph-stepper {
+  gap: 0;
+  cursor: default;
+}
+
+.graph-stepper button {
+  width: 20px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.graph-stepper button:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.graph-stepper button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.graph-stepper button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.graph-stepper-value {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.graph-note-link {
+  align-self: flex-start;
+  font-size: 12px;
+}
+
+/* "Around ZD24  [1 step | 2 steps]  ×": a line above the notes. */
+.graph-focus-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.graph-focus-label {
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.graph-depth button {
+  height: 20px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+.graph-focus-leave {
+  width: 22px;
+  height: 22px;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.graph-focus-leave:hover {
+  background: var(--bg-inset);
+  color: var(--text);
+}
+
+.graph-focus-leave:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.graph-card-reference {
+  display: -webkit-box;
+  margin: 2px 0 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  line-clamp: 5;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.graph-card-ghost-kind {
+  display: inline-block;
+  color: var(--text-dim);
+}
+
+/* The detail column while a missing work is picked. */
+.missing-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.missing-panel-text {
+  margin: 0;
+  color: var(--text);
+  line-height: 19px;
+  overflow-wrap: anywhere;
+}
+
+.missing-panel-ids {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.missing-panel-ids dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.missing-panel-citers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  font-size: 12px;
+}
+
+.missing-panel .is-mono,
+.missing-panel-ids .is-mono {
+  font-family: ui-monospace, Menlo, monospace;
+}
+
+.missing-note {
+  margin-top: -6px;
+}
+
+/* The middle column's list of missing works. */
+.missing-list-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 0 8px 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.missing-list-head > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.missing-list-empty {
+  padding: 0 8px;
+}
+
+.missing-row {
+  cursor: pointer;
+}
+
+.missing-row-text {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  color: var(--text);
+  font-size: 13px;
 }

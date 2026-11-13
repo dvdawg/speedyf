@@ -1,6 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SIDEBAR_WIDTH, clampSidebarWidth, extensionPanelId } from './uiStore';
 
+describe('DEFAULT_SIDEBAR_WIDTH', () => {
+  /** Measured from the CSS: `.icon-btn` is 28px wide (16px icon, 5px padding
+   * and a 1px border each side), `.sidebar-mode-toggle` separates buttons by
+   * 2px inside 6px of padding, and `.sidebar` carries a 1px right border in
+   * its border-box width. Six built-ins — Pages, Outline, Formal, Figures,
+   * Notes, Paper — must sit on one row by default. */
+  it('fits the six built-in mode buttons on one row', () => {
+    const buttons = 6;
+    const needed = buttons * 28 + (buttons - 1) * 2 + 2 * 6 + 1;
+    expect(DEFAULT_SIDEBAR_WIDTH).toBe(needed);
+  });
+});
+
 describe('clampSidebarWidth', () => {
   const roomy = 1600;
 
@@ -55,5 +68,6 @@ describe('extensionPanelId', () => {
   it('is null for a built-in mode', () => {
     expect(extensionPanelId('pages')).toBe(null);
     expect(extensionPanelId('notes')).toBe(null);
+    expect(extensionPanelId('paper')).toBe(null);
   });
 });

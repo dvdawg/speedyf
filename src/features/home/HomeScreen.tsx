@@ -4,18 +4,20 @@
  * A fixed rail on the left holds the open action and the section list; the
  * right column renders the selected section. Selection is local state, and
  * App unmounts this whole screen once a tab becomes active, so returning home
- * always lands back on Recents. */
-import { createSignal, For } from 'solid-js';
+ * always lands back on Recents — unless another screen asked for a panel on
+ * the way in (see `showHomePanel`). */
+import { createEffect, createSignal, For } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
 import type { Component } from 'solid-js';
 import { openFromDialog } from '../document/tabsController';
 import { IconExtension, IconHome, IconList, IconOpen, IconSettings } from '../../components/icons';
+import LaunchToggle from '../projects/LaunchToggle';
 import RecentsPanel from './RecentsPanel';
 import LibraryPanel from './LibraryPanel';
 import ExtensionsPanel from './ExtensionsPanel';
 import SettingsPanel from './SettingsPanel';
 
-type PanelId = 'recents' | 'library' | 'extensions' | 'settings';
+export type PanelId = 'recents' | 'library' | 'extensions' | 'settings';
 
 const SECTIONS: { id: PanelId; label: string; icon: Component }[] = [
   { id: 'recents', label: 'Recents', icon: IconHome },
@@ -31,8 +33,27 @@ const PANELS: Record<PanelId, Component> = {
   settings: SettingsPanel,
 };
 
+/** A panel another screen asked Home to show. The Projects screen hands its
+ * search to the Library panel this way. The request is consumed as soon as
+ * it is honoured, so a later plain visit lands on Recents as before. */
+const [requestedPanel, setRequestedPanel] = createSignal<PanelId | null>(null);
+
+export function showHomePanel(id: PanelId): void {
+  setRequestedPanel(id);
+}
+
 export default function HomeScreen() {
   const [active, setActive] = createSignal<PanelId>('recents');
+
+  // Honours a request whether it arrived before this mount or while the
+  // screen is already up.
+  createEffect(() => {
+    const requested = requestedPanel();
+    if (requested) {
+      setActive(requested);
+      setRequestedPanel(null);
+    }
+  });
 
   return (
     <div class="home-screen">
@@ -65,6 +86,7 @@ export default function HomeScreen() {
       <main class="home-panel">
         <Dynamic component={PANELS[active()]} />
       </main>
+      <LaunchToggle class="home-launch-toggle" />
     </div>
   );
 }

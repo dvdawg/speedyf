@@ -45,6 +45,7 @@ function extension(overrides: Partial<ExtensionRecord>): ExtensionRecord {
     enabled: true,
     builtin: false,
     manifest: null,
+    referenceProvider: null,
     commands: [],
     panels: [],
     selectionActions: [],

@@ -6,7 +6,8 @@ import { createStore } from 'solid-js/store';
  * extension contributed. One string rather than a discriminated pair because
  * the mode is persisted and compared all over the shell, and a contributed
  * panel should be no more special to that code than a built-in one. */
-export type SidebarMode = 'pages' | 'outline' | 'formal' | 'figures' | 'notes' | `ext:${string}`;
+export type SidebarMode =
+  'pages' | 'outline' | 'formal' | 'figures' | 'notes' | 'paper' | `ext:${string}`;
 
 export const EXTENSION_MODE_PREFIX = 'ext:';
 
@@ -14,8 +15,11 @@ export function extensionPanelId(mode: SidebarMode): string | null {
   return mode.startsWith(EXTENSION_MODE_PREFIX) ? mode.slice(EXTENSION_MODE_PREFIX.length) : null;
 }
 
-/** Default sidebar width. Fits the five built-in panel buttons on one row. */
-export const DEFAULT_SIDEBAR_WIDTH = 188;
+/** Default sidebar width. The smallest width that fits the six built-in panel
+ * buttons on one row: six 28px buttons and five 2px gaps (178px) inside the
+ * strip's 6px padding, plus the sidebar's own 1px right border, which the
+ * border-box width includes. One pixel less and the sixth button wraps. */
+export const DEFAULT_SIDEBAR_WIDTH = 191;
 /** Narrow enough to be a sliver, wide enough that the mode buttons and a row
  * of content are still usable. Below this, collapsing is the better answer. */
 const MIN_SIDEBAR_WIDTH = 150;
