@@ -618,6 +618,9 @@ export const API_PERMISSIONS: Readonly<Record<string, string>> = {
   // only library write an extension has, and it can only answer what it was
   // asked: the document is a token SpeedyF issued, never a path.
   'references.contribute': 'library:contributeReferences',
+  // A term provider's answer for the document it was asked about: terms
+  // SpeedyF matches against that document's pages and previews on hover.
+  'terms.contribute': 'document:contributeTerms',
   'clipboard.write': 'clipboard:write',
   'storage.get': 'storage',
   'storage.set': 'storage',
