@@ -182,6 +182,10 @@ pub enum Work {
         chain: u64,
     },
     LibraryScanNext,
+    /// One step of the library watcher's queue: files that went marked
+    /// missing, one settled file scanned and reconciled. Idle; requeues
+    /// itself until the queue is empty (`library::watch`).
+    LibraryWatchNext,
     /// Extract one library document's full text to its sidecar. Runs at Idle,
     /// one document per job, so a background library index can never outrank
     /// a page the reader is looking at.
@@ -338,6 +342,8 @@ pub struct EngineShared {
     /// Whether a rebuild is already under way, so a burst of queries against a
     /// stale library starts one build rather than one each.
     pub gram_building: AtomicBool,
+    /// The library folder watcher, once started (`start_library_watch`).
+    pub library_watch: Mutex<Option<crate::library::watch::WatchHandle>>,
 }
 
 impl EngineShared {
@@ -380,12 +386,59 @@ impl EngineShared {
         self.after_flush(flushed);
     }
 
-    fn after_flush(&self, flushed: AppResult<bool>) {
+    pub(crate) fn after_flush(&self, flushed: AppResult<bool>) {
         match flushed {
             Ok(true) => self.notify_library_changed(),
             Ok(false) => {}
             Err(error) => log::warn!("cannot save the paper library: {error}"),
         }
+    }
+}
+
+/// The watcher thread's view of the engine. Weak, so the thread never
+/// keeps an engine alive; it stops once the engine is gone.
+struct EngineWatchSink(std::sync::Weak<EngineShared>);
+
+impl crate::library::watch::WatchSink for EngineWatchSink {
+    fn roots(&self) -> Option<Vec<PathBuf>> {
+        Some(self.0.upgrade()?.library.lock().roots())
+    }
+
+    fn skip_dirs(&self) -> Vec<PathBuf> {
+        let Some(shared) = self.0.upgrade() else {
+            return Vec::new();
+        };
+        let data = PathBuf::from(shared.papers.lock().data_info().dir);
+        let mut dirs = vec![shared.app_data_dir.clone(), data];
+        dirs.extend(
+            dirs.clone()
+                .iter()
+                .filter_map(|dir| dir.canonicalize().ok()),
+        );
+        dirs
+    }
+
+    fn deliver(&self, files: Vec<PathBuf>, gone: Vec<PathBuf>) {
+        let Some(shared) = self.0.upgrade() else {
+            return;
+        };
+        if shared.library.lock().queue_watched(files, gone) {
+            shared.queue.push(
+                Priority::Idle,
+                JobMeta {
+                    doc: 0,
+                    gen: shared.gens.current(0),
+                    epoch: shared.cancels.current(0),
+                },
+                Work::LibraryWatchNext,
+            );
+        }
+    }
+
+    fn known_stamps(&self) -> Option<std::collections::HashMap<PathBuf, (u64, u64)>> {
+        let shared = self.0.upgrade()?;
+        let library = shared.library.lock();
+        (!library.is_scanning()).then(|| library.stamps())
     }
 }
 
@@ -525,6 +578,7 @@ impl EngineHandle {
             last_metrics: Mutex::new(EngineMetricsDto::default()),
             gram_index: Mutex::new(None),
             gram_building: AtomicBool::new(false),
+            library_watch: Mutex::new(None),
         });
         let worker_shared = Arc::clone(&shared);
         std::thread::Builder::new()
@@ -728,7 +782,23 @@ impl EngineHandle {
             self.0.finish_library_scan();
         }
         self.submit(Priority::Idle, 0, Work::LibraryTextNext);
+        if let Some(watch) = self.0.library_watch.lock().as_ref() {
+            watch.rearm();
+        }
         Ok(())
+    }
+
+    /// Watch the library roots for PDFs that arrive, change, move or go
+    /// while the app runs (`library::watch`), with a stat-only pass every
+    /// 10 minutes for whatever the watcher misses. Once per engine.
+    pub fn start_library_watch(&self) {
+        let mut slot = self.0.library_watch.lock();
+        if slot.is_none() {
+            *slot = Some(crate::library::watch::spawn(
+                EngineWatchSink(Arc::downgrade(&self.0)),
+                Default::default(),
+            ));
+        }
     }
 
     /// Search every indexed document in the library, or, with `project_id`,

@@ -240,6 +240,7 @@ pub fn run() {
                 );
             }));
 
+            engine.start_library_watch();
             app.manage(EngineState(engine));
             app.manage(windows::Windows::default());
             windows::install_menu(app.handle())?;

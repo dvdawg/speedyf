@@ -363,6 +363,7 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         | Work::StartIndexing { .. }
         | Work::IndexNext { .. }
         | Work::LibraryScanNext
+        | Work::LibraryWatchNext
         | Work::LibraryTextNext
         | Work::LibraryCitesNext
         | Work::OcrDone { .. } => {}
@@ -460,6 +461,7 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
         Work::StartIndexing { doc } => state.request_indexing(doc, shared),
         Work::IndexNext { doc, chain } => do_index_next(state, shared, meta, doc, chain),
         Work::LibraryScanNext => do_library_scan_next(state, shared),
+        Work::LibraryWatchNext => do_library_watch_next(state, shared),
         Work::LibraryTextNext => do_library_text_next(state, shared),
         Work::LibraryCitesNext => do_library_cites_next(shared),
         Work::OcrDone { done } => do_ocr_done(state, shared, done),
@@ -1827,6 +1829,14 @@ fn scan_library_candidate(
     app_data_dir: &Path,
     ocr_allowed: bool,
 ) -> (LibraryEntry, bool) {
+    if library::is_dataless(&candidate.path) {
+        // A cloud placeholder: any read downloads it. Its name and stamp
+        // only; without a fingerprint the next scan reads it properly once
+        // it has been downloaded.
+        let entry = library::entry_from_filename(candidate)
+            .unwrap_or_else(|| library::entry_from_first_page(candidate, ""));
+        return (entry, false);
+    }
     let fingerprint = library::content_fingerprint(&candidate.path);
     let named = library::entry_from_filename(candidate);
     let xmp = library::xmp::read_xmp(&candidate.path);
@@ -1970,6 +1980,47 @@ fn scan_step(
     shared.finish_library_scan();
     // The metadata pass is what discovers files, so the text pass (and the
     // cites backfill behind it) starts once it has nothing left to find.
+    requeue_library_text(shared);
+}
+
+/// One step of the watcher's queue (`library::watch`): paths that went are
+/// dropped from the index and their paper files marked missing now; then
+/// one settled file is scanned - at idle, without OCR, copying nothing -
+/// and reconciled, which reattaches a renamed file by its fingerprint.
+/// Saves (and so `library:changed`) come at most once a second while a
+/// burst drains, and once more when it is done.
+fn do_library_watch_next(state: &mut WorkerState, shared: &EngineShared) {
+    let gone = shared.library.lock().take_gone();
+    if !gone.is_empty() {
+        let flushed = {
+            let mut papers = shared.papers.lock();
+            papers.mark_paths_missing(&gone);
+            papers.flush(false)
+        };
+        shared.after_flush(flushed);
+    }
+    let candidate = shared.library.lock().next_watched();
+    if let Some(candidate) = candidate.filter(|candidate| !candidate.unchanged) {
+        let app_data_dir = shared.library.lock().app_data_dir();
+        let (entry, _) = scan_library_candidate(state, &candidate, &app_data_dir, false);
+        shared.library.lock().record_watched(entry.clone());
+        shared.reconcile_library_entry(&entry);
+    }
+    if shared.library.lock().finish_watch_step() {
+        shared.queue.push(
+            Priority::Idle,
+            JobMeta {
+                doc: 0,
+                gen: shared.gens.current(0),
+                epoch: shared.cancels.current(0),
+            },
+            Work::LibraryWatchNext,
+        );
+        return;
+    }
+    let flushed = shared.papers.lock().flush(true);
+    shared.after_flush(flushed);
+    // New files' text, cites and OCR follow through the usual idle chain.
     requeue_library_text(shared);
 }
 
@@ -3097,6 +3148,7 @@ mod tests {
             last_metrics: Mutex::new(EngineMetricsDto::default()),
             gram_index: Mutex::new(None),
             gram_building: AtomicBool::new(false),
+            library_watch: Mutex::new(None),
         }
     }
 
@@ -3385,6 +3437,161 @@ mod tests {
         assert!((w - 150.0 * 12.0 / 19.0).abs() < 0.01, "{w}");
         assert!((y - (1.0 - 0.2 - 0.05) * 400.0).abs() < 0.01, "{y}");
         assert!((h - 0.05 * 400.0).abs() < 0.01, "{h}");
+    }
+
+    /// A one-page PDF whose only text is `label`, so every fixture has
+    /// its own bytes (and fingerprint).
+    fn labelled_pdf(pdfium: &Pdfium, path: &Path, label: &str) {
+        let mut document = pdfium.create_new_pdf().unwrap();
+        let font = document.fonts_mut().helvetica();
+        let mut page = document
+            .pages_mut()
+            .create_page_at_end(PdfPagePaperSize::Custom(
+                PdfPoints::new(300.0),
+                PdfPoints::new(400.0),
+            ))
+            .unwrap();
+        let mut text =
+            PdfPageTextObject::new(&document, label, font, PdfPoints::new(14.0)).unwrap();
+        text.translate(PdfPoints::new(20.0), PdfPoints::new(300.0))
+            .unwrap();
+        page.objects_mut().add_text_object(text).unwrap();
+        drop(page);
+        document.save_to_file(path).unwrap();
+    }
+
+    /// Every library item, papers and others alike.
+    fn items(shared: &EngineShared) -> u32 {
+        let counts = shared.papers.lock().counts();
+        counts.all + counts.others
+    }
+
+    fn quiet_state(pdfium: &Pdfium) -> WorkerState<'_> {
+        WorkerState::new(
+            pdfium.bindings(),
+            pdfium,
+            OcrService::new(Arc::new(|_: &[u8]| None), Arc::new(|_| {})),
+            false,
+        )
+    }
+
+    /// Hand the watcher's batch over as `EngineWatchSink::deliver` does
+    /// and run its jobs until the chain ends.
+    fn drain_watch(
+        state: &mut WorkerState,
+        shared: &EngineShared,
+        files: Vec<PathBuf>,
+        gone: Vec<PathBuf>,
+    ) {
+        if shared.library.lock().queue_watched(files, gone) {
+            handle_work(state, shared, idle(), Work::LibraryWatchNext);
+        }
+        while let Some((meta, work)) = (!shared.queue.is_empty())
+            .then(|| shared.queue.pop_blocking())
+            .flatten()
+        {
+            if matches!(work, Work::LibraryWatchNext) {
+                handle_work(state, shared, meta, work);
+            }
+        }
+    }
+
+    #[test]
+    fn a_watched_file_is_indexed_followed_through_a_rename_and_marked_missing_when_deleted() {
+        let _guard = pdfium_init::test_guard();
+        let pdfium = Pdfium::new(pdfium_init::init_bindings(&[]).unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("papers");
+        std::fs::create_dir_all(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let shared = test_shared(dir.path());
+        shared.library.lock().add_root(root.clone()).unwrap();
+        let mut state = quiet_state(&pdfium);
+
+        // Created: scanned, indexed and given a paper; text work follows.
+        let first = root.join("downloaded.pdf");
+        labelled_pdf(
+            &pdfium,
+            &first,
+            "Interactive proofs and the polynomial hierarchy",
+        );
+        drain_watch(&mut state, &shared, vec![first.clone()], Vec::new());
+        assert!(shared.library.lock().entry_for_path(&first).is_some());
+        let paper = shared.papers.lock().paper_for_path(&first).unwrap();
+        assert_eq!(paper.files.len(), 1);
+
+        // Renamed: the same paper, now at the new path, not missing.
+        let renamed = root.join("renamed.pdf");
+        std::fs::rename(&first, &renamed).unwrap();
+        drain_watch(
+            &mut state,
+            &shared,
+            vec![renamed.clone()],
+            vec![first.clone()],
+        );
+        assert!(shared.library.lock().entry_for_path(&first).is_none());
+        let moved = shared.papers.lock().paper_for_path(&renamed).unwrap();
+        assert_eq!(moved.id, paper.id, "reattached by fingerprint");
+        assert_eq!(moved.files.len(), 1);
+        assert!(!moved.files[0].missing);
+        assert_eq!(items(&shared), 1);
+
+        // Moved to the Trash under the root (a root that holds the home
+        // folder): the Trash path is never the library's, so the file is
+        // missing, not reattached there.
+        let trash = root.join(".Trash");
+        std::fs::create_dir_all(&trash).unwrap();
+        let trashed = trash.join("renamed.pdf");
+        std::fs::rename(&renamed, &trashed).unwrap();
+        let roots = vec![root.clone()];
+        assert!(library::watch::is_ignored(&trashed, &roots, &[]));
+        drain_watch(&mut state, &shared, Vec::new(), vec![renamed.clone()]);
+        let gone = shared.papers.lock().paper_for_path(&renamed).unwrap();
+        assert!(gone.files[0].missing);
+        assert!(gone.files[0].missing_since.is_some());
+        assert!(shared.library.lock().entry_for_path(&renamed).is_none());
+        // Even a full scan does not find it there.
+        shared.library.lock().add_root(root.clone()).unwrap();
+        assert!(!shared.library.lock().has_scan_work());
+        assert!(shared.papers.lock().paper_for_path(&trashed).is_none());
+    }
+
+    #[test]
+    fn a_burst_of_watched_files_saves_and_notifies_a_bounded_number_of_times() {
+        let _guard = pdfium_init::test_guard();
+        let pdfium = Pdfium::new(pdfium_init::init_bindings(&[]).unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("papers");
+        std::fs::create_dir_all(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let shared = test_shared(dir.path());
+        shared.library.lock().add_root(root.clone()).unwrap();
+        let notified = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = Arc::clone(&notified);
+        *shared.library_changed.lock() = Some(Box::new(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        }));
+        let mut state = quiet_state(&pdfium);
+        let files: Vec<PathBuf> = (0..30)
+            .map(|n| {
+                let path = root.join(format!("paper-{n:02}.pdf"));
+                labelled_pdf(&pdfium, &path, &format!("A distinct study number {n}"));
+                path
+            })
+            .collect();
+        let started = Instant::now();
+        drain_watch(&mut state, &shared, files.clone(), Vec::new());
+        let elapsed = started.elapsed().as_secs() as usize;
+        assert_eq!(items(&shared), 30);
+        assert_eq!(shared.library.lock().all_entries().len(), 30);
+        let count = notified.load(Ordering::SeqCst);
+        // At most one a second while it drains, and one at the end.
+        assert!(count >= 1, "the end of the burst is announced");
+        assert!(count <= elapsed + 2, "{count} notifications in {elapsed} s");
+        // The same batch again is unchanged and costs nothing.
+        notified.store(0, Ordering::SeqCst);
+        drain_watch(&mut state, &shared, files, Vec::new());
+        assert_eq!(notified.load(Ordering::SeqCst), 0);
     }
 
     #[test]
