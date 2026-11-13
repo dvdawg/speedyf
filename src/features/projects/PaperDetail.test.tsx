@@ -25,6 +25,7 @@ const { projectsStore } = await import('./projectsStore');
 const { engine } = await import('../../lib/transport/engine');
 const { updateSettings } = await import('../../stores/settings');
 const { CANDIDATES } = await import('./testFixtures');
+const { requestTitleLookup, titleLookupRequested } = await import('./screenIntents');
 
 const select = async (id: string) => {
   projectsStore.select(id);
@@ -371,5 +372,22 @@ describe('PaperDetail project suggestion', () => {
     render(() => <PaperDetail onMoveFocus={() => {}} />);
     await waitFor(() => expect(engine.librarySuggestProjects).toHaveBeenCalledWith('a'));
     expect(screen.queryByText(/^Add to /)).toBeNull();
+  });
+});
+
+describe('Look Up by Title from the palette', () => {
+  it('runs once the requested item shows, and shows the matches here', async () => {
+    vi.mocked(engine.libraryLookup).mockResolvedValueOnce({ kind: 'candidates', candidates: [] });
+    updateSettings({ onlineLookup: true });
+    render(() => <PaperDetail onMoveFocus={() => {}} />);
+    await screen.findByText(TITLE);
+    // Asked for another item: nothing runs until that item is the one shown.
+    requestTitleLookup('b');
+    expect(engine.libraryLookup).not.toHaveBeenCalled();
+    await select('b');
+    await waitFor(() => expect(engine.libraryLookup).toHaveBeenCalledWith('b', 'title'));
+    expect(engine.libraryLookup).toHaveBeenCalledTimes(1);
+    expect(titleLookupRequested()).toBeNull();
+    await screen.findByText('Nothing found');
   });
 });

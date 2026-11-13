@@ -5,7 +5,16 @@
  * centered: the list changes height on every keystroke, and centering would
  * move the row under the cursor as it did.
  */
-import { batch, createEffect, createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
+import {
+  batch,
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  onCleanup,
+  Show,
+  untrack,
+} from 'solid-js';
 import { COMMANDS, describeDisabled, formatShortcut, type CommandCtx } from '../../app/commands';
 import { activeTab, tabsStore } from '../../stores/tabsStore';
 import { activateTab } from '../document/tabsController';
@@ -22,6 +31,7 @@ import {
   selectionActions,
 } from '../extensions/extensionStore';
 import { selectedText } from '../../stores/selectionStore';
+import { primeProjectPalette, projectPaletteRows } from '../projects/projectCommands';
 import {
   defaultSections,
   flatten,
@@ -111,6 +121,11 @@ export default function CommandPalette() {
         });
       }
     }
+
+    // Projects, the current item's projects and files, and toggles whose
+    // title follows their state: rows that exist per thing, from their own
+    // provider so they are tested without a palette.
+    items.push(...projectPaletteRows(context));
 
     for (const tab of tabsStore.state.tabs) {
       const name = tab.documentStore.state.name;
@@ -230,6 +245,9 @@ export default function CommandPalette() {
 
   createEffect(() => {
     if (paletteOpen()) {
+      // The library reads those rows depend on: the open document's record
+      // and its suggested project. One engine call each, never a page.
+      untrack(() => primeProjectPalette(ctx()));
       batch(() => {
         setQuery('');
         setCursor(0);

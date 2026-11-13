@@ -10,7 +10,15 @@
  * way a citation hover is, so it costs what a hover preview costs, and it is
  * sequence-guarded the way the store's reads are: a slow preview for the
  * previous paper must not land on this one. */
-import { createEffect, createSignal, createUniqueId, For, onCleanup, Show } from 'solid-js';
+import {
+  createEffect,
+  createSignal,
+  createUniqueId,
+  For,
+  onCleanup,
+  Show,
+  untrack,
+} from 'solid-js';
 import { engine } from '../../lib/transport/engine';
 import { renderUrl } from '../../lib/rendering/renderSource';
 import { pagesInverted, settings } from '../../stores/settings';
@@ -39,6 +47,7 @@ import {
 } from './paperFields';
 import { projectsStore } from './projectsStore';
 import ProjectSuggestionLine from './ProjectSuggestion';
+import { takeTitleLookupRequest, titleLookupRequested } from './screenIntents';
 
 /** Text fields that save as they are typed, trimmed. Year, authors, kind and
  * the abstract each need something more and are wired by hand below. */
@@ -716,6 +725,16 @@ export default function PaperDetail(props: { onMoveFocus: (dir: -1 | 1) => void 
       setBusy(false);
     }
   };
+
+  // Look Up by Title from the palette runs here once the item shows, so
+  // its matches land where they can be picked.
+  createEffect(() => {
+    const wanted = titleLookupRequested();
+    const p = paper();
+    if (!wanted || !p || p.id !== wanted) return;
+    takeTitleLookupRequest();
+    untrack(() => void lookup(p, 'title'));
+  });
 
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key !== 'ArrowLeft') return;

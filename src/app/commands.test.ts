@@ -43,6 +43,10 @@ vi.mock('../features/document/tabsController', () => ({
   openFromDialog: vi.fn(),
 }));
 
+// The full-text hand-off opens a Home panel; Home itself is a component
+// tree this node test has no DOM for.
+vi.mock('../features/home/HomeScreen', () => ({ showHomePanel: vi.fn() }));
+
 const { COMMANDS, COMMAND_GROUPS, commandById, formatShortcut, runCommand } =
   await import('./commands');
 const { settings, updateSettings } = await import('../stores/settings');

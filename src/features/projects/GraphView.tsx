@@ -72,7 +72,8 @@ import {
   uniqueLabels,
 } from './graphLayout';
 import type { LabelBox, NodeBox, Point } from './graphLayout';
-import { clearPositions, loadPositions, savePositions } from './graphPositions';
+import { clearPositions, loadPositions, positionsKey, savePositions } from './graphPositions';
+import { registerGraphControls } from './screenIntents';
 import { ghostId, ghostLabel, referenceText } from './MissingWorks';
 import { openPaper } from './openPaper';
 import { IconClose } from '../../components/icons';
@@ -94,6 +95,10 @@ const RADIUS_MIN = 3.5;
 const RADIUS_MAX = 7.5;
 /** A missing work's dot: small, whoever cites it. */
 const GHOST_RADIUS = 4;
+/** Every node answers clicks within this radius, however small its dot is
+ * drawn. Ghosts have no fill, and an unfilled circle only takes clicks on
+ * its outline, which made missing works nearly impossible to hit. */
+const HIT_RADIUS = 12;
 /** How far an edge bows from the straight line, as a share of its length;
  * a citation running both ways bows further so the pair separates. */
 const BOW = 0.06;
@@ -255,12 +260,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
   const projectId = () => store.graphProjectId();
   const focus = () => store.state.focus;
   /** Where dragged positions are kept: per scope, and per focus item. */
-  const scopeKey = () => {
-    const f = focus();
-    if (f) return `focus:${f.paperId}`;
-    const scope = store.state.scope;
-    return scope.kind === 'project' ? scope.id : scope.kind;
-  };
+  const scopeKey = () => positionsKey(store.state.scope, focus());
 
   let seq = 0;
   /** The next answer is the scope's first: it settles in and is fitted. */
@@ -819,6 +819,9 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
     setMoved(reconcile({}));
     fit();
   };
+  // The palette's Fit Graph and Reset Graph Layout reach the graph on
+  // screen through here.
+  onCleanup(registerGraphControls({ fit, resetLayout, hasMoved }));
 
   /* ---- notes ---- */
   const externalNote = () => {
@@ -1209,6 +1212,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
                         onDblClick={() => onNodeDblClick(node)}
                         onKeyDown={(e) => onNodeKeyDown(node, e)}
                       >
+                        <circle class="graph-node-hit" r={Math.max(r() + 8, HIT_RADIUS)} />
                         <circle class="graph-node-halo" r={r() + 4} />
                         <Show when={node.projectIds.length > 1}>
                           <circle class="graph-node-ring" r={r() + 2.5} />
@@ -1251,6 +1255,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
                         onClick={() => onNodeClick({ id })}
                         onKeyDown={(e) => onNodeKeyDown({ id }, e)}
                       >
+                        <circle class="graph-node-hit" r={HIT_RADIUS} />
                         <circle class="graph-node-halo" r={GHOST_RADIUS + 4} />
                         <circle class="graph-node-dot" r={GHOST_RADIUS} />
                         <text class="graph-node-label" x={GHOST_RADIUS + LABEL_GAP} dy="0.35em">

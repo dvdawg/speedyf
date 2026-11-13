@@ -11,7 +11,12 @@
  *
  * Keyed by path rather than by tab: the panel lives inside a tab's subtree and
  * only knows its own document, while a command only knows which tab is in
- * front. The path is what both agree on. */
+ * front. The path is what both agree on.
+ *
+ * The one concession to reactivity is a version count, bumped on every
+ * write: the command palette's rows depend on the record, and a palette
+ * opened before the answer arrived has to redraw when it does. */
+import { createSignal } from 'solid-js';
 import { engine } from '../../lib/transport/engine';
 import { activeTab } from '../../stores/tabsStore';
 import type { Paper } from '../../types/engine';
@@ -19,6 +24,8 @@ import type { Paper } from '../../types/engine';
 /** `null` means the engine said the file is outside the library; a path that
  * is absent has simply not been asked about yet. */
 const papers = new Map<string, Paper | null>();
+const [version, setVersion] = createSignal(0);
+const bump = () => setVersion((v) => v + 1);
 
 function activePath(): string | null {
   const doc = activeTab()?.documentStore.state;
@@ -29,12 +36,14 @@ function activePath(): string | null {
  * null both when the file is outside the library and when nothing is known
  * yet; `activePaperKnown` tells those apart. */
 export function activePaper(): Paper | null {
+  version();
   const path = activePath();
   return path ? (papers.get(path) ?? null) : null;
 }
 
 /** Whether `activePaper()`'s null is an answer rather than an absence. */
 export function activePaperKnown(): boolean {
+  version();
   const path = activePath();
   return path !== null && papers.has(path);
 }
@@ -42,6 +51,7 @@ export function activePaperKnown(): boolean {
 /** Called by the Paper panel with each answer it gets. */
 export function rememberPaper(path: string, paper: Paper | null): void {
   papers.set(path, paper);
+  bump();
 }
 
 /** Every cached record may be stale after `library:changed` — a membership
@@ -49,6 +59,7 @@ export function rememberPaper(path: string, paper: Paper | null): void {
  * the panel refills it. */
 export function forgetPapers(): void {
   papers.clear();
+  bump();
 }
 
 /** The slow path, for a command that runs before the panel has ever been
@@ -59,6 +70,6 @@ export async function refreshActivePaper(): Promise<Paper | null> {
   if (!path) return null;
   const paper = await engine.libraryPaperForPath(path);
   // Only worth keeping if the user is still on the same document.
-  if (activePath() === path) papers.set(path, paper);
+  if (activePath() === path) rememberPaper(path, paper);
   return paper;
 }

@@ -10,15 +10,9 @@ import { createEffect, createSignal, on, onCleanup, onMount, Show } from 'solid-
 import { engine } from '../../lib/transport/engine';
 import type { ProjectSuggestion } from '../../types/engine';
 import { projectsStore } from './projectsStore';
+import { dismissSuggestion, suggestionDismissed } from './suggestionDismissals';
 
-/** "paper id:project id" pairs the user said Not now to, this session. */
-const [dismissed, setDismissed] = createSignal<ReadonlySet<string>>(new Set());
-const pair = (paperId: string, projectId: string) => `${paperId}:${projectId}`;
-
-/** Forget every Not now; for tests. */
-export function resetDismissedSuggestions(): void {
-  setDismissed(new Set<string>());
-}
+export { resetDismissedSuggestions } from './suggestionDismissals';
 
 export default function ProjectSuggestionLine(props: { paperId: string; class?: string }) {
   const [suggestions, setSuggestions] = createSignal<ProjectSuggestion[]>([]);
@@ -70,7 +64,7 @@ export default function ProjectSuggestionLine(props: { paperId: string; class?: 
 
   const top = () =>
     suggestions().find(
-      (s) => !dismissed().has(pair(props.paperId, s.projectId)) && !added().has(s.projectId)
+      (s) => !suggestionDismissed(props.paperId, s.projectId) && !added().has(s.projectId)
     ) ?? null;
 
   const add = (suggestion: ProjectSuggestion) => {
@@ -78,7 +72,7 @@ export default function ProjectSuggestionLine(props: { paperId: string; class?: 
     void projectsStore.setMembership(props.paperId, suggestion.projectId, true);
   };
   const notNow = (suggestion: ProjectSuggestion) =>
-    setDismissed((pairs) => new Set([...pairs, pair(props.paperId, suggestion.projectId)]));
+    dismissSuggestion(props.paperId, suggestion.projectId);
 
   return (
     <Show when={top()}>

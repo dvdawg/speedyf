@@ -6148,3 +6148,17 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   width: 12px;
   height: 12px;
 }
+
+/* An invisible disc behind each node that takes the clicks. Drawn first, so
+   the visible dot and label sit on top of it. */
+.graph-node-hit {
+  fill: transparent;
+  stroke: none;
+  pointer-events: all;
+}
+
+/* Edges never take clicks meant for a node underneath them. */
+.graph-edge,
+.graph-edge-lit {
+  pointer-events: none;
+}

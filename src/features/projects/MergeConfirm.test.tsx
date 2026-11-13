@@ -29,6 +29,7 @@ const { default: PaperDetail } = await import('./PaperDetail');
 const { default: PaperList } = await import('./PaperList');
 const { CAN_DISMISS_DUPLICATES, mergeMoves } = await import('./MergeConfirm');
 const { projectsStore, duplicateIndex } = await import('./projectsStore');
+const { requestMerge } = await import('./screenIntents');
 const { engine } = await import('../../lib/transport/engine');
 const { DUPLICATES, PREPRINT_TITLE, fixture, paperFor, resetFixture } =
   await import('./testFixtures');
@@ -175,5 +176,27 @@ describe('merging from the list', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
     await waitFor(() => expect(engine.libraryMergePapers).toHaveBeenCalledWith('b', ['a']));
     await waitFor(() => expect(screen.queryByRole('group', { name: 'Merge items' })).toBeNull());
+  });
+
+  it("opens the same confirmation for the palette's Merge Selected Items", async () => {
+    const { container } = render(() => <PaperList onMoveFocus={() => {}} />);
+    await screen.findByText(JARZYNSKI);
+    // One row selected: the request asks nothing.
+    fireEvent.click(rowFor(container, 'Entropy production'));
+    expect(requestMerge()).toBe(true);
+    expect(screen.queryByRole('group', { name: 'Merge items' })).toBeNull();
+
+    fireEvent.click(rowFor(container, JARZYNSKI), { metaKey: true });
+    expect(requestMerge()).toBe(true);
+    await waitFor(() =>
+      expect(confirmBox().textContent).toContain('Keep "Entropy production fluctuation theorem"')
+    );
+    expect(engine.libraryMergePapers).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
+    await waitFor(() => expect(engine.libraryMergePapers).toHaveBeenCalledWith('b', ['a']));
+  });
+
+  it('has no list to ask once the list is gone', () => {
+    expect(requestMerge()).toBe(false);
   });
 });

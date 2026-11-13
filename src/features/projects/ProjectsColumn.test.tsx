@@ -19,6 +19,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
 const { default: ProjectsColumn } = await import('./ProjectsColumn');
 const { projectsStore } = await import('./projectsStore');
 const { engine } = await import('../../lib/transport/engine');
+const { requestNewProject, newProjectRequested } = await import('./screenIntents');
 
 beforeEach(async () => {
   projectsStore.setScope({ kind: 'all' });
@@ -143,6 +144,20 @@ describe('ProjectsColumn', () => {
       expect(projectsStore.state.scope).toEqual({ kind: 'project', id: 'p3' })
     );
     expect(screen.queryByLabelText('New project name')).toBeNull();
+  });
+
+  it("opens the same field for the palette's New Project..., before or after mounting", async () => {
+    requestNewProject();
+    render(() => <ProjectsColumn onMoveFocus={() => {}} />);
+    const input = (await screen.findByLabelText('New project name')) as HTMLInputElement;
+    expect(newProjectRequested()).toBe(false);
+    fireEvent.input(input, { target: { value: 'Thesis' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(engine.libraryCreateProject).toHaveBeenCalledWith('Thesis');
+    await vi.waitFor(() => expect(screen.queryByLabelText('New project name')).toBeNull());
+
+    requestNewProject();
+    await screen.findByLabelText('New project name');
   });
 
   it('cancels the new project on Escape without creating anything', async () => {

@@ -45,6 +45,7 @@ import { openPaper } from './openPaper';
 import { metaLine } from './paperFields';
 import { beginPointerDrag } from './pointerDrag';
 import { projectsStore } from './projectsStore';
+import { registerMergeRequest } from './screenIntents';
 import type { ProjectsView } from './projectsStore';
 import MathText from '../../components/MathText';
 
@@ -244,6 +245,15 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
   onCleanup(
     // eslint-disable-next-line solid/reactivity -- read on demand, not tracked
     registerCiteSelection(() => (view() === 'list' ? selectedRows() : []), citeFailed)
+  );
+
+  // The palette's Merge Selected Items opens the same inline confirmation
+  // the Merge button does; it never merges by itself.
+  onCleanup(
+    // eslint-disable-next-line solid/reactivity -- read on demand, not tracked
+    registerMergeRequest(() => {
+      if (view() === 'list' && multi().length >= 2) setMerging(multi().slice());
+    })
   );
 
   /** The rows a drag from this row carries: the multi-selection when the

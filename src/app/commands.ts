@@ -35,6 +35,7 @@ import {
 import { engine } from '../lib/transport/engine';
 import { openQuickOpen } from '../features/palette/quickOpenStore';
 import { citeSelection, copyCite, copyListSelection } from '../features/projects/citeSelection';
+import { PROJECT_COMMANDS } from '../features/projects/projectCommands';
 import { setUi, ui, type SidebarMode } from '../stores/uiStore';
 import { tabsStore, type TabRecord } from '../stores/tabsStore';
 import type { Paper } from '../types/engine';
@@ -555,6 +556,8 @@ export const COMMANDS: readonly Command[] = [
       goHome();
     },
   },
+  // The Projects screen, projects and items: projectCommands.ts.
+  ...PROJECT_COMMANDS,
 
   // ---- Settings ------------------------------------------------------
   {

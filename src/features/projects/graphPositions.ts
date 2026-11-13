@@ -107,3 +107,14 @@ export function clearPositions(scope: string): void {
   delete all[scope];
   writeAll(all);
 }
+
+/** The key a graph's positions are kept under: per focus item while one is
+ * focused, else per scope (a project id, or the scope's kind). Shared by the
+ * graph and the palette's Reset Graph Layout, so the two cannot disagree. */
+export function positionsKey(
+  scope: { kind: string; id?: string },
+  focus: { paperId: string } | null
+): string {
+  if (focus) return `focus:${focus.paperId}`;
+  return scope.kind === 'project' && scope.id ? scope.id : scope.kind;
+}

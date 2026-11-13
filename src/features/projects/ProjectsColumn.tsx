@@ -15,7 +15,7 @@
  * another column. Keyboard handling lives on the list element with a roving
  * tabindex: the active scope is the one row in the tab order, and arrows
  * move the scope itself, the way a sidebar does. */
-import { createSignal, For, onCleanup, onMount, Show } from 'solid-js';
+import { createEffect, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { IconMore, IconPlus } from '../../components/icons';
 import type { Project } from '../../types/engine';
 import { exportBib, stopSyncingBib, syncBib } from './bibActions';
@@ -23,6 +23,7 @@ import { dropHover, reorderSlotAt, setDropHover } from './dnd';
 import { beginPointerDrag } from './pointerDrag';
 import { projectsStore, sameScope } from './projectsStore';
 import type { Scope } from './projectsStore';
+import { newProjectRequested, takeNewProjectRequest } from './screenIntents';
 
 /** A text field that commits on Enter or blur and cancels on Escape. Used for
  * renaming and for naming a new project, so the two cannot behave
@@ -154,6 +155,13 @@ export default function ProjectsColumn(props: { onMoveFocus: (dir: -1 | 1) => vo
   const [confirming, setConfirming] = createSignal<string | null>(null);
   const [creating, setCreating] = createSignal(false);
   let list!: HTMLDivElement;
+
+  // New Project... from the palette: the same field the button opens.
+  createEffect(() => {
+    if (!newProjectRequested()) return;
+    takeNewProjectRequest();
+    setCreating(true);
+  });
 
   const scopes = (): Scope[] => [
     { kind: 'all' },
