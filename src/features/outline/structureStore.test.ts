@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { flattenOutline } from './structureStore';
+import { flattenOutline, outlineIsTrivial } from './structureStore';
 import type { OutlineNode } from '../../types/engine';
 
 function node(title: string, page: number | null, children: OutlineNode[] = []): OutlineNode {
@@ -31,5 +31,26 @@ describe('flattenOutline', () => {
 
   it('is empty for a document with no outline', () => {
     expect(flattenOutline([])).toEqual([]);
+  });
+});
+
+describe('outlineIsTrivial', () => {
+  it('treats a missing outline as trivial', () => {
+    expect(outlineIsTrivial([])).toBe(true);
+  });
+
+  it('treats a single entry as trivial', () => {
+    expect(outlineIsTrivial([node('Title', 0)])).toBe(true);
+    expect(outlineIsTrivial([node('Paper', 3)])).toBe(true);
+  });
+
+  it('treats entries that all point at the first page as trivial', () => {
+    expect(outlineIsTrivial([node('Title', 0), node('Abstract', 0)])).toBe(true);
+    expect(outlineIsTrivial([node('Cover', null), node('Title', 0)])).toBe(true);
+  });
+
+  it('keeps a real outline', () => {
+    expect(outlineIsTrivial([node('Intro', 0), node('Methods', 2)])).toBe(false);
+    expect(outlineIsTrivial([node('Part I', null, [node('Chapter 1', 4)])])).toBe(false);
   });
 });
