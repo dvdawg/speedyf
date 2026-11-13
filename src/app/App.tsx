@@ -9,6 +9,7 @@ import Sidebar from '../components/Sidebar';
 import StatusBar from '../components/StatusBar';
 import Modals from '../components/Modals';
 import CommandPalette from '../features/palette/CommandPalette';
+import QuickOpen from '../features/palette/QuickOpen';
 import Viewer from '../features/viewer/Viewer';
 import ContextHeader from '../features/viewer/ContextHeader';
 import SearchPanel from '../features/search/SearchPanel';
@@ -261,6 +262,7 @@ export default function App() {
         </Show>
         <Modals />
         <CommandPalette />
+        <QuickOpen />
         <PreviewPopover />
       </div>
       <Show when={windowTransferPending()}>

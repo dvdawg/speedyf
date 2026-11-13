@@ -288,6 +288,7 @@ describe('library commands', () => {
     paperOverride: null,
     candidates: [],
     mergedCount: 0,
+    autoMerged: [],
   };
   const writeText = vi.fn(async (_text: string) => {});
 

@@ -3189,6 +3189,59 @@ html.is-dragging-tab * {
   color: var(--text);
 }
 
+/* ---------- quick open ---------- */
+
+/* The palette's rows, two lines tall: title over a dim byline, the cite key
+   at the right where the palette puts its shortcut. */
+.quick-open-row {
+  align-items: center;
+}
+
+.quick-open-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.quick-open-text .palette-title {
+  display: block;
+}
+
+.quick-open-detail {
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-open-key {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.quick-open-row.is-missing .palette-title,
+.quick-open-row.is-missing .quick-open-key {
+  color: var(--text-dim);
+}
+
+.quick-open-missing {
+  margin-left: 8px;
+  font-style: italic;
+}
+
+.quick-open-row.is-fulltext {
+  margin-top: 4px;
+  color: var(--text-dim);
+}
+
 /* ---------- home: extensions ---------- */
 .ext-list {
   display: flex;
@@ -4869,6 +4922,35 @@ textarea.paper-field-input {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.paper-file-size {
+  flex: none;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.paper-file-actions {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.paper-auto-merged {
+  color: var(--text-dim);
+}
+
+.paper-row-files {
+  flex: none;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.paper-also {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .paper-file.is-missing .paper-file-name {

@@ -14,6 +14,7 @@ import { activeTab } from '../stores/tabsStore';
 import { setActiveTool, toolState } from '../features/annotations/toolStore';
 import { modal } from '../stores/modalStore';
 import { openPalette, paletteOpen } from '../features/palette/paletteStore';
+import { quickOpenOpen } from '../features/palette/quickOpenStore';
 import { runCommand, type CommandCtx } from './commands';
 import { canonicalChord, chordMatches } from '../features/extensions/capabilities';
 import { extensionBindings, runBoundCommand } from '../features/extensions/extensionStore';
@@ -45,7 +46,17 @@ const BINDINGS: readonly Binding[] = [
     whileTyping: true,
     preventAlways: true,
   },
-  { key: 'o', mod: true, id: 'file.open', whileTyping: true, preventAlways: true },
+  { key: 'o', mod: true, shift: false, id: 'file.open', whileTyping: true, preventAlways: true },
+  // Quick open sits on the shifted Open: Cmd+P is print, which the webview
+  // would answer with its own dialog for the viewer's DOM if we let it go.
+  {
+    key: 'o',
+    mod: true,
+    shift: true,
+    id: 'library.quickOpen',
+    whileTyping: true,
+    preventAlways: true,
+  },
   { key: 'p', mod: true, shift: false, id: 'file.print', whileTyping: true, preventAlways: true },
   { key: 's', mod: true, shift: false, id: 'file.save', whileTyping: true, preventAlways: true },
   { key: 's', mod: true, shift: true, id: 'file.saveAs', whileTyping: true, preventAlways: true },
@@ -169,9 +180,9 @@ export function installShortcuts(): () => void {
       return;
     }
     if (modal.kind !== null) return; // modals own the keyboard
-    // The palette owns the keyboard too, or its arrow keys would also scroll
+    // The palette (and quick open) owns the keyboard too, or its arrow keys would also scroll
     // the document underneath it. It handles its own Escape.
-    if (paletteOpen()) return;
+    if (paletteOpen() || quickOpenOpen()) return;
     const mod = isMac ? e.metaKey : e.ctrlKey;
     const typing = isTypingTarget(e.target);
     const ctx: CommandCtx = { tab: activeTab() };

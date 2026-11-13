@@ -33,6 +33,7 @@ import {
   refreshActivePaper,
 } from '../features/projects/activePaper';
 import { engine } from '../lib/transport/engine';
+import { openQuickOpen } from '../features/palette/quickOpenStore';
 import { setUi, ui, type SidebarMode } from '../stores/uiStore';
 import { tabsStore, type TabRecord } from '../stores/tabsStore';
 import type { Paper } from '../types/engine';
@@ -461,6 +462,15 @@ export const COMMANDS: readonly Command[] = [
   panel('panel.notes', 'Notes & Annotations', 'notes', ['export', 'markdown', 'comments']),
 
   // ---- Library -------------------------------------------------------
+  {
+    id: 'library.quickOpen',
+    title: 'Open Item...',
+    group: 'Library',
+    shortcut: 'mod+shift+o',
+    keywords: ['quick', 'open', 'switch', 'find', 'paper', 'cite key', 'author', 'title', 'go to'],
+    enabled: () => true,
+    run: openQuickOpen,
+  },
   {
     id: 'library.copyCiteKey',
     title: 'Copy Cite Key',
