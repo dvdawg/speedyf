@@ -24,12 +24,15 @@ export default function SearchPanel() {
    * through matches with Enter must not leave a Back step per match: only the
    * first jump of a search, and later ones that move more than a page. */
   let recordedQuery: string | null = null;
-  const requestScrollToPage = (page: number, offsetCss?: number) => {
+  const requestScrollToPage = (page: number, offsetCss?: number, focusX?: number) => {
     const first = recordedQuery !== s.query;
     recordedQuery = s.query;
     const layout = zoom.layoutFor(vp.state.zoom);
     const pageHeight = layout.heights[vp.state.currentPage] ?? vp.state.containerH;
-    jumpToPage(tab, page, offsetCss, first ? undefined : { minDistance: pageHeight });
+    jumpToPage(tab, page, offsetCss, {
+      ...(first ? {} : { minDistance: pageHeight }),
+      ...(focusX !== undefined ? { focusX } : {}),
+    });
   };
   const s = searchStore.state;
   let inputEl!: HTMLInputElement;
@@ -64,7 +67,11 @@ export default function SearchPanel() {
           // Never scroll above the page's own top: for a match in the first
           // few lines the framing offset goes negative, which would land the
           // view on the end of the previous page instead of on the hit.
-          requestScrollToPage(pageIndex, Math.max(0, css.y - vp.state.containerH * 0.35));
+          requestScrollToPage(
+            pageIndex,
+            Math.max(0, css.y - vp.state.containerH * 0.35),
+            first[0] + first[2] / 2
+          );
           return;
         }
       }

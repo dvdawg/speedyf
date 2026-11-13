@@ -20,6 +20,7 @@ import type {
   Bubble,
   PageAnnotations,
   PageBubbles,
+  ColumnLayout,
   PageLinks,
   PageTextLayout,
   PreviewSpec,
@@ -114,6 +115,9 @@ export interface EngineApi {
   /** Bubbles and checkboxes the page draws as glyphs rather than declares as
    * form fields, for the shading tool. */
   getPageBubbles(docId: number, src: number): Promise<Bubble[]>;
+  /** A page's reading segments for column zoom: blocks and columns in reading
+   * order (src-tauri/src/engine/columns.rs). */
+  getColumnLayout(docId: number, src: number): Promise<ColumnLayout>;
   getPreviewRect(
     docId: number,
     src: number,
@@ -296,6 +300,7 @@ export const engine: EngineApi = {
   getPageLinks: (docId, src) => invoke('get_page_links', { docId, src }),
   getPageBubbles: async (docId, src) =>
     (await invoke<PageBubbles>('get_page_bubbles', { docId, src })).bubbles,
+  getColumnLayout: (docId, src) => invoke('get_column_layout', { docId, src }),
   getPreviewRect: (docId, src, x, y) => invoke('get_preview_rect', { docId, src, x, y }),
   resolveCitation: (id) => invoke('resolve_citation', { id }),
   changeLibraryRoot: (path, add) => invoke('change_library_root', { path, add }),

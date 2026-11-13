@@ -111,6 +111,31 @@ export interface PageBubbles {
   bubbles: Bubble[];
 }
 
+/** How a page reads, for column zoom (src-tauri/src/engine/columns.rs): no
+ * confident reading (fit the page width), one text block, or columns with
+ * full-width blocks between them. */
+export interface ColumnLayout {
+  src: number;
+  kind: 'none' | 'single' | 'columns';
+  columns: number;
+  bands: number;
+  /** In reading order. */
+  segments: ReadingSegment[];
+  source: 'text' | 'image';
+  /** Why a page is 'none': "empty", "slides", "poster", "garbled". */
+  reason: string;
+}
+
+export interface ReadingSegment {
+  /** 'block': the text area's full width (a title, a wide figure, a
+   * single-column page's text); 'column': one column of a band. */
+  kind: 'block' | 'column';
+  /** Display page space, y-up: [x, y_bottom, w, h], like text runs. */
+  rect: [number, number, number, number];
+  band: number;
+  column: number;
+}
+
 export interface PreviewSpec {
   docId: number;
   src: number;

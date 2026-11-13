@@ -406,7 +406,7 @@ export function createCitationStore(doc: DocumentStore, vp: ViewportStore): Cita
           ? undefined
           : Math.max(0, (page.heightPt - target.y) * vp.state.zoom - vp.state.containerH * 0.2);
       recordJumpForViewport(vp, { page: pageIndex, offsetCss: offset });
-      vp.requestScrollToPage(pageIndex, offset);
+      vp.requestScrollToPage(pageIndex, offset, target.x ?? undefined);
     },
 
     dispose(): void {

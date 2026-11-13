@@ -106,7 +106,9 @@ export interface DocMeta {
   estimatedSize: [number, number];
 }
 
-export type FitMode = 'custom' | 'fit-page' | 'fit-width';
+/** `column`: column zoom is fitting one reading segment at a time
+ * (features/viewer/columns). Any other zoom leaves it. */
+export type FitMode = 'custom' | 'fit-page' | 'fit-width' | 'column';
 
 export interface SearchMatchRect {
   x: number;
