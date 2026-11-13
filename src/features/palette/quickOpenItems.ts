@@ -6,6 +6,7 @@
  * is folded once, when the list arrives, not once per key.
  */
 import type { PaperRow } from '../../types/engine';
+import { yearText } from '../projects/paperFields';
 import { subsequenceScore } from './fuzzyScore';
 
 /** Rows shown at most. Anything further down is found by typing more. */
@@ -142,7 +143,7 @@ export function defaultRows(
 
 /** "Authors, Year, Venue", leaving out whatever is unknown. */
 export function detailLine(row: PaperRow): string {
-  return [row.authors.trim(), row.year === null ? '' : String(row.year), (row.venue ?? '').trim()]
+  return [row.authors.trim(), yearText(row), (row.venue ?? '').trim()]
     .filter((part) => part.length > 0)
     .join(', ');
 }

@@ -480,7 +480,9 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
       [
         ...shown().map((n) => ({
           id: n.id,
-          year: n.year,
+          // The soft time pull uses the year its references give when the
+          // item has none.
+          year: n.year ?? n.yearFloor ?? null,
           box: boxOf(n.id),
           pinned: n.id === centre,
         })),
