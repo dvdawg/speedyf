@@ -11,7 +11,14 @@
  */
 import { render, fireEvent, cleanup, screen, waitFor } from '@solidjs/testing-library';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CitationLinks, MetaPatch, Paper, Project, Paperness } from '../../types/engine';
+import type {
+  CitationLinks,
+  MetaPatch,
+  Paper,
+  Project,
+  Paperness,
+  ProjectSuggestion,
+} from '../../types/engine';
 import type { TabRecord } from '../../stores/tabsStore';
 import type * as engineModule from '../../lib/transport/engine';
 
@@ -109,6 +116,7 @@ const engine = {
   libraryCitationLinks: vi.fn(async (_id: string): Promise<CitationLinks> => {
     throw notImplemented;
   }),
+  librarySuggestProjects: vi.fn(async (_id: string): Promise<ProjectSuggestion[]> => []),
   libraryFileIntoInbox: vi.fn(async (_path: string, _inbox: string) => paper),
   libraryPaper: vi.fn(async (_id: string) => paper),
   libraryLookup: vi.fn(async () => ({ kind: 'applied' as const, paper })),
@@ -142,6 +150,7 @@ const { TabContext } = await import('../../app/TabContext');
 const { createDocumentStore } = await import('../document/documentStore');
 const { updateSettings } = await import('../../stores/settings');
 const { activePaper, activePaperKnown, forgetPapers } = await import('./activePaper');
+const { resetDismissedSuggestions } = await import('./ProjectSuggestion');
 
 const meta = (path: string) => ({
   docId: 1,
@@ -171,6 +180,8 @@ beforeEach(() => {
   engine.libraryCitationLinks.mockImplementation(async () => {
     throw notImplemented;
   });
+  engine.librarySuggestProjects.mockImplementation(async () => []);
+  resetDismissedSuggestions();
   openDialog.mockClear();
   openInNewTabOrFocus.mockClear();
   goHome.mockClear();
@@ -532,5 +543,72 @@ describe('PaperPanel', () => {
     mount('/lib/x.pdf', false);
     expect(screen.getByText('Open a document to see its place in your library.')).toBeTruthy();
     expect(engine.libraryPaperForPath).not.toHaveBeenCalled();
+  });
+});
+
+describe('project suggestions', () => {
+  const thesis: ProjectSuggestion = {
+    projectId: 'p2',
+    name: 'Thesis',
+    score: 2,
+    cites: 1,
+    citedBy: 0,
+    sharedRefs: 0,
+    reason: 'cites 1 paper in it',
+  };
+  const other: ProjectSuggestion = {
+    projectId: 'p3',
+    name: 'Reading group',
+    score: 1.5,
+    cites: 0,
+    citedBy: 0,
+    sharedRefs: 3,
+    reason: 'shares 3 references with it',
+  };
+
+  it('shows nothing when the graph suggests nothing', async () => {
+    mount();
+    await screen.findByLabelText('Thesis');
+    await waitFor(() => expect(engine.librarySuggestProjects).toHaveBeenCalledWith('paper-1'));
+    expect(screen.queryByText(/^Add to /)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Not now' })).toBeNull();
+  });
+
+  it('offers the top suggestion in one line and adds on Add, never by itself', async () => {
+    engine.librarySuggestProjects.mockImplementation(async () => [thesis, other]);
+    mount();
+    expect(await screen.findByText('Add to Thesis? (cites 1 paper in it)')).toBeTruthy();
+    expect(screen.queryByText(/Reading group/)).toBeNull();
+    expect(engine.librarySetMembership).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() =>
+      expect(engine.librarySetMembership).toHaveBeenCalledWith('paper-1', 'p2', true)
+    );
+  });
+
+  it('dismisses per paper and project for the session on Not now', async () => {
+    engine.librarySuggestProjects.mockImplementation(async () => [thesis, other]);
+    const first = mount();
+    await screen.findByText('Add to Thesis? (cites 1 paper in it)');
+    fireEvent.click(screen.getByRole('button', { name: 'Not now' }));
+    expect(
+      await screen.findByText('Add to Reading group? (shares 3 references with it)')
+    ).toBeTruthy();
+    expect(screen.queryByText(/Add to Thesis/)).toBeNull();
+    // Remounted, the dismissal holds.
+    first.unmount();
+    mount();
+    await screen.findByText('Add to Reading group? (shares 3 references with it)');
+    expect(screen.queryByText(/Add to Thesis/)).toBeNull();
+    expect(engine.librarySetMembership).not.toHaveBeenCalled();
+  });
+
+  it('re-reads on library:changed', async () => {
+    mount();
+    await screen.findByLabelText('Thesis');
+    await waitFor(() => expect(engine.librarySuggestProjects).toHaveBeenCalled());
+    engine.librarySuggestProjects.mockImplementation(async () => [thesis]);
+    for (const [callback] of engine.onLibraryChanged.mock.calls) callback();
+    expect(await screen.findByText('Add to Thesis? (cites 1 paper in it)')).toBeTruthy();
   });
 });

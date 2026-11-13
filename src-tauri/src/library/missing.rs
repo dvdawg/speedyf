@@ -49,7 +49,7 @@ struct Cited<'a> {
     entry: Option<&'a StoredRef>,
 }
 
-fn id_key(id: &CitationIdDto) -> String {
+pub(super) fn id_key(id: &CitationIdDto) -> String {
     match id {
         CitationIdDto::Doi(doi) => format!("doi:{}", doi.to_ascii_lowercase()),
         CitationIdDto::ArXiv(arxiv) => format!("arxiv:{}", arxiv.to_ascii_lowercase()),
@@ -57,7 +57,7 @@ fn id_key(id: &CitationIdDto) -> String {
 }
 
 /// An entry's text key: its compact text with its year taken out.
-fn text_key(entry: &StoredRef) -> String {
+pub(super) fn text_key(entry: &StoredRef) -> String {
     match entry.year {
         Some(year) => entry.compact.replace(&year.to_string(), ""),
         None => entry.compact.clone(),

@@ -31,6 +31,7 @@ import { settings, updateSettings } from '../../stores/settings';
 import { goHome, openInNewTabOrFocus } from '../document/tabsController';
 import type { Author, CitationLinks, Paper, Paperness, PaperRow } from '../../types/engine';
 import MathText from '../../components/MathText';
+import ProjectSuggestionLine from './ProjectSuggestion';
 
 /** What the engine answers for a call the Rust side has not grown yet. The
  * citation graph is the one section that hides on it rather than reporting
@@ -529,6 +530,7 @@ export default function PaperPanel() {
                       )}
                     </For>
                   </Show>
+                  <ProjectSuggestionLine paperId={current().id} />
                 </div>
 
                 <div class="paper-panel-actions">

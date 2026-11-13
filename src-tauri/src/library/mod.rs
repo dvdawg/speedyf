@@ -32,6 +32,7 @@ pub mod ratelimit;
 pub mod references;
 pub mod sources;
 pub mod store;
+pub mod suggest;
 pub mod titlematch;
 pub mod types;
 pub mod xmp;

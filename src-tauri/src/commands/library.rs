@@ -26,7 +26,7 @@ use crate::library::store::PaperStore;
 use crate::library::types::{
     CitationLinksDto, DuplicateGroupDto, GraphDto, LibraryCountsDto, LibraryDataInfoDto,
     LookupBatchDto, LookupCandidateDto, LookupMode, LookupResultDto, MetaPatchDto, MissingWorkDto,
-    PaperDto, PaperFilterDto, PaperListDto, PapernessDto, ProjectDto,
+    PaperDto, PaperFilterDto, PaperListDto, PapernessDto, ProjectDto, ProjectSuggestionDto,
 };
 use std::collections::HashMap;
 use std::future::Future;
@@ -319,6 +319,21 @@ pub async fn library_bibtex(
     paper_ids: Vec<String>,
 ) -> AppResult<String> {
     write_store_if_changed(state.0.clone(), move |store| store.bibtex_for(&paper_ids)).await
+}
+
+/// Pin these papers' keys without rendering anything: the keys were just
+/// copied as a `\cite{}` to be pasted into a manuscript, where a key that
+/// changes later breaks the citation (projects.md §2). Ids that name no
+/// paper are skipped; saves and notifies only when a key was not pinned.
+#[tauri::command]
+pub async fn library_pin_keys(
+    state: tauri::State<'_, EngineState>,
+    paper_ids: Vec<String>,
+) -> AppResult<()> {
+    write_store_if_changed(state.0.clone(), move |store| {
+        Ok(((), store.freeze_keys(&paper_ids)))
+    })
+    .await
 }
 
 /// Export .bib…: the project's entries, written once to `path`.
@@ -812,6 +827,25 @@ pub async fn library_missing_works(
             &refs,
             &network,
         )
+    })
+    .await
+    .map_err(|error| AppError::Internal(format!("library task failed: {error}")))?
+}
+
+/// Projects the item is not in that the citation graph ties it to, at
+/// most three, strongest first (`PaperStore::suggest_projects`). Empty for
+/// an id that names no item. Read-only, against the same snapshots as
+/// `library_citation_links`.
+#[tauri::command]
+pub async fn library_suggest_projects(
+    state: tauri::State<'_, EngineState>,
+    paper_id: String,
+) -> AppResult<Vec<ProjectSuggestionDto>> {
+    let engine = state.0.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (entries, refs, network) = citation_inputs(&engine);
+        let store = engine.0.papers.lock();
+        Ok(store.suggest_projects(&paper_id, &entries, &refs, &network))
     })
     .await
     .map_err(|error| AppError::Internal(format!("library task failed: {error}")))?

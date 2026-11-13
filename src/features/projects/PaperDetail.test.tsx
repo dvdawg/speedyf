@@ -331,3 +331,45 @@ describe('PaperDetail', () => {
     });
   });
 });
+
+describe('PaperDetail project suggestion', () => {
+  afterEach(async () => {
+    const { resetFixture } = await import('./testFixtures');
+    const { resetDismissedSuggestions } = await import('./ProjectSuggestion');
+    resetFixture();
+    resetDismissedSuggestions();
+  });
+
+  it('shows the top suggestion under the checkboxes and adds only on Add', async () => {
+    const { fixture } = await import('./testFixtures');
+    fixture.suggestions = [
+      {
+        projectId: 'p3',
+        name: 'Thesis',
+        score: 3,
+        cites: 1,
+        citedBy: 1,
+        sharedRefs: 0,
+        reason: 'cites 1 paper in it, cited by 1 paper in it',
+      },
+    ];
+    const { container } = render(() => <PaperDetail onMoveFocus={() => {}} />);
+    const line = await screen.findByText(
+      'Add to Thesis? (cites 1 paper in it, cited by 1 paper in it)'
+    );
+    expect(line.closest('.paper-section')).toBe(
+      container.querySelector('.paper-projects')!.closest('.paper-section')
+    );
+    expect(engine.librarySuggestProjects).toHaveBeenCalledWith('a');
+    expect(engine.librarySetMembership).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(engine.librarySetMembership).toHaveBeenCalledWith('a', 'p3', true));
+    expect(screen.queryByText(/Add to Thesis/)).toBeNull();
+  });
+
+  it('shows nothing without a suggestion', async () => {
+    render(() => <PaperDetail onMoveFocus={() => {}} />);
+    await waitFor(() => expect(engine.librarySuggestProjects).toHaveBeenCalledWith('a'));
+    expect(screen.queryByText(/^Add to /)).toBeNull();
+  });
+});

@@ -1536,6 +1536,26 @@ impl PaperStore {
     ) -> AppResult<CitationLinksDto> {
         let own = self.index_of(paper_id)?;
         let tables = self.citation_tables();
+        let (cites, cited_by, unresolved) = self.link_indices(own, &tables, entries, refs, network);
+        let papers = |indices: &[usize]| indices.iter().map(|&i| &self.papers[i]).collect();
+        Ok(CitationLinksDto {
+            cites: self.rows_in_list_order(papers(&cites)),
+            cited_by: self.rows_in_list_order(papers(&cited_by)),
+            unresolved: unresolved.min(u32::MAX as usize) as u32,
+        })
+    }
+
+    /// `citation_links` as paper indices, against tables the caller built:
+    /// the papers `own` cites and the papers citing it, each once, and how
+    /// many of its citations resolve to nothing.
+    pub(super) fn link_indices(
+        &self,
+        own: usize,
+        tables: &CitationTables<'_>,
+        entries: &[LibraryEntry],
+        refs: &DocRefs,
+        network: &NetworkEdges,
+    ) -> (Vec<usize>, Vec<usize>, usize) {
         let own_ids: HashSet<&CitationIdDto> = tables
             .by_id
             .iter()
@@ -1618,13 +1638,8 @@ impl PaperStore {
                 }
             }
         }
-        let papers = |indices: &[usize]| indices.iter().map(|&i| &self.papers[i]).collect();
         let unresolved = unresolved_entries + unresolved_ids.len();
-        Ok(CitationLinksDto {
-            cites: self.rows_in_list_order(papers(&cites)),
-            cited_by: self.rows_in_list_order(papers(&cited_by)),
-            unresolved: unresolved.min(u32::MAX as usize) as u32,
-        })
+        (cites, cited_by, unresolved)
     }
 
     /// The citation graph over a set of papers (projects.md §8): every

@@ -445,3 +445,22 @@ pub struct MissingWorkDto {
     /// The items in the view that cite it, in list order.
     pub cited_by: Vec<String>,
 }
+
+/// A project the open item might belong in, from the citation graph
+/// (`PaperStore::suggest_projects`).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSuggestionDto {
+    pub project_id: String,
+    pub name: String,
+    /// Higher is a stronger suggestion; normalized by the project's size.
+    pub score: f32,
+    /// Members the item cites.
+    pub cites: u32,
+    /// Members citing the item.
+    pub cited_by: u32,
+    /// Works the item and at least one member both cite.
+    pub shared_refs: u32,
+    /// In plain words: "cites 2 papers in it, shares 4 references with it".
+    pub reason: String,
+}

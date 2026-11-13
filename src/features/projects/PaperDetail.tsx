@@ -38,6 +38,7 @@ import {
   SOURCE_LABEL,
 } from './paperFields';
 import { projectsStore } from './projectsStore';
+import ProjectSuggestionLine from './ProjectSuggestion';
 
 /** Text fields that save as they are typed, trimmed. Year, authors, kind and
  * the abstract each need something more and are wired by hand below. */
@@ -808,6 +809,7 @@ export default function PaperDetail(props: { onMoveFocus: (dir: -1 | 1) => void 
                   </For>
                 </div>
               </Show>
+              <ProjectSuggestionLine paperId={p().id} class="paper-detail-suggestion" />
             </div>
 
             <Show when={p().isPaper && p().incomplete.length > 0}>
