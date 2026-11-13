@@ -66,6 +66,14 @@ const BINDINGS: readonly Binding[] = [
   { key: 's', mod: true, shift: true, id: 'file.saveAs', whileTyping: true, preventAlways: true },
   { key: 'w', mod: true, id: 'file.closeTab', whileTyping: true, preventAlways: true },
   {
+    key: 't',
+    mod: true,
+    shift: true,
+    id: 'file.reopenClosedTab',
+    whileTyping: true,
+    preventAlways: true,
+  },
+  {
     key: 'f',
     mod: true,
     id: 'search.findInDocument',

@@ -21,7 +21,9 @@ import {
   detachTab,
   goHome,
   openFromDialog,
+  reopenClosedTab,
 } from '../features/document/tabsController';
+import { closedTabCount } from '../features/document/closedTabs';
 import { addBlankPageAfter } from '../features/editor/editorActions';
 import { setActiveTool, type Tool } from '../features/annotations/toolStore';
 import { beginPrint } from '../features/print/printStore';
@@ -293,6 +295,16 @@ export const COMMANDS: readonly Command[] = [
     run: (ctx) => {
       if (ctx.tab) void closeTab(ctx.tab.id);
     },
+  },
+  {
+    id: 'file.reopenClosedTab',
+    title: 'Reopen Closed Tab',
+    group: 'File',
+    keywords: ['undo close', 'restore', 'closed'],
+    shortcut: 'mod+shift+t',
+    enabled: () => closedTabCount() > 0,
+    disabledReason: 'no tab has been closed',
+    run: () => void reopenClosedTab(),
   },
   {
     id: 'file.closeOtherTabs',

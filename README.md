@@ -140,10 +140,24 @@ within the strip to reorder; press Escape to cancel a drag. You can also use
 menu also closes the other tabs or the tabs to its right, and moves the tab
 into a new window or into any other open window, edits and all.
 
+**Reopen Closed Tab** (`Cmd+Shift+T`, or the command palette) brings back the
+most recently closed tab at the page, offset, zoom and rotation it was left
+at. Each window remembers its last 20 closed tabs until the app quits; closing
+several at once (Close Other Tabs, Close Tabs to the Right) lets them come
+back one by one in reverse order. A file that has since been moved or deleted
+is skipped for the one closed before it, and a file that is open again is
+focused instead (raising its window if another window has it). A tab moved to
+another window was not closed and is not on the list.
+
+On Home and Projects the toolbar holds only Open; the reader controls appear
+with a document. Theme, page inversion and low memory live in Home's
+**Settings** panel and in the command palette's Settings group.
+
 | Action                     | macOS                   | Windows/Linux             |
 | -------------------------- | ----------------------- | ------------------------- |
 | Open                       | `Cmd+O`                 | `Ctrl+O`                  |
 | New window                 | `Cmd+N`                 | `Ctrl+N`                  |
+| Reopen closed tab          | `Cmd+Shift+T`           | `Ctrl+Shift+T`            |
 | Save / Save As             | `Cmd+S` / `Cmd+Shift+S` | `Ctrl+S` / `Ctrl+Shift+S` |
 | Search                     | `Cmd+F`                 | `Ctrl+F`                  |
 | Undo / redo                | `Cmd+Z` / `Cmd+Shift+Z` | `Ctrl+Z` / `Ctrl+Y`       |
@@ -176,9 +190,9 @@ waiting for the whole document. Scanned PDFs without an embedded text layer
 are viewable but not searchable because OCR is not implemented.
 
 Hover a linked citation, section, figure, or table for a destination crop.
-Choose **Citation library...** in the status bar to index a local folder of PDFs;
-recognized DOI/arXiv links can then show the matching paper's first page. The
-library is local-only and can be disabled from the same control.
+Choose **Add folder...** in Home's **Library** panel to index a local folder of
+PDFs; recognized DOI/arXiv links can then show the matching paper's first page.
+The library is local-only, and a folder is removed from the same list.
 
 ## Architecture
 

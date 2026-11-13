@@ -16,7 +16,9 @@ import {
   detachTab,
   initializeWindow,
   moveTabToWindow,
+  closeTab,
   openInNewTabOrFocus,
+  reopenClosedTab,
   restoreSession,
   type TabSnapshot,
 } from './tabsController';
@@ -25,6 +27,14 @@ import type * as controllerModule from './controller';
 import { saveSession } from '../../stores/sessionStore';
 import { windowTransferPending } from '../windows/windowController';
 import { showError } from '../../stores/modalStore';
+import {
+  CLOSED_TABS_LIMIT,
+  clearClosedTabs,
+  closedTabCount,
+  popClosedTab,
+  pushClosedTab,
+} from './closedTabs';
+import { VIEW_PADDING } from '../../stores/viewportStore';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@tauri-apps/api/window', () => ({
@@ -65,6 +75,7 @@ afterEach(() => {
     removeTab(tab.id);
   }
   setActiveId(null);
+  clearClosedTabs();
   vi.clearAllTimers();
   vi.useRealTimers();
   vi.restoreAllMocks();
@@ -368,4 +379,132 @@ it('declines an offered tab it fails to adopt, so the sender is not left waiting
   await acceptOfferedTab();
   expect(invoke).toHaveBeenCalledWith('decline_window_tab');
   expect(tabsStore.state.tabs).toHaveLength(0);
+});
+
+const paths = () => tabsStore.state.tabs.map((t) => t.documentStore.state.path);
+
+it('reopens closed tabs most recent first, closing several pushing each', async () => {
+  const open = stubOpen();
+  const a = plainTab('/a.pdf');
+  plainTab('/b.pdf', { dirty: true });
+  plainTab('/c.pdf');
+  // b's unsaved changes were discarded at the prompt; it still counts.
+  await closeOtherTabs(a.id);
+  expect(closedTabCount()).toBe(2);
+  await closeTab(a.id);
+  expect(closedTabCount()).toBe(3);
+
+  expect(await reopenClosedTab()).toBe(true);
+  expect(await reopenClosedTab()).toBe(true);
+  expect(await reopenClosedTab()).toBe(true);
+  expect(open.mock.calls.map(([path]) => path)).toEqual(['/a.pdf', '/c.pdf', '/b.pdf']);
+  expect(paths()).toEqual(['/a.pdf', '/c.pdf', '/b.pdf']);
+  expect(closedTabCount()).toBe(0);
+  expect(await reopenClosedTab()).toBe(false);
+});
+
+it('keeps only the last twenty closed tabs', () => {
+  for (let i = 1; i <= CLOSED_TABS_LIMIT + 5; i++) {
+    pushClosedTab({
+      path: `/${i}.pdf`,
+      page: 0,
+      fraction: 0,
+      zoom: 1,
+      fitMode: 'fit-width',
+      viewRotation: 0,
+    });
+  }
+  expect(closedTabCount()).toBe(CLOSED_TABS_LIMIT);
+  expect(popClosedTab()?.path).toBe(`/${CLOSED_TABS_LIMIT + 5}.pdf`);
+  let last = null;
+  for (let entry = popClosedTab(); entry; entry = popClosedTab()) last = entry;
+  expect(last?.path).toBe('/6.pdf');
+});
+
+it('skips a closed file that can no longer be opened, quietly, for the one before it', async () => {
+  const open = stubOpen(['/gone.pdf']);
+  const a = plainTab('/a.pdf');
+  const gone = plainTab('/gone.pdf');
+  await closeTab(a.id);
+  await closeTab(gone.id);
+  expect(await reopenClosedTab()).toBe(true);
+  expect(open.mock.calls.map(([path]) => path)).toEqual(['/gone.pdf', '/a.pdf']);
+  expect(paths()).toEqual(['/a.pdf']);
+  expect(showError).not.toHaveBeenCalled();
+  expect(closedTabCount()).toBe(0);
+});
+
+it('focuses a closed file that is open again, here or in another window, and spends its entry', async () => {
+  const open = stubOpen();
+  const a = plainTab('/a.pdf');
+  const b = plainTab('/b.pdf');
+  await closeTab(a.id);
+  const again = plainTab('/a.pdf');
+  setActiveId(b.id);
+  expect(await reopenClosedTab()).toBe(true);
+  expect(activeTab()?.id).toBe(again.id);
+  expect(open).not.toHaveBeenCalled();
+  expect(closedTabCount()).toBe(0);
+
+  await closeTab(b.id);
+  vi.mocked(invoke).mockImplementation((command) =>
+    Promise.resolve(command === 'focus_window_for_path' ? true : undefined)
+  );
+  expect(await reopenClosedTab()).toBe(true);
+  expect(invoke).toHaveBeenCalledWith('focus_window_for_path', { path: '/b.pdf' });
+  expect(open).not.toHaveBeenCalled();
+  expect(closedTabCount()).toBe(0);
+});
+
+it('does not count a tab detached or moved to another window as closed', async () => {
+  const moved = openedTab();
+  await moveTabToWindow(moved.id, 'speedyf-3');
+  expect(tabsStore.state.tabs).toHaveLength(0);
+  const detached = openedTab();
+  await detachTab(detached.id);
+  expect(tabsStore.state.tabs).toHaveLength(0);
+  expect(closedTabCount()).toBe(0);
+});
+
+it('reopens a closed tab at its page, offset, zoom and rotation', async () => {
+  stubOpen();
+  const tab = plainTab('/r.pdf');
+  setActiveId(tab.id);
+  tab.viewport.setState({ zoom: 1.5, fitMode: 'custom', viewRotation: 90 });
+  // Two pages, so there is a second one to have scrolled into.
+  tab.documentStore.initFromMeta({
+    ...metaFor('/r.pdf', 7),
+    pageCount: 2,
+    sizes: [
+      [600, 800, 0, 0, 0],
+      [600, 800, 0, 0, 0],
+    ],
+  });
+  const layout = tab.zoom.layoutFor(1.5);
+  tab.viewport.setState({
+    currentPage: 1,
+    scrollTop: layout.tops[1]! - VIEW_PADDING + layout.heights[1]! / 4,
+  });
+  await closeTab(tab.id);
+
+  vi.spyOn(engine, 'open').mockResolvedValue({
+    ...metaFor('/r.pdf', 8),
+    pageCount: 2,
+    sizes: [
+      [600, 800, 0, 0, 0],
+      [600, 800, 0, 0, 0],
+    ],
+  });
+  await reopenClosedTab();
+  const back = activeTab()!;
+  expect(back.documentStore.state.path).toBe('/r.pdf');
+  expect(back.viewport.state).toMatchObject({
+    zoom: 1.5,
+    fitMode: 'custom',
+    viewRotation: 90,
+    currentPage: 1,
+  });
+  expect(back.viewport.state.scrollRequest).toMatchObject({ page: 1, settle: true });
+  const request = back.viewport.state.scrollRequest;
+  expect(request?.kind === 'page' ? request.fraction : null).toBeCloseTo(0.25);
 });

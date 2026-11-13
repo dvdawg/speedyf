@@ -39,6 +39,7 @@ import {
 import { MAIN_LABEL, windowApi, windowLabel } from '../../lib/transport/windows';
 import { abandonPrintFor } from '../print/printStore';
 import { captureView, forgetTab, noteTabSwitch, setNavTabActivator } from '../viewer/navHistory';
+import { popClosedTab, pushClosedTab, type ClosedTab } from './closedTabs';
 
 const MAX_TABS = 30;
 
@@ -106,6 +107,25 @@ export async function openInNewTabOrFocus(
   path: string,
   opts?: { skipGuard?: boolean; fromSessionRestore?: boolean }
 ): Promise<boolean> {
+  const outcome = await openPath(path, opts);
+  return outcome === 'opened' || outcome === 'focused';
+}
+
+/** How an open ended: a new tab, an existing one (here or in another
+ * window) brought forward, a failure, a password prompt the user walked away
+ * from, or no room for another tab. */
+type OpenOutcome = 'opened' | 'focused' | 'failed' | 'cancelled' | 'full';
+
+async function openPath(
+  path: string,
+  opts?: {
+    skipGuard?: boolean;
+    fromSessionRestore?: boolean;
+    /** Reopening a closed tab: put the view back as it was, and fail quietly
+     * so the caller can move on to the next one. */
+    reopen?: ClosedTab;
+  }
+): Promise<OpenOutcome> {
   // Opening (or focusing) another document from a reading tab is a jump like
   // any other: Back in the tab it lands in returns here, to this exact view.
   const source = activeTab();
@@ -114,7 +134,7 @@ export async function openInNewTabOrFocus(
   if (existing) {
     activateTab(existing.id);
     noteTabSwitch(from, existing.id);
-    return true;
+    return 'focused';
   }
   // Nobody opens a second copy of a document another window already has: that
   // is two PDFium handles, two independent dirty states, and whichever window
@@ -122,10 +142,10 @@ export async function openInNewTabOrFocus(
   // raises itself and focuses the tab instead. Not at restore: the restored
   // windows' sessions are already disjoint (see takeWindowSessions), and a
   // window coming up must not raise another over itself.
-  if (!opts?.fromSessionRestore && (await openElsewhere(path))) return true;
+  if (!opts?.fromSessionRestore && (await openElsewhere(path))) return 'focused';
   if (tabsStore.state.tabs.length >= MAX_TABS) {
     showError(`Too many tabs open (limit ${MAX_TABS}). Close one before opening another.`);
-    return false;
+    return 'full';
   }
 
   const record = createTab();
@@ -159,7 +179,17 @@ export async function openInNewTabOrFocus(
       record.viewport.setState({ currentPage: 0, scrollTop: 0 });
       // Pick up where this document was last left, when we have a position for
       // it and it still points inside the document.
-      const resume = recentStore.positionFor(path);
+      const reopen = opts?.reopen;
+      const resume = reopen ?? recentStore.positionFor(path);
+      if (reopen) {
+        // Column zoom is a mode over a settled layout; it comes back as its
+        // zoom, the way Back treats it.
+        record.viewport.setState({
+          zoom: reopen.zoom,
+          fitMode: reopen.fitMode === 'column' ? 'custom' : reopen.fitMode,
+          viewRotation: reopen.viewRotation,
+        });
+      }
       if (resume && resume.page < meta.pageCount) {
         record.viewport.setState('currentPage', resume.page);
         record.viewport.requestRestorePosition(resume.page, resume.fraction);
@@ -175,14 +205,14 @@ export async function openInNewTabOrFocus(
       recentStore.recordOpen({ path, name: meta.name });
       noteTabSwitch(from, record.id);
       scheduleSave();
-      return true;
+      return 'opened';
     } catch (e) {
       if (isEngineError(e) && e.code === 'password') {
         if (opts?.fromSessionRestore) {
           // Prompting for N passwords at launch would conflict with
           // modalStore's single in-flight prompt — just drop this tab.
           abandon();
-          return false;
+          return 'failed';
         }
         const entered = await askPassword(
           password === undefined
@@ -191,7 +221,7 @@ export async function openInNewTabOrFocus(
         );
         if (entered === null) {
           abandon();
-          return false;
+          return 'cancelled';
         }
         password = entered;
         continue;
@@ -199,11 +229,13 @@ export async function openInNewTabOrFocus(
       // A path that no longer exists during session restore is expected
       // (moved/deleted since last launch) — drop it silently, no modal spam
       // on every future relaunch.
-      if (!opts?.fromSessionRestore) {
+      // Nor when reopening a closed tab: a file gone since is skipped for the
+      // next one.
+      if (!opts?.fromSessionRestore && !opts?.reopen) {
         showError(isEngineError(e) ? e.message : `Could not open ${path}: ${String(e)}`);
       }
       abandon();
-      return false;
+      return 'failed';
     }
   }
 }
@@ -227,6 +259,7 @@ export async function closeTab(id: string): Promise<boolean> {
     const ok = await guardUnsaved(tab);
     if (!ok) return false;
   }
+  rememberClosed(tab);
   if (tab.documentStore.state.loaded) {
     // A print dialog open on this document is now previewing something that
     // is about to be closed underneath it.
@@ -248,6 +281,38 @@ export async function closeTab(id: string): Promise<boolean> {
   }
   scheduleSave();
   return true;
+}
+
+/** Puts a closing tab on this window's Reopen Closed Tab stack, with where
+ * its reader was. Only documents with a file behind them can come back. */
+function rememberClosed(tab: TabRecord): void {
+  const doc = tab.documentStore.state;
+  if (!doc.loaded || !doc.path) return;
+  const vp = tab.viewport.state;
+  const view = captureView(tab);
+  pushClosedTab({
+    path: doc.path,
+    page: view?.page ?? vp.currentPage,
+    fraction: view ? Math.min(1, Math.max(0, view.fraction)) : 0,
+    zoom: vp.zoom,
+    fitMode: vp.fitMode,
+    viewRotation: vp.viewRotation,
+  });
+}
+
+/** Reopens the most recently closed tab where it was left. A file that can
+ * no longer be opened is skipped for the one closed before it; a file open
+ * already (here, or in another window, which raises itself) is focused and
+ * its entry spent. */
+export async function reopenClosedTab(): Promise<boolean> {
+  for (let entry = popClosedTab(); entry; entry = popClosedTab()) {
+    const outcome = await openPath(entry.path, { reopen: entry });
+    if (outcome === 'failed') continue;
+    // No room: keep it for when there is.
+    if (outcome === 'full') pushClosedTab(entry);
+    return outcome !== 'full';
+  }
+  return false;
 }
 
 /** Closes every tab but one. Sequential, because each may prompt and
