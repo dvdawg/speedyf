@@ -248,7 +248,7 @@ pub fn analyze_page<R: std::ops::Deref<Target = PageRaster>>(
 ) -> (Analysis, &'static str) {
     if content.text.len() >= MIN_TEXT_RUNS {
         let a = analyze(&content);
-        if a.reason != "garbled" {
+        if a.reason != "garbled" && a.reason != "empty" {
             return (a, "text");
         }
     }
@@ -1744,6 +1744,25 @@ mod tests {
             b.FPDF_CloseDocument(doc);
         }
         std::fs::write(format!("{out}/pages.tsv"), tsv).unwrap();
+    }
+
+    #[test]
+    fn a_garbled_text_layer_is_read_from_its_pixels_instead() {
+        // An OCR layer set in zero-height type: boxes that say nothing.
+        let text: Vec<Bx> = (0..40)
+            .map(|i| Bx::new(60.0 + i as f32, 100.0, 61.0 + i as f32, 100.05))
+            .collect();
+        let (a, source) = analyze_page(page(text, vec![]), || {
+            Some(Box::new(scanned(&[(108, 588), (636, 1116)], 0)))
+        });
+        assert_eq!(source, "image");
+        assert_eq!(a.kind, PageLayoutKind::Columns);
+        // A good text layer is read as it is, without rendering anything.
+        let (a, source) = analyze_page(
+            page(prose(90.0, 522.0, 80.0, 50, 8), vec![]),
+            || -> Option<Box<PageRaster>> { panic!("rendered a page with a text layer") },
+        );
+        assert_eq!((a.kind, source), (PageLayoutKind::Single, "text"));
     }
 
     #[test]
