@@ -115,7 +115,9 @@ records as not duplicates, so they are not merged again.
 
 **Merge suggestions** (`merge::duplicates`, offered through Merge in the
 detail column), strongest reason first: a shared DOI or arXiv id; an arXiv
-id the lookup cache says became a DOI another record holds; the same title
+id the lookup cache says became a DOI another record holds; an identifier
+citing papers print for one record that the other holds ("cited as the same
+DOI by 3 papers", sec. 4, "From citing papers"); the same title
 (years at most one apart); a near-identical title with the same year; and
 **nearly the same reference list** (`library::versions`): both items have at
 least 12 stored references, the Jaccard index of the two lists is at least
@@ -166,6 +168,32 @@ unless it is in a project, has user edits or a pinned key, carries merged
 records or aliases, or has parked candidates. A file under `/Volumes/X`
 while X is not mounted does not count as gone.
 
+### Authors as people
+
+`library::persons` clusters the name variants the library prints into
+persons. Two names are candidates when the family names match (case,
+diacritics, hyphens and leading particles folded: "van der Waals" is
+"Waals", "Garcia-Lopez" is "Garcia Lopez") and the given names fit position
+by position (an initial fits any name it begins; two spelled-out names must
+be equal). A candidate pair on two items is merged only with evidence: the
+same spelled-out first given name; a shared coauthor (compatible names); or
+a citation between the two items with at least 3 shared references (the
+citation pass records these as `topicLinks`). Clusters are complete-linkage:
+no two names in one person are incompatible ("J. Smith" never joins "John"
+and "James") and no item holds a person twice; edges are taken in a fixed
+order, so clusters are the same on every machine. Persons are refreshed
+before every save and kept in `library.json`'s `persons` section (its own
+`version`; another is rebuilt), ids carried over by majority of members.
+
+The best form of a person is the fullest given name seen, then the most
+seen. In the detail column and the reader's Library panel an author with
+other items is a quiet link; it lists the person's items in the middle
+column under "Items by John Smith", with "also as J. Smith" below, until
+Escape or the close button, like the graph's focus (`library_person`).
+Consensus counts two forms of one person as agreeing; a brand-new item's
+cite key takes the first author's family as the person is most often
+printed. Existing keys never change because a person did.
+
 ### Metadata with provenance
 
 Each field carries where it came from:
@@ -181,7 +209,7 @@ source: one of the ranks below
 | 2-9                    | lookups: `crossref`, `inspire`, `datacite`, `arxiv`, `semantic-scholar`, `dblp`, `openalex`, `open-library`    |
 | 10                     | `xmp`                                                                                                          |
 | 11                     | `identifier` (the year an arXiv id or DOI carries)                                                             |
-| 12                     | `citations`: what at least two independent citing items in the library agree on (sec. 4, "From citing papers") |
+| 12                     | `citations`: what at least two independent citing items in the library agree on, identifiers included (sec. 4) |
 | 13                     | `pdf-info`                                                                                                     |
 | 14                     | `first-page`                                                                                                   |
 | 15                     | `filename`                                                                                                     |
@@ -310,6 +338,7 @@ confirm.
       "updatedAt": "2026-11-11T20:05:00Z"
     }
   ],
+  "persons": { "version": 1, "topicLinks": [], "people": [] },
   "projects": [
     {
       "id": "3b9d...",
@@ -433,7 +462,20 @@ Lett." is "Physical Review Letters", not "Phys. Rev. A" vs "Applied").
 The value lands at rank `citations`: above the first page, the file name and
 the Info dictionary, below the identifier, XMP, lookups and the user, via the
 same `offer`, so user edits are never touched. A value the record already
-holds that agrees stays under its own source. The record keeps which items
+holds that agrees stays under its own source.
+
+**Identifiers.** An item with no DOI (or arXiv id) takes the one its citing
+papers print when at least 2 independent citing items name it by title and
+print that identifier in the same entry, no citing item prints another, and
+each entry's first-author family and year (when both sides have them, years
+at most 1 apart) fit the item. An arXiv DOI counts as the arXiv id. It is
+held with source `citations`: a scan of the file that finds an identifier,
+XMP, a lookup and the user each replace it; a scan that finds none leaves it;
+it goes when the consensus does. Once held it is an identifier like any
+other (resolution, merging); cite keys are untouched, frozen or not. An
+identifier another item already holds is never taken: the two are offered as
+duplicates, "cited as the same DOI by 3 papers". The DOI field shows "from 3
+citing papers". The record keeps which items
 vouched (`citationFacts.vouched`); the detail column's provenance tag reads
 "from 3 citing papers". When the consensus goes, a value from it is dropped
 and the primary file reconciled again. The pass runs at idle a few seconds
