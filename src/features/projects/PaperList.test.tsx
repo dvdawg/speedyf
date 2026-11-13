@@ -164,6 +164,29 @@ describe('rows that are not papers, and rows with parked matches', () => {
     expect(row.getAttribute('draggable')).toBeNull();
   });
 
+  it('tags an item with several PDFs on disk, and not one with a single file', async () => {
+    const list = vi.mocked(engine.libraryPapers);
+    const original = list.getMockImplementation()!;
+    list.mockImplementation(async (filter) => {
+      const answer = await original(filter);
+      return {
+        ...answer,
+        rows: answer.rows.map((r) => (r.id === 'b' ? { ...r, fileCount: 3 } : r)),
+      };
+    });
+    try {
+      projectsStore.setScope({ kind: 'project', id: 'p1' });
+      await projectsStore.refresh();
+      render(() => <PaperList onMoveFocus={() => {}} />);
+      const row = (await screen.findByText(CROOKS)).closest('.paper-row')!;
+      expect(row.querySelector('.paper-row-files')?.textContent).toBe('3 PDFs');
+      const other = screen.getByText(JARZYNSKI).closest('.paper-row')!;
+      expect(other.querySelector('.paper-row-files')).toBeNull();
+    } finally {
+      list.mockImplementation(original);
+    }
+  });
+
   it('badges a paper whose title search parked matches', async () => {
     projectsStore.setScope({ kind: 'project', id: 'p1' });
     await projectsStore.refresh();

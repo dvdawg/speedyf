@@ -230,7 +230,11 @@ export const projectsStore = {
     const seq = ++detailSeq;
     const paper = await guarded(() => engine.libraryPaper(id));
     if (seq !== detailSeq) return;
-    if (paper) setState('selected', paper);
+    if (!paper) return;
+    setState('selected', paper);
+    // Merged away (automatically, say): the engine answers with the item
+    // it went into, and that is now the selection.
+    if (paper.id !== id && state.selectedId === id) setState('selectedId', paper.id);
   },
 
   /** A background read on every refresh, so a failure stays quiet: the
@@ -440,6 +444,13 @@ export const projectsStore = {
       projectsStore.select(first.id);
     }
     return restored;
+  },
+
+  /** Makes the file at `path` the item's main one. */
+  async setPrimaryFile(paperId: string, path: string): Promise<Paper | undefined> {
+    const paper = await guarded(() => engine.librarySetPrimaryFile(paperId, path));
+    if (paper && state.selected?.id === paper.id) setState('selected', paper);
+    return paper;
   },
 
   async discardCandidates(paperId: string): Promise<void> {

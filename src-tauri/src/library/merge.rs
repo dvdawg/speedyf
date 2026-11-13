@@ -442,6 +442,7 @@ impl PaperStore {
             target_cite_key_pinned: keep.cite_key_pinned,
             target_alias_ids: keep.alias_ids.clone(),
             target_alias_keys: keep.alias_keys.clone(),
+            auto: false,
         };
         let nested = std::mem::take(&mut gone.merged_from);
         let mut snapshot = gone.clone();
@@ -647,6 +648,28 @@ impl PaperStore {
                 }
             }
         }
+
+        // Splitting an automatic merge says the records are not one work:
+        // every record it joined stays apart from the others from now on.
+        let mut auto_ids: Vec<String> = Vec::new();
+        for (id, _, trace) in &restored {
+            if let Some(trace) = trace.as_ref().filter(|trace| trace.auto) {
+                for id in [id, &trace.into] {
+                    if !auto_ids.contains(id) && self.index_of(id).is_ok() {
+                        auto_ids.push(id.clone());
+                    }
+                }
+            }
+        }
+        if auto_ids.len() > 1 {
+            self.mark_not_duplicates(&auto_ids)?;
+        }
+        for (id, _, _) in &restored {
+            let index = self.index_of(id)?;
+            self.papers[index].auto_merge_reasons.clear();
+        }
+        let index = self.index_of(paper_id)?;
+        self.papers[index].auto_merge_reasons.clear();
 
         // A restored record whose unpinned key someone took meanwhile gets
         // a fresh one.

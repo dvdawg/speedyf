@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
+pub mod automerge;
 pub mod bibtex;
 pub mod chain;
 pub mod citekey;

@@ -122,6 +122,14 @@ pub struct PaperRecord {
     /// for unmerge to put back.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge_trace: Option<MergeTrace>,
+    /// Why records were merged into this one automatically ("same arXiv
+    /// id 2606.13614"), one entry per distinct reason (`automerge`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub auto_merge_reasons: Vec<String>,
+    /// The file the user made the main one (`set_primary_file`). A rescan
+    /// that reattaches files keeps it first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_path: Option<String>,
 }
 
 /// What a merge did, kept on the merged record's snapshot.
@@ -147,6 +155,10 @@ pub struct MergeTrace {
     pub target_alias_ids: Vec<CitationIdDto>,
     #[serde(default)]
     pub target_alias_keys: Vec<String>,
+    /// The merge was automatic (`automerge`): splitting it back says the
+    /// records are not the same work.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub auto: bool,
 }
 
 /// How long a lookup stands before a batch asks about the paper again.
@@ -407,6 +419,8 @@ impl PaperRecord {
             alias_ids: Vec::new(),
             alias_keys: Vec::new(),
             merge_trace: None,
+            auto_merge_reasons: Vec::new(),
+            primary_path: None,
         }
     }
 
@@ -633,10 +647,30 @@ impl PaperRecord {
             })
         });
         match moved {
-            Some(position) => self.files[position] = file,
+            Some(position) => {
+                if self.primary_path.as_deref() == Some(self.files[position].path.as_str()) {
+                    self.primary_path = Some(file.path.clone());
+                }
+                self.files[position] = file;
+            }
             None => self.files.push(file),
         }
+        self.keep_primary_first();
         true
+    }
+
+    /// The file the user made the main one stays first, wherever a rescan
+    /// put it back.
+    fn keep_primary_first(&mut self) {
+        let Some(primary) = self.primary_path.as_deref() else {
+            return;
+        };
+        if let Some(at) = self.files.iter().position(|file| file.path == primary) {
+            if at > 0 {
+                let file = self.files.remove(at);
+                self.files.insert(0, file);
+            }
+        }
     }
 
     /// Everything a scan found about a file, offered at its rank. The
@@ -989,6 +1023,38 @@ impl PaperStore {
             .ok_or_else(|| AppError::Internal("paper not found".into()))
     }
 
+    /// Like `index_of`, but a record merged away answers with the record it
+    /// was merged into: a lookup that merged its paper mid-way, or a window
+    /// that has not heard of the merge yet, still reaches the item.
+    pub(super) fn live_index(&self, id: &str) -> AppResult<usize> {
+        self.index_of(id).or_else(|error| {
+            self.papers
+                .iter()
+                .position(|paper| paper.merged_from.iter().any(|snapshot| snapshot.id == id))
+                .ok_or(error)
+        })
+    }
+
+    /// Make the file at `path` the item's main one: first in its list, so
+    /// it is the one opened, previewed and read for fields. Kept across
+    /// rescans.
+    pub fn set_primary_file(&mut self, id: &str, path: &str) -> AppResult<PaperDto> {
+        self.ensure_writable()?;
+        let index = self.live_index(id)?;
+        let paper = &mut self.papers[index];
+        let at = paper
+            .files
+            .iter()
+            .position(|file| file.path == path)
+            .ok_or_else(|| AppError::Internal("that file is not one of this item's".into()))?;
+        let file = paper.files.remove(at);
+        paper.files.insert(0, file);
+        paper.primary_path = Some(path.to_owned());
+        paper.touch();
+        self.mark_dirty();
+        Ok(self.dto_for(&self.papers[index]))
+    }
+
     /// A free key for `meta`, counting every paper's key but `except`'s.
     pub(super) fn free_key(&self, meta: &PaperMeta, except: Option<usize>) -> String {
         let taken: HashSet<&str> = self
@@ -1162,6 +1228,8 @@ impl PaperStore {
         if changed {
             self.papers[index].touch();
             self.mark_dirty();
+            let id = self.papers[index].id.clone();
+            self.auto_merge_around(&id);
         }
         changed
     }
@@ -1229,7 +1297,7 @@ impl PaperStore {
     }
 
     pub fn paper_dto(&self, id: &str) -> AppResult<PaperDto> {
-        let paper = &self.papers[self.index_of(id)?];
+        let paper = &self.papers[self.live_index(id)?];
         Ok(self.dto_for(paper))
     }
 
@@ -1252,6 +1320,7 @@ impl PaperStore {
             paper_override: paper.paper_override,
             candidates: paper.candidates.clone(),
             merged_count: paper.merged_from.len().min(u32::MAX as usize) as u32,
+            auto_merged: paper.auto_merge_reasons.clone(),
         }
     }
 
@@ -1371,6 +1440,12 @@ impl PaperStore {
             incomplete_count: paper.incomplete().len() as u32,
             is_paper: paper.is_paper(),
             candidate_count: paper.candidates.len().min(u32::MAX as usize) as u32,
+            file_count: paper
+                .files
+                .iter()
+                .filter(|file| !file.missing)
+                .count()
+                .min(u32::MAX as usize) as u32,
         }
     }
 
@@ -1767,7 +1842,7 @@ impl PaperStore {
 
     /// What a lookup of this paper has to go on.
     pub fn lookup_target(&self, id: &str) -> AppResult<LookupTarget> {
-        Ok(target_for(&self.papers[self.index_of(id)?]))
+        Ok(target_for(&self.papers[self.live_index(id)?]))
     }
 
     /// Which of a project's papers a project-wide lookup asks about, and
@@ -1788,16 +1863,17 @@ impl PaperStore {
         id: &str,
         candidates: &[LookupCandidateDto],
     ) -> AppResult<PaperDto> {
+        let mut id = id.to_owned();
         for candidate in candidates {
-            self.apply_candidate(id, candidate)?;
+            id = self.apply_candidate(&id, candidate)?.id;
         }
-        self.paper_dto(id)
+        self.paper_dto(&id)
     }
 
     /// Stamp the paper as looked up now, whatever was found.
     pub fn mark_looked_up(&mut self, id: &str) -> AppResult<()> {
         self.ensure_writable()?;
-        let index = self.index_of(id)?;
+        let index = self.live_index(id)?;
         let paper = &mut self.papers[index];
         paper.looked_up_at = Some(now_rfc3339());
         paper.touch();
@@ -1813,7 +1889,7 @@ impl PaperStore {
         mut candidates: Vec<LookupCandidateDto>,
     ) -> AppResult<usize> {
         self.ensure_writable()?;
-        let index = self.index_of(id)?;
+        let index = self.live_index(id)?;
         candidates.truncate(PARK_LIMIT);
         let paper = &mut self.papers[index];
         let parked = candidates.len();
@@ -1837,7 +1913,7 @@ impl PaperStore {
         candidate: &LookupCandidateDto,
     ) -> AppResult<PaperDto> {
         self.ensure_writable()?;
-        let index = self.index_of(id)?;
+        let index = self.live_index(id)?;
         let source = candidate.source;
         let base_before = citekey::base_key(&self.papers[index].meta);
         let paper = &mut self.papers[index];
@@ -1911,7 +1987,9 @@ impl PaperStore {
         if changed {
             self.papers[index].touch();
         }
-        self.paper_dto(id)
+        let id = self.papers[index].id.clone();
+        let (survivor, _) = self.auto_merge_around(&id);
+        self.paper_dto(&survivor)
     }
 
     /// Throw away the parked title-search candidates: the user looked and
@@ -1919,7 +1997,7 @@ impl PaperStore {
     /// not ask the same question.
     pub fn discard_candidates(&mut self, id: &str) -> AppResult<PaperDto> {
         self.ensure_writable()?;
-        let index = self.index_of(id)?;
+        let index = self.live_index(id)?;
         let paper = &mut self.papers[index];
         if !paper.candidates.is_empty() {
             for candidate in paper.candidates.drain(..) {
@@ -1972,7 +2050,9 @@ impl PaperStore {
     /// another edit can replace.
     pub fn apply_patch(&mut self, id: &str, patch: MetaPatchDto) -> AppResult<PaperDto> {
         self.ensure_writable()?;
-        let index = self.index_of(id)?;
+        let index = self.live_index(id)?;
+        let identifier_set =
+            matches!(patch.doi, Some(Some(_))) || matches!(patch.arxiv, Some(Some(_)));
         let pinned_key = match &patch.cite_key {
             Some(Some(key)) => {
                 let key = key.trim();
@@ -2065,7 +2145,12 @@ impl PaperStore {
             self.papers[index].cite_key = key;
         }
         self.papers[index].touch();
-        self.paper_dto(id)
+        let id = self.papers[index].id.clone();
+        if identifier_set {
+            let (survivor, _) = self.auto_merge_around(&id);
+            return self.paper_dto(&survivor);
+        }
+        self.paper_dto(&id)
     }
 }
 
@@ -4538,6 +4623,8 @@ mod tests {
         let mut only_packet = xmp_entry("/l/book2.pdf", "b2");
         only_packet.xmp.as_mut().unwrap().doi = None;
         only_packet.xmp.as_mut().unwrap().isbn = Some("9780306406157".into());
+        // Another work: the same title, author and year would be merged.
+        only_packet.xmp.as_mut().unwrap().title = Some("Another Book Entirely Here".into());
         store.reconcile_file(&only_packet);
         assert_eq!(store.papers[1].ids.isbn.as_deref(), Some("9780306406157"));
 

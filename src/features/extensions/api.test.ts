@@ -76,6 +76,7 @@ const paper: Paper = {
   paperOverride: null,
   candidates: [],
   mergedCount: 0,
+  autoMerged: [],
 };
 
 const projects: Project[] = [
@@ -106,6 +107,7 @@ const list: PaperList = {
       incompleteCount: 0,
       isPaper: true,
       candidateCount: 0,
+      fileCount: 1,
     },
   ],
   total: 1,

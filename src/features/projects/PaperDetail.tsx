@@ -27,6 +27,8 @@ import MathText from '../../components/MathText';
 import { DuplicateLine, MergedLine } from './MergeConfirm';
 import { MissingWorkPanel } from './MissingWorks';
 import { openPaper } from './openPaper';
+import { openInNewTabOrFocus } from '../document/tabsController';
+import { formatSize } from '../home/format';
 import {
   authorsLine,
   formatAuthors,
@@ -549,6 +551,78 @@ function CiteKey(props: { paper: Paper; copied: boolean; onCopy: () => void }) {
   );
 }
 
+/** The folder a file is in, for its tooltip. */
+function folderOf(path: string): string {
+  const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+  return at > 0 ? path.slice(0, at) : path;
+}
+
+/** Every file of the item, the main one first: each can be opened, and any
+ * other made the main one (the one Open, previews and the scan's fields
+ * use). */
+function FilesSection(props: { paper: Paper }) {
+  const store = projectsStore;
+  const [busy, setBusy] = createSignal(false);
+  const makeMain = async (path: string) => {
+    setBusy(true);
+    await store.setPrimaryFile(props.paper.id, path);
+    setBusy(false);
+  };
+  const open = async (path: string) => {
+    try {
+      await openInNewTabOrFocus(path);
+    } catch (error) {
+      store.reportError(error);
+    }
+  };
+  return (
+    <div class="paper-section">
+      <span class="paper-field-label">Files</span>
+      <ul class="paper-files">
+        <For each={props.paper.files}>
+          {(file, index) => (
+            <li class="paper-file" classList={{ 'is-missing': file.missing }}>
+              <span class="paper-file-name" title={folderOf(file.path)}>
+                {file.name}
+              </span>
+              <span class="paper-file-size">{formatSize(file.size)}</span>
+              <Show when={index() === 0 && props.paper.files.length > 1}>
+                <span class="paper-field-source">main</span>
+              </Show>
+              <Show when={file.missing}>
+                <span class="paper-badge">missing</span>
+              </Show>
+              <span class="paper-file-actions">
+                <button
+                  type="button"
+                  class="paper-mini-btn"
+                  disabled={file.missing}
+                  aria-label={`Open ${file.name}`}
+                  onClick={() => void open(file.path)}
+                >
+                  Open
+                </button>
+                <Show when={index() > 0}>
+                  <button
+                    type="button"
+                    class="paper-mini-btn"
+                    disabled={busy()}
+                    title="Open, preview and read this file for the item"
+                    aria-label={`Make ${file.name} the main file`}
+                    onClick={() => void makeMain(file.path)}
+                  >
+                    Make main
+                  </button>
+                </Show>
+              </span>
+            </li>
+          )}
+        </For>
+      </ul>
+    </div>
+  );
+}
+
 export default function PaperDetail(props: { onMoveFocus: (dir: -1 | 1) => void }) {
   const store = projectsStore;
   const paper = () => (ghost() ? null : store.state.selected);
@@ -709,25 +783,7 @@ export default function PaperDetail(props: { onMoveFocus: (dir: -1 | 1) => void 
               <CiteKey paper={p()} copied={copied() === 'key'} onCopy={() => void copyKey(p())} />
             </Show>
 
-            <div class="paper-section">
-              <span class="paper-field-label">Files</span>
-              <ul class="paper-files">
-                <For each={p().files}>
-                  {(file) => (
-                    <li
-                      class="paper-file"
-                      classList={{ 'is-missing': file.missing }}
-                      title={file.path}
-                    >
-                      <span class="paper-file-name">{file.name}</span>
-                      <Show when={file.missing}>
-                        <span class="paper-badge">missing</span>
-                      </Show>
-                    </li>
-                  )}
-                </For>
-              </ul>
-            </div>
+            <FilesSection paper={p()} />
 
             <div class="paper-section">
               <span class="paper-field-label">Projects</span>

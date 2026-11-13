@@ -590,6 +590,14 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
                                 <span class="paper-row-meta">{metaLine(row())}</span>
                               </Show>
                             </span>
+                            <Show when={(row().fileCount ?? 0) > 1}>
+                              <span
+                                class="paper-row-files"
+                                title="One item, several PDFs; see the details"
+                              >
+                                {row().fileCount} PDFs
+                              </span>
+                            </Show>
                             <Show when={row().candidateCount > 0}>
                               <span
                                 class="paper-row-matches"

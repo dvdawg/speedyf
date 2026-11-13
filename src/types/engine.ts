@@ -310,6 +310,9 @@ export interface Paper {
   candidates: LookupCandidate[];
   /** how many records were merged into this one; non-zero means it can be split */
   mergedCount: number;
+  /** why records were merged into this one automatically ("same arXiv id
+   * 2606.13614"); empty when none were */
+  autoMerged: string[];
 }
 
 /** One row of the paper list: display strings, already resolved. */
@@ -331,6 +334,8 @@ export interface PaperRow {
   isPaper: boolean;
   /** parked title-search matches waiting for the user */
   candidateCount: number;
+  /** files of the item that are on disk */
+  fileCount: number;
 }
 
 export interface Project {

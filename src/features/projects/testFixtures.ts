@@ -56,6 +56,7 @@ export const ROWS: PaperRow[] = [
     incompleteCount: 0,
     isPaper: true,
     candidateCount: 0,
+    fileCount: 1,
   },
   {
     id: 'b',
@@ -71,6 +72,7 @@ export const ROWS: PaperRow[] = [
     incompleteCount: 0,
     isPaper: true,
     candidateCount: 2,
+    fileCount: 1,
   },
   {
     id: 'c',
@@ -86,6 +88,7 @@ export const ROWS: PaperRow[] = [
     incompleteCount: 2,
     isPaper: true,
     candidateCount: 0,
+    fileCount: 1,
   },
   // Not a paper: the scan found no identifier, no abstract, no venue. The
   // engine shows the file name as its title and it only appears under
@@ -104,6 +107,7 @@ export const ROWS: PaperRow[] = [
     incompleteCount: 3,
     isPaper: false,
     candidateCount: 0,
+    fileCount: 1,
   },
 ];
 
@@ -125,6 +129,7 @@ export const EVANS: PaperRow = {
   incompleteCount: 0,
   isPaper: true,
   candidateCount: 0,
+  fileCount: 1,
 };
 
 /** The citation graph of project p1 (and, in this fixture, of the library):
@@ -169,6 +174,7 @@ export function bigGraph(count = 30, isolated = 0): Graph {
     incompleteCount: 0,
     isPaper: true,
     candidateCount: 0,
+    fileCount: 1,
   });
   const hubYears = [2000, 2004, 2008];
   const nodes: PaperRow[] = [];
@@ -304,6 +310,7 @@ const PAPERS: Record<string, Paper> = {
     paperOverride: null,
     candidates: [],
     mergedCount: 0,
+    autoMerged: [],
   },
   b: {
     id: 'b',
@@ -352,6 +359,7 @@ const PAPERS: Record<string, Paper> = {
     paperOverride: true,
     candidates: CANDIDATES,
     mergedCount: 0,
+    autoMerged: [],
   },
   d: {
     id: 'd',
@@ -391,6 +399,7 @@ const PAPERS: Record<string, Paper> = {
     paperOverride: null,
     candidates: [],
     mergedCount: 0,
+    autoMerged: [],
   },
   // Evans for the graph's hover card: a full author list and an abstract.
   g: {
@@ -441,6 +450,7 @@ const PAPERS: Record<string, Paper> = {
     paperOverride: null,
     candidates: [],
     mergedCount: 0,
+    autoMerged: [],
   },
   e: {
     id: 'e',
@@ -480,6 +490,7 @@ const PAPERS: Record<string, Paper> = {
     paperOverride: null,
     candidates: [],
     mergedCount: 0,
+    autoMerged: [],
   },
   // A thesis and a book: items too, with the kind the scan read off them.
   // Not in ROWS, so the lists above are unchanged; reached by id alone.
@@ -521,6 +532,7 @@ const PAPERS: Record<string, Paper> = {
     paperOverride: null,
     candidates: [],
     mergedCount: 0,
+    autoMerged: [],
   },
   k: {
     id: 'k',
@@ -560,6 +572,7 @@ const PAPERS: Record<string, Paper> = {
     paperOverride: null,
     candidates: [],
     mergedCount: 0,
+    autoMerged: [],
   },
 };
 
@@ -663,6 +676,12 @@ export function fakeEngine() {
     }),
     libraryUnmerge: vi.fn(async (): Promise<Paper[]> => [paperFor('e'), paperFor('a')]),
     libraryNotDuplicates: vi.fn(async (_ids: string[]): Promise<void> => undefined),
+    librarySetPrimaryFile: vi.fn(async (id: string, path: string): Promise<Paper> => {
+      const paper = paperFor(id);
+      const at = paper.files.findIndex((file) => file.path === path);
+      if (at > 0) paper.files.unshift(...paper.files.splice(at, 1));
+      return paper;
+    }),
     openExternalUrl: vi.fn(async () => {}),
     libraryDataDir: vi.fn(async () => ({ dir: '/data', isDefault: true })),
     libraryMoveData: vi.fn(async () => ({ dir: '/data', isDefault: true })),

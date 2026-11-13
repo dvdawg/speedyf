@@ -222,6 +222,9 @@ export interface EngineApi {
   libraryMergePapers(keepId: string, mergeIds: string[]): Promise<Paper>;
   /** Undoes every merge into this record, restoring the records as they were. */
   libraryUnmerge(paperId: string): Promise<Paper[]>;
+  /** Makes one of an item's files its main one (first: opened, previewed,
+   * read for fields). Kept across rescans. Returns the item. */
+  librarySetPrimaryFile(paperId: string, path: string): Promise<Paper>;
   /** Records that these are not one work, so they are never suggested
    * (or joined through a third record) again. */
   libraryNotDuplicates(paperIds: string[]): Promise<void>;
@@ -319,6 +322,7 @@ export const engine: EngineApi = {
   libraryDuplicates: () => invoke('library_duplicates'),
   libraryMergePapers: (keepId, mergeIds) => invoke('library_merge_papers', { keepId, mergeIds }),
   libraryUnmerge: (paperId) => invoke('library_unmerge', { paperId }),
+  librarySetPrimaryFile: (paperId, path) => invoke('library_set_primary_file', { paperId, path }),
   libraryNotDuplicates: (paperIds) => invoke('library_not_duplicates', { paperIds }),
   libraryDataDir: () => invoke('library_data_dir'),
   libraryMoveData: (dir) => invoke('library_move_data', { dir }),

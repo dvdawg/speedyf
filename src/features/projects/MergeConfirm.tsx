@@ -225,7 +225,15 @@ export function MergedLine(props: { paper: Paper }) {
   return (
     <Show when={props.paper.mergedCount > 0}>
       <div class="paper-dup-line paper-merged">
-        <span class="paper-dup-text">Merged from {props.paper.mergedCount + 1} items</span>
+        <span class="paper-dup-text">
+          Merged from {props.paper.mergedCount + 1} items
+          <Show when={(props.paper.autoMerged ?? []).length > 0}>
+            {' '}
+            <span class="paper-auto-merged">
+              Merged automatically ({props.paper.autoMerged.join('; ')})
+            </span>
+          </Show>
+        </span>
         <button
           type="button"
           class="paper-mini-btn"

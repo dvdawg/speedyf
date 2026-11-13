@@ -45,6 +45,80 @@ afterEach(() => {
   updateSettings({ onlineLookup: false });
 });
 
+describe('PaperDetail files and automatic merges', () => {
+  const twoFiles = async () => {
+    const { paperFor } = await import('./testFixtures');
+    const paper = paperFor('a');
+    paper.files = [
+      { ...paper.files[0]!, path: '/lib/2606.13614v1.pdf', name: '2606.13614v1.pdf', size: 2048 },
+      { ...paper.files[0]!, path: '/lib/review/mot_tmlr.pdf', name: 'mot_tmlr.pdf', size: 4096 },
+      {
+        ...paper.files[0]!,
+        path: '/lib/gone.pdf',
+        name: 'gone.pdf',
+        missing: true,
+      },
+    ];
+    paper.mergedCount = 1;
+    paper.autoMerged = ['same arXiv id 2606.13614'];
+    vi.mocked(engine.libraryPaper).mockResolvedValue(paper);
+    await projectsStore.loadDetail('a');
+    await vi.waitFor(() => expect(projectsStore.state.selected?.files.length).toBe(3));
+  };
+
+  afterEach(async () => {
+    const { paperFor } = await import('./testFixtures');
+    vi.mocked(engine.libraryPaper).mockImplementation(async (id: string) => paperFor(id));
+  });
+
+  it('lists every file with its size, main marker and missing badge', async () => {
+    await twoFiles();
+    const { container } = render(() => <PaperDetail onMoveFocus={() => {}} />);
+    const items = await vi.waitFor(() => {
+      const found = container.querySelectorAll('.paper-file');
+      expect(found.length).toBe(3);
+      return Array.from(found);
+    });
+    expect(items[0]!.textContent).toContain('2606.13614v1.pdf');
+    expect(items[0]!.textContent).toContain('2.0 KB');
+    expect(items[0]!.querySelector('.paper-field-source')?.textContent).toBe('main');
+    expect(items[0]!.querySelector('.paper-file-name')?.getAttribute('title')).toBe('/lib');
+    expect(items[1]!.querySelector('.paper-field-source')).toBeNull();
+    expect(items[2]!.textContent).toContain('missing');
+    // The main file has no Make main; the others do.
+    expect(screen.queryByLabelText('Make 2606.13614v1.pdf the main file')).toBeNull();
+    expect(screen.getByLabelText('Make mot_tmlr.pdf the main file')).toBeTruthy();
+  });
+
+  it('opens a file and makes another the main one through the transport', async () => {
+    await twoFiles();
+    const { openInNewTabOrFocus } = await import('../document/tabsController');
+    render(() => <PaperDetail onMoveFocus={() => {}} />);
+    fireEvent.click(await screen.findByLabelText('Open mot_tmlr.pdf'));
+    await waitFor(() =>
+      expect(openInNewTabOrFocus).toHaveBeenCalledWith('/lib/review/mot_tmlr.pdf')
+    );
+    fireEvent.click(screen.getByLabelText('Make mot_tmlr.pdf the main file'));
+    await waitFor(() =>
+      expect(engine.librarySetPrimaryFile).toHaveBeenCalledWith('a', '/lib/review/mot_tmlr.pdf')
+    );
+  });
+
+  it('says the item was merged automatically, and why, beside Split', async () => {
+    await twoFiles();
+    render(() => <PaperDetail onMoveFocus={() => {}} />);
+    const line = await screen.findByText(/Merged automatically/);
+    expect(line.textContent).toBe('Merged automatically (same arXiv id 2606.13614)');
+    expect(line.closest('.paper-merged')?.querySelector('button')?.textContent).toBe('Split');
+  });
+
+  it('says nothing of automatic merges for an item merged by hand', async () => {
+    render(() => <PaperDetail onMoveFocus={() => {}} />);
+    await screen.findByText(TITLE);
+    expect(screen.queryByText(/Merged automatically/)).toBeNull();
+  });
+});
+
 describe('PaperDetail', () => {
   it('shows each field with its provenance', async () => {
     render(() => <PaperDetail onMoveFocus={() => {}} />);

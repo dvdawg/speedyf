@@ -161,6 +161,10 @@ pub struct PaperDto {
     /// can be split back.
     #[serde(default)]
     pub merged_count: u32,
+    /// Why records were merged into this one automatically, when any
+    /// were ("same arXiv id 2606.13614"). Empty for manual merges only.
+    #[serde(default)]
+    pub auto_merged: Vec<String>,
 }
 
 /// One row of the paper list. Display strings, already resolved, so the list
@@ -187,6 +191,9 @@ pub struct PaperRowDto {
     pub is_paper: bool,
     /// Parked title-search matches waiting for the user.
     pub candidate_count: u32,
+    /// Files of the item that are on disk.
+    #[serde(default)]
+    pub file_count: u32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

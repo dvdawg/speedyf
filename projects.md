@@ -82,6 +82,29 @@ file marked missing: the paper stays in its projects and its `.bib`, the UI
 dims it and says so, and the next file that matches by identifier or
 fingerprint reattaches.
 
+**Automatic merging.** Two item records that are plainly one work become
+one, through the ordinary merge (snapshots, so Split restores them):
+
+- a shared DOI or arXiv id, aliases included (an arXiv DOI
+  `10.48550/arxiv.X` counts as arXiv id X); or
+- the same normalized title of four words or more, the same first-author
+  family name (case and accents folded), known years at most one apart, and
+  no conflicting identifiers (two different DOIs, or two different arXiv
+  ids, are two works).
+
+Never a pair the user dismissed (directly or through a third record), a
+non-item, or anything in a read-only store. It runs whenever an identifier
+or a lookup lands on a record (a lookup, an edited DOI or arXiv id, a scan's
+reconcile) and once over the whole library on load. The keeper is the
+record with more projects, then a pinned key, then user edits, then more
+files, then the earlier `addedAt`, then the smaller id; the reason is kept
+on it and shown beside Split. Splitting an automatic merge records the
+records as not duplicates, so they are not merged again.
+
+All of an item's files stay visible: the detail column lists them, and any
+can be opened or made the main one (`files[0]`: the one Open, previews and
+the scan's fields use), which a rescan keeps.
+
 ### Metadata with provenance
 
 Each field carries where it came from:

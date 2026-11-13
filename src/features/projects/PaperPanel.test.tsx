@@ -53,6 +53,7 @@ const paper: Paper = {
   paperOverride: null,
   candidates: [],
   mergedCount: 0,
+  autoMerged: [],
 };
 
 /** The same file as the scan sees a manual: in the library, not a paper. */
@@ -185,6 +186,35 @@ beforeEach(() => {
 });
 
 afterEach(cleanup);
+
+describe('PaperPanel with several files on one item', () => {
+  const withCopies: Paper = {
+    ...paper,
+    files: [
+      { ...paper.files[0]!, path: '/lib/2606.13614v1.pdf', name: '2606.13614v1.pdf' },
+      { ...paper.files[0]!, path: '/lib/mot_tmlr.pdf', name: 'mot_tmlr.pdf' },
+      { ...paper.files[0]!, path: '/lib/mot.pdf', name: 'mot.pdf' },
+      { ...paper.files[0]!, path: '/lib/gone.pdf', name: 'gone.pdf', missing: true },
+    ],
+  };
+
+  it('names the other files and opens one from its link', async () => {
+    engine.libraryPaperForPath.mockImplementation(async () => withCopies);
+    mount('/lib/mot_tmlr.pdf');
+    const line = await screen.findByText(/Also in this item/);
+    const note = line.closest('.paper-also')!;
+    const links = Array.from(note.querySelectorAll('button')).map((b) => b.textContent);
+    expect(links).toEqual(['2606.13614v1.pdf', 'mot.pdf']);
+    fireEvent.click(screen.getByText('mot.pdf'));
+    await waitFor(() => expect(openInNewTabOrFocus).toHaveBeenCalledWith('/lib/mot.pdf'));
+  });
+
+  it('says nothing for an item with one file', async () => {
+    mount();
+    await screen.findByText('jarzynski1997nonequilibrium');
+    expect(screen.queryByText(/Also in this item/)).toBeNull();
+  });
+});
 
 describe('authorsLine', () => {
   const author = (family: string) => ({ family, given: 'X.' });
@@ -458,6 +488,7 @@ describe('PaperPanel', () => {
         incompleteCount: 0,
         isPaper: true,
         candidateCount: 0,
+        fileCount: 1,
       };
       engine.libraryCitationLinks.mockResolvedValueOnce({
         cites: [],

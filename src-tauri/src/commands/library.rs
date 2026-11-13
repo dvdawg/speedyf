@@ -865,6 +865,20 @@ pub async fn library_merge_papers(
     .await
 }
 
+/// Make one of an item's files its main one: opened, previewed and read
+/// for fields (`PaperStore::set_primary_file`).
+#[tauri::command]
+pub async fn library_set_primary_file(
+    state: tauri::State<'_, EngineState>,
+    paper_id: String,
+    path: String,
+) -> AppResult<PaperDto> {
+    write_store(state.0.clone(), move |store| {
+        store.set_primary_file(&paper_id, &path)
+    })
+    .await
+}
+
 /// Split a merged record back into the records merged into it. Returns
 /// the restored records, then this one.
 #[tauri::command]

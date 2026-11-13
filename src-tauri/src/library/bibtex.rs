@@ -327,6 +327,7 @@ mod tests {
             paper_override: None,
             candidates: vec![],
             merged_count: 0,
+            auto_merged: vec![],
         }
     }
 

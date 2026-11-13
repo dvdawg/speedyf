@@ -306,6 +306,20 @@ export default function PaperPanel() {
     }
   };
 
+  /** The item's other files on disk, when the open document is one of
+   * several: the review copy beside the preprint. */
+  const otherFiles = (current: Paper) =>
+    current.files.some((file) => file.path === doc.path)
+      ? current.files.filter((file) => !file.missing && file.path !== doc.path)
+      : [];
+  const openOther = async (path: string) => {
+    try {
+      await openInNewTabOrFocus(path);
+    } catch (reason) {
+      setError(message(reason));
+    }
+  };
+
   const showInProjects = () => {
     updateSettings({ launchScreen: 'projects' });
     goHome();
@@ -402,6 +416,27 @@ export default function PaperPanel() {
                   <div class="paper-panel-meta">{yearVenue(current())}</div>
                 </Show>
               </div>
+
+              <Show when={otherFiles(current()).length > 0}>
+                <div class="paper-panel-note paper-also">
+                  <span>Also in this item: </span>
+                  <For each={otherFiles(current())}>
+                    {(file, index) => (
+                      <>
+                        {index() > 0 ? ', ' : ''}
+                        <button
+                          type="button"
+                          class="paper-panel-link"
+                          title={file.path}
+                          onClick={() => void openOther(file.path)}
+                        >
+                          {file.name}
+                        </button>
+                      </>
+                    )}
+                  </For>
+                </div>
+              </Show>
 
               <Show when={filed()}>
                 {(copy) => (

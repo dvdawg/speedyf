@@ -118,6 +118,14 @@ impl PaperStore {
             Loaded::Ok(file) => {
                 store.papers = file.papers;
                 store.projects = file.projects;
+                // Duplicates from before automatic merging, or from another
+                // machine's edits, are merged once here.
+                if store.auto_merge_all() {
+                    if let Err(error) = store.save() {
+                        log::warn!("cannot save the library after merging duplicates: {error}");
+                        store.mark_dirty();
+                    }
+                }
             }
             Loaded::Newer(version) => {
                 log::warn!(
@@ -172,6 +180,11 @@ impl PaperStore {
 
     pub fn writable(&self) -> bool {
         self.write_block.is_none()
+    }
+
+    #[cfg(test)]
+    pub(super) fn block_writes_for_tests(&mut self) {
+        self.write_block = Some("read-only for a test".into());
     }
 
     /// Something changed in memory that is not on disk yet. Scans call this

@@ -447,6 +447,7 @@ pub fn run() {
             commands::library::library_duplicates,
             commands::library::library_merge_papers,
             commands::library::library_unmerge,
+            commands::library::library_set_primary_file,
             commands::library::library_not_duplicates,
             commands::library::library_refs_provider,
             commands::library::library_refs_pending,
