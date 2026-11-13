@@ -33,6 +33,7 @@ pub mod papers;
 pub mod projects;
 pub mod ratelimit;
 pub mod references;
+pub mod related;
 pub mod sources;
 pub mod store;
 pub mod suggest;

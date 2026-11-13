@@ -505,3 +505,20 @@ pub struct ProjectSuggestionDto {
     /// In plain words: "cites 2 papers in it, shares 4 references with it".
     pub reason: String,
 }
+
+/// Another item the citation graph ties to one through the works both cite
+/// and the items citing both (`PaperStore::related_items`).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RelatedItemDto {
+    pub row: PaperRowDto,
+    /// Higher is more related; normalized so a long bibliography or a much
+    /// cited item does not win on size alone.
+    pub score: f32,
+    /// Works both cite (bibliographic coupling).
+    pub shared_refs: u32,
+    /// Items citing both (co-citation).
+    pub co_cited: u32,
+    /// In plain words: "shares 6 references, cited together by 3 items".
+    pub reason: String,
+}

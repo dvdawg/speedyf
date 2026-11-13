@@ -18,6 +18,7 @@ import type {
   Project,
   Paperness,
   ProjectSuggestion,
+  RelatedItem,
 } from '../../types/engine';
 import type { TabRecord } from '../../stores/tabsStore';
 import type * as engineModule from '../../lib/transport/engine';
@@ -117,6 +118,7 @@ const engine = {
     throw notImplemented;
   }),
   librarySuggestProjects: vi.fn(async (_id: string): Promise<ProjectSuggestion[]> => []),
+  libraryRelatedItems: vi.fn(async (_id: string): Promise<RelatedItem[]> => []),
   libraryFileIntoInbox: vi.fn(async (_path: string, _inbox: string) => paper),
   libraryPaper: vi.fn(async (_id: string) => paper),
   libraryLookup: vi.fn(async () => ({ kind: 'applied' as const, paper })),
@@ -181,6 +183,7 @@ beforeEach(() => {
     throw notImplemented;
   });
   engine.librarySuggestProjects.mockImplementation(async () => []);
+  engine.libraryRelatedItems.mockImplementation(async () => []);
   resetDismissedSuggestions();
   openDialog.mockClear();
   openInNewTabOrFocus.mockClear();
@@ -526,6 +529,57 @@ describe('PaperPanel', () => {
       await waitFor(() =>
         expect(openInNewTabOrFocus).toHaveBeenCalledWith('/lib/noneq/crooks1999.pdf')
       );
+    });
+
+    it('lists related items after cited by, with why, and hides them when none', async () => {
+      const row = {
+        id: 'paper-3',
+        title: 'Free energy differences from nonequilibrium measurements',
+        authors: 'Hummer & Szabo',
+        year: 2001,
+        venue: null,
+        citeKey: 'hummer2001free',
+        alphaLabel: 'HS01',
+        projectIds: [],
+        missing: false,
+        hasIdentifier: true,
+        incompleteCount: 0,
+        isPaper: true,
+        candidateCount: 0,
+        fileCount: 1,
+      };
+      engine.libraryCitationLinks.mockResolvedValue({ cites: [], citedBy: [], unresolved: 0 });
+      engine.libraryRelatedItems.mockResolvedValueOnce([
+        {
+          row,
+          score: 0.8,
+          sharedRefs: 6,
+          coCited: 3,
+          reason: 'shares 6 references, cited together by 3 items',
+        },
+      ]);
+      engine.libraryPaper.mockResolvedValueOnce({
+        ...paper,
+        id: 'paper-3',
+        files: [{ ...paper.files[0]!, path: '/lib/noneq/hummer2001.pdf', missing: false }],
+      });
+      mount();
+      expect(await screen.findByText('Related')).toBeTruthy();
+      expect(engine.libraryRelatedItems).toHaveBeenCalledWith('paper-1');
+      expect(screen.getByText('shares 6 references, cited together by 3 items')).toBeTruthy();
+      fireEvent.click(screen.getByText(row.title));
+      await waitFor(() =>
+        expect(openInNewTabOrFocus).toHaveBeenCalledWith('/lib/noneq/hummer2001.pdf')
+      );
+      cleanup();
+
+      mount();
+      await screen.findByText('In your library');
+      await waitFor(() => expect(engine.libraryRelatedItems).toHaveBeenCalledTimes(2));
+      expect(screen.queryByText('Related')).toBeNull();
+      engine.libraryCitationLinks.mockImplementation(async () => {
+        throw notImplemented;
+      });
     });
 
     it('reports any other failure rather than hiding it', async () => {

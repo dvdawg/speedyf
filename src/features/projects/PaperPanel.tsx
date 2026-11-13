@@ -32,6 +32,7 @@ import { goHome, openInNewTabOrFocus } from '../document/tabsController';
 import type { Author, CitationLinks, Paper, Paperness, PaperRow } from '../../types/engine';
 import MathText from '../../components/MathText';
 import ProjectSuggestionLine from './ProjectSuggestion';
+import RelatedItems from './RelatedItems';
 
 /** What the engine answers for a call the Rust side has not grown yet. The
  * citation graph is the one section that hides on it rather than reporting
@@ -581,6 +582,16 @@ export default function PaperPanel() {
                           </Show>
                           <LinkList heading="Cites" rows={graph().cites} />
                           <LinkList heading="Cited by" rows={graph().citedBy} />
+                          <RelatedItems
+                            paperId={current().id}
+                            onOpen={(row) => void openRow(row)}
+                            frame={(rows) => (
+                              <>
+                                <div class="paper-panel-subhead">Related</div>
+                                {rows}
+                              </>
+                            )}
+                          />
                           <Show when={graph().unresolved > 0}>
                             <div class="paper-panel-dim">
                               {graph().unresolved} cited{' '}

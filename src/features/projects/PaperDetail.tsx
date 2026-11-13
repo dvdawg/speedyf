@@ -50,6 +50,7 @@ import {
 } from './paperFields';
 import { projectsStore } from './projectsStore';
 import ProjectSuggestionLine from './ProjectSuggestion';
+import RelatedItems from './RelatedItems';
 import { takeTitleLookupRequest, titleLookupRequested } from './screenIntents';
 
 /** Text fields that save as they are typed, trimmed. Year, authors, kind and
@@ -846,6 +847,17 @@ export default function PaperDetail(props: { onMoveFocus: (dir: -1 | 1) => void 
               </Show>
               <ProjectSuggestionLine paperId={p().id} class="paper-detail-suggestion" />
             </div>
+
+            <RelatedItems
+              paperId={p().id}
+              onOpen={(row) => void openPaper(row.id)}
+              frame={(rows) => (
+                <div class="paper-section">
+                  <span class="paper-field-label">Related</span>
+                  <div>{rows}</div>
+                </div>
+              )}
+            />
 
             <Show when={p().isPaper && p().incomplete.length > 0}>
               <p class="paper-incomplete sb-warn">

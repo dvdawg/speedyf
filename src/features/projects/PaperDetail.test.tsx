@@ -375,6 +375,38 @@ describe('PaperDetail project suggestion', () => {
   });
 });
 
+describe('related items', () => {
+  afterEach(async () => {
+    const { resetFixture } = await import('./testFixtures');
+    resetFixture();
+  });
+
+  it('lists them after the projects, with why, each row opening that item', async () => {
+    const { fixture, ROWS } = await import('./testFixtures');
+    const { openInNewTabOrFocus } = await import('../document/tabsController');
+    const row = ROWS.find((r) => r.id === 'b')!;
+    fixture.related = [
+      { row, score: 0.7, sharedRefs: 6, coCited: 0, reason: 'shares 6 references' },
+    ];
+    const { container } = render(() => <PaperDetail onMoveFocus={() => {}} />);
+    const reason = await screen.findByText('shares 6 references');
+    const section = reason.closest('.paper-section')!;
+    expect(section.querySelector('.paper-field-label')?.textContent).toBe('Related');
+    const sections = [...container.querySelectorAll('.paper-section')];
+    const projects = container.querySelector('.paper-projects')!.closest('.paper-section')!;
+    expect(sections.indexOf(section)).toBeGreaterThan(sections.indexOf(projects));
+    expect(engine.libraryRelatedItems).toHaveBeenCalledWith('a');
+    fireEvent.click(reason.closest('button')!);
+    await waitFor(() => expect(openInNewTabOrFocus).toHaveBeenCalled());
+  });
+
+  it('shows nothing, heading included, when nothing is related', async () => {
+    render(() => <PaperDetail onMoveFocus={() => {}} />);
+    await waitFor(() => expect(engine.libraryRelatedItems).toHaveBeenCalledWith('a'));
+    expect(screen.queryByText('Related')).toBeNull();
+  });
+});
+
 describe('Look Up by Title from the palette', () => {
   it('runs once the requested item shows, and shows the matches here', async () => {
     vi.mocked(engine.libraryLookup).mockResolvedValueOnce({ kind: 'candidates', candidates: [] });

@@ -712,6 +712,8 @@ struct IndexedTitle {
 pub struct TitleIndex {
     titles: Vec<IndexedTitle>,
     by_prefix: HashMap<[u8; PREFIX], Vec<usize>>,
+    /// Each paper's indexed titles, so `find` need not scan them all.
+    by_paper: HashMap<usize, Vec<usize>>,
 }
 
 impl TitleIndex {
@@ -722,6 +724,7 @@ impl TitleIndex {
     pub fn new<'a>(papers: impl IntoIterator<Item = (usize, &'a str, Option<i32>)>) -> Self {
         let mut titles = Vec::new();
         let mut by_prefix: HashMap<[u8; PREFIX], Vec<usize>> = HashMap::new();
+        let mut by_paper: HashMap<usize, Vec<usize>> = HashMap::new();
         for (paper, title, year) in papers {
             let whole = matchable(title);
             let main = title
@@ -733,6 +736,7 @@ impl TitleIndex {
                     continue;
                 };
                 by_prefix.entry(key).or_default().push(titles.len());
+                by_paper.entry(paper).or_default().push(titles.len());
                 titles.push(IndexedTitle {
                     compact,
                     paper,
@@ -740,7 +744,11 @@ impl TitleIndex {
                 });
             }
         }
-        Self { titles, by_prefix }
+        Self {
+            titles,
+            by_prefix,
+            by_paper,
+        }
     }
 
     /// The paper whose title the entry contains: not `citing` itself nor
@@ -753,10 +761,11 @@ impl TitleIndex {
         // or a running header taken for a title ("Under review as
         // submission to TMLR"), never what the entry cites.
         let own: Vec<&str> = self
-            .titles
-            .iter()
-            .filter(|title| title.paper == citing)
-            .map(|title| title.compact.as_str())
+            .by_paper
+            .get(&citing)
+            .into_iter()
+            .flatten()
+            .map(|&index| self.titles[index].compact.as_str())
             .collect();
         let mut best: Option<&IndexedTitle> = None;
         for at in 0..text.len().saturating_sub(PREFIX - 1) {
