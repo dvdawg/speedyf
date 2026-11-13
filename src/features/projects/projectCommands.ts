@@ -17,9 +17,10 @@ import { engine } from '../../lib/transport/engine';
 import { settings, updateSettings } from '../../stores/settings';
 import type { Paper, Project, ProjectSuggestion } from '../../types/engine';
 import { goHome, openInNewTabOrFocus } from '../document/tabsController';
+import { openInNewWindow } from '../windows/windowController';
 import type { Candidate } from '../palette/paletteItems';
 import { activePaper, activePaperKnown, refreshActivePaper, rememberPaper } from './activePaper';
-import { exportBib, stopSyncingBib, syncBib } from './bibActions';
+import { exportBib, exportBundle, stopSyncingBib, syncBib } from './bibActions';
 import { citeSelection } from './citeSelection';
 import { searchFullText } from './fullTextHandoff';
 import { clearPositions, loadPositions, positionsKey } from './graphPositions';
@@ -302,6 +303,18 @@ export const PROJECT_COMMANDS: readonly Command[] = [
     },
   },
   {
+    id: 'library.exportProjectBundle',
+    title: 'Export Project Bundle...',
+    group: 'Library',
+    keywords: ['zip', 'archive', 'pdfs', 'bibtex', 'share', 'send', 'co-author', 'save'],
+    enabled: (ctx) => currentProject(ctx) !== null,
+    disabledReason: NEEDS_PROJECT,
+    run: (ctx) => {
+      const project = currentProject(ctx);
+      if (project) void exportBundle(project);
+    },
+  },
+  {
     id: 'library.syncProjectBib',
     title: 'Sync Project .bib...',
     group: 'Library',
@@ -485,6 +498,7 @@ export function projectPaletteRows(ctx: CommandCtx): Candidate[] {
       run: () => {
         openInNewTabOrFocus(file.path).catch((error: unknown) => store.reportError(error));
       },
+      runAlt: () => void openInNewWindow(file.path),
     });
   }
   return rows;

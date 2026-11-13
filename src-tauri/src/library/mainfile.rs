@@ -55,7 +55,9 @@ pub fn traits_of(entry: &LibraryEntry) -> FileTraits {
     FileTraits {
         dois,
         publisher: entry.paper_reason.as_deref().is_some_and(names_publisher),
-        version: version_from_name(&name),
+        // The scan's reading (the stamp, or an arXiv-id file name), else
+        // whatever version the name gives ("paper_v3.pdf").
+        version: entry.arxiv_version.or_else(|| version_from_name(&name)),
         authors: !entry.first_page_authors.is_empty(),
     }
 }

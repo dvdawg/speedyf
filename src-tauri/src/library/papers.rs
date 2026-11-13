@@ -2452,6 +2452,7 @@ mod tests {
             xmp: None,
             isbn: None,
             arxiv_category: None,
+            arxiv_version: None,
             first_page_authors: Vec::new(),
             first_page_title_confident: false,
             first_page_authors_confident: false,

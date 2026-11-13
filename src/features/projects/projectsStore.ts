@@ -15,6 +15,7 @@ import { engine, isEngineError } from '../../lib/transport/engine';
 import { forgetPapers } from './activePaper';
 import type { GraphFocus } from '../../lib/transport/engine';
 import type {
+  BundleReport,
   DuplicateGroup,
   LibraryCounts,
   LookupBatch,
@@ -118,6 +119,9 @@ interface State {
    * cited-by lists name items the way the graph does. */
   graphLabels: Record<string, string>;
   error: string | null;
+  /** The outcome of a one-off action worth reading (an exported bundle),
+   * shown in the screen's bar until dismissed or replaced. */
+  notice: string | null;
 }
 
 const [state, setState] = createStore<State>({
@@ -141,6 +145,7 @@ const [state, setState] = createStore<State>({
   ghostKey: null,
   graphLabels: {},
   error: null,
+  notice: null,
 });
 
 let rowsSeq = 0;
@@ -148,6 +153,24 @@ let detailSeq = 0;
 let missingSeq = 0;
 let queryTimer: ReturnType<typeof setTimeout> | undefined;
 let unlisten: (() => void) | null = null;
+
+/** How many keys a bundle's missing list names before it says "and N more". */
+const MISSING_SHOWN = 8;
+
+/** "Exported 23 PDFs and the .bib; 2 missing: key1, key2". */
+export function bundleSummary(report: BundleReport): string {
+  const count = report.pdfs.length;
+  const pdfs = count === 1 ? '1 PDF' : `${count} PDFs`;
+  let text = `Exported ${pdfs} and the .bib`;
+  const missing = report.missing;
+  if (missing.length > 0) {
+    const named = missing.slice(0, MISSING_SHOWN).join(', ');
+    const more =
+      missing.length > MISSING_SHOWN ? ` and ${missing.length - MISSING_SHOWN} more` : '';
+    text += `; ${missing.length} missing: ${named}${more}`;
+  }
+  return text;
+}
 
 const message = (error: unknown) => (isEngineError(error) ? error.message : String(error));
 
@@ -407,6 +430,15 @@ export const projectsStore = {
     await guarded(() => engine.libraryExportBib(projectId, path));
   },
 
+  /** Writes the project's bundle (.bib and main PDFs as one .zip) and says
+   * what it held in the screen's notice bar. */
+  async exportBundle(projectId: string, path: string): Promise<BundleReport | undefined> {
+    setState('notice', null);
+    const report = await guarded(() => engine.libraryExportBundle(projectId, path));
+    if (report) setState('notice', bundleSummary(report));
+    return report;
+  },
+
   /** Records (or with null, forgets) the .bib the engine keeps rewriting for
    * this project. The project's `bibPath` arrives with the next refresh. */
   async setProjectBib(projectId: string, path: string | null): Promise<void> {
@@ -459,6 +491,10 @@ export const projectsStore = {
 
   clearError(): void {
     setState('error', null);
+  },
+
+  clearNotice(): void {
+    setState('notice', null);
   },
 
   /** For work the screen does outside the store (a lookup, an open) that

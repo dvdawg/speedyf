@@ -28,6 +28,7 @@ import type {
   SearchQueryResult,
 } from '../../types/engine';
 import type {
+  BundleReport,
   CitationLinks,
   DuplicateGroup,
   Graph,
@@ -196,6 +197,8 @@ export interface EngineApi {
    * rendering anything: what a copied \cite{} calls after the write. */
   libraryPinKeys(paperIds: string[]): Promise<void>;
   libraryExportBib(projectId: string, path: string): Promise<void>;
+  /** The project's .bib and each item's main PDF, as one .zip at `path`. */
+  libraryExportBundle(projectId: string, path: string): Promise<BundleReport>;
   librarySetProjectBib(projectId: string, path: string | null): Promise<void>;
   libraryLookup(paperId: string, mode: LookupMode): Promise<LookupResult>;
   libraryApplyCandidate(paperId: string, candidate: LookupCandidate): Promise<Paper>;
@@ -313,6 +316,7 @@ export const engine: EngineApi = {
   libraryBibtex: (paperIds) => invoke('library_bibtex', { paperIds }),
   libraryPinKeys: (paperIds) => invoke('library_pin_keys', { paperIds }),
   libraryExportBib: (projectId, path) => invoke('library_export_bib', { projectId, path }),
+  libraryExportBundle: (projectId, path) => invoke('library_export_bundle', { projectId, path }),
   librarySetProjectBib: (projectId, path) => invoke('library_set_project_bib', { projectId, path }),
   libraryLookup: (paperId, mode) => invoke('library_lookup', { paperId, mode }),
   libraryApplyCandidate: (paperId, candidate) =>

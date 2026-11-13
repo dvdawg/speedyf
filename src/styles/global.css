@@ -4330,6 +4330,11 @@ body.is-resizing-sidebar * {
   font-size: 12px;
 }
 
+.projects-notice {
+  border-color: var(--border);
+  color: var(--text-dim);
+}
+
 .projects-error-text {
   flex: 1;
   min-width: 0;

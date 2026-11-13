@@ -99,6 +99,8 @@ pub struct ArxivStamp {
     pub category: Option<String>,
     /// The version's date as (year, month, day).
     pub date: Option<(i32, u8, u8)>,
+    /// The version the stamp prints (`v5`), which `id` leaves off.
+    pub version: Option<u32>,
 }
 
 /// The most whitespace the stamp's parts may be apart. The parts sit on
@@ -176,6 +178,16 @@ fn stamp_date(chars: &[char], at: usize) -> Option<(i32, u8, u8)> {
     Some((year as i32, month, day as u8))
 }
 
+/// The `v5` an arXiv id ends with, if it ends with one after a digit.
+fn version_suffix(id: &[char]) -> Option<u32> {
+    let digits = id.iter().rev().take_while(|c| c.is_ascii_digit()).count();
+    let v = id.len().checked_sub(digits + 1)?;
+    if digits == 0 || !matches!(id[v], 'v' | 'V') || !id[..v].last()?.is_ascii_digit() {
+        return None;
+    }
+    id[v + 1..].iter().collect::<String>().parse().ok()
+}
+
 /// The first arXiv stamp in page text: an explicitly labelled arXiv id
 /// followed by its bracketed category, and the version date when it is
 /// there. An id without the brackets is a citation, not a stamp.
@@ -190,10 +202,13 @@ pub fn arxiv_stamp(text: &str) -> Option<ArxivStamp> {
             continue;
         };
         let date = stamp_date(&chars, skip_gap(&chars, end));
+        let start = found.start as usize;
+        let version = version_suffix(&chars[start..(start + found.len as usize).min(chars.len())]);
         return Some(ArxivStamp {
             id,
             category: Some(category),
             date,
+            version,
         });
     }
     None
@@ -488,11 +503,13 @@ mod tests {
         assert_eq!(stamp.id, "1706.03762");
         assert_eq!(stamp.category.as_deref(), Some("cs.CL"));
         assert_eq!(stamp.date, Some((2017, 12, 6)));
+        assert_eq!(stamp.version, Some(5));
 
         let legacy = arxiv_stamp("arXiv:hep-th/9901001v2  [hep-th]  5 Jan 1999").expect("stamp");
         assert_eq!(legacy.id, "hep-th/9901001");
         assert_eq!(legacy.category.as_deref(), Some("hep-th"));
         assert_eq!(legacy.date, Some((1999, 1, 5)));
+        assert_eq!(legacy.version, Some(2));
 
         let dotted = arxiv_stamp("arXiv:2401.00001v2 [cond-mat.stat-mech] 31 Jan 2024").unwrap();
         assert_eq!(dotted.category.as_deref(), Some("cond-mat.stat-mech"));
@@ -503,6 +520,10 @@ mod tests {
         assert_eq!(undated.date, None);
         let bad_date = arxiv_stamp("arXiv:1706.03762 [cs.CL] 6 Foo 2017").expect("stamp");
         assert_eq!(bad_date.date, None);
+        assert_eq!(bad_date.version, None, "no v, no version");
+        let late = arxiv_stamp("arXiv:2606.13614v12 [cs.LG] 1 Jun 2026").unwrap();
+        assert_eq!(late.version, Some(12));
+        assert_eq!(late.id, "2606.13614");
 
         // A citation is not a stamp; the stamp is the first bracketed id.
         assert_eq!(arxiv_stamp("see arXiv:1706.03762 and doi:10.1/x"), None);

@@ -17,6 +17,7 @@ use std::time::UNIX_EPOCH;
 pub mod automerge;
 pub mod backup;
 pub mod bibtex;
+pub mod bundle;
 pub mod chain;
 pub mod citekey;
 pub mod filing;
@@ -103,6 +104,11 @@ pub struct LibraryEntry {
     /// been asked.
     #[serde(default)]
     pub arxiv_category: Option<String>,
+    /// Which arXiv version this file is (`v5`), which `arxiv` leaves off:
+    /// read off the stamp when it names the file's own id, else off a file
+    /// name that gave the id. Ranks the item's main file (`mainfile`).
+    #[serde(default)]
+    pub arxiv_version: Option<u32>,
     /// Where `doi` and `arxiv` were read: `FirstPage` for the head of the
     /// first page, `Filename` for the file's name, `Identifier` for a DOI
     /// made from a PII. The paper record keeps the source beside the
@@ -183,10 +189,13 @@ pub struct LibraryEntry {
 /// title, authors and identifiers. Text is extracted again only for the
 /// files that rescan finds worth OCR (`ocr_wanted`, see
 /// `keep_text_state`); every other sidecar stands.
-const FORMAT_VERSION: u32 = 12;
+/// v13: the scan keeps the file's arXiv version (`arxiv_version`, off the
+/// stamp or the file name), which ranks an item's main file. Rescanned
+/// once, metadata only, like v12: same bytes keep every sidecar.
+const FORMAT_VERSION: u32 = 13;
 /// Indexes older than this are rescanned on upgrade: what changed after
 /// it is re-derived from the text sidecars instead.
-const RESCAN_BELOW_VERSION: u32 = 12;
+const RESCAN_BELOW_VERSION: u32 = 13;
 /// Indexes older than this have every document's text extracted again.
 const TEXT_SINCE_VERSION: u32 = 11;
 /// Indexes older than this have their `cites` re-derived by the backfill.
@@ -918,6 +927,7 @@ pub fn entry_from_filename(candidate: &ScanCandidate) -> Option<LibraryEntry> {
         xmp: None,
         isbn: None,
         arxiv_category: None,
+        arxiv_version: None,
         first_page_authors: Vec::new(),
         first_page_title_confident: false,
         first_page_authors_confident: false,
@@ -1051,6 +1061,7 @@ pub fn entry_from_page(
         xmp: None,
         isbn: find_isbn(head),
         arxiv_category: None,
+        arxiv_version: None,
         first_page_authors,
         first_page_title_confident: title_confident,
         first_page_authors_confident,
@@ -1077,9 +1088,19 @@ pub fn derive_from_identifiers(entry: &mut LibraryEntry, text: &str, info_title:
             .map(|pii| identifiers::doi_from_pii(&pii));
         entry.doi_source = entry.doi.as_ref().map(|_| types::MetaSource::Identifier);
     }
-    entry.arxiv_category = identifiers::arxiv_stamp(text)
-        .filter(|stamp| entry.arxiv.as_deref().is_none_or(|id| id == stamp.id))
-        .and_then(|stamp| stamp.category);
+    let stamp = identifiers::arxiv_stamp(text)
+        .filter(|stamp| entry.arxiv.as_deref().is_none_or(|id| id == stamp.id));
+    let named_version = || {
+        (entry.arxiv_source == Some(types::MetaSource::Filename))
+            .then(|| entry.path.file_name())
+            .flatten()
+            .and_then(|name| mainfile::version_from_name(&name.to_string_lossy()))
+    };
+    entry.arxiv_version = stamp
+        .as_ref()
+        .and_then(|stamp| stamp.version)
+        .or_else(named_version);
+    entry.arxiv_category = stamp.and_then(|stamp| stamp.category);
 }
 
 /// The separators an ISBN is printed with. Hyphens of every kind and
@@ -1479,6 +1500,7 @@ mod tests {
             xmp: None,
             isbn: None,
             arxiv_category: None,
+            arxiv_version: None,
             first_page_authors: Vec::new(),
             first_page_title_confident: false,
             first_page_authors_confident: false,
@@ -2455,6 +2477,79 @@ mod tests {
     }
 
     #[test]
+    fn the_arxiv_version_comes_off_the_stamp_or_an_arxiv_file_name() {
+        let page = "arXiv:1706.03762v5 [cs.CL] 6 Dec 2017\nAttention Is All You Need";
+        let mut entry = entry_from_first_page(&candidate("/lib/attention.pdf"), page);
+        derive_from_identifiers(&mut entry, page, None);
+        assert_eq!(entry.arxiv_version, Some(5));
+        assert_eq!(
+            mainfile::traits_of(&entry).version,
+            Some(5),
+            "not in the name"
+        );
+
+        // A name that gave the id gives the version, when there is no stamp.
+        let mut named = entry_from_filename(&candidate("/lib/1706.03762v3.pdf")).unwrap();
+        derive_from_identifiers(&mut named, "No stamp here", None);
+        assert_eq!(named.arxiv_version, Some(3));
+        // The stamp names the same id: the file says which version it is.
+        derive_from_identifiers(&mut named, page, None);
+        assert_eq!(named.arxiv_version, Some(5));
+        // The name named another id: the stamp is not this file's.
+        let mut other = entry_from_filename(&candidate("/lib/2401.00001v2.pdf")).unwrap();
+        derive_from_identifiers(&mut other, page, None);
+        assert_eq!(other.arxiv_version, Some(2));
+
+        // A "v3" in a name that is no arXiv id is no arXiv version, though
+        // the main-file rule still reads it off the name; a rescan without
+        // a stamp takes a stale version back.
+        let mut plain = entry_from_first_page(&candidate("/lib/paper_v3.pdf"), "A title");
+        plain.arxiv_version = Some(9);
+        derive_from_identifiers(&mut plain, "A title", None);
+        assert_eq!(plain.arxiv_version, None);
+        assert_eq!(mainfile::traits_of(&plain).version, Some(3));
+    }
+
+    #[test]
+    fn a_v12_index_is_rescanned_once_for_the_arxiv_version_keeping_its_text() {
+        let app_data = tempfile::tempdir().expect("app data");
+        let root = tempfile::tempdir().expect("root");
+        let pdf = root.path().join("attention.pdf");
+        fs::write(&pdf, b"fixture").unwrap();
+        let pdf = pdf.canonicalize().unwrap();
+        let (mtime_ms, size) = file_stamp(&pdf).unwrap();
+        fs::write(
+            app_data.path().join(ROOT_FILE),
+            serde_json::json!({ "version": 2, "roots": [root.path()] }).to_string(),
+        )
+        .unwrap();
+        fs::write(
+            app_data.path().join(INDEX_FILE),
+            serde_json::json!({ "version": 12, "entries": [{
+                "path": pdf, "mtime_ms": mtime_ms, "size": size, "fingerprint": "fp",
+                "title": null, "doi": null, "arxiv": "1706.03762", "text_indexed": true,
+                "cites": []
+            }]})
+            .to_string(),
+        )
+        .unwrap();
+
+        let mut state = LibraryState::load(app_data.path().to_path_buf());
+        assert_eq!(state.entry_for_path(&pdf).unwrap().arxiv_version, None);
+        let candidate = state.next_candidate().expect("queued");
+        assert!(!candidate.unchanged, "v12: rescanned once");
+        let page = "arXiv:1706.03762v5 [cs.CL] 6 Dec 2017";
+        let mut scanned = entry_from_page(&candidate, page, None);
+        derive_from_identifiers(&mut scanned, page, None);
+        scanned.fingerprint = Some("fp".into());
+        assert!(state.finish_candidate(&candidate, Some(scanned)));
+        let stored = state.entry_for_path(&pdf).unwrap();
+        assert_eq!(stored.arxiv_version, Some(5));
+        assert!(stored.text_indexed, "metadata only: the text stands");
+        assert!(state.next_candidate().is_none(), "once");
+    }
+
+    #[test]
     fn the_v12_rescan_reextracts_text_only_for_files_worth_ocr() {
         let app_data = tempfile::tempdir().expect("app data");
         let root = tempfile::tempdir().expect("root");
@@ -2597,6 +2692,7 @@ mod tests {
                     xmp: None,
                     isbn: None,
                     arxiv_category: None,
+                    arxiv_version: None,
                     first_page_authors: Vec::new(),
                     first_page_title_confident: false,
                     first_page_authors_confident: false,

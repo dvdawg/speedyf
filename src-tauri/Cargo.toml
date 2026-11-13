@@ -44,6 +44,10 @@ quick-xml = "0.37"
 # lookup so Crossref and arXiv see a trickle rather than a burst.
 tokio = { version = "1", features = ["time"] }
 futures-util = "0.3"
+# Export a project as a bundle (projects.md §5). Writing only, deflate only:
+# the defaults bring every other codec plus AES. `deflate-flate2` reuses the
+# flate2 already above rather than adding zopfli and zlib-rs.
+zip = { version = "=9.1.3", default-features = false, features = ["deflate-flate2"] }
 
 # Native OCR for scanned pages (engine/ocr.rs): Apple's Vision framework.
 # Only the features the module uses — the crate's defaults pull in CoreML,

@@ -236,6 +236,10 @@ impl PaperStore {
         Ok(())
     }
 
+    pub(super) fn project_name(&self, project_id: &str) -> AppResult<String> {
+        Ok(self.projects[self.project_index(project_id)?].name.clone())
+    }
+
     /// The project's papers in list order — the order `library_papers`
     /// shows them — so a `.bib` reads like the screen. Ids that name no
     /// paper are skipped.
@@ -269,7 +273,7 @@ impl PaperStore {
 
     /// The project's `.bib`, header included, and the ids of the papers in
     /// it, in file order.
-    fn render_project_bib(&self, project_id: &str) -> AppResult<(String, Vec<String>)> {
+    pub(super) fn render_project_bib(&self, project_id: &str) -> AppResult<(String, Vec<String>)> {
         let members = self.project_members(project_id)?;
         let ids = members.iter().map(|paper| paper.id.clone()).collect();
         let dtos: Vec<PaperDto> = members.iter().map(|paper| self.dto_for(paper)).collect();
@@ -436,6 +440,54 @@ mod tests {
             .is_err());
         assert!(!other.papers[0].cite_key_pinned);
         assert!(other.export_project_bib("nope", &path).is_err());
+    }
+
+    #[test]
+    fn a_bundle_plan_names_the_bib_after_the_project_and_takes_each_main_file() {
+        let mut store = store();
+        let zed = add_paper_with(&mut store, "Zed", 2001, "Alpha work");
+        let abel = add_paper_with(&mut store, "Abel", 1999, "Zeta work");
+        let project = store.create_project("Thesis: ch. 2").unwrap().id;
+        store.set_membership(&zed, &project, true).unwrap();
+        store.set_membership(&abel, &project, true).unwrap();
+        let file = |path: &str, missing: bool| crate::library::types::PaperFile {
+            path: path.into(),
+            name: path.rsplit('/').next().unwrap().into(),
+            size: 1,
+            mtime_ms: 0,
+            fingerprint: None,
+            missing,
+            missing_since: None,
+            traits: Default::default(),
+            duplicate_of: None,
+        };
+        let at =
+            |store: &PaperStore, id: &str| store.papers.iter().position(|p| p.id == id).unwrap();
+        let z = at(&store, &zed);
+        store.papers[z].files = vec![
+            file("/lib/zed-v2.pdf", false),
+            file("/lib/zed-v1.pdf", false),
+        ];
+        let a = at(&store, &abel);
+        store.papers[a].files = vec![file("/lib/abel.pdf", true)];
+
+        let plan = store.project_bundle_plan(&project).unwrap();
+        assert_eq!(plan.bib_name, "Thesis_ ch. 2.bib");
+        assert!(plan.bib_text.contains("@article{abel1999zeta,"));
+        let members: Vec<(&str, Option<&Path>)> = plan
+            .members
+            .iter()
+            .map(|m| (m.cite_key.as_str(), m.main_file.as_deref()))
+            .collect();
+        assert_eq!(
+            members,
+            vec![
+                ("abel1999zeta", None),
+                ("zed2001alpha", Some(Path::new("/lib/zed-v2.pdf")))
+            ],
+            "list order, the main (first) file, a missing one as none"
+        );
+        assert!(store.project_bundle_plan("nope").is_err());
     }
 
     #[test]

@@ -31,11 +31,13 @@ import type {
   PaperKind,
   ResolvedCitation,
 } from '../../types/engine';
+import { formatShortcut } from '../../app/shortcutLabel';
 import MathText from '../../components/MathText';
 import { DuplicateLine, MergedLine } from './MergeConfirm';
 import { MissingWorkPanel } from './MissingWorks';
 import { openPaper } from './openPaper';
 import { openInNewTabOrFocus } from '../document/tabsController';
+import { openInNewWindow, wantsNewWindow } from '../windows/windowController';
 import { formatSize } from '../home/format';
 import { fileRows, type FileRow } from './fileRows';
 import {
@@ -581,7 +583,11 @@ function FilesSection(props: { paper: Paper }) {
     await store.setPrimaryFile(props.paper.id, path);
     setBusy(false);
   };
-  const open = async (path: string) => {
+  const open = async (path: string, newWindow: boolean) => {
+    if (newWindow) {
+      await openInNewWindow(path);
+      return;
+    }
     try {
       await openInNewTabOrFocus(path);
     } catch (error) {
@@ -617,7 +623,8 @@ function FilesSection(props: { paper: Paper }) {
                   class="paper-mini-btn"
                   disabled={row.file.missing}
                   aria-label={`Open ${row.file.name}`}
-                  onClick={() => void open(row.file.path)}
+                  title={`${formatShortcut('mod')}-click to open in a new window`}
+                  onClick={(e) => void open(row.file.path, wantsNewWindow(e))}
                 >
                   Open
                 </button>

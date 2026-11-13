@@ -117,6 +117,23 @@ export default function ProjectsScreen() {
           </div>
         )}
       </Show>
+      <Show when={store.state.notice}>
+        {(notice) => (
+          <div class="projects-error projects-notice" role="status">
+            <span class="projects-error-text" title={notice()}>
+              {notice()}
+            </span>
+            <button
+              type="button"
+              class="projects-error-dismiss"
+              aria-label="Dismiss"
+              onClick={() => store.clearNotice()}
+            >
+              <IconClose />
+            </button>
+          </div>
+        )}
+      </Show>
       <div class="projects-columns">
         <section
           class="projects-col projects-col-projects"

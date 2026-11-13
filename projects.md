@@ -111,9 +111,12 @@ again when a file attaches, on a merge, after a scan marks files missing,
 and in the load sweep, by narrowing the files rule by rule (a rule applies
 only when some file passes it): on disk; the published version (the file's
 own first-page or XMP DOI is the item's journal DOI, not a 10.48550 one, or
-its classifier reason names a publisher); the highest arXiv version (from
-the file name, `2606.13614v2.pdf`, `paper_v3.pdf`: the index entry keeps no
-stamp version, so a file whose version is unknown is not ruled out); authors
+its classifier reason names a publisher); the highest arXiv version (the
+index entry's `arxiv_version`, read off the stamp, `arXiv:1706.03762v5
+[cs.CL]`, when it names the file's own id, else off a file name that gave
+the id, `2606.13614v2.pdf`; failing both, any `v3` in the name,
+`paper_v3.pdf`; a file whose version is unknown is not ruled out. Index v13
+rescans once, metadata only, to fill it); authors
 on the first page (an anonymous review copy loses); not a browser duplicate
 (`name (1).pdf`, `Copy of`, `name copy.pdf`); the newest mtime; a tie keeps
 the order. The evidence is kept on each file (`traits`), refreshed by every
@@ -451,6 +454,26 @@ count. Then the search field, then the list.
 - Selecting a row fills the right column; Enter or double-click opens the
   paper in a tab, through `openInNewTabOrFocus`, exactly as the Library panel
   does today.
+
+**Export bundle (.zip)…** (the project's menu, beside Export .bib…, and the
+palette's _Export Project Bundle..._) writes one zip through the save
+dialog: `<project name>.bib`, rendered as Export .bib renders it and its
+keys pinned the same way, and `pdfs/<citekey>.pdf`, a byte copy of each
+item's main file that is on disk (stored, not recompressed; a key made safe
+as a file name that would collide gets `-2`). Nothing else goes in. Items
+whose main file is missing are skipped and named only in the screen's
+inline result ("Exported 23 PDFs and the .bib; 2 missing: key1, key2").
+The zip is streamed to a temp file in the destination folder and renamed
+into place, so a failed export leaves nothing; library files are only read,
+and the PDFs are copied outside the store lock (`library/bundle.rs`,
+`library_export_bundle`).
+
+**Opening in a new window.** Cmd+Enter (Ctrl+Enter) in quick open, Cmd- or
+Alt-click on a file's Open in the detail column, and Cmd+Enter or Cmd-click
+on the palette's _Open <file>_ rows open the file in a window of its own
+(`open_in_new_window`: the new window takes the path as its opening tab,
+the way a restored window takes its session). A window that already has
+the file, or one still coming up for it, is raised instead.
 
 **Right column.** The first page, rendered through the engine's library
 document pool by a new by-path variant of citation resolve, so it costs what a

@@ -18,7 +18,7 @@
 import { createEffect, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { IconMore, IconPlus } from '../../components/icons';
 import type { Project } from '../../types/engine';
-import { exportBib, stopSyncingBib, syncBib } from './bibActions';
+import { exportBib, exportBundle, stopSyncingBib, syncBib } from './bibActions';
 import { dropHover, reorderSlotAt, setDropHover } from './dnd';
 import { beginPointerDrag } from './pointerDrag';
 import { projectsStore, sameScope } from './projectsStore';
@@ -86,6 +86,7 @@ function ProjectMenu(props: {
   const items = (): { label: string; run: () => void; danger?: boolean }[] => [
     { label: 'Rename', run: props.onRename },
     { label: 'Export .bib...', run: () => void exportBib(props.project) },
+    { label: 'Export bundle (.zip)...', run: () => void exportBundle(props.project) },
     props.project.bibPath
       ? { label: 'Stop syncing .bib', run: () => void stopSyncingBib(props.project) }
       : { label: 'Sync .bib...', run: () => void syncBib(props.project) },

@@ -65,6 +65,8 @@ const h = vi.hoisted(() => {
     goHome: vi.fn(),
     openInNewTabOrFocus: vi.fn(async (_path: string) => true),
     exportBib: vi.fn(async (_p: Any) => {}),
+    exportBundle: vi.fn(async (_p: Any) => {}),
+    openInNewWindow: vi.fn(async (_path: string) => {}),
     syncBib: vi.fn(async (_p: Any) => {}),
     stopSyncingBib: vi.fn(async (_p: Any) => {}),
     searchFullText: vi.fn(),
@@ -90,6 +92,9 @@ vi.mock('../document/tabsController', () => ({
   goHome: () => h.goHome(),
   openInNewTabOrFocus: (path: string) => h.openInNewTabOrFocus(path),
 }));
+vi.mock('../windows/windowController', () => ({
+  openInNewWindow: (path: string) => h.openInNewWindow(path),
+}));
 vi.mock('./activePaper', () => ({
   activePaper: () => h.active.paper,
   activePaperKnown: () => h.active.known,
@@ -99,6 +104,7 @@ vi.mock('./activePaper', () => ({
 }));
 vi.mock('./bibActions', () => ({
   exportBib: (p: Project) => h.exportBib(p),
+  exportBundle: (p: Project) => h.exportBundle(p),
   syncBib: (p: Project) => h.syncBib(p),
   stopSyncingBib: (p: Project) => h.stopSyncingBib(p),
 }));
@@ -337,6 +343,17 @@ describe('projects', () => {
     expect(exportCmd.enabled(readerCtx())).toBe(false);
   });
 
+  it('exports the bundle of the project open on the screen', () => {
+    const bundle = command('library.exportProjectBundle');
+    expect(bundle.enabled(screenCtx)).toBe(false);
+    expect(bundle.disabledReason).toMatch(/project open/);
+    h.store.state.scope = { kind: 'project', id: 'p1' };
+    expect(bundle.enabled(screenCtx)).toBe(true);
+    bundle.run(screenCtx);
+    expect(h.exportBundle).toHaveBeenCalledWith(expect.objectContaining({ id: 'p1' }));
+    expect(bundle.enabled(readerCtx())).toBe(false);
+  });
+
   it('hands the full-text search over with the project as its scope', () => {
     h.store.state.scope = { kind: 'project', id: 'p1' };
     h.store.state.query = 'fluctuation';
@@ -477,6 +494,10 @@ describe('items', () => {
     expect(titles(screenCtx).filter((t) => t.startsWith('Open '))).toEqual(['Open journal.pdf']);
     row(screenCtx, 'Open journal.pdf').run();
     expect(h.openInNewTabOrFocus).toHaveBeenCalledWith('/lib/journal.pdf');
+    // Cmd+Enter or Cmd-click: the same file in a window of its own.
+    row(screenCtx, 'Open journal.pdf').runAlt!();
+    expect(h.openInNewWindow).toHaveBeenCalledWith('/lib/journal.pdf');
+    expect(h.openInNewTabOrFocus).toHaveBeenCalledTimes(1);
 
     h.active.paper = paper({ files });
     h.active.known = true;

@@ -28,6 +28,23 @@ export async function exportBib(project: Project): Promise<void> {
   if (path) await projectsStore.exportBib(project.id, path);
 }
 
+/** Export bundle (.zip)...: the project's .bib and each item's main PDF in
+ * one archive, for a co-author or a submission system. */
+export async function exportBundle(project: Project): Promise<void> {
+  let path: string | null = null;
+  try {
+    const picked = await save({
+      title: `Export "${project.name}" as a bundle`,
+      defaultPath: `${project.name}.zip`,
+      filters: [{ name: 'Zip archive', extensions: ['zip'] }],
+    });
+    path = typeof picked === 'string' ? picked : null;
+  } catch (error) {
+    projectsStore.reportError(error);
+  }
+  if (path) await projectsStore.exportBundle(project.id, path);
+}
+
 export async function syncBib(project: Project): Promise<void> {
   const path = await chooseBibPath(project, `Keep a .bib for "${project.name}"`);
   if (path) await projectsStore.setProjectBib(project.id, path);

@@ -343,6 +343,16 @@ export interface PaperRow {
   fileCount: number;
 }
 
+/** What Export bundle wrote (`library_export_bundle`). */
+export interface BundleReport {
+  path: string;
+  bibName: string;
+  /** Names inside the zip (`pdfs/<key>.pdf`), in project order. */
+  pdfs: string[];
+  /** Cite keys of the items whose main file is not on disk. */
+  missing: string[];
+}
+
 export interface Project {
   id: string;
   name: string;

@@ -16,6 +16,7 @@ use crate::engine::{EngineHandle, Work};
 use crate::errors::{AppError, AppResult};
 use crate::library::backup::LibraryBackupDto;
 use crate::library::bibtex::BibtexOptions;
+use crate::library::bundle::{self, BundleReportDto};
 use crate::library::chain::{
     apply_title_candidates, drive_batch, without_declined, BatchTurns, Chain, ChainKind, EdgeJob,
     TitleOutcome, Turn, PARK_LIMIT,
@@ -389,6 +390,32 @@ pub async fn library_export_bib(
         store.export_project_bib(&project_id, &PathBuf::from(path))
     })
     .await
+}
+
+/// Export bundle (.zip)…: the project's `.bib` and each item's main PDF,
+/// written to `path` (projects.md §5). The plan is read under the store
+/// lock; the PDFs are copied without it, so a large bundle never holds up
+/// the library; the keys are pinned once the zip is in place, as an
+/// Export .bib pins them.
+#[tauri::command]
+pub async fn library_export_bundle(
+    state: tauri::State<'_, EngineState>,
+    project_id: String,
+    path: String,
+) -> AppResult<BundleReportDto> {
+    let engine = state.0.clone();
+    let plan = read_store(engine.clone(), move |store| {
+        store.project_bundle_plan(&project_id)
+    })
+    .await?;
+    let ids = plan.paper_ids.clone();
+    let report = tauri::async_runtime::spawn_blocking(move || {
+        bundle::write_bundle(&plan, &PathBuf::from(path))
+    })
+    .await
+    .map_err(|error| AppError::Internal(format!("library task failed: {error}")))??;
+    write_store_if_changed(engine, move |store| Ok(((), store.freeze_keys(&ids)))).await?;
+    Ok(report)
 }
 
 /* ---- Online lookup (projects.md §4) ---- */
