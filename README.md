@@ -23,6 +23,13 @@ manual QA before a public release.
 - Selectable PDF text and incremental, normalized search
 - Hover previews for internal PDF links and DOI/arXiv citations, with optional
   local-library first-page previews
+- Hover previews read from the page text, for PDFs without links: "Eq. (12)",
+  "Fig. 3", "Theorem 2.1", "Sec. IV" preview their target (the display, the
+  figure with its caption, the statement) and a click jumps there with Back;
+  footnote marks preview their note; acronyms the Notation extension finds
+  preview their long form. Nothing is drawn on the page, and a mention that is
+  unsure - another paper's equation, an ambiguous number, a bibliography line -
+  gets no preview at all
 - Projects: a second launch screen (Home / Projects toggle) that groups the
   library's items (papers, theses, books) into projects, each with its own cite keys and a BibTeX
   file SpeedyF exports or keeps in sync. The scan tells papers from the other
