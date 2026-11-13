@@ -33,6 +33,16 @@ log = "0.4"
 env_logger = "0.11"
 libc = "0.2"
 base64 = "0.22"
+uuid = { version = "1", features = ["v4"] }
+# Online metadata lookup (projects.md §4). Rust-side only; the webview's CSP is
+# untouched. rustls so no system OpenSSL on Linux.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "gzip"] }
+# The arXiv export API answers in Atom XML.
+quick-xml = "0.37"
+# Already Tauri's runtime; named here for the sleep that paces a project-wide
+# lookup so Crossref and arXiv see a trickle rather than a burst.
+tokio = { version = "1", features = ["time"] }
+futures-util = "0.3"
 
 # Windows and Linux start a fresh process for every "open with"; without this
 # a second PDF opens a second copy of the app instead of reaching the one
