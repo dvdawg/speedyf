@@ -38,6 +38,7 @@ pub mod store;
 pub mod suggest;
 pub mod titlematch;
 pub mod types;
+pub mod witness;
 pub mod xmp;
 
 const INDEX_FILE: &str = "library-index.json";
