@@ -370,6 +370,7 @@ function startWorker(docs: Record<string, Doc>, settings: Record<string, string>
   const drawn: unknown[] = [];
   const visited: string[] = [];
   const texts: number[] = [];
+  const contributed: { document: unknown; terms: Record<string, unknown>[] }[] = [];
   let open: string | null = null;
 
   const fake = {
@@ -427,6 +428,13 @@ function startWorker(docs: Record<string, Doc>, settings: Record<string, string>
       case 'ui.render':
         drawn.push(args.ui);
         break;
+      case 'terms.contribute':
+        contributed.push({
+          document: args.document,
+          terms: args.terms as Record<string, unknown>[],
+        });
+        value = { stored: (args.terms as unknown[]).length };
+        break;
       default:
         ok = false;
     }
@@ -443,10 +451,11 @@ function startWorker(docs: Record<string, Doc>, settings: Record<string, string>
     visited,
     texts,
     storage,
+    contributed,
     openDocument(key: string | null) {
       open = key;
     },
-    async invoke(command: string, value?: string) {
+    async invoke(command: string, value?: unknown) {
       return new Promise<void>((resolve, reject) => {
         const requestId = nextInvoke++;
         const post = fake.postMessage.bind(fake);
@@ -600,5 +609,69 @@ describe('Notation worker: the panel', () => {
     await worker.invoke('notation');
     expect(last(worker).empty).toBe('No notation found');
     expect(rowsIn(last(worker))).toEqual([]);
+  });
+});
+
+describe('Notation worker: terms for hover previews', () => {
+  const PS: Doc = {
+    name: 'ps.pdf',
+    pages: [
+      ['A fluctuation-dis-', 'sipation theorem (FDT) holds here.', 'We use photosystem (PS) data.'],
+      ['The FDT and the PS are both used.'],
+      ['Later, a phase space (PS) is meant.'],
+    ],
+  };
+
+  it('contributes every meaning with its page and the box that defines it', async () => {
+    const worker = startWorker({ ps: PS });
+    worker.openDocument('ps');
+    await worker.invoke('terms', { document: 'terms-1' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(worker.contributed).toHaveLength(1);
+    const { document, terms } = worker.contributed[0]!;
+    expect(document).toBe('terms-1');
+    const read = terms.map((t) => [t.text, t.body, t.page]);
+    // A long form broken across lines is put back together.
+    expect(read).toContainEqual(['FDT', 'fluctuation-dissipation theorem', 0]);
+    // The same acronym defined twice: both meanings, each where it is
+    // defined, so the core can take the nearest preceding one.
+    expect(read).toContainEqual(['PS', 'photosystem', 0]);
+    expect(read).toContainEqual(['PS', 'phase space', 2]);
+    const fdt = terms.find((t) => t.text === 'FDT')!;
+    expect(fdt.caseSensitive).toBe(true);
+    expect(fdt.box).toEqual({ x: 50, y: 700, w: expect.any(Number), h: 24 });
+  });
+
+  it('reads the whole long form and refuses a function argument', () => {
+    const result = extract(
+      'our private populous estimator (PPE) works. ' +
+        'Solving the resulting inequality yields P(RE,j) small. ' +
+        'A multidi\u0002 mensional organization unit (MOU) is used.'
+    );
+    expect(acronym(result, 'PPE')?.long).toBe('private populous estimator');
+    expect(acronym(result, 'RE')).toBeUndefined();
+    expect(acronym(result, 'MOU')?.long).toBe('multidimensional organization unit');
+  });
+
+  it('closes up a word broken across lines but keeps a real hyphen', () => {
+    const result = extract(
+      'A fluctuation-dis- sipation theorem (FDT) and a mean- field theory (MFT) apply. ' +
+        'The field is strong.'
+    );
+    expect(acronym(result, 'FDT')?.long).toBe('fluctuation-dissipation theorem');
+    expect(acronym(result, 'MFT')?.long).toBe('mean-field theory');
+  });
+
+  it('contributes nothing when acronyms are switched off', async () => {
+    const worker = startWorker({ ps: PS }, { acronyms: 'false' });
+    worker.openDocument('ps');
+    await worker.invoke('terms', { document: 'terms-2' });
+    expect(worker.contributed).toEqual([{ document: 'terms-2', terms: [] }]);
+  });
+
+  it('refuses an invoke without a document token', async () => {
+    const worker = startWorker({ ps: PS });
+    worker.openDocument('ps');
+    await expect(worker.invoke('terms', 'nope')).rejects.toThrow(/document/);
   });
 });

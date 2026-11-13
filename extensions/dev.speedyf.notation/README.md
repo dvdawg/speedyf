@@ -15,6 +15,17 @@ sidebar. **Notation: Rescan Document** reads the paper again.
 - **Scan pages**: the first 50, the first 200 (the default), or all of them.
 - **Show acronyms**: list acronyms alongside symbols (on by default).
 
+## Hover previews
+
+Notation is also SpeedyF's term provider: with it enabled (and **Show
+acronyms** on), hovering an acronym anywhere in the paper shows what it
+stands for and the page that defines it, and a click goes there. It hands
+SpeedyF every meaning it reads - a paper that uses "PS" for two things gives
+both, and each use shows the nearest one defined before it - and SpeedyF
+does the matching, by whole word: "FDTs", "FDT's", "FDT-based" and "non-FDT"
+count, "SFDT" does not, and nothing in mathematics or the bibliography
+counts. Disable Notation and the hovers go with it.
+
 ## What it reads as a definition
 
 Acronyms, in either order:
@@ -95,6 +106,13 @@ they are defined, acronyms alphabetically.
 | `panels` + `ui.render`                   | The list, with TeX titles                            |
 | `settings`                               | How many pages to read, and whether to list acronyms |
 | `storage`                                | Caching the scan per document                        |
+
+A word broken across a line ("fluctuation-dis-" / "sipation theorem") is
+closed up when the paper uses the whole word elsewhere, or when neither half
+is a word of its own; otherwise the hyphen was real ("mean-field"). The long
+form is read by initials first, so "private populous estimator (PPE)" keeps
+its first word, and a parenthesis attached to a word, "P(RE,j)", is never an
+acronym.
 
 It reads eight pages at a time, draws progress every 32 pages, and answers
 every invoke within the five-second budget; a scan still going after four

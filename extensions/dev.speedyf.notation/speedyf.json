@@ -3,11 +3,11 @@
   "apiVersion": 1,
   "name": "Notation",
   "version": "1.0.0",
-  "description": "Every symbol and acronym the paper defines, each with the phrase that defines it and a jump to where it is defined.",
+  "description": "Every symbol and acronym the paper defines, each with the phrase that defines it and a jump to where it is defined. Hovering an acronym in the text shows what it stands for.",
   "author": "speedyf",
   "entry": "worker.js",
   "icon": "icon.svg",
-  "permissions": ["document:read", "commands:run", "storage"],
+  "permissions": ["document:read", "commands:run", "storage", "document:contributeTerms"],
   "contributes": {
     "panels": [
       {
@@ -30,6 +30,10 @@
         "id": "goto",
         "title": "Notation: Go To Definition",
         "keywords": ["navigate", "jump", "defined"]
+      },
+      {
+        "id": "terms",
+        "title": "Notation: Terms for Hover Previews"
       }
     ],
     "settings": [
@@ -48,6 +52,9 @@
         "default": "true",
         "description": "List acronyms like \"NESS (nonequilibrium steady state)\" alongside symbols."
       }
-    ]
+    ],
+    "termProvider": {
+      "command": "terms"
+    }
   }
 }

@@ -25,7 +25,7 @@
 
 /** Cache namespace. Bumped whenever what a scan produces changes, so a scan
  * made by older code is never drawn by newer code. */
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 const CACHE_PREFIX = `scan:v${CACHE_VERSION}:`;
 
 /** "Scan pages" setting values to page counts. */
@@ -96,6 +96,7 @@ async function handle(command, value) {
   if (command === 'notation') return show({ force: false });
   if (command === 'rescan') return show({ force: true });
   if (command === 'goto') return goTo(value);
+  if (command === 'terms') return provideTerms(value);
   throw new Error(`unknown command "${command}"`);
 }
 
@@ -162,6 +163,88 @@ async function goTo(value) {
     return;
   }
   await call('navigate.toPlace', { page, y: Math.max(...boxes.map((box) => box.y)), boxes });
+}
+
+// ---------- term provider ----------
+
+/** Answer SpeedyF's request for the terms this document defines: every
+ * acronym meaning, with the page and the place it is defined, so the core
+ * can preview it wherever the acronym is used.
+ *
+ * Read the same way the panel reads - from the cache when there is one -
+ * and answered with `terms.contribute` whenever the scan finishes, which
+ * may be after this invoke has reported done. */
+async function provideTerms(value) {
+  const document = value && typeof value === 'object' ? value.document : null;
+  if (typeof document !== 'string') throw new Error('no document to read terms for');
+  await withinBudget(contributeTerms(document));
+}
+
+async function contributeTerms(document) {
+  if ((await setting('acronyms')) === 'false') {
+    await call('terms.contribute', { document, terms: [] });
+    return;
+  }
+  let info;
+  try {
+    info = await call('document.info');
+  } catch {
+    return;
+  }
+  const scanned = Math.min(info.pageCount, pageLimit(await setting('pages')));
+  const key = cacheKey(info, scanned);
+  let result = current?.key === key ? current : await readCache(key, info);
+  if (!result) {
+    if (job?.key !== key) {
+      const entry = { key, quiet: true };
+      entry.promise = scan(info, scanned, entry).finally(() => {
+        if (job === entry) job = null;
+      });
+      job = entry;
+    }
+    await job.promise;
+    result = current?.key === key ? current : null;
+  }
+  if (!result) return;
+  await call('terms.contribute', { document, terms: await acronymTerms(result.meanings ?? []) });
+}
+
+/** Acronym meanings as terms, each with the box of the sentence that
+ * defines it - which is what keeps that sentence itself from previewing. */
+async function acronymTerms(meanings) {
+  const runsByPage = new Map();
+  const terms = [];
+  for (const def of meanings) {
+    if (!runsByPage.has(def.page)) {
+      let runs = [];
+      try {
+        runs = await call('document.pageRuns', { page: def.page });
+      } catch {
+        runs = [];
+      }
+      runsByPage.set(def.page, Array.isArray(runs) ? runs : []);
+    }
+    const boxes = locate(runsByPage.get(def.page), def.snippet);
+    terms.push({
+      text: def.key,
+      caseSensitive: true,
+      kind: 'acronym',
+      title: def.key,
+      body: def.long,
+      page: def.page,
+      ...(boxes.length > 0 ? { box: unionBox(boxes) } : {}),
+    });
+  }
+  return terms;
+}
+
+/** One box around several, in the same top-edge space. */
+function unionBox(boxes) {
+  const left = Math.min(...boxes.map((b) => b.x));
+  const right = Math.max(...boxes.map((b) => b.x + b.w));
+  const top = Math.max(...boxes.map((b) => b.y));
+  const bottom = Math.min(...boxes.map((b) => b.y - b.h));
+  return { x: round(left), y: round(top), w: round(right - left), h: round(top - bottom) };
 }
 
 /** The boxes, one per printed line, that a run of text occupies on a page. */
@@ -246,7 +329,7 @@ async function scan(info, scanned, entry) {
     texts.forEach((text, i) => extractor.addPage(pages[i], typeof text === 'string' ? text : ''));
 
     const read = pages[pages.length - 1] + 1;
-    if (read < scanned && read % PROGRESS_EVERY < BATCH) {
+    if (!entry.quiet && read < scanned && read % PROGRESS_EVERY < BATCH) {
       const partial = {
         name: info.name,
         pageCount: info.pageCount,
@@ -327,7 +410,8 @@ function usable(scan) {
     );
   return (
     fine(scan.symbols, (def) => typeof def.tex === 'string' && typeof def.phrase === 'string') &&
-    fine(scan.acronyms, (def) => typeof def.long === 'string' && Number.isInteger(def.uses))
+    fine(scan.acronyms, (def) => typeof def.long === 'string' && Number.isInteger(def.uses)) &&
+    fine(scan.meanings, (def) => typeof def.long === 'string')
   );
 }
 
@@ -476,6 +560,11 @@ const REPLACE = {
 
 const IS_SPACE = /\s/;
 const IS_LOWER = /\p{Ll}/u;
+/** Where a word was hyphenated across a line: kept as a soft hyphen until
+ * the whole document has been read, then either closed up ("fluctuation-dis-"
+ * / "sipation" is "dissipation") or turned back into the hyphen it was
+ * ("mean-" / "field" is "mean-field"). See `resolveBreaks`. */
+const BREAK = '\u00ad';
 
 /** Page text in the one spelling the patterns below are written against.
  *
@@ -497,11 +586,12 @@ function normalizePage(raw) {
       while (j < raw.length && IS_SPACE.test(raw[j])) j++;
       const prev = out[out.length - 1];
       const joinHyphen =
-        prev === '-' &&
+        (prev === '-' || prev === BREAK) &&
         IS_LOWER.test(out[out.length - 2] ?? '') &&
         IS_LOWER.test(raw[j] ?? '') &&
         // "x - y" is an operator, not a broken word.
         out[out.length - 2] !== ' ';
+      if (joinHyphen) out[out.length - 1] = BREAK;
       if (out.length > 0 && prev !== ' ' && !joinHyphen) {
         out.push(' ');
         map.push(i);
@@ -510,7 +600,9 @@ function normalizePage(raw) {
       continue;
     }
     let rep;
-    if (cp < 0x80) rep = ch;
+    // PDFium reports a hyphen it cannot map at a line end as U+0002.
+    if (cp === 2) rep = '-';
+    else if (cp < 0x80) rep = ch;
     else if (SUPERSCRIPTS[ch] !== undefined) rep = `^${SUPERSCRIPTS[ch]}`;
     else if (SUBSCRIPTS[ch] !== undefined) rep = `_${SUBSCRIPTS[ch]}`;
     else if (REPLACE[ch] !== undefined) rep = REPLACE[ch];
@@ -644,13 +736,10 @@ function longFormBefore(core, before) {
   const words = before.split(' ').filter(Boolean).slice(-maxWords);
   const candidate = words.join(' ');
 
-  const start = longFormStart(core, candidate);
-  if (start !== -1) {
-    const long = candidate.slice(start);
-    if (plausibleLongForm(core, long, maxWords)) return long;
-  }
-  // Initials, allowing one slip: "Markov chain Monte Carlo (MCMC)" passes
-  // either way; "carbon dioxide (CO2)" only this way.
+  // Initials first, allowing one slip: they read the whole long form, where
+  // the letter match below takes the shortest - "populous estimator" for
+  // "private populous estimator (PPE)". "Markov chain Monte Carlo (MCMC)"
+  // passes either way; "carbon dioxide (CO2)" only this way.
   for (let k = 1; k <= words.length; k++) {
     const tail = words.slice(-k);
     if (STOPWORDS.has(tail[0].toLowerCase())) continue;
@@ -658,6 +747,16 @@ function longFormBefore(core, before) {
       const long = tail.join(' ');
       if (plausibleLongForm(core, long, maxWords)) return long;
     }
+  }
+  const start = longFormStart(core, candidate);
+  if (start !== -1) {
+    const long = candidate.slice(start);
+    // Letters found inside words reach far for a short acronym: "RE" in
+    // "the resulting inequality yields". At most one word per letter, and
+    // one more, for those.
+    const content = long.split(' ').filter((w) => w && !STOPWORDS.has(w.toLowerCase()));
+    const loose = letters.length <= 3 && content.length > letters.length + 1;
+    if (!loose && plausibleLongForm(core, long, maxWords)) return long;
   }
   return null;
 }
@@ -712,6 +811,9 @@ function findAcronyms(norm, page) {
   const found = [];
 
   for (const match of text.matchAll(ACRONYM_AFTER)) {
+    // "long form (ACRO)" has a space before its parenthesis; "P(RE,j)" is a
+    // function of something.
+    if (match.index > 0 && text[match.index - 1] !== ' ') continue;
     const core = acronymCore(match[1]);
     if (!core) continue;
     const before = clauseBefore(text, match.index);
@@ -1495,18 +1597,44 @@ function withoutRepeats(defs) {
 
 /** Reads pages one at a time and keeps the first definition of each symbol
  * and acronym, with how often each acronym is used. */
+/** Close up or restore the line-break hyphens in `text` (`BREAK`), using
+ * the document's own words: a break closes up when the joined word occurs
+ * elsewhere unbroken, or when neither half is a word of its own - "dis" and
+ * "sipation" are not, so "fluctuation-dis-sipation" reads as
+ * "fluctuation-dissipation". Otherwise the hyphen was real: "mean-field". */
+function resolveBreaks(text, words) {
+  return text
+    .replace(/(\p{L}+)\u00ad(\p{L}+)/gu, (_, a, b) => {
+      const joined = `${a}${b}`.toLowerCase();
+      const neither = !words.has(a.toLowerCase()) && !words.has(b.toLowerCase());
+      return words.has(joined) || neither ? `${a}${b}` : `${a}-${b}`;
+    })
+    .replace(/\u00ad/g, '-');
+}
+
 function createExtractor() {
   const symbols = new Map();
   const acronyms = new Map();
+  /** Every word the document uses unbroken, for `resolveBreaks`. */
+  const words = new Set();
+  /** Every distinct meaning of every acronym, first definition of each:
+   * what hover previews are made of, where a paper that uses "PS" for two
+   * things needs both. */
+  const meanings = new Map();
   const counts = new Map();
   return {
     addPage(page, raw) {
       const norm = normalizePage(raw);
       for (const def of findAcronyms(norm, page)) {
         if (!acronyms.has(def.key)) acronyms.set(def.key, def);
+        const meaning = `${def.key}\u0000${def.long.toLowerCase()}`;
+        if (!meanings.has(meaning)) meanings.set(meaning, def);
       }
       for (const def of findSymbols(norm, page)) {
         if (!symbols.has(def.key)) symbols.set(def.key, def);
+      }
+      for (const word of norm.text.match(/[\p{L}\u00ad]+/gu) ?? []) {
+        if (word.length >= 2 && !word.includes(BREAK)) words.add(word.toLowerCase());
       }
       for (const token of norm.text.match(/[A-Za-z0-9]+/g) ?? []) {
         if (token.length > 11 || !/[A-Z].*[A-Z]/.test(token)) continue;
@@ -1514,7 +1642,11 @@ function createExtractor() {
       }
     },
     result() {
-      const strip = ({ index: _index, ...def }) => def;
+      const strip = ({ index: _index, ...def }) => ({
+        ...def,
+        ...(typeof def.long === 'string' ? { long: resolveBreaks(def.long, words) } : {}),
+        ...(typeof def.phrase === 'string' ? { phrase: resolveBreaks(def.phrase, words) } : {}),
+      });
       return {
         symbols: withoutRepeats([...symbols.values()]).map(strip),
         acronyms: [...acronyms.values()]
@@ -1523,6 +1655,7 @@ function createExtractor() {
             uses: Math.max(0, (counts.get(def.key) ?? 0) + (counts.get(`${def.key}s`) ?? 0) - 1),
           }))
           .sort((a, b) => a.key.localeCompare(b.key)),
+        meanings: [...meanings.values()].map(strip),
       };
     },
   };
