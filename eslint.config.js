@@ -13,6 +13,7 @@ export default tseslint.config(
       'src-tauri/pdfium/**',
       'bench/**',
       'docs/**',
+      '.claude/**',
     ],
   },
   js.configs.recommended,

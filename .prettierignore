@@ -11,3 +11,4 @@ docs/superpowers/
 
 # Agent scratch (git-ignored via a nested .gitignore, which Prettier does not read)
 .superpowers/
+.claude/
