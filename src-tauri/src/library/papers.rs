@@ -1915,7 +1915,7 @@ impl PaperStore {
 
     /// `citation_graph` over a given node set, and its edges as node
     /// positions in `nodes` order.
-    fn graph_over(
+    pub(super) fn graph_over(
         &self,
         nodes: Vec<&PaperRecord>,
         entries: &[LibraryEntry],

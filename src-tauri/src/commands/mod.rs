@@ -8,6 +8,7 @@ use crate::errors::{AppError, AppResult};
 use std::path::PathBuf;
 
 pub mod citations;
+pub mod health;
 pub mod library;
 
 pub struct EngineState(pub EngineHandle);

@@ -37,7 +37,7 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Run `f` against the store on a blocking thread.
-async fn read_store<T: Send + 'static>(
+pub(super) async fn read_store<T: Send + 'static>(
     engine: EngineHandle,
     f: impl FnOnce(&PaperStore) -> AppResult<T> + Send + 'static,
 ) -> AppResult<T> {
@@ -52,7 +52,7 @@ async fn read_store<T: Send + 'static>(
 /// Run `f` against the store, save, then tell the windows. The store lock is
 /// released before the event goes out, since a window answers it by reading
 /// the store back.
-async fn write_store<T: Send + 'static>(
+pub(super) async fn write_store<T: Send + 'static>(
     engine: EngineHandle,
     f: impl FnOnce(&mut PaperStore) -> AppResult<T> + Send + 'static,
 ) -> AppResult<T> {
@@ -822,7 +822,7 @@ pub async fn library_citation_links(
 /// What citation resolution reads besides the store: the index entries,
 /// the active provider's reference lists, and the network's edges. The
 /// locks in turn, never nested.
-fn citation_inputs(
+pub(super) fn citation_inputs(
     engine: &EngineHandle,
 ) -> (
     Vec<crate::library::LibraryEntry>,
@@ -977,32 +977,53 @@ pub async fn library_duplicates(
     state: tauri::State<'_, EngineState>,
 ) -> AppResult<Vec<DuplicateGroupDto>> {
     let engine = state.0.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let arxiv_ids: Vec<String> = {
-            let store = engine.0.papers.lock();
-            store.arxiv_ids()
-        };
-        let preprint_dois: HashMap<String, String> = {
-            let cache = engine.0.lookup_cache.lock();
-            arxiv_ids
-                .into_iter()
-                .filter_map(|arxiv| {
-                    let doi = cache
-                        .get(&lookup::LookupCache::arxiv_key(&arxiv))?
-                        .doi
-                        .as_deref()
-                        .and_then(normalize_doi)?;
-                    Some((arxiv, doi))
-                })
-                .collect()
-        };
-        let (entries, refs, _) = citation_inputs(&engine);
+    tauri::async_runtime::spawn_blocking(move || Ok(duplicate_groups(&engine)))
+        .await
+        .map_err(|error| AppError::Internal(format!("library task failed: {error}")))?
+}
+
+/// The last groups and the library generation they were read at. Held
+/// while computing, so the duplicate line and the health list asking in
+/// the same refresh compute them once.
+static DUPLICATES: parking_lot::Mutex<Option<(u64, Vec<DuplicateGroupDto>)>> =
+    parking_lot::Mutex::new(None);
+
+/// The duplicate groups, computed once per library change
+/// (`library::health::generation`).
+pub(super) fn duplicate_groups(engine: &EngineHandle) -> Vec<DuplicateGroupDto> {
+    let mut cache = DUPLICATES.lock();
+    let generation = crate::library::health::generation();
+    if let Some((at, groups)) = cache.as_ref() {
+        if *at == generation {
+            return groups.clone();
+        }
+    }
+    let arxiv_ids: Vec<String> = {
+        let store = engine.0.papers.lock();
+        store.arxiv_ids()
+    };
+    let preprint_dois: HashMap<String, String> = {
+        let cache = engine.0.lookup_cache.lock();
+        arxiv_ids
+            .into_iter()
+            .filter_map(|arxiv| {
+                let doi = cache
+                    .get(&lookup::LookupCache::arxiv_key(&arxiv))?
+                    .doi
+                    .as_deref()
+                    .and_then(normalize_doi)?;
+                Some((arxiv, doi))
+            })
+            .collect()
+    };
+    let (entries, refs, _) = citation_inputs(engine);
+    let groups = {
         let store = engine.0.papers.lock();
         let versions = store.version_pairs(&entries, &refs);
-        Ok(store.duplicates_with_versions(&preprint_dois, &versions))
-    })
-    .await
-    .map_err(|error| AppError::Internal(format!("library task failed: {error}")))?
+        store.duplicates_with_versions(&preprint_dois, &versions)
+    };
+    *cache = Some((generation, groups.clone()));
+    groups
 }
 
 /// Merge `merge_ids` into `keep_id` (`PaperStore::merge_papers`).
