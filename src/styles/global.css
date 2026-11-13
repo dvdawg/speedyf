@@ -2843,23 +2843,6 @@ html.is-dragging-tab * {
   }
 }
 
-.sb-control {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--text-dim);
-  cursor: pointer;
-}
-
-.sb-control select {
-  background: var(--bg-inset);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  font: inherit;
-}
-
-.sb-button,
 .sb-clear {
   padding: 0;
   border: 0;
@@ -2869,7 +2852,6 @@ html.is-dragging-tab * {
   cursor: pointer;
 }
 
-.sb-button:hover,
 .sb-clear:hover {
   color: var(--text);
 }

@@ -26,6 +26,7 @@ const backups = [
     projects: 1,
   },
 ];
+const setLowMemory = vi.fn(async (_on: boolean) => {});
 const libraryBackups = vi.fn(async () => backups);
 const libraryRestoreBackup = vi.fn(async (_file: string) => {});
 const defaults = {
@@ -43,7 +44,7 @@ vi.mock('../../lib/transport/engine', () => ({
       librarySetLookup(...(args as [boolean, string, string])),
     libraryDataDir: vi.fn(async () => ({ dir: '/data', isDefault: true })),
     libraryMoveData: vi.fn(async () => ({ dir: '/data', isDefault: true })),
-    setLowMemory: vi.fn(async () => {}),
+    setLowMemory: (on: boolean) => setLowMemory(on),
     libraryBackups: () => libraryBackups(),
     libraryRestoreBackup: (file: string) => libraryRestoreBackup(file),
     libraryBibtexOptions: vi.fn(async () => ({ ...defaults })),
@@ -164,5 +165,26 @@ describe('SettingsPanel BibTeX options', () => {
         protectTitle: false,
       })
     );
+  });
+});
+
+// These used to sit in the status bar too; Settings is now their only control
+// besides the palette commands, so each one must still save and take effect.
+describe('SettingsPanel display settings', () => {
+  it('saves the theme, page inversion and low memory', () => {
+    updateSettings({ theme: 'system', invertPages: false, lowMemory: false });
+    render(() => <SettingsPanel />);
+
+    fireEvent.input(screen.getByLabelText(/Theme/), { target: { value: 'dark' } });
+    expect(settings.theme).toBe('dark');
+
+    fireEvent.input(screen.getByLabelText(/Invert page colors/), { target: { checked: true } });
+    expect(settings.invertPages).toBe(true);
+
+    fireEvent.input(screen.getByLabelText(/Low memory/), { target: { checked: true } });
+    expect(settings.lowMemory).toBe(true);
+    expect(setLowMemory).toHaveBeenCalledWith(true);
+
+    updateSettings({ theme: 'system', invertPages: false, lowMemory: false });
   });
 });

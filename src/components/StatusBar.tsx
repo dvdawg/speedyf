@@ -1,6 +1,5 @@
 import { createSignal, onCleanup, onMount, Show } from 'solid-js';
 import { activeTab } from '../stores/tabsStore';
-import { applyLowMemory, effectiveTheme, settings, updateSettings } from '../stores/settings';
 import { engine } from '../lib/transport/engine';
 import type { EngineMetrics, LookupActivity } from '../lib/transport/engine';
 import { libraryStore } from '../features/citations/libraryStore';
@@ -160,53 +159,6 @@ export default function StatusBar() {
             {Math.round((activeTab()?.viewport.state.zoom ?? 1) * 100)}%
           </span>
         </Show>
-        <label class="sb-control" title="Reduce cache memory budgets">
-          <input
-            type="checkbox"
-            checked={settings.lowMemory}
-            onInput={(e) => applyLowMemory(e.currentTarget.checked)}
-          />
-          low&nbsp;memory
-        </label>
-        <button
-          type="button"
-          class="sb-control sb-button"
-          title={
-            libraryStore.state.library.roots.join('\n') || 'Choose folders of local PDF papers'
-          }
-          onClick={() => void libraryStore.addLibraryFolder()}
-        >
-          Library...
-        </button>
-        <label
-          class="sb-control"
-          title={
-            effectiveTheme() === 'dark'
-              ? 'Render pages as dark paper with light ink'
-              : 'Renders pages as dark paper (takes effect under the dark theme)'
-          }
-        >
-          <input
-            type="checkbox"
-            checked={settings.invertPages}
-            onInput={(e) => updateSettings({ invertPages: e.currentTarget.checked })}
-          />
-          invert&nbsp;pages
-        </label>
-        <label class="sb-control" title="Color theme">
-          <span class="sr-only">Theme</span>
-          <select
-            value={settings.theme}
-            onInput={(e) =>
-              updateSettings({ theme: e.currentTarget.value as 'system' | 'light' | 'dark' })
-            }
-            aria-label={`Theme (currently ${effectiveTheme()})`}
-          >
-            <option value="system">System</option>
-            <option value="light">Light</option>
-            <option value="dark">Dark</option>
-          </select>
-        </label>
       </div>
     </footer>
   );
