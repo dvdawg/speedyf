@@ -6,6 +6,7 @@
  * into those bytes, so this is the output rather than an impression of it. */
 import { createEffect, createMemo, createSignal, For, Show } from 'solid-js';
 import { renderUrl } from '../../lib/rendering/renderSource';
+import { IconChevronLeft, IconChevronRight } from '../../components/icons';
 import { checkPageRange } from './pageRange';
 import { choiceLabel, optionLabel, SHOWN_OPTIONS } from './printLabels';
 import {
@@ -97,10 +98,10 @@ export default function PrintDialog() {
             onClick={() => step(-1)}
             disabled={shown() === 0}
           >
-            &lsaquo;
+            <IconChevronLeft />
           </button>
           <span>
-            <Show when={ready()} fallback="Preparing…">
+            <Show when={ready()} fallback="Preparing...">
               Page {shown() + 1} of {pageCount()}
             </Show>
           </span>
@@ -110,7 +111,7 @@ export default function PrintDialog() {
             onClick={() => step(1)}
             disabled={shown() >= pageCount() - 1}
           >
-            &rsaquo;
+            <IconChevronRight />
           </button>
         </div>
       </div>
@@ -130,7 +131,7 @@ export default function PrintDialog() {
             <For each={printState.printers}>
               {(p) => <option value={p.name}>{p.name.replaceAll('_', ' ')}</option>}
             </For>
-            <option value={SAVE_AS_PDF}>Save as PDF…</option>
+            <option value={SAVE_AS_PDF}>Save as PDF...</option>
           </select>
         </label>
 
@@ -228,8 +229,8 @@ export default function PrintDialog() {
             ref={(el) => queueMicrotask(() => el.isConnected && el.focus())}
             onClick={go}
           >
-            <Show when={!printState.submitting} fallback={toPdf() ? 'Saving…' : 'Printing…'}>
-              {toPdf() ? 'Save…' : 'Print'}
+            <Show when={!printState.submitting} fallback={toPdf() ? 'Saving...' : 'Printing...'}>
+              {toPdf() ? 'Save...' : 'Print'}
             </Show>
           </button>
         </div>

@@ -16,6 +16,9 @@ export default defineConfig({
     outDir: 'dist',
     sourcemap: false,
     chunkSizeWarningLimit: 900,
+    // The CSP allows fonts from 'self' only (no data: URIs), so KaTeX's small
+    // fonts must stay files instead of being inlined into its stylesheet.
+    assetsInlineLimit: (file) => (/\.(woff2?|ttf|otf)$/.test(file) ? false : undefined),
   },
   test: {
     // Node by default: almost every test here is over pure logic, and a DOM

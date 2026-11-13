@@ -41,7 +41,8 @@ vi.mock('../features/document/tabsController', () => ({
   openFromDialog: vi.fn(),
 }));
 
-const { COMMANDS, COMMAND_GROUPS, commandById, runCommand } = await import('./commands');
+const { COMMANDS, COMMAND_GROUPS, commandById, formatShortcut, runCommand } =
+  await import('./commands');
 const { settings, updateSettings } = await import('../stores/settings');
 const { ui, setUi } = await import('../stores/uiStore');
 const { addTab, createTab, removeTab, tabsStore } = await import('../stores/tabsStore');
@@ -429,5 +430,26 @@ describe('library commands', () => {
     runCommand('library.switchLaunchScreen', empty);
     expect(settings.launchScreen).toBe('home');
     expect(goHome).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('formatShortcut', () => {
+  it('spells shortcuts as words joined by +, on every platform', () => {
+    expect(formatShortcut('mod+shift+c', true)).toBe('Cmd+Shift+C');
+    expect(formatShortcut('mod+shift+c', false)).toBe('Ctrl+Shift+C');
+    expect(formatShortcut('alt+backspace', true)).toBe('Option+Backspace');
+    expect(formatShortcut('alt+backspace', false)).toBe('Alt+Backspace');
+    expect(formatShortcut('mod+plus', true)).toBe('Cmd+Plus');
+    expect(formatShortcut('mod+minus', false)).toBe('Ctrl+Minus');
+    expect(formatShortcut('ctrl+tab', true)).toBe('Ctrl+Tab');
+  });
+
+  it('renders every command shortcut in plain ASCII', () => {
+    for (const command of COMMANDS) {
+      if (!command.shortcut) continue;
+      for (const mac of [true, false]) {
+        expect(formatShortcut(command.shortcut, mac)).toMatch(/^[\x21-\x7e]+$/);
+      }
+    }
   });
 });

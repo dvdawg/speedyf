@@ -39,7 +39,7 @@ export default function FormPanel() {
           <IconClose />
         </IconButton>
       </div>
-      <Show when={!fields.loading} fallback={<div class="panel-note">Reading form fields…</div>}>
+      <Show when={!fields.loading} fallback={<div class="panel-note">Reading form fields...</div>}>
         <Show
           when={(fields() ?? []).length > 0}
           fallback={<div class="panel-note">This document has no AcroForm fields.</div>}
@@ -59,7 +59,7 @@ export default function FormPanel() {
                         <span class="form-ro">
                           {f.kind === 'checkbox' || f.kind === 'radio'
                             ? buttonState(f)
-                            : f.value || '—'}
+                            : f.value || '-'}
                         </span>
                       }
                     >

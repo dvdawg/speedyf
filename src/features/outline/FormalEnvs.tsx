@@ -25,7 +25,7 @@ export default function FormalEnvs() {
     <div class="sidebar-scroll outline-panel" aria-label="Formal environments">
       <Show
         when={structure.formalLoaded}
-        fallback={<div class="panel-note">Reading environments…</div>}
+        fallback={<div class="panel-note">Reading environments...</div>}
       >
         <Show
           when={structure.formal.length > 0}

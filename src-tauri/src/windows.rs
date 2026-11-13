@@ -586,7 +586,7 @@ fn disambiguate(entries: &mut [(String, Option<&str>)]) {
             .and_then(|p| Path::new(p).parent())
             .and_then(|p| p.file_name())
         {
-            Some(folder) => *title = format!("{title} — {}", folder.to_string_lossy()),
+            Some(folder) => *title = format!("{title} ({})", folder.to_string_lossy()),
             None => *title = format!("{title} {}", *index + 1),
         }
     }
@@ -699,8 +699,8 @@ mod tests {
             ("solo.pdf".to_string(), Some("/papers/solo.pdf")),
         ];
         disambiguate(&mut entries);
-        assert_eq!(entries[0].0, "main.pdf — elsevier");
-        assert_eq!(entries[1].0, "main.pdf — springer");
+        assert_eq!(entries[0].0, "main.pdf (elsevier)");
+        assert_eq!(entries[1].0, "main.pdf (springer)");
         assert_eq!(entries[2].0, "solo.pdf");
     }
 

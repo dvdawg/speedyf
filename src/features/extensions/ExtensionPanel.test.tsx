@@ -78,7 +78,7 @@ describe('ExtensionPanelView', () => {
 
   it('shows a loading note until the extension answers', () => {
     const { getByText } = render(() => <ExtensionPanelView panel={panel} />);
-    expect(getByText('Loading…')).toBeTruthy();
+    expect(getByText('Loading...')).toBeTruthy();
   });
 
   it('draws rows the extension described', () => {

@@ -482,7 +482,7 @@ export default function PageThumbnails() {
                             <IconChevronDown />
                           </IconButton>
                           <IconButton
-                            label={`Rotate page ${i + 1} 90°`}
+                            label={`Rotate page ${i + 1} 90 degrees`}
                             onClick={() =>
                               documentStore.apply({
                                 type: 'rotate',

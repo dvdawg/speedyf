@@ -82,7 +82,7 @@ export default function TabMenu(props: { target: TabMenuTarget; onClose: () => v
     ];
     for (const win of windows()) {
       list.push({
-        label: `Move to “${win.title}”`,
+        label: `Move to "${win.title}"`,
         enabled: canMove,
         run: () => void moveTabToWindow(id, win.label),
       });

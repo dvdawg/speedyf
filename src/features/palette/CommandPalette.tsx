@@ -308,7 +308,7 @@ export default function CommandPalette() {
             aria-expanded={rows().length > 0}
             aria-controls="palette-list"
             aria-activedescendant={rows().length > 0 ? `palette-row-${cursor()}` : undefined}
-            placeholder="Search commands, tabs, pages…"
+            placeholder="Search commands, tabs, pages..."
             spellcheck={false}
             autocomplete="off"
             value={query()}
@@ -367,10 +367,10 @@ export default function CommandPalette() {
           </div>
           <div class="palette-foot" aria-hidden="true">
             <span>
-              <b>↑↓</b> navigate
+              <b>Up/Down</b> navigate
             </span>
             <span>
-              <b>↵</b> run
+              <b>Enter</b> run
             </span>
             <span>
               <b>esc</b> close

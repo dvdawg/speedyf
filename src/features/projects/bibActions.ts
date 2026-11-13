@@ -24,12 +24,12 @@ async function chooseBibPath(project: Project, title: string): Promise<string | 
 }
 
 export async function exportBib(project: Project): Promise<void> {
-  const path = await chooseBibPath(project, `Export “${project.name}” as BibTeX`);
+  const path = await chooseBibPath(project, `Export "${project.name}" as BibTeX`);
   if (path) await projectsStore.exportBib(project.id, path);
 }
 
 export async function syncBib(project: Project): Promise<void> {
-  const path = await chooseBibPath(project, `Keep a .bib for “${project.name}”`);
+  const path = await chooseBibPath(project, `Keep a .bib for "${project.name}"`);
   if (path) await projectsStore.setProjectBib(project.id, path);
 }
 

@@ -11,6 +11,7 @@ import { engine } from '../../lib/transport/engine';
 import { settings } from '../../stores/settings';
 import type { MissingWork } from '../../types/engine';
 import { projectsStore } from './projectsStore';
+import MathText from '../../components/MathText';
 
 /** The ghost node's id in the graph: never a record id. */
 export const ghostId = (key: string) => `missing:${key}`;
@@ -27,12 +28,12 @@ export function referenceText(work: MissingWork): string {
     work.arxiv ? `arXiv ${work.arxiv}` : null,
     work.year !== null ? String(work.year) : null,
   ].filter((p): p is string => p !== null);
-  return parts.length > 0 ? parts.join(' · ') : 'A reference with no text';
+  return parts.length > 0 ? parts.join(', ') : 'A reference with no text';
 }
 
-/** "Missing · cited by 3": the ghost's label, shown only on hover or
+/** "Missing, cited by 3": the ghost's label, shown only on hover or
  * selection so a graph with many ghosts stays calm. */
-export const ghostLabel = (work: MissingWork) => `Missing · cited by ${work.citedBy.length}`;
+export const ghostLabel = (work: MissingWork) => `Missing, cited by ${work.citedBy.length}`;
 
 /** The citers by the graph's labels ("ZD24a"), falling back to the list's. */
 export function citerLabel(id: string): string {
@@ -51,7 +52,7 @@ export function missingMeta(work: MissingWork): string {
     `cited by ${work.citedBy.map(citerLabel).join(', ')}`,
   ]
     .filter((p): p is string => p !== null)
-    .join(' · ');
+    .join(', ');
 }
 
 async function copyText(text: string): Promise<boolean> {
@@ -127,7 +128,9 @@ export function MissingWorkPanel(props: { work: MissingWork }) {
   return (
     <section class="missing-panel" aria-label="Missing work">
       <span class="paper-field-label">Not in the library</span>
-      <p class="missing-panel-text">{referenceText(props.work)}</p>
+      <p class="missing-panel-text">
+        <MathText text={referenceText(props.work)} />
+      </p>
       <Show when={props.work.year !== null || props.work.doi || props.work.arxiv}>
         <dl class="missing-panel-ids">
           <Show when={props.work.year !== null}>
@@ -177,8 +180,9 @@ export function MissingList() {
     <div class="projects-col-scroll missing-list">
       <div class="missing-list-head">
         <span>
-          {works().length} {works().length === 1 ? 'work' : 'works'} cited by ≥{' '}
-          {store.state.missing.min}, not in the library
+          <MathText
+            text={`${works().length} ${works().length === 1 ? 'work' : 'works'} cited by $\\geq ${store.state.missing.min}$, not in the library`}
+          />
         </span>
         <button
           type="button"
@@ -210,7 +214,7 @@ export function MissingList() {
                 }}
               >
                 <span class="paper-row-main">
-                  <span class="missing-row-text">{referenceText(work)}</span>
+                  <MathText class="missing-row-text" text={referenceText(work)} />
                   <span class="paper-row-meta">{missingMeta(work)}</span>
                 </span>
               </div>

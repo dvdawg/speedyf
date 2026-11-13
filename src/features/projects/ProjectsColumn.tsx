@@ -84,10 +84,10 @@ function ProjectMenu(props: {
   let menu!: HTMLDivElement;
   const items = (): { label: string; run: () => void; danger?: boolean }[] => [
     { label: 'Rename', run: props.onRename },
-    { label: 'Export .bib…', run: () => void exportBib(props.project) },
+    { label: 'Export .bib...', run: () => void exportBib(props.project) },
     props.project.bibPath
       ? { label: 'Stop syncing .bib', run: () => void stopSyncingBib(props.project) }
-      : { label: 'Sync .bib…', run: () => void syncBib(props.project) },
+      : { label: 'Sync .bib...', run: () => void syncBib(props.project) },
     { label: 'Delete', run: props.onDelete, danger: true },
   ];
   const focusItem = (delta: number) => {
@@ -334,7 +334,7 @@ export default function ProjectsColumn(props: { onMoveFocus: (dir: -1 | 1) => vo
                 >
                   <div class="projects-confirm" role="group" aria-label={`Delete ${project.name}?`}>
                     <span class="projects-confirm-text">
-                      Delete “{project.name}”? Its items stay in the library.
+                      Delete "{project.name}"? Its items stay in the library.
                     </span>
                     <button
                       type="button"

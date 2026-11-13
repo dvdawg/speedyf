@@ -104,7 +104,7 @@ export default function NotesPanel() {
   const preview = (annot: Annotation) => {
     const quote = quotes[annot.id];
     if (!quote) return null;
-    return quote.length > PREVIEW_CHARS ? `${quote.slice(0, PREVIEW_CHARS).trimEnd()}…` : quote;
+    return quote.length > PREVIEW_CHARS ? `${quote.slice(0, PREVIEW_CHARS).trimEnd()}...` : quote;
   };
 
   return (
@@ -139,7 +139,7 @@ export default function NotesPanel() {
               />
               <span class="note-body">
                 <span class="note-meta">
-                  {KIND_LABEL[row.annot.kind] ?? 'Annotation'} · p{row.page}
+                  {KIND_LABEL[row.annot.kind] ?? 'Annotation'}, p{row.page}
                 </span>
                 <Show when={preview(row.annot)}>
                   <span class="note-quote">{preview(row.annot)}</span>

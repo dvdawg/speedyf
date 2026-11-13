@@ -40,9 +40,9 @@ function entryToMarkdown(entry: ExportEntry): string | null {
     // Blockquote every line, so a multi-line quote stays one quote.
     for (const line of quoted.split('\n')) lines.push(`> ${line}`);
     lines.push(`>`);
-    lines.push(`> — p${entry.page}`);
+    lines.push(`> (p${entry.page})`);
   } else {
-    lines.push(`**${KIND_LABEL[entry.annot.kind] ?? 'Annotation'}** — p${entry.page}`);
+    lines.push(`**${KIND_LABEL[entry.annot.kind] ?? 'Annotation'}** (p${entry.page})`);
   }
   if (own) {
     if (quoted) lines.push('');

@@ -64,7 +64,7 @@ export default function HomeScreen() {
           class="primary-btn home-rail-action"
           onClick={() => void openFromDialog()}
         >
-          <IconOpen /> Open PDF…
+          <IconOpen /> Open PDF...
         </button>
         <nav class="home-nav" aria-label="Home sections">
           <For each={SECTIONS}>

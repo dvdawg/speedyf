@@ -23,6 +23,7 @@ import type {
   PaperKind,
   ResolvedCitation,
 } from '../../types/engine';
+import MathText from '../../components/MathText';
 import { DuplicateLine, MergedLine } from './MergeConfirm';
 import { MissingWorkPanel } from './MissingWorks';
 import { openPaper } from './openPaper';
@@ -71,11 +72,11 @@ function focusLater(el: HTMLElement) {
   });
 }
 
-/** "Given Family · 1999 · Venue", for a candidate's one-line summary. */
+/** "Given Family, 1999, Venue", for a candidate's one-line summary. */
 function candidateMeta(candidate: LookupCandidate): string {
   return [authorsLine(candidate.authors), candidate.year, candidate.venue]
     .filter((part) => part !== null && part !== '')
-    .join(' · ');
+    .join(', ');
 }
 
 function SourceTag(props: { source: MetaSource | null | undefined }) {
@@ -102,6 +103,8 @@ function EditableField(props: {
   /** Shown folded until asked for; the abstract. */
   collapsible?: boolean;
   mono?: boolean;
+  /** Typeset `$...$` math in the shown value; the editor keeps the source. */
+  math?: boolean;
   onSave: (text: string) => Promise<string | null>;
 }) {
   const id = createUniqueId();
@@ -180,7 +183,11 @@ function EditableField(props: {
                 aria-labelledby={id}
                 onClick={begin}
               >
-                {props.display || 'Add'}
+                <Show when={props.display} fallback="Add">
+                  <Show when={props.math} fallback={props.display}>
+                    <MathText text={props.display} />
+                  </Show>
+                </Show>
               </button>
             </Show>
           }
@@ -350,7 +357,7 @@ function Verdict(props: { paper: Paper }) {
         <button
           type="button"
           class="paper-verdict-link"
-          title="Clear your mark and go back to the scan’s verdict"
+          title="Clear your mark and go back to the scan's verdict"
           onClick={() => set(null)}
         >
           Let the scan decide
@@ -375,6 +382,7 @@ function Fields(props: { paper: Paper }) {
         label="Title"
         display={text('title')}
         text={text('title')}
+        math
         source={props.paper.meta.title?.source}
         onSave={(v) => save(textPatch('title', v.trim() || null))}
       />
@@ -425,7 +433,7 @@ function Fields(props: { paper: Paper }) {
               void save({ kind: value ? (value as PaperKind) : null });
             }}
           >
-            <option value="">—</option>
+            <option value="">-</option>
             <For each={KINDS}>{(kind) => <option value={kind}>{kind}</option>}</For>
           </select>
           <SourceTag source={props.paper.meta.kind?.source} />
@@ -435,6 +443,7 @@ function Fields(props: { paper: Paper }) {
         label="Abstract"
         display={props.paper.meta.abstract?.value ?? ''}
         text={props.paper.meta.abstract?.value ?? ''}
+        math
         source={props.paper.meta.abstract?.source}
         multiline
         collapsible
@@ -589,7 +598,7 @@ export default function PaperDetail(props: { onMoveFocus: (dir: -1 | 1) => void 
       bibCache = { id: p.id, updatedAt: p.updatedAt, text: bib };
     }
     if (await copyText(bib)) flash('bibtex');
-    else setNotice({ text: 'Could not write to the clipboard — press Copy again', error: true });
+    else setNotice({ text: 'Could not write to the clipboard; press Copy again', error: true });
   };
 
   const lookup = async (p: Paper, mode: LookupMode) => {
@@ -672,7 +681,7 @@ export default function PaperDetail(props: { onMoveFocus: (dir: -1 | 1) => void 
                 <For each={p().candidates}>
                   {(candidate) => (
                     <div class="paper-parked-item">
-                      <span class="paper-candidate-title">{candidate.title}</span>
+                      <MathText class="paper-candidate-title" text={candidate.title} />
                       <Show when={candidateMeta(candidate)}>
                         <span class="paper-candidate-meta">{candidateMeta(candidate)}</span>
                       </Show>
@@ -821,7 +830,7 @@ export default function PaperDetail(props: { onMoveFocus: (dir: -1 | 1) => void 
                         disabled={busy()}
                         onClick={() => void apply(p(), candidate)}
                       >
-                        <span class="paper-candidate-title">{candidate.title}</span>
+                        <MathText class="paper-candidate-title" text={candidate.title} />
                         <span class="paper-candidate-meta">{candidateMeta(candidate)}</span>
                         <span class="paper-field-source">{SOURCE_LABEL[candidate.source]}</span>
                       </button>

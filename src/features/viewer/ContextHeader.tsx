@@ -26,6 +26,7 @@ import { pageIndexAt } from '../../lib/coordinates/layout';
 import { TabContext } from '../../app/TabContext';
 import { jumpToAnchor } from '../outline/jumpToAnchor';
 import ScriptText from '../../components/ScriptText';
+import { IconChevronRight } from '../../components/icons';
 
 const EMPTY: StructureAnchors = { section: null, subsection: null, environment: null };
 
@@ -84,7 +85,7 @@ export default function ContextHeader() {
     const relative = home ? `~/${path.slice(home.length + 1)}` : path;
     const parts = relative.split('/');
     if (parts.length <= 3) return relative;
-    return [parts[0], '…', ...parts.slice(-2)].join('/');
+    return [parts[0], '...', ...parts.slice(-2)].join('/');
   });
 
   /** Takes accessors, not values. A non-keyed `<Show>` re-runs its callback
@@ -118,7 +119,7 @@ export default function ContextHeader() {
           </Show>
           <Show when={here().section && here().subsection}>
             <span class="context-sep" aria-hidden="true">
-              ›
+              <IconChevronRight />
             </span>
           </Show>
           <Show when={here().subsection}>{(subsection) => crumb(subsection, () => true)}</Show>

@@ -23,7 +23,7 @@ describe('annotationsToMarkdown', () => {
     const out = annotationsToMarkdown('Paper', [entry({ quoted: 'variance collapse', page: 4 })]);
     expect(out).toContain('# Paper');
     expect(out).toContain('> variance collapse');
-    expect(out).toContain('> — p4');
+    expect(out).toContain('> (p4)');
   });
 
   it('puts your own note below what you highlighted', () => {
@@ -45,7 +45,7 @@ describe('annotationsToMarkdown', () => {
     const out = annotationsToMarkdown('', [
       entry({ annot: annot({ kind: 'note', text: 'check this' }), page: 7 }),
     ]);
-    expect(out).toContain('**Note** — p7');
+    expect(out).toContain('**Note** (p7)');
     expect(out).toContain('check this');
   });
 

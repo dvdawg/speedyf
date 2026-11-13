@@ -55,7 +55,7 @@ export default function TabPreview(props: { tab: TabRecord; anchor: Anchor }) {
         role="tooltip"
         style={{ left: `${position().left}px`, top: `${position().top}px` }}
       >
-        <Show when={url()} fallback={<div class="tab-preview-empty">Opening…</div>}>
+        <Show when={url()} fallback={<div class="tab-preview-empty">Opening...</div>}>
           <img class="tab-preview-page" src={url()!} alt="" draggable={false} />
         </Show>
         <div class="tab-preview-meta">

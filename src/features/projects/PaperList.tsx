@@ -29,7 +29,7 @@ import {
   Show,
   Switch,
 } from 'solid-js';
-import { IconChevronDown, IconChevronRight, IconSearch } from '../../components/icons';
+import { IconChevronDown, IconChevronRight, IconClose, IconSearch } from '../../components/icons';
 import { libraryStore } from '../citations/libraryStore';
 import { settings } from '../../stores/settings';
 import type { LookupBatch, PaperRow, Project } from '../../types/engine';
@@ -44,6 +44,7 @@ import { metaLine } from './paperFields';
 import { beginPointerDrag } from './pointerDrag';
 import { projectsStore } from './projectsStore';
 import type { ProjectsView } from './projectsStore';
+import MathText from '../../components/MathText';
 
 /** The group every paper with no project falls into under All papers. Not a
  * project id, so `collapsed` can hold it beside the real ones. */
@@ -295,20 +296,20 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
   };
 
   const emptyText = () => {
-    if (store.state.loadingRows) return 'Loading…';
+    if (store.state.loadingRows) return 'Loading...';
     if (hasQuery()) return 'No items match';
     if (libraryStore.state.library.roots.length === 0) {
-      return 'No library folders yet — add one on the Home screen’s Library panel';
+      return 'No library folders yet. Add one on the Home screen, in the Library panel';
     }
     switch (store.state.scope.kind) {
       case 'project':
-        return 'This project is empty — drag items here or tick it in an item’s details';
+        return "This project is empty. Drag items here or tick it in an item's details";
       case 'unfiled':
         return 'Every item is in a project';
       case 'others':
-        return 'Nothing here — every PDF in the library folders is treated as an item';
+        return 'Nothing here: every PDF in the library folders is treated as an item';
       default:
-        return 'No items yet — the library scan fills this in';
+        return 'No items yet. The library scan fills this in';
     }
   };
   const offerAddFolder = () =>
@@ -390,7 +391,7 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
                     }
                     onClick={() => void lookUpAll()}
                   >
-                    {lookingUp() ? 'Looking up…' : 'Look up all'}
+                    {lookingUp() ? 'Looking up...' : 'Look up all'}
                   </button>
                 </>
               )}
@@ -399,10 +400,10 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
               {(p) => (
                 <>
                   <button type="button" class="secondary-btn" onClick={() => void exportBib(p())}>
-                    Export .bib…
+                    Export .bib...
                   </button>
                   <button type="button" class="secondary-btn" onClick={() => void syncBib(p())}>
-                    Sync .bib…
+                    Sync .bib...
                   </button>
                 </>
               )}
@@ -438,7 +439,7 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
               <IconSearch />
               <input
                 type="text"
-                placeholder="Search title, authors, year, key…"
+                placeholder="Search title, authors, year, key..."
                 aria-label="Search items"
                 value={store.state.query}
                 onInput={(e) => store.setQuery(e.currentTarget.value)}
@@ -460,7 +461,7 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
                   aria-label="Clear the search"
                   onClick={() => store.setQuery('')}
                 >
-                  ×
+                  <IconClose />
                 </button>
               </Show>
             </div>
@@ -516,7 +517,7 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
                     class="secondary-btn"
                     onClick={() => void libraryStore.addLibraryFolder()}
                   >
-                    Add folder…
+                    Add folder...
                   </button>
                 </Show>
               </div>
@@ -584,7 +585,7 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
                             onPointerDown={(e) => onRowPointerDown(row(), e)}
                           >
                             <span class="paper-row-main">
-                              <span class="paper-row-title">{row().title}</span>
+                              <MathText class="paper-row-title" text={row().title} />
                               <Show when={metaLine(row())}>
                                 <span class="paper-row-meta">{metaLine(row())}</span>
                               </Show>
@@ -634,7 +635,7 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
             >
               <IconSearch />
               <span>
-                Search the full text of {project()?.name ?? 'every item'} for “{store.state.query}”
+                Search the full text of {project()?.name ?? 'every item'} for "{store.state.query}"
               </span>
             </button>
           </Show>

@@ -30,6 +30,7 @@ import { chooseInbox } from './fileDrop';
 import { settings, updateSettings } from '../../stores/settings';
 import { goHome, openInNewTabOrFocus } from '../document/tabsController';
 import type { Author, CitationLinks, Paper, Paperness, PaperRow } from '../../types/engine';
+import MathText from '../../components/MathText';
 
 /** What the engine answers for a call the Rust side has not grown yet. The
  * citation graph is the one section that hides on it rather than reporting
@@ -313,7 +314,7 @@ export default function PaperPanel() {
   const title = (current: Paper) =>
     current.meta.title?.value.trim() || current.files[0]?.name || 'Untitled';
   const yearVenue = (current: Paper) =>
-    [current.meta.year?.value, current.meta.venue?.value].filter(Boolean).join(' · ');
+    [current.meta.year?.value, current.meta.venue?.value].filter(Boolean).join(', ');
   const hasIdentifier = (current: Paper) => current.doi !== null || current.arxiv !== null;
 
   const LinkList = (props: { heading: string; rows: PaperRow[] }) => (
@@ -328,9 +329,9 @@ export default function PaperPanel() {
             title={row.missing ? 'Every file of this item is missing' : undefined}
             onClick={() => void openRow(row)}
           >
-            <span class="paper-panel-link-title">{row.title}</span>
+            <MathText class="paper-panel-link-title" text={row.title} />
             <span class="paper-panel-link-meta">
-              {[row.authors, row.year].filter(Boolean).join(' · ')}
+              {[row.authors, row.year].filter(Boolean).join(', ')}
             </span>
           </button>
         )}
@@ -349,7 +350,7 @@ export default function PaperPanel() {
           fallback={
             <Show
               when={paper() !== undefined || error()}
-              fallback={<div class="panel-note">Looking this document up in your library…</div>}
+              fallback={<div class="panel-note">Looking this document up in your library...</div>}
             >
               <Show when={paper() === null}>
                 <Show
@@ -379,7 +380,7 @@ export default function PaperPanel() {
                     disabled={busy() === 'filing'}
                     onClick={() => void addToLibrary()}
                   >
-                    {busy() === 'filing' ? 'Copying…' : 'Add to library'}
+                    {busy() === 'filing' ? 'Copying...' : 'Add to library'}
                   </button>
                 </div>
               </Show>
@@ -389,7 +390,9 @@ export default function PaperPanel() {
           {(current) => (
             <>
               <div class="paper-panel-head">
-                <div class="paper-panel-title">{title(current())}</div>
+                <div class="paper-panel-title">
+                  <MathText text={title(current())} />
+                </div>
                 <Show when={authorsLine(current().meta.authors?.value ?? [])}>
                   <div class="paper-panel-authors">
                     {authorsLine(current().meta.authors?.value ?? [])}
@@ -436,7 +439,7 @@ export default function PaperPanel() {
                         disabled={busy() === 'marking'}
                         onClick={() => void markAsPaper(current())}
                       >
-                        {busy() === 'marking' ? 'Marking…' : 'Mark as item'}
+                        {busy() === 'marking' ? 'Marking...' : 'Mark as item'}
                       </button>
                     </div>
                     <Show when={error()}>
@@ -510,7 +513,7 @@ export default function PaperPanel() {
                       title={hasIdentifier(current()) ? undefined : 'Needs a DOI or an arXiv id'}
                       onClick={() => void lookUp(current())}
                     >
-                      {busy() === 'lookup' ? 'Looking up…' : 'Look up'}
+                      {busy() === 'lookup' ? 'Looking up...' : 'Look up'}
                     </button>
                   </Show>
                 </div>

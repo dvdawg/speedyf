@@ -123,7 +123,7 @@ describe('PaperDetail', () => {
     updateSettings({ onlineLookup: true });
     fireEvent.click(screen.getByRole('button', { name: 'Find by title' }));
     expect(engine.libraryLookup).toHaveBeenCalledWith('a', 'title');
-    const pick = await screen.findByText('Christopher Jarzynski · 1997 · Physical Review Letters');
+    const pick = await screen.findByText('Christopher Jarzynski, 1997, Physical Review Letters');
     expect(screen.getByText('OpenAlex')).toBeTruthy();
     fireEvent.click(pick);
     await waitFor(() => expect(engine.libraryApplyCandidate).toHaveBeenCalledWith('a', candidate));
@@ -227,8 +227,8 @@ describe('PaperDetail', () => {
     it('lists what a title search parked, with its source, and applies the pick', async () => {
       render(() => <PaperDetail onMoveFocus={() => {}} />);
       expect(await screen.findByText('Possible matches (2)')).toBeTruthy();
-      expect(screen.getByText('Gavin E. Crooks · 1999 · Physical Review E')).toBeTruthy();
-      expect(screen.getByText('G. Crooks · 2000')).toBeTruthy();
+      expect(screen.getByText('Gavin E. Crooks, 1999, Physical Review E')).toBeTruthy();
+      expect(screen.getByText('G. Crooks, 2000')).toBeTruthy();
       expect(screen.getByText('OpenAlex')).toBeTruthy();
       expect(screen.getByText('Semantic Scholar')).toBeTruthy();
 

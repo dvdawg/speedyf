@@ -7,7 +7,12 @@ import type { FormalEntry } from '../../types/engine';
 import { contextForMatch } from '../../lib/structure/context';
 import { pdfRectToCssRect } from '../../lib/coordinates/coords';
 import IconButton from '../../components/IconButton';
-import { IconChevronDown, IconChevronUp, IconClose } from '../../components/icons';
+import {
+  IconChevronDown,
+  IconChevronRight,
+  IconChevronUp,
+  IconClose,
+} from '../../components/icons';
 import { TabContext } from '../../app/TabContext';
 import ScriptText from '../../components/ScriptText';
 
@@ -85,7 +90,7 @@ export default function SearchPanel() {
           ref={inputEl}
           class="search-input"
           type="text"
-          placeholder="Search document…"
+          placeholder="Search document..."
           value={s.query}
           onInput={(e) => searchStore.setQuery(e.currentTarget.value)}
           onKeyDown={(e) => {
@@ -95,7 +100,7 @@ export default function SearchPanel() {
           aria-label="Search query"
         />
         <IconButton
-          label="Previous match (⇧Enter)"
+          label="Previous match (Shift+Enter)"
           disabled={s.flat.length === 0}
           onClick={() => step(-1)}
         >
@@ -127,7 +132,7 @@ export default function SearchPanel() {
         </label>
         <span class="search-count" aria-live="polite">
           <Show when={s.query.trim()} fallback={<span />}>
-            <Show when={s.flat.length > 0} fallback={s.running ? 'Searching…' : 'No matches'}>
+            <Show when={s.flat.length > 0} fallback={s.running ? 'Searching...' : 'No matches'}>
               {s.current + 1} / {s.flat.length}
             </Show>
           </Show>
@@ -136,7 +141,7 @@ export default function SearchPanel() {
 
       <Show when={!s.indexingDone && s.total > 0}>
         <div class="search-progress" role="status">
-          Indexing pages… {s.indexed}/{s.total} ({indexingPct()}%)
+          Indexing pages... {s.indexed}/{s.total} ({indexingPct()}%)
           <div class="progress-track" aria-hidden="true">
             <div class="progress-fill" style={{ width: `${indexingPct()}%` }} />
           </div>
@@ -144,7 +149,7 @@ export default function SearchPanel() {
       </Show>
       <Show when={s.truncated}>
         <div class="search-warning" role="status">
-          The text-index memory budget was reached — results cover the first {s.indexed} pages. Text
+          The text-index memory budget was reached: results cover the first {s.indexed} pages. Text
           selection and highlighting still work on every page.
         </div>
       </Show>
@@ -183,7 +188,11 @@ export default function SearchPanel() {
                               <ScriptText value={where().section!} />
                             </span>
                           </Show>
-                          <Show when={where().section && where().environment}> › </Show>
+                          <Show when={where().section && where().environment}>
+                            <span class="search-result-sep" aria-hidden="true">
+                              <IconChevronRight />
+                            </span>
+                          </Show>
                           <Show when={where().environment}>
                             <span class="search-result-env">
                               <ScriptText value={where().environment!} />

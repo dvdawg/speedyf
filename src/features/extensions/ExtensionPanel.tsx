@@ -62,7 +62,7 @@ export default function ExtensionPanelView(props: { panel: ExtensionPanel }) {
         </IconButton>
       </div>
 
-      <Show when={ui()} fallback={<div class="panel-note">Loading…</div>}>
+      <Show when={ui()} fallback={<div class="panel-note">Loading...</div>}>
         <Show when={ui()!.error}>
           <div class="ext-error" role="status">
             {ui()!.error}

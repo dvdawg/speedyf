@@ -75,6 +75,8 @@ import type { LabelBox, NodeBox, Point } from './graphLayout';
 import { clearPositions, loadPositions, savePositions } from './graphPositions';
 import { ghostId, ghostLabel, referenceText } from './MissingWorks';
 import { openPaper } from './openPaper';
+import { IconClose } from '../../components/icons';
+import MathText, { plainMath } from '../../components/MathText';
 import { DRAG_THRESHOLD } from './pointerDrag';
 import { MISSING_MAX, MISSING_MIN, projectsStore } from './projectsStore';
 
@@ -836,8 +838,8 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
     if (!store.state.missing.on) return null;
     const n = ghosts().length;
     return n === 0
-      ? `Nothing missing is cited by ≥ ${store.state.missing.min}`
-      : `${plural(n, 'missing work')} cited by ≥ ${store.state.missing.min}`;
+      ? `Nothing missing is cited by $\\geq ${store.state.missing.min}$`
+      : `${plural(n, 'missing work')} cited by $\\geq ${store.state.missing.min}$`;
   };
   const notes = createMemo(() =>
     [emptyNote(), externalNote(), unindexedNote(), missingNote()].filter(
@@ -1039,15 +1041,17 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
               title="Back to the whole graph (Escape)"
               onClick={() => store.leaveFocus()}
             >
-              ×
+              <IconClose />
             </button>
           </div>
         )}
       </Show>
       {/* Always one line, always there, so the canvas below never moves
           as notes come and go. The full text is in the tooltip. */}
-      <div class="graph-notes" title={notes().join('\n')}>
-        <span class="graph-note">{error() ? '' : notes().join(' · ')}</span>
+      <div class="graph-notes" title={plainMath(notes().join('\n'))}>
+        <span class="graph-note">
+          <MathText text={error() ? '' : notes().join('; ')} />
+        </span>
         <Show when={store.state.missing.on && ghosts().length > 0}>
           <button
             type="button"
@@ -1258,15 +1262,15 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
                 </For>
               </g>
             </g>
-            <Show when={yearCount() >= 2}>
-              <text class="graph-time-hint is-start" x={12} y={size().height - 12}>
-                ← older
-              </text>
-              <text class="graph-time-hint is-end" x={size().width - 12} y={size().height - 12}>
-                newer →
-              </text>
-            </Show>
           </svg>
+          <Show when={yearCount() >= 2}>
+            <div class="graph-time-hint is-start" aria-hidden="true">
+              <MathText text="$\leftarrow$ older" />
+            </div>
+            <div class="graph-time-hint is-end" aria-hidden="true">
+              <MathText text="newer $\rightarrow$" />
+            </div>
+          </Show>
           <Show when={focusId()}>
             <div class="graph-legend" aria-hidden="true">
               <span class="graph-legend-row">
@@ -1346,9 +1350,11 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
                   disabled={store.state.missing.min <= MISSING_MIN}
                   onClick={() => store.setMissingMin(store.state.missing.min - 1)}
                 >
-                  −
+                  -
                 </button>
-                <span class="graph-stepper-value">cited by ≥ {store.state.missing.min}</span>
+                <span class="graph-stepper-value">
+                  <MathText text={`cited by $\\geq ${store.state.missing.min}$`} />
+                </span>
                 <button
                   type="button"
                   aria-label="More citers"

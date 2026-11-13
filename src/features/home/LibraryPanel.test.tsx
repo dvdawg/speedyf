@@ -51,13 +51,13 @@ describe('LibraryPanel scope picker', () => {
     await libraryStore.refreshLibraryStatus();
     render(() => <LibraryPanel />);
     const picker = (await screen.findByLabelText('Search in')) as HTMLSelectElement;
-    fireEvent.input(screen.getByPlaceholderText('Search every paper…'), {
+    fireEvent.input(screen.getByPlaceholderText('Search every paper...'), {
       target: { value: 'entropy' },
     });
     fireEvent.change(picker, { target: { value: 'p2' } });
     expect(libraryStore.state.scope).toBe('p2');
     await waitFor(() => expect(engine.librarySearch).toHaveBeenCalledWith('entropy', false, 'p2'));
-    expect(screen.getByPlaceholderText('Search this project…')).toBeTruthy();
+    expect(screen.getByPlaceholderText('Search this project...')).toBeTruthy();
 
     fireEvent.change(picker, { target: { value: '' } });
     expect(libraryStore.state.scope).toBeNull();

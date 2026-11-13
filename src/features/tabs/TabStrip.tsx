@@ -253,11 +253,7 @@ export default function TabStrip() {
                 onLostPointerCapture={cancelDrag}
               >
                 <span class="tab-pill-name">{doc().name || 'Untitled'}</span>
-                {doc().dirty && (
-                  <span class="tab-pill-dirty" title="Unsaved changes">
-                    ●
-                  </span>
-                )}
+                {doc().dirty && <span class="tab-pill-dirty" title="Unsaved changes" />}
                 <button
                   type="button"
                   class="icon-btn tab-pill-close"
@@ -304,7 +300,7 @@ export default function TabStrip() {
               >
                 <span class="tab-pill-name">{tab().documentStore.state.name || 'Untitled'}</span>
                 <Show when={tab().documentStore.state.dirty}>
-                  <span class="tab-pill-dirty">●</span>
+                  <span class="tab-pill-dirty" />
                 </Show>
                 <span class="icon-btn tab-pill-close">
                   <IconClose />

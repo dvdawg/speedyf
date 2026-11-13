@@ -38,7 +38,7 @@ describe('subsequenceScore', () => {
 
   it('prefers the shorter title for the same prefix', () => {
     expect(subsequenceScore('Save', 'save')!).toBeGreaterThan(
-      subsequenceScore('Save As…', 'save')!
+      subsequenceScore('Save As...', 'save')!
     );
   });
 
@@ -80,7 +80,7 @@ describe('usageBoost', () => {
 describe('rankCandidates', () => {
   const base = [
     candidate({ title: 'Save' }),
-    candidate({ title: 'Save As…' }),
+    candidate({ title: 'Save As...' }),
     candidate({ title: 'Insert Blank Page', group: 'Page' }),
   ];
 
@@ -197,10 +197,10 @@ describe('pageJumpTarget', () => {
  */
 describe('ranking over the real command titles', () => {
   const TITLES = [
-    'Open PDF…',
+    'Open PDF...',
     'Save',
-    'Save As…',
-    'Print…',
+    'Save As...',
+    'Print...',
     'Close Tab',
     'Undo',
     'Redo',
@@ -223,7 +223,7 @@ describe('ranking over the real command titles', () => {
     'Toggle Sidebar',
     'Table of Contents',
     'Notes & Annotations',
-    'Find in Document…',
+    'Find in Document...',
     'Next Page',
     'Next Tab',
     'Previous Tab',

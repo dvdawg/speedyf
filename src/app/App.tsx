@@ -57,7 +57,7 @@ export default function App() {
   // window title reflects the active tab's document + dirty state
   createEffect(() => {
     const doc = activeTab()?.documentStore.state;
-    const title = doc?.loaded ? `${doc.dirty ? '• ' : ''}${doc.name} — SpeedyF` : 'SpeedyF';
+    const title = doc?.loaded ? `${doc.dirty ? '* ' : ''}${doc.name} - SpeedyF` : 'SpeedyF';
     void getCurrentWindow()
       .setTitle(title)
       .catch(() => undefined);
@@ -265,7 +265,7 @@ export default function App() {
       </div>
       <Show when={windowTransferPending()}>
         <div class="window-transfer-overlay" role="status">
-          Moving tab to another window…
+          Moving tab to another window...
         </div>
       </Show>
     </>

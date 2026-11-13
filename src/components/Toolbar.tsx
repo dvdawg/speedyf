@@ -1,5 +1,6 @@
 import { createSignal, Show } from 'solid-js';
 import IconButton from './IconButton';
+import { formatShortcut } from '../app/shortcutLabel';
 import {
   IconBack,
   IconChevronDown,
@@ -80,11 +81,14 @@ export default function Toolbar() {
       </div>
 
       <div class="tb-group">
-        <IconButton label="Open PDF (⌘O)" onClick={() => void openFromDialog()}>
+        <IconButton
+          label={`Open PDF (${formatShortcut('mod+o')})`}
+          onClick={() => void openFromDialog()}
+        >
           <IconOpen />
         </IconButton>
         <IconButton
-          label="Save (⌘S)"
+          label={`Save (${formatShortcut('mod+s')})`}
           disabled={!loaded() || !doc()?.dirty || doc()?.saving || !saveSupported()}
           onClick={() => {
             const tab = activeTab();
@@ -94,7 +98,7 @@ export default function Toolbar() {
           <IconSave />
         </IconButton>
         <IconButton
-          label="Save As… (⇧⌘S)"
+          label={`Save As... (${formatShortcut('mod+shift+s')})`}
           disabled={!loaded() || doc()?.saving || !saveSupported()}
           onClick={() => {
             const tab = activeTab();
@@ -104,7 +108,7 @@ export default function Toolbar() {
           <IconSaveAs />
         </IconButton>
         <IconButton
-          label="Print (⌘P)"
+          label={`Print (${formatShortcut('mod+p')})`}
           disabled={!loaded()}
           onClick={() => {
             const tab = activeTab();
@@ -117,14 +121,14 @@ export default function Toolbar() {
 
       <div class="tb-group">
         <IconButton
-          label="Undo (⌘Z)"
+          label={`Undo (${formatShortcut('mod+z')})`}
           disabled={(doc()?.historyDepth ?? 0) === 0}
           onClick={() => activeTab()?.documentStore.undo()}
         >
           <IconUndo />
         </IconButton>
         <IconButton
-          label="Redo (⇧⌘Z)"
+          label={`Redo (${formatShortcut('mod+shift+z')})`}
           disabled={(doc()?.redoDepth ?? 0) === 0}
           onClick={() => activeTab()?.documentStore.redo()}
         >
@@ -169,7 +173,7 @@ export default function Toolbar() {
             disabled={!loaded()}
             value={
               pageInput() ??
-              (loaded() ? String((activeTab()?.viewport.state.currentPage ?? 0) + 1) : '–')
+              (loaded() ? String((activeTab()?.viewport.state.currentPage ?? 0) + 1) : '-')
             }
             onFocus={(e) => {
               setPageInput(e.currentTarget.value);
@@ -188,13 +192,13 @@ export default function Toolbar() {
           />
         </label>
         <span class="tb-total" aria-label="Total pages">
-          / {loaded() ? pageCount() : '–'}
+          / {loaded() ? pageCount() : '-'}
         </span>
       </div>
 
       <div class="tb-group">
         <IconButton
-          label="Zoom out (⌘−)"
+          label={`Zoom out (${formatShortcut('mod+minus')})`}
           disabled={!loaded()}
           onClick={() => activeTab()?.zoom.zoomStep(-1)}
         >
@@ -221,7 +225,7 @@ export default function Toolbar() {
           aria-label="Zoom percentage"
         />
         <IconButton
-          label="Zoom in (⌘+)"
+          label={`Zoom in (${formatShortcut('mod+plus')})`}
           disabled={!loaded()}
           onClick={() => activeTab()?.zoom.zoomStep(1)}
         >
@@ -244,7 +248,7 @@ export default function Toolbar() {
           <IconFitWidth />
         </IconButton>
         <IconButton
-          label="Rotate view 90°"
+          label="Rotate view 90 degrees"
           disabled={!loaded()}
           onClick={() => {
             const tab = activeTab();
@@ -390,7 +394,7 @@ export default function Toolbar() {
           <IconEdit />
         </IconButton>
         <IconButton
-          label="Search (⌘F)"
+          label={`Search (${formatShortcut('mod+f')})`}
           disabled={!loaded()}
           active={activeTab()?.viewport.state.searchOpen ?? false}
           onClick={() => {

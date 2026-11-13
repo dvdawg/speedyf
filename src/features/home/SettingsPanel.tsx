@@ -178,7 +178,7 @@ export default function SettingsPanel() {
                 class="secondary-btn"
                 onClick={() => void chooseInbox()}
               >
-                Choose…
+                Choose...
               </button>
               <Show when={settings.libraryInbox}>
                 <button
@@ -251,7 +251,7 @@ export default function SettingsPanel() {
           <label class="home-setting-text" for="setting-data-move">
             <span class="home-setting-title">Library data folder</span>
             <span class="home-setting-desc">
-              Where library.json — your projects, memberships and edits — is kept. Choose a synced
+              Where library.json (your projects, memberships and edits) is kept. Choose a synced
               folder to share it between machines. A folder that already holds a library.json is
               adopted as it is, and a sync conflict is not merged: the copy that arrives last wins.
             </span>
@@ -260,7 +260,7 @@ export default function SettingsPanel() {
             <Show
               when={dataDir()}
               fallback={
-                <span class="library-setting-path">{dataError() ? 'unknown' : 'reading…'}</span>
+                <span class="library-setting-path">{dataError() ? 'unknown' : 'reading...'}</span>
               }
             >
               {(info) => (
@@ -277,7 +277,7 @@ export default function SettingsPanel() {
                 class="secondary-btn"
                 onClick={() => void moveData()}
               >
-                Move…
+                Move...
               </button>
             </div>
             <Show when={dataError()}>

@@ -75,45 +75,7 @@ export interface Command {
   disabledReason?: string;
 }
 
-const IS_MAC = typeof navigator !== 'undefined' && /mac/i.test(navigator.userAgent);
-
-const MAC_PARTS: Record<string, string> = {
-  mod: '⌘',
-  ctrl: '⌃',
-  shift: '⇧',
-  alt: '⌥',
-  plus: '+',
-  minus: '−',
-  backspace: '⌫',
-  pagedown: 'PgDn',
-  pageup: 'PgUp',
-  tab: 'Tab',
-};
-
-const PC_PARTS: Record<string, string> = {
-  mod: 'Ctrl',
-  ctrl: 'Ctrl',
-  shift: 'Shift',
-  alt: 'Alt',
-  plus: '+',
-  minus: '−',
-  backspace: 'Backspace',
-  pagedown: 'PgDn',
-  pageup: 'PgUp',
-  tab: 'Tab',
-};
-
-/** Render a neutral shortcut spec for the current platform.
- *
- * macOS stacks the glyphs (`⌘⇧S`); everywhere else the convention is a joined
- * word form (`Ctrl+Shift+S`). Storing the spec neutrally is what keeps a
- * Windows build from advertising a ⌘ that does not exist on the keyboard.
- */
-export function formatShortcut(spec: string, isMac: boolean = IS_MAC): string {
-  const table = isMac ? MAC_PARTS : PC_PARTS;
-  const parts = spec.split('+').map((part) => table[part] ?? part.toUpperCase());
-  return isMac ? parts.join('') : parts.join('+');
-}
+export { formatShortcut } from './shortcutLabel';
 
 /** What to tell someone about a command they cannot run right now.
  *
@@ -270,7 +232,7 @@ export const COMMANDS: readonly Command[] = [
   // ---- File ----------------------------------------------------------
   {
     id: 'file.open',
-    title: 'Open PDF…',
+    title: 'Open PDF...',
     group: 'File',
     shortcut: 'mod+o',
     enabled: () => true,
@@ -288,7 +250,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     id: 'file.saveAs',
-    title: 'Save As…',
+    title: 'Save As...',
     group: 'File',
     shortcut: 'mod+shift+s',
     enabled: loaded,
@@ -298,7 +260,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     id: 'file.print',
-    title: 'Print…',
+    title: 'Print...',
     group: 'File',
     shortcut: 'mod+p',
     enabled: loaded,
@@ -621,7 +583,7 @@ export const COMMANDS: readonly Command[] = [
   // ---- Search --------------------------------------------------------
   {
     id: 'search.findInDocument',
-    title: 'Find in Document…',
+    title: 'Find in Document...',
     group: 'Search',
     shortcut: 'mod+f',
     keywords: ['search'],
@@ -630,7 +592,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     id: 'search.library',
-    title: 'Search Library…',
+    title: 'Search Library...',
     group: 'Search',
     // The library lives on the home screen; this is the route to it rather
     // than a second copy of that panel.

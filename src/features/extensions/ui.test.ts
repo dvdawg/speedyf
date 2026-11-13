@@ -94,8 +94,8 @@ describe('parseUi bounds what an extension can put on screen', () => {
   it('truncates over-long text rather than dropping the row', () => {
     const ui = parseUi({ rows: [{ title: 'x'.repeat(MAX_TEXT + 500) }] });
     const title = ui.sections[0]!.rows[0]!.title;
-    expect(title.length).toBeLessThanOrEqual(MAX_TEXT + 1);
-    expect(title.endsWith('…')).toBe(true);
+    expect(title.length).toBeLessThanOrEqual(MAX_TEXT + 3);
+    expect(title.endsWith('...')).toBe(true);
   });
 });
 

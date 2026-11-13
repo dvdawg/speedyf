@@ -210,7 +210,7 @@ describe('PaperPanel', () => {
       await screen.findByText('Nonequilibrium Equality for Free Energy Differences')
     ).toBeTruthy();
     expect(screen.getByText('Jarzynski')).toBeTruthy();
-    expect(screen.getByText('1997 · Physical Review Letters')).toBeTruthy();
+    expect(screen.getByText('1997, Physical Review Letters')).toBeTruthy();
     expect(screen.getByText('jarzynski1997nonequilibrium')).toBeTruthy();
 
     const noneq = (await screen.findByLabelText('Noneq')) as HTMLInputElement;
@@ -476,7 +476,7 @@ describe('PaperPanel', () => {
       expect(await screen.findByText('In your library')).toBeTruthy();
       expect(screen.getByText('Cited by')).toBeTruthy();
       expect(screen.queryByText('Cites')).toBeNull();
-      expect(screen.getByText('Crooks · 1999')).toBeTruthy();
+      expect(screen.getByText('Crooks, 1999')).toBeTruthy();
       expect(screen.getByText(/2 cited identifiers are not in your library/)).toBeTruthy();
 
       fireEvent.click(screen.getByText('Entropy Production Fluctuation Theorem'));

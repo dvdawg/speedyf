@@ -882,7 +882,7 @@ fn refuse_builtin_collision(
     if is_builtin(app, &entry.id) {
         let _ = extensions::uninstall(root, &entry.id);
         return Err(AppError::Malformed(format!(
-            "\"{}\" ships with SpeedyF — disable the built-in rather than installing over it",
+            "\"{}\" ships with SpeedyF; disable the built-in rather than installing over it",
             entry.id
         )));
     }
@@ -922,7 +922,7 @@ pub async fn uninstall_extension(app: tauri::AppHandle, id: String) -> AppResult
     // if it were writable, removing them would only last until the next update.
     if is_builtin(&app, &id) {
         return Err(AppError::Malformed(format!(
-            "\"{id}\" ships with SpeedyF and cannot be removed — disable it instead"
+            "\"{id}\" ships with SpeedyF and cannot be removed; disable it instead"
         )));
     }
     extensions::uninstall(&extensions_root(&app)?, &id)

@@ -16,6 +16,7 @@ import type { Accessor } from 'solid-js';
 import { engine } from '../../lib/transport/engine';
 import type { Paper } from '../../types/engine';
 import { projectsStore } from './projectsStore';
+import MathText from '../../components/MathText';
 
 /** "Not the same" records the pair with the engine, which then never
  * suggests it again, nor joins the two through a third record. */
@@ -89,7 +90,7 @@ export function MergeConfirm(props: {
   };
   const others = () => {
     const list = mergeIds();
-    return list.length === 1 ? `“${paperTitle(papers().get(list[0]!))}”` : `${list.length} others`;
+    return list.length === 1 ? `"${paperTitle(papers().get(list[0]!))}"` : `${list.length} others`;
   };
 
   const confirm = async () => {
@@ -102,7 +103,7 @@ export function MergeConfirm(props: {
   return (
     <div class="merge-confirm" role="group" aria-label="Merge items">
       <p class="merge-confirm-text">
-        Keep “{paperTitle(keep())}” and fold {others()} into it.{' '}
+        Keep "<MathText text={paperTitle(keep())} />" and fold <MathText text={others()} /> into it.{' '}
         <Show when={moves().length > 0} fallback={<>Nothing else moves.</>}>
           Moves: {moves().join(', ')}.
         </Show>{' '}
@@ -115,7 +116,7 @@ export function MergeConfirm(props: {
           disabled={busy() || !keep()}
           onClick={() => void confirm()}
         >
-          {busy() ? 'Merging…' : 'Merge'}
+          {busy() ? 'Merging...' : 'Merge'}
         </button>
         <button
           type="button"
@@ -177,7 +178,7 @@ export function DuplicateLine(props: { paper: Paper }) {
                           title="Show this item"
                           onClick={() => store.select(id)}
                         >
-                          {paperTitle(papers().get(id), 'another item')}
+                          <MathText text={paperTitle(papers().get(id), 'another item')} />
                         </button>
                       </>
                     )}

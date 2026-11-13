@@ -11,6 +11,7 @@
 import { Show } from 'solid-js';
 import type { MissingWork, Paper, PaperKind, PaperRow } from '../../types/engine';
 import { authorsLine } from './paperFields';
+import MathText from '../../components/MathText';
 
 /** Past this many authors the list ends in "et al.". */
 const MAX_AUTHORS = 6;
@@ -51,7 +52,7 @@ export default function GraphHoverCard(props: {
   const meta = () =>
     [props.row.year, props.row.venue ?? props.paper?.meta.venue?.value]
       .filter((part) => part !== null && part !== undefined && part !== '')
-      .join(' · ');
+      .join(', ');
   const abstract = () => props.paper?.meta.abstract?.value.trim() || null;
   const authors = () => cardAuthors(props.row, props.paper);
 
@@ -68,7 +69,9 @@ export default function GraphHoverCard(props: {
         width: `${props.width}px`,
       }}
     >
-      <div class="graph-card-title">{props.row.title}</div>
+      <div class="graph-card-title">
+        <MathText text={props.row.title} />
+      </div>
       <Show when={authors()}>
         <div class="graph-card-authors">{authors()}</div>
       </Show>
@@ -84,11 +87,15 @@ export default function GraphHoverCard(props: {
         </div>
       </Show>
       <Show when={abstract()}>
-        <p class="graph-card-abstract">{abstract()}</p>
+        {(text) => (
+          <p class="graph-card-abstract">
+            <MathText text={text()} />
+          </p>
+        )}
       </Show>
       <div class="graph-card-foot">
         <span>
-          cites {props.cites} · cited by {props.citedBy} in this view
+          cites {props.cites}, cited by {props.citedBy} in this view
         </span>
         <Show when={props.row.missing}>
           <span class="graph-card-missing">File missing</span>
@@ -131,10 +138,12 @@ export function GhostHoverCard(props: {
       }}
     >
       <div class="graph-card-kind graph-card-ghost-kind">Not in the library</div>
-      <p class="graph-card-reference">{props.work.text?.trim() || 'A reference with no text'}</p>
+      <p class="graph-card-reference">
+        <MathText text={props.work.text?.trim() || 'A reference with no text'} />
+      </p>
       <Show when={ids().length > 0}>
         <div class="graph-card-meta">
-          <span>{ids().join(' · ')}</span>
+          <span>{ids().join(', ')}</span>
         </div>
       </Show>
       <div class="graph-card-foot">

@@ -3,7 +3,7 @@ import { formatDate, formatSize } from './format';
 
 describe('formatSize', () => {
   it('renders an en dash when the size is unknown', () => {
-    expect(formatSize(null)).toBe('–');
+    expect(formatSize(null)).toBe('-');
   });
 
   it('reports raw bytes below one kibibyte', () => {

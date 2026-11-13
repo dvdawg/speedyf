@@ -154,7 +154,7 @@ it('shows the actual tab under the grab point and follows movement beyond the st
   expect(ghost.style.top).toBe('0px');
   expect(ghost.querySelector('.tab-pill-name')!.textContent).toBe('Paper 0');
   expect(ghost.querySelector('.tab-pill.is-active')).not.toBeNull();
-  expect(ghost.querySelector('.tab-pill-dirty')!.textContent).toBe('●');
+  expect(ghost.querySelector('.tab-pill-dirty')).not.toBeNull();
   expect(ghost.querySelector<HTMLElement>('.tab-pill')!.style.width).toBe('200px');
   expect(ghost.querySelector('.tab-detach-hint')).toBeNull();
   fireEvent.pointerMove(tabs[0]!, { pointerId: 1, clientX: 300, clientY: 200 });
@@ -227,15 +227,15 @@ it('right-click opens a tab menu offering the other open windows as destinations
   ]);
   const { tabs } = setup();
   fireEvent.contextMenu(tabs[1]!, { clientX: 300, clientY: 20 });
-  const item = await screen.findByRole('menuitem', { name: 'Move to “notes.pdf”' });
+  const item = await screen.findByRole('menuitem', { name: 'Move to "notes.pdf"' });
   const labels = screen.getAllByRole('menuitem').map((b) => b.textContent);
   expect(labels).toEqual([
     'Close Tab',
     'Close Other Tabs',
     'Close Tabs to the Right',
     'Move to New Window',
-    'Move to “notes.pdf”',
-    'Move to “Empty window”',
+    'Move to "notes.pdf"',
+    'Move to "Empty window"',
   ]);
   fireEvent.click(item);
   expect(moveTabToWindow).toHaveBeenCalledWith(tabsStore.state.tabs[1]!.id, 'speedyf-2');

@@ -75,11 +75,11 @@ export default function StatusBar() {
           </span>
           <Show when={doc()!.dirty}>
             <span class="sb-dirty" title="Unsaved changes">
-              ● edited
+              edited
             </span>
           </Show>
           <Show when={doc()!.saving}>
-            <span class="sb-dim">saving…</span>
+            <span class="sb-dim">saving...</span>
           </Show>
         </Show>
       </div>
@@ -106,7 +106,7 @@ export default function StatusBar() {
               title="Fetching paper metadata from the lookup services you turned on"
             >
               looking up metadata online
-              {status().total > 0 ? ` ${status().done}/${status().total}` : ''}…
+              {status().total > 0 ? ` ${status().done}/${status().total}` : ''}...
             </span>
           )}
         </Show>
@@ -132,13 +132,13 @@ export default function StatusBar() {
               title={`Engine diagnostics: ${value().rendered} renders, queue ${value().queueDepth}`}
               aria-label={`Engine cache ${value().cacheHits} hits from ${value().cacheLookups} lookups; ${value().skippedStale} stale tasks skipped`}
             >
-              cache {value().cacheHits}/{value().cacheLookups} · stale {value().skippedStale}
+              cache {value().cacheHits}/{value().cacheLookups}, stale {value().skippedStale}
             </span>
           )}
         </Show>
         <Show when={doc()?.loaded}>
           <span class="sb-dim">
-            p. {(activeTab()?.viewport.state.currentPage ?? 0) + 1}/{doc()!.pages.length} ·{' '}
+            p. {(activeTab()?.viewport.state.currentPage ?? 0) + 1}/{doc()!.pages.length},{' '}
             {Math.round((activeTab()?.viewport.state.zoom ?? 1) * 100)}%
           </span>
         </Show>
@@ -158,14 +158,14 @@ export default function StatusBar() {
           }
           onClick={() => void libraryStore.addLibraryFolder()}
         >
-          Library…
+          Library...
         </button>
         <label
           class="sb-control"
           title={
             effectiveTheme() === 'dark'
               ? 'Render pages as dark paper with light ink'
-              : 'Renders pages as dark paper — takes effect under the dark theme'
+              : 'Renders pages as dark paper (takes effect under the dark theme)'
           }
         >
           <input

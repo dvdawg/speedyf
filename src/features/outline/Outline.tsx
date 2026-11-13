@@ -48,7 +48,7 @@ export default function Outline() {
     <div class="sidebar-scroll outline-panel" aria-label="Table of contents">
       <Show
         when={!structure.outlineLoading}
-        fallback={<div class="panel-note">Loading outline…</div>}
+        fallback={<div class="panel-note">Loading outline...</div>}
       >
         <Show
           when={structure.outline.length > 0}

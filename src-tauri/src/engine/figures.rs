@@ -249,7 +249,7 @@ fn truncate_words(text: &str, limit: usize) -> String {
     }
     let clipped: String = trimmed.chars().take(limit).collect();
     let cut = clipped.rfind(' ').unwrap_or(clipped.len());
-    format!("{}…", clipped[..cut].trim_end())
+    format!("{}...", clipped[..cut].trim_end())
 }
 
 #[cfg(test)]
@@ -430,7 +430,7 @@ mod tests {
         let captions = find_captions(&lines);
         let title = &captions[0].title;
         assert!(title.chars().count() <= MAX_TITLE_CHARS + 1, "{title}");
-        assert!(title.ends_with('…'), "{title}");
+        assert!(title.ends_with("..."), "{title}");
         assert!(!title.contains("  "), "{title}");
     }
 

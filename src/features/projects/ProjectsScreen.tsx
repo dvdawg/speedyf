@@ -18,6 +18,7 @@ import PaperDetail from './PaperDetail';
 import PaperList from './PaperList';
 import ProjectsColumn from './ProjectsColumn';
 import { projectsStore } from './projectsStore';
+import { IconClose } from '../../components/icons';
 
 /** Below this the detail column folds behind a Details button; the sidebar
  * on Home is 240px and the same breakpoint is used there. */
@@ -111,7 +112,7 @@ export default function ProjectsScreen() {
               aria-label="Dismiss"
               onClick={() => store.clearError()}
             >
-              ×
+              <IconClose />
             </button>
           </div>
         )}

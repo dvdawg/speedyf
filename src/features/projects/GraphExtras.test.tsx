@@ -111,9 +111,13 @@ describe('missing works', () => {
     // Calm at rest: no ghost is labelled.
     expect(ghosts(container).some((g) => g.classList.contains('is-label-on'))).toBe(false);
     expect(ghostFor(container, 'm1').querySelector('text')?.textContent).toBe(
-      'Missing · cited by 2'
+      'Missing, cited by 2'
     );
-    expect(screen.getByText(/2 missing works cited by ≥ 2/)).toBeTruthy();
+    // The note typesets "$\geq 2$" with KaTeX; its tooltip spells it out.
+    expect(container.querySelector('.graph-notes')!.getAttribute('title')).toContain(
+      '2 missing works cited by >= 2'
+    );
+    await waitFor(() => expect(container.querySelector('.graph-note .katex')).not.toBeNull());
   });
 
   it('rereads when the threshold steps', async () => {
@@ -122,7 +126,10 @@ describe('missing works', () => {
     fireEvent.click(screen.getByRole('button', { name: 'More citers' }));
     await waitFor(() => expect(ghosts(container)).toHaveLength(1));
     expect(engine.libraryMissingWorks).toHaveBeenLastCalledWith('p1', 3, undefined);
-    expect(screen.getByText('cited by ≥ 3')).toBeTruthy();
+    await waitFor(() =>
+      expect(container.querySelector('.graph-stepper-value .katex')?.textContent).toContain('3')
+    );
+    expect(container.querySelector('.graph-stepper-value')!.textContent).toMatch(/^cited by /);
     fireEvent.click(screen.getByRole('button', { name: 'Fewer citers' }));
     fireEvent.click(screen.getByRole('button', { name: 'Fewer citers' }));
     await waitFor(() => expect(ghosts(container)).toHaveLength(3));
@@ -143,7 +150,7 @@ describe('missing works', () => {
       return el!;
     });
     expect(card.textContent).toContain(MISSING[0]!.text!);
-    expect(card.textContent).toContain('2000 · doi 10.1103/PhysRevE.61.2361');
+    expect(card.textContent).toContain('2000, doi 10.1103/PhysRevE.61.2361');
     expect(card.textContent).toContain('cited by: Jar97, ES02');
     expect(ghostFor(container, 'm1').classList.contains('is-label-on')).toBe(true);
     expect(ghostFor(container, 'm2').classList.contains('is-label-on')).toBe(false);

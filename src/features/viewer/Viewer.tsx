@@ -453,7 +453,7 @@ export default function Viewer() {
         <div class="viewer">
           <div class="empty-state">
             <div class="empty-card">
-              <p>Opening…</p>
+              <p>Opening...</p>
             </div>
           </div>
         </div>
@@ -468,7 +468,7 @@ export default function Viewer() {
                 <h1>SpeedyF</h1>
                 <p>Open a PDF to get started, or drop a file anywhere in this window.</p>
                 <button type="button" class="primary-btn" onClick={() => void openFromDialog()}>
-                  <IconOpen /> Open PDF…
+                  <IconOpen /> Open PDF...
                 </button>
               </div>
             </div>

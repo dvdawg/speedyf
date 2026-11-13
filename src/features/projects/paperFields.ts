@@ -61,5 +61,5 @@ export function metaLine(row: PaperRow): string {
   return [row.authors, row.year, row.venue]
     .filter((part) => part !== null && part !== '')
     .map(String)
-    .join(' · ');
+    .join(', ');
 }

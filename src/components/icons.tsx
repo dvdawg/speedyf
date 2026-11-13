@@ -259,6 +259,7 @@ export const IconDuplicate = () =>
   );
 export const IconClose = () => base(<path d="M3.5 3.5l9 9M12.5 3.5l-9 9" />);
 export const IconChevronRight = () => base(<path d="M6 3.5l4.5 4.5L6 12.5" />);
+export const IconChevronLeft = () => base(<path d="M10 3.5L5.5 8l4.5 4.5" />);
 /** Three dots: the per-row menu on the Projects screen. */
 export const IconMore = () =>
   base(

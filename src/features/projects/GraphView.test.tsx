@@ -177,10 +177,12 @@ describe('GraphView', () => {
     // No year bands or axis; a quiet time hint instead.
     expect(container.querySelector('.graph-band')).toBeNull();
     expect(container.querySelector('.graph-axis-label')).toBeNull();
-    const hints = Array.from(container.querySelectorAll('.graph-time-hint')).map(
-      (t) => t.textContent
-    );
-    expect(hints).toEqual(['← older', 'newer →']);
+    // Arrows are TeX, typeset by KaTeX once it has loaded.
+    const hints = () => Array.from(container.querySelectorAll('.graph-time-hint'));
+    expect(hints()).toHaveLength(2);
+    await waitFor(() => expect(hints().every((h) => h.querySelector('.katex'))).toBe(true));
+    expect(hints()[0]!.textContent).toMatch(/older$/);
+    expect(hints()[1]!.textContent).toMatch(/^newer /);
   });
 
   it('counts items with no citations in a chip that leads to the list', async () => {
@@ -406,12 +408,12 @@ describe('GraphView hover card', () => {
     expect(shown.querySelector('.graph-card-title')!.textContent).toBe('The fluctuation theorem');
     expect(shown.querySelector('.graph-card-authors')!.textContent).toBe('Evans & Searles');
     expect(shown.querySelector('.graph-card-meta')!.textContent).toContain(
-      '2002 · Advances in Physics'
+      '2002, Advances in Physics'
     );
     // The alpha label, small and dim, beside the year.
     expect(shown.querySelector('.graph-card-alpha')!.textContent).toBe('ES02');
     expect(shown.querySelector('.graph-card-foot')!.textContent).toContain(
-      'cites 2 · cited by 1 in this view'
+      'cites 2, cited by 1 in this view'
     );
     expect(shown.querySelector('.graph-card-abstract')).toBeNull();
     expect(libraryPaper.mock.calls).toEqual([['g']]);

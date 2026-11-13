@@ -52,7 +52,7 @@ export default function Figures() {
 
   return (
     <div class="sidebar-scroll figure-panel" aria-label="Figures and tables">
-      <Show when={!figures.loading} fallback={<div class="panel-note">Finding figures…</div>}>
+      <Show when={!figures.loading} fallback={<div class="panel-note">Finding figures...</div>}>
         <Show
           when={(figures() ?? []).length > 0}
           fallback={<div class="panel-note">No figures or tables extractable.</div>}

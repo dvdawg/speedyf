@@ -196,8 +196,8 @@ function PreviewContent(props: { tab: TabRecord; result: HoverPreview }) {
               {result().id
                 ? result().libraryRoot
                   ? result().libraryScanning
-                    ? `Library scan in progress — ${citationLabel(result().id!)}`
-                    : `Not in your library — ${citationLabel(result().id!)}`
+                    ? `Library scan in progress: ${citationLabel(result().id!)}`
+                    : `Not in your library: ${citationLabel(result().id!)}`
                   : citationLabel(result().id!)
                 : 'External link'}
             </strong>
@@ -211,7 +211,7 @@ function PreviewContent(props: { tab: TabRecord; result: HoverPreview }) {
                 class="citation-library-action"
                 onClick={() => void libraryStore.addLibraryFolder()}
               >
-                Choose library folder…
+                Choose library folder...
               </button>
             </Show>
           </div>

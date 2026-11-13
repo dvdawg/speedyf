@@ -18,7 +18,8 @@ import { libraryStore } from '../../features/citations/libraryStore';
 import { projectsStore } from '../projects/projectsStore';
 import { openInNewTabOrFocus } from '../document/tabsController';
 import { tabsStore } from '../../stores/tabsStore';
-import { IconPlus, IconSearch } from '../../components/icons';
+import { IconClose, IconPlus, IconSearch } from '../../components/icons';
+import MathText from '../../components/MathText';
 import { splitSnippet } from './snippet';
 import type { LibraryHit } from '../../types/engine';
 
@@ -59,10 +60,10 @@ export default function LibraryPanel() {
   const status = createMemo(() => {
     const { indexed, scanning, textIndexed, textTotal } = library();
     if (!hasFolders()) return '';
-    if (scanning) return `Scanning… ${indexed} papers found so far.`;
+    if (scanning) return `Scanning... ${indexed} papers found so far.`;
     const pending = Math.max(0, textTotal - textIndexed);
     if (pending > 0) {
-      return `Indexing ${textIndexed} of ${textTotal} — searching what is ready so far.`;
+      return `Indexing ${textIndexed} of ${textTotal}; searching what is ready so far.`;
     }
     return `${indexed} ${indexed === 1 ? 'paper' : 'papers'} in the library.`;
   });
@@ -96,8 +97,8 @@ export default function LibraryPanel() {
                 !hasFolders()
                   ? 'Add a folder to search it'
                   : libraryStore.state.scope === null
-                    ? 'Search every paper…'
-                    : 'Search this project…'
+                    ? 'Search every paper...'
+                    : 'Search this project...'
               }
               disabled={!hasFolders()}
               value={libraryStore.state.query}
@@ -117,7 +118,7 @@ export default function LibraryPanel() {
                 aria-label="Clear the search"
                 onClick={() => libraryStore.setQuery('')}
               >
-                ×
+                <IconClose />
               </button>
             </Show>
             <Show when={projects().length > 0}>
@@ -159,7 +160,7 @@ export default function LibraryPanel() {
               when={libraryStore.state.results.length > 0}
               fallback={
                 <p class="library-hint">
-                  {libraryStore.state.searching ? 'Searching…' : 'No papers contain that.'}
+                  {libraryStore.state.searching ? 'Searching...' : 'No papers contain that.'}
                 </p>
               }
             >
@@ -174,7 +175,7 @@ export default function LibraryPanel() {
                         onClick={() => void openHit(hit, hit.pages[0]?.src ?? 0)}
                       >
                         <span class="library-result-title">
-                          <span class="library-result-name">{hit.title || hit.name}</span>
+                          <MathText class="library-result-name" text={hit.title || hit.name} />
                           <Show when={hit.title && hit.title !== hit.name}>
                             <span class="library-result-file">{hit.name}</span>
                           </Show>
@@ -217,7 +218,7 @@ export default function LibraryPanel() {
                 </For>
                 <Show when={libraryStore.state.truncated}>
                   <p class="library-hint">
-                    Showing the best matches only — narrow the search to see fewer, better ones.
+                    Showing the best matches only. Narrow the search to see fewer, better ones.
                   </p>
                 </Show>
               </div>
@@ -233,7 +234,7 @@ export default function LibraryPanel() {
               class="secondary-btn library-add-folder"
               onClick={() => void libraryStore.addLibraryFolder()}
             >
-              <IconPlus /> Add folder…
+              <IconPlus /> Add folder...
             </button>
           </div>
           <Show when={hasFolders()}>
@@ -249,7 +250,7 @@ export default function LibraryPanel() {
                       title="Remove this folder"
                       onClick={() => void libraryStore.removeLibraryFolder(root)}
                     >
-                      ×
+                      <IconClose />
                     </button>
                   </span>
                 )}

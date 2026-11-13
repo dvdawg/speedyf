@@ -80,7 +80,7 @@ describe('duplicates', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
     // Step two: what moves, in words; the first Merge is gone.
     await waitFor(() => expect(confirmBox().textContent).toContain('Moves: 1 file, arXiv id.'));
-    expect(confirmBox().textContent).toContain(`Keep “${JARZYNSKI}”`);
+    expect(confirmBox().textContent).toContain(`Keep "${JARZYNSKI}"`);
     expect(engine.libraryMergePapers).not.toHaveBeenCalled();
     expect(screen.getAllByRole('button', { name: 'Merge' })).toHaveLength(1);
 
@@ -101,7 +101,7 @@ describe('duplicates', () => {
     render(() => <PaperDetail onMoveFocus={() => {}} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Merge' }));
     fireEvent.click(await screen.findByText('Keep the other one instead'));
-    await waitFor(() => expect(confirmBox().textContent).toContain(`Keep “${PREPRINT_TITLE}”`));
+    await waitFor(() => expect(confirmBox().textContent).toContain(`Keep "${PREPRINT_TITLE}"`));
     expect(confirmBox().textContent).toContain('Moves: 1 file, 2 projects, DOI.');
     fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
     await waitFor(() => expect(engine.libraryMergePapers).toHaveBeenCalledWith('e', ['a']));
@@ -170,7 +170,7 @@ describe('merging from the list', () => {
     fireEvent.click(rowFor(container, JARZYNSKI), { metaKey: true });
     fireEvent.click(await screen.findByRole('button', { name: 'Merge 2 items' }));
     await waitFor(() =>
-      expect(confirmBox().textContent).toContain('Keep “Entropy production fluctuation theorem”')
+      expect(confirmBox().textContent).toContain('Keep "Entropy production fluctuation theorem"')
     );
     fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
     await waitFor(() => expect(engine.libraryMergePapers).toHaveBeenCalledWith('b', ['a']));

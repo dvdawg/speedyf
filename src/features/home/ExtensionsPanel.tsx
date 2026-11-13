@@ -117,12 +117,12 @@ export default function ExtensionsPanel() {
               disabled={busy() || url().trim().length === 0}
               onClick={() => void addFromUrl()}
             >
-              {busy() ? 'Installing…' : 'Install'}
+              {busy() ? 'Installing...' : 'Install'}
             </button>
           </div>
           <div class="ext-add-alt">
             <span>
-              Clones with git — add <code>#tag</code> to pin a version.
+              Clones with git; add <code>#tag</code> to pin a version.
             </span>
             <button
               type="button"
@@ -130,7 +130,7 @@ export default function ExtensionsPanel() {
               disabled={busy()}
               onClick={() => void addFromFolder()}
             >
-              Load from a folder instead…
+              Load from a folder instead...
             </button>
           </div>
           <Show when={installError()}>
@@ -159,7 +159,7 @@ function ExtensionRow(props: { ext: ExtensionRecord }) {
     const actions = ext().selectionActions.length + ext().citationActions.length;
     if (actions) parts.push(plural(actions, 'action'));
     if (ext().documentTasks.length) parts.push(plural(ext().documentTasks.length, 'task'));
-    return parts.join(' · ');
+    return parts.join(', ');
   };
 
   const hasDetails = () => ext().commands.length > 0 || ext().log.length > 0;

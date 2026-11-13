@@ -2,7 +2,7 @@
  * node-environment test runner can reach it. */
 
 export function formatSize(bytes: number | null): string {
-  if (bytes === null) return '–';
+  if (bytes === null) return '-';
   if (bytes < 1024) return `${bytes} B`;
   const units = ['KB', 'MB', 'GB'];
   let value = bytes / 1024;

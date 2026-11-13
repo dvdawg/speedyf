@@ -767,8 +767,12 @@ html.is-dragging-tab * {
 }
 
 .tab-pill-dirty {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
   color: var(--accent);
-  font-size: 10px;
 }
 
 .tab-pill-close {
@@ -1135,7 +1139,21 @@ html.is-dragging-tab * {
 
 .context-sep {
   flex: none;
+  display: inline-flex;
+  align-items: center;
   opacity: 0.6;
+}
+
+.context-sep svg,
+.search-result-sep svg {
+  width: 10px;
+  height: 10px;
+}
+
+.search-result-sep {
+  display: inline-flex;
+  margin: 0 4px;
+  vertical-align: middle;
 }
 
 /* ---------- viewer ---------- */
@@ -2390,8 +2408,12 @@ html.is-dragging-tab * {
 }
 
 .print-pager button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 26px;
   height: 24px;
+  padding: 0;
   border: 1px solid var(--border);
   border-radius: 5px;
   background: var(--bg-elev);
@@ -3220,8 +3242,14 @@ html.is-dragging-tab * {
 
 .ext-contributes::before,
 .ext-perms::before {
-  content: '·';
+  content: '';
+  display: inline-block;
+  width: 3px;
+  height: 3px;
   margin-right: 10px;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: middle;
   opacity: 0.5;
 }
 
@@ -5252,19 +5280,24 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   fill: transparent;
 }
 
-/* "older ← → newer" in the bottom corners: a hint that time leans left
+/* "older" and "newer" in the bottom corners: a hint that time leans left
  * to right, quiet enough to ignore. */
 .graph-time-hint {
-  fill: var(--text-dim);
+  position: absolute;
+  bottom: 6px;
+  left: 12px;
+  color: var(--text-dim);
   opacity: 0.55;
   font-size: 10px;
+  line-height: 1;
   pointer-events: none;
   -webkit-user-select: none;
   user-select: none;
 }
 
 .graph-time-hint.is-end {
-  text-anchor: end;
+  left: auto;
+  right: 12px;
 }
 
 .graph-skeleton {
@@ -5979,4 +6012,33 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 
 .graph-notes .graph-note-link {
   flex: none;
+}
+
+/* Close and stepper buttons that carry an inline SVG glyph instead of text. */
+.library-search-clear,
+.library-folder-remove,
+.graph-focus-leave,
+.projects-error-dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.library-search-clear svg,
+.library-folder-remove svg,
+.graph-focus-leave svg,
+.projects-error-dismiss svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* KaTeX math inside titles and abstracts: a touch smaller than KaTeX's own
+ * 1.21em, so a formula sits in a list row without growing it. */
+.math-run .katex {
+  font-size: 1.05em;
+}
+
+.print-pager button svg {
+  width: 12px;
+  height: 12px;
 }

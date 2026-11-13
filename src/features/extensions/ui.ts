@@ -66,7 +66,7 @@ function text(value: unknown, limit = MAX_TEXT): string | null {
   if (trimmed.length === 0) return null;
   // Truncated rather than refused: an over-long title is a formatting mistake,
   // not a reason to throw away the whole panel.
-  return trimmed.length > limit ? `${trimmed.slice(0, limit)}…` : trimmed;
+  return trimmed.length > limit ? `${trimmed.slice(0, limit)}...` : trimmed;
 }
 
 function parseAction(value: unknown): UiAction | undefined {
