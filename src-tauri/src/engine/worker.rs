@@ -3830,4 +3830,53 @@ mod tests {
             "Speed"
         );
     }
+    #[test]
+    fn a_two_column_page_reads_left_column_then_right() {
+        let _guard = pdfium_init::test_guard();
+        let pdfium = Pdfium::new(pdfium_init::init_bindings(&[]).unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("columns.pdf");
+        let mut document = pdfium.create_new_pdf().unwrap();
+        let font = document.fonts_mut().times_roman();
+        let mut page = document
+            .pages_mut()
+            .create_page_at_end(PdfPagePaperSize::a4())
+            .unwrap();
+        let line = "the quick brown fox jumps over the lazy dog and runs";
+        for i in 0..44 {
+            let y = 760.0 - 15.0 * i as f32;
+            for x in [56.0, 310.0] {
+                let mut text =
+                    PdfPageTextObject::new(&document, line, font, PdfPoints::new(9.5)).unwrap();
+                text.translate(PdfPoints::new(x), PdfPoints::new(y))
+                    .unwrap();
+                page.objects_mut().add_text_object(text).unwrap();
+            }
+        }
+        drop(page);
+        document.save_to_file(&path).unwrap();
+
+        let shared = test_shared(dir.path());
+        let mut state = quiet_state(&pdfium);
+        let doc = do_open(&mut state, path.to_str().unwrap().into(), None)
+            .unwrap()
+            .doc_id;
+        let (tx, rx) = std::sync::mpsc::channel();
+        handle_work(
+            &mut state,
+            &shared,
+            idle(),
+            Work::ColumnLayout {
+                doc,
+                src: 0,
+                respond: Box::new(move |r| tx.send(r).unwrap()),
+            },
+        );
+        let reading = rx.recv().unwrap().unwrap();
+        assert_eq!(reading.kind, columns::PageLayoutKind::Columns);
+        assert_eq!(reading.columns, 2);
+        let xs: Vec<f32> = reading.segments.iter().map(|s| s.rect[0]).collect();
+        assert_eq!(xs.len(), 2, "{reading:?}");
+        assert!(xs[0] < 100.0 && xs[1] > 300.0, "{reading:?}");
+    }
 }
