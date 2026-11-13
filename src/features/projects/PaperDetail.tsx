@@ -595,7 +595,7 @@ function CiteKey(props: { paper: Paper; copied: boolean; onCopy: () => void }) {
                   setEditing(true);
                 }}
               >
-                edit
+                Edit
               </button>
               <Show when={props.paper.citeKeyPinned}>
                 <button
@@ -604,7 +604,7 @@ function CiteKey(props: { paper: Paper; copied: boolean; onCopy: () => void }) {
                   title="Unpin and regenerate from the metadata"
                   onClick={() => void store.updatePaper(props.paper.id, { citeKey: null })}
                 >
-                  reset
+                  Reset
                 </button>
               </Show>
             </>
