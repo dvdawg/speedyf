@@ -56,7 +56,8 @@ const OPENALEX_BATCH: usize = 50;
 const TIMEOUT: Duration = Duration::from_secs(15);
 /// How many candidates a title search returns at most.
 pub(crate) const TITLE_RESULTS: usize = 5;
-const DISABLED_MESSAGE: &str = "Online lookup is off (Settings → Look up paper metadata online)";
+const DISABLED_MESSAGE: &str =
+    "Online lookup is off (turn on Look up paper metadata online in Settings)";
 /// The cache file, inside the library's data directory.
 pub const CACHE_FILE: &str = "lookup-cache.json";
 /// How long a cached miss stands before the identifier is asked for again.
@@ -459,7 +460,11 @@ fn crossref_work(work: &Value) -> Option<LookupCandidateDto> {
     if !work.is_object() {
         return None;
     }
-    let title = work.get("title").and_then(text_field)?;
+    let title = work
+        .get("title")
+        .and_then(text_field)
+        .map(|raw| crossref_title(&raw))
+        .and_then(non_empty)?;
     let authors = work
         .get("author")
         .and_then(Value::as_array)
@@ -528,6 +533,132 @@ fn crossref_year(work: &Value) -> Option<i32> {
                 .as_i64()
                 .and_then(|year| i32::try_from(year).ok())
         })
+}
+
+/// Crossref titles carry inline JATS and MathML now and then
+/// (`H<sub>2</sub>O`, `<i>in vivo</i>`, `<mml:math alttext="...">`). The app
+/// typesets TeX between `$` signs, so scripts become `$_{2}$` / `$^{2}$`,
+/// MathML becomes its `alttext` (as `$...$`) or, without one, its text, and
+/// every other tag is dropped. Entities are decoded and whitespace collapsed.
+pub(crate) fn crossref_title(raw: &str) -> String {
+    if !raw.contains('<') && !raw.contains('&') {
+        return raw.to_string();
+    }
+    let mut out = String::with_capacity(raw.len());
+    let mut rest = raw;
+    while let Some(start) = rest.find('<') {
+        out.push_str(&rest[..start]);
+        let Some(len) = rest[start..].find('>') else {
+            rest = "";
+            break;
+        };
+        let tag = &rest[start + 1..start + len];
+        let after = &rest[start + len + 1..];
+        let name = tag_local_name(tag);
+        let closing = tag.starts_with('/');
+        rest = after;
+        if closing || tag.ends_with('/') {
+            continue;
+        }
+        match name {
+            "math" => {
+                let (inner, tail) = split_element(after, "math");
+                rest = tail;
+                let alt = attribute(tag, "alttext").map(|alt| decode_entities(&alt));
+                match alt.map(|alt| collapse_whitespace(&alt)) {
+                    Some(alt) if !alt.is_empty() => {
+                        if alt.contains('$') {
+                            out.push_str(&alt);
+                        } else {
+                            out.push('$');
+                            out.push_str(&alt);
+                            out.push('$');
+                        }
+                    }
+                    _ => out.push_str(&strip_tags(inner)),
+                }
+            }
+            "sub" | "sup" => {
+                let (inner, tail) = split_element(after, name);
+                rest = tail;
+                let text = collapse_whitespace(&decode_entities(&strip_tags(inner)));
+                if text.is_empty() {
+                    continue;
+                }
+                if text.contains(['$', '{', '}', '\\']) {
+                    out.push_str(&text);
+                } else {
+                    out.push_str(if name == "sub" { "$_{" } else { "$^{" });
+                    out.push_str(&text);
+                    out.push_str("}$");
+                }
+            }
+            _ => {}
+        }
+    }
+    out.push_str(rest);
+    collapse_whitespace(&decode_entities(&out))
+}
+
+/// `jats:sub` / `/mml:math attr="..."` -> `sub` / `math`.
+fn tag_local_name(tag: &str) -> &str {
+    let name = tag
+        .trim_start_matches('/')
+        .split(|c: char| c.is_whitespace() || c == '/')
+        .next()
+        .unwrap_or("");
+    name.rsplit(':').next().unwrap_or(name)
+}
+
+/// The content of an element whose start tag was just read, and the text
+/// after its end tag. Same-named elements nested inside are counted, so
+/// `<sup>a<sup>b</sup></sup>` closes at the outer end tag.
+fn split_element<'a>(text: &'a str, local: &str) -> (&'a str, &'a str) {
+    let mut depth = 1usize;
+    let mut from = 0;
+    while let Some(offset) = text[from..].find('<') {
+        let at = from + offset;
+        let Some(len) = text[at..].find('>') else {
+            break;
+        };
+        let tag = &text[at + 1..at + len];
+        if tag_local_name(tag) == local {
+            if tag.starts_with('/') {
+                depth -= 1;
+                if depth == 0 {
+                    return (&text[..at], &text[at + len + 1..]);
+                }
+            } else if !tag.ends_with('/') {
+                depth += 1;
+            }
+        }
+        from = at + len + 1;
+    }
+    (text, "")
+}
+
+/// The value of `name="..."` (or single-quoted) in a start tag.
+fn attribute(tag: &str, name: &str) -> Option<String> {
+    let mut from = 0;
+    while let Some(offset) = tag[from..].find(name) {
+        let at = from + offset;
+        from = at + name.len();
+        let before_ok = tag[..at].ends_with(char::is_whitespace);
+        let rest = tag[from..].trim_start();
+        let Some(rest) = rest.strip_prefix('=') else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        let Some(quote) = rest.chars().next().filter(|c| *c == '"' || *c == '\'') else {
+            continue;
+        };
+        if !before_ok {
+            continue;
+        }
+        let body = &rest[1..];
+        return body.find(quote).map(|end| body[..end].to_string());
+    }
+    None
 }
 
 /// Crossref abstracts are JATS fragments. Section headings
@@ -1521,7 +1652,7 @@ mod tests {
         let error = ensure_enabled(&off).expect_err("off by default");
         assert_eq!(
             error.to_string(),
-            "Online lookup is off (Settings → Look up paper metadata online)"
+            "Online lookup is off (turn on Look up paper metadata online in Settings)"
         );
         let on = LookupSettings {
             enabled: true,
@@ -1891,6 +2022,56 @@ with emphasis on mesoscale phenomena &amp; defects.
   </entry>
 </feed>
 "#;
+
+    #[test]
+    fn arxiv_titles_keep_their_tex() {
+        let feed = ARXIV_FEED.replace(
+            "<title>Active Matter at the\n  Mesoscale: A Review</title>",
+            "<title>Scaling of $\\mathcal{O}(N^2)$\n  attention &amp; $x_1$</title>",
+        );
+        let entries = parse_arxiv_atom(&feed);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].title,
+            "Scaling of $\\mathcal{O}(N^2)$ attention & $x_1$"
+        );
+    }
+
+    #[test]
+    fn crossref_titles_turn_markup_into_tex() {
+        assert_eq!(crossref_title("Plain title"), "Plain title");
+        assert_eq!(
+            crossref_title("Splitting H<sub>2</sub>O with <i>in vivo</i> TiO<sub>2</sub>"),
+            "Splitting H$_{2}$O with in vivo TiO$_{2}$"
+        );
+        assert_eq!(
+            crossref_title("Ca<sup>2+</sup> waves in <b>bold</b> &amp; <jats:sub>x</jats:sub>"),
+            "Ca$^{2+}$ waves in bold & $_{x}$"
+        );
+        assert_eq!(
+            crossref_title(
+                r#"Bounds on <mml:math xmlns:mml="http://www.w3.org/1998/Math/MathML" alttext="\epsilon &lt; 1"><mml:mi>&#x3B5;</mml:mi><mml:mo>&lt;</mml:mo><mml:mn>1</mml:mn></mml:math> codes"#
+            ),
+            "Bounds on $\\epsilon < 1$ codes"
+        );
+        assert_eq!(
+            crossref_title(
+                "The <mml:math><mml:mi>k</mml:mi><mml:mo>-</mml:mo><mml:mi>SAT</mml:mi></mml:math> problem"
+            ),
+            "The k-SAT problem"
+        );
+        assert_eq!(crossref_title("a<sup>b<sup>c</sup></sup> d"), "a$^{bc}$ d");
+        assert_eq!(crossref_title("broken <i"), "broken");
+    }
+
+    #[test]
+    fn crossref_work_title_goes_through_the_markup_conversion() {
+        let json = r#"{"title": ["Growth of GaN<sub>x</sub> on <i>c</i>-plane sapphire"]}"#;
+        let work = parse_crossref_work(json).expect("a work");
+        assert_eq!(work.title, "Growth of GaN$_{x}$ on c-plane sapphire");
+        let empty = r#"{"title": ["<i> </i>"]}"#;
+        assert_eq!(parse_crossref_work(empty), None);
+    }
 
     #[test]
     fn arxiv_atom_parses_the_entry_and_not_the_feed_header() {
