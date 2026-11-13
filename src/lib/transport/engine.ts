@@ -30,6 +30,7 @@ import type {
 import type {
   BundleReport,
   CitationLinks,
+  CoCitedWork,
   DuplicateGroup,
   Graph,
   BibtexOptions,
@@ -225,6 +226,14 @@ export interface EngineApi {
     minCitedBy: number,
     focus?: GraphFocus
   ): Promise<MissingWork[]>;
+  /** Works the library cites alongside the project's members, cited with
+   * at least `minMembers` of them, less the missing works cited by at least
+   * `minCitedBy` members. At most twenty, strongest first. */
+  libraryCocitedWorks(
+    projectId: string,
+    minMembers: number,
+    minCitedBy: number
+  ): Promise<CoCitedWork[]>;
   /** Projects the item is not in that the citation graph ties it to: at
    * most three, strongest first. Empty for an id that names no item. */
   librarySuggestProjects(paperId: string): Promise<ProjectSuggestion[]>;
@@ -337,6 +346,8 @@ export const engine: EngineApi = {
       focus: focus?.paperId ?? null,
       depth: focus?.depth ?? null,
     }),
+  libraryCocitedWorks: (projectId, minMembers, minCitedBy) =>
+    invoke('library_cocited_works', { projectId, minMembers, minCitedBy }),
   libraryMissingWorks: (projectId, minCitedBy, focus) =>
     invoke('library_missing_works', {
       projectId,

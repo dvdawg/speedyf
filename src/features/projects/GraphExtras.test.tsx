@@ -83,7 +83,15 @@ async function graph() {
   return view;
 }
 
+/** Opens the View popover, where the ghosts' toggles live. */
+function openView() {
+  if (!screen.queryByRole('dialog', { name: 'Graph view' })) {
+    fireEvent.click(screen.getByRole('button', { name: 'View' }));
+  }
+}
+
 async function missingOn(container: HTMLElement, count = 2) {
+  openView();
   fireEvent.click(screen.getByRole('button', { name: 'Missing' }));
   await waitFor(() => expect(ghosts(container)).toHaveLength(count));
 }
@@ -93,6 +101,7 @@ describe('missing works', () => {
     const { container } = await graph();
     expect(ghosts(container)).toHaveLength(0);
     expect(engine.libraryMissingWorks).not.toHaveBeenCalled();
+    openView();
     expect(screen.getByRole('button', { name: 'Missing' }).getAttribute('aria-pressed')).toBe(
       'false'
     );

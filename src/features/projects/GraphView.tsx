@@ -43,6 +43,18 @@
  * the middle; its dragged positions are kept under their own key, and
  * Escape or × goes back to the scope's graph.
  *
+ * Cited with (the View popover, in a project) adds ghosts for works the
+ * library often cites alongside the members (CitedWith.tsx). They are
+ * drawn in the missing works' ghost style but take no part in the layout:
+ * each sits near the members it is cited with, joined to them by faint
+ * dashed lines, so turning them on moves nothing.
+ *
+ * The View popover also picks how busy the rest is: every edge or only
+ * those of the hovered or selected node, many labels or few or none until
+ * hovered, and whether items with no edge are drawn (in rows under the
+ * layout, which is not rerun) or counted in the chip. The choices are kept
+ * across sessions (graphViewPrefs.ts); the defaults draw today's graph.
+ *
  * Hover, labels and emphasis touch only the nodes they change: each is a
  * selector or a keyed store read per node, and the layout never reruns for
  * any of them. */
@@ -60,7 +72,14 @@ import {
 } from 'solid-js';
 import { createStore, reconcile, unwrap } from 'solid-js/store';
 import { engine } from '../../lib/transport/engine';
-import type { Graph, GraphEdge, MissingWork, Paper, PaperRow } from '../../types/engine';
+import type {
+  CoCitedWork,
+  Graph,
+  GraphEdge,
+  MissingWork,
+  Paper,
+  PaperRow,
+} from '../../types/engine';
 import GraphHoverCard, { GhostHoverCard } from './GraphHoverCard';
 import {
   LABEL_GAP,
@@ -79,7 +98,9 @@ import { openPaper } from './openPaper';
 import { IconClose } from '../../components/icons';
 import MathText, { plainMath } from '../../components/MathText';
 import { DRAG_THRESHOLD } from './pointerDrag';
-import { MISSING_MAX, MISSING_MIN, projectsStore } from './projectsStore';
+import { projectsStore } from './projectsStore';
+import { citedWithLabel, citedWithText, withGhostId } from './CitedWith';
+import ViewMenu from './GraphViewMenu';
 
 /** Room around the drawing when it is fitted, in pixels: the notes and the
  * controls sit along the top, the chip and the time hint along the bottom.
@@ -121,6 +142,11 @@ const DENSE_EDGES = 60;
 const ZOOM_STEP = 1.5;
 const TWEEN_MS = 200;
 const SETTLE_MS = 400;
+/** A cited-with ghost's distance from the middle of its members. */
+const WITH_REACH = 34;
+/** Items with no edge, when drawn: rows of this pitch under the layout. */
+const LOOSE_PITCH = { x: 96, y: 28 };
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 
 interface Transform {
   k: number;
@@ -399,6 +425,8 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
     );
   });
   const allEdges = createMemo(() => [...edges(), ...ghostEdges()]);
+  /** What is drawn and lit: the laid-out edges and the cited-with ones. */
+  const drawnEdges = () => [...allEdges(), ...withEdges()];
   const shown = createMemo(() => {
     const linked = new Set<string>();
     for (const e of allEdges()) {
@@ -410,15 +438,44 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
     if (f) linked.add(f);
     return allNodes().filter((n) => linked.has(n.id));
   });
-  const isolatedCount = () => allNodes().length - shown().length;
-  const rowOf = createMemo(() => new Map(shown().map((n) => [n.id, n] as const)));
+  const prefs = () => store.state.viewPrefs;
+  /** Items with no edge, drawn only when asked for. */
+  const loose = createMemo<PaperRow[]>(() => {
+    if (prefs().unlinked !== 'show') return [];
+    const linked = new Set(shown().map((n) => n.id));
+    return allNodes().filter((n) => !linked.has(n.id));
+  });
+  /** Every item drawn: the linked, then the loose. */
+  const drawnNodes = createMemo(() => (loose().length === 0 ? shown() : [...shown(), ...loose()]));
+  const isolatedCount = () => allNodes().length - drawnNodes().length;
+  const rowOf = createMemo(() => new Map(drawnNodes().map((n) => [n.id, n] as const)));
+  /** Works cited with the project's members, with a member drawn; an item
+   * already drawn (around a focus) is not drawn twice. */
+  const withGhosts = createMemo<CoCitedWork[]>(() => {
+    if (!store.state.citedWith.on) return [];
+    const drawn = rowOf();
+    return store.state.coCited.filter(
+      (w) => w.members.some((id) => drawn.has(id)) && !(w.paperId && drawn.has(w.paperId))
+    );
+  });
+  const withOf = createMemo(
+    () => new Map(withGhosts().map((w) => [withGhostId(w.key), w] as const))
+  );
+  /** Member to cited-with ghost: drawn, never laid out. */
+  const withEdges = createMemo<GraphEdge[]>(() => {
+    const drawn = rowOf();
+    return withGhosts().flatMap((w) =>
+      w.members.filter((id) => drawn.has(id)).map((id) => ({ from: id, to: withGhostId(w.key) }))
+    );
+  });
+  const isGhost = (id: string) => ghostOf().has(id) || withOf().has(id);
   /** Layout order: the items, then the ghosts. */
   const indexOf = createMemo(() => {
     const map = new Map(shown().map((n, i) => [n.id, i] as const));
     ghosts().forEach((w, i) => map.set(ghostId(w.key), shown().length + i));
     return map;
   });
-  const labelText = createMemo(() => uniqueLabels(shown()));
+  const labelText = createMemo(() => uniqueLabels(drawnNodes()));
   // The missing works' cited-by lists name items as the graph does.
   createEffect(() => {
     const texts = labelText();
@@ -430,6 +487,8 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
   const labelFor = (id: string): string => {
     const ghost = ghostOf().get(id);
     if (ghost) return ghostLabel(ghost);
+    const work = withOf().get(id);
+    if (work) return citedWithLabel(work);
     return labelText().get(id) ?? '';
   };
   const degrees = createMemo(() => {
@@ -448,7 +507,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
       if (!map.has(a)) map.set(a, new Set());
       map.get(a)!.add(b);
     };
-    for (const e of allEdges()) {
+    for (const e of drawnEdges()) {
       add(e.from, e.to);
       add(e.to, e.from);
     }
@@ -460,7 +519,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
   });
 
   const radius = (id: string) => {
-    if (ghostOf().has(id)) return GHOST_RADIUS;
+    if (isGhost(id)) return GHOST_RADIUS;
     const max = maxIn();
     if (max === 0) return RADIUS_MIN;
     return RADIUS_MIN + (RADIUS_MAX - RADIUS_MIN) * Math.sqrt((degrees().into.get(id) ?? 0) / max);
@@ -471,7 +530,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
     left: radius(id) + 4,
     // A ghost's label shows only on hover, over whatever is there; at rest
     // it is a dot, and the layout spaces it as one.
-    right: radius(id) + (ghostOf().has(id) ? 4 : LABEL_GAP + labelWidth(labelText().get(id) ?? '')),
+    right: radius(id) + (isGhost(id) ? 4 : LABEL_GAP + labelWidth(labelText().get(id) ?? '')),
     height: LABEL_HEIGHT,
   });
   const layout = createMemo(() => {
@@ -494,12 +553,55 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
   const drawnIds = createMemo(() => [
     ...shown().map((n) => n.id),
     ...ghosts().map((w) => ghostId(w.key)),
+    ...loose().map((n) => n.id),
+    ...withGhosts().map((w) => withGhostId(w.key)),
   ]);
   const yearCount = createMemo(
     () => new Set(shown().flatMap((n) => (n.year === null ? [] : [n.year]))).size
   );
+  /** The loose items' places: rows under the layout, in list order. */
+  const loosePlaces = createMemo(() => {
+    const map = new Map<string, Point>();
+    const items = loose();
+    if (items.length === 0) return map;
+    const { points, width } = layout();
+    const left = points.length > 0 ? Math.min(...points.map((p) => p.x)) : 0;
+    const bottom = points.length > 0 ? Math.max(...points.map((p) => p.y)) : 0;
+    const perRow = Math.max(1, Math.floor(Math.max(width, LOOSE_PITCH.x) / LOOSE_PITCH.x));
+    items.forEach((n, i) => {
+      map.set(n.id, {
+        x: left + (i % perRow) * LOOSE_PITCH.x,
+        y: bottom + LOOSE_PITCH.y * (1.5 + Math.floor(i / perRow)),
+      });
+    });
+    return map;
+  });
+  const basePosition = (id: string): Point =>
+    moved[id] ?? loosePlaces().get(id) ?? layout().points[indexOf().get(id) ?? 0] ?? { x: 0, y: 0 };
+  /** A cited-with ghost sits near the middle of its drawn members, turned
+   * by its rank so two never land on one spot; it follows them when they
+   * are dragged. */
+  const withPlace = (id: string): Point => {
+    const work = withOf().get(id);
+    const drawn = rowOf();
+    const members = work ? work.members.filter((m) => drawn.has(m)) : [];
+    if (members.length === 0) return { x: 0, y: 0 };
+    let x = 0;
+    let y = 0;
+    for (const m of members) {
+      const p = basePosition(m);
+      x += p.x;
+      y += p.y;
+    }
+    const rank = withGhosts().indexOf(work!);
+    const angle = rank * GOLDEN_ANGLE + Math.PI / 2;
+    return {
+      x: x / members.length + Math.cos(angle) * WITH_REACH,
+      y: y / members.length + Math.sin(angle) * WITH_REACH,
+    };
+  };
   const positionOf = (id: string): Point =>
-    moved[id] ?? layout().points[indexOf().get(id) ?? 0] ?? { x: 0, y: 0 };
+    withOf().has(id) ? (moved[id] ?? withPlace(id)) : basePosition(id);
   /** Layout space before zoom and pan; `s` < 1 draws the arrival's
    * compact start, gathered toward the middle of the drawing. */
   const toPixels = (u: Point, s = 1): Point => {
@@ -562,8 +664,11 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
   /** The picked missing work, as its node id, when it is drawn. */
   const ghostPicked = createMemo(() => {
     const key = store.state.ghostKey;
-    const id = key ? ghostId(key) : null;
-    return id && ghostOf().has(id) ? id : null;
+    if (!key) return null;
+    // A cited-with work's picked key is its ghost's id.
+    if (key.startsWith('with:')) return withOf().has(key) ? key : null;
+    const id = ghostId(key);
+    return ghostOf().has(id) ? id : null;
   });
   const isGhostPicked = createSelector(ghostPicked);
   const isCentre = createSelector(() => focus()?.paperId ?? null);
@@ -591,10 +696,22 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
   const focusEdges = createMemo(() => {
     const f = focusId();
     if (!f) return [];
-    return allEdges()
+    return drawnEdges()
       .filter((e) => e.from === f || e.to === f)
       .map((edge) => ({ edge, out: edge.from === f }));
   });
+
+  /** The rest-style edges drawn: every one, or under Edges: Selected only
+   * those of the hovered or emphasised node; the others are not drawn. */
+  const touching = (list: GraphEdge[]) => {
+    if (prefs().edges === 'all') return list;
+    const ends = new Set([hot(), focusId()].filter((id): id is string => id !== null));
+    if (ends.size === 0) return [];
+    return list.filter((e) => ends.has(e.from) || ends.has(e.to));
+  };
+  const restEdges = createMemo(() => touching(edges()));
+  const restGhostEdges = createMemo(() => touching(ghostEdges()));
+  const restWithEdges = createMemo(() => touching(withEdges()));
 
   /** Cited ones first, most cited first, by position in the set on ties. */
   const ranked = createMemo(() => {
@@ -617,7 +734,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
         id,
         x: p.x * k + radius(id) + LABEL_GAP,
         y: p.y * k - LABEL_HEIGHT / 2,
-        width: labelWidth(ghostOf().has(id) ? labelFor(id) : (texts.get(id) ?? '')),
+        width: labelWidth(isGhost(id) ? labelFor(id) : (texts.get(id) ?? '')),
         height: LABEL_HEIGHT,
         force,
       });
@@ -630,12 +747,20 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
     if (ghost) add(ghost, true);
     const f = focusId();
     // Ghost neighbours stay unlabelled: only the hovered or picked one speaks.
-    if (f) for (const id of neighbours().get(f) ?? []) if (!ghostOf().has(id)) add(id, true);
-    const n = shown().length;
+    if (f) for (const id of neighbours().get(f) ?? []) if (!isGhost(id)) add(id, true);
+    const mode = prefs().labels;
+    // Hover: nothing speaks until hovered or picked.
+    if (mode === 'hover') return placeLabels(boxes);
+    // Few: the most cited, whatever the zoom.
+    if (mode === 'few') {
+      for (const id of ranked().slice(0, TOP_LABELS)) add(id, false);
+      return placeLabels(boxes);
+    }
+    const n = drawnNodes().length;
     if (n <= LABEL_ALL) {
       // Small enough to label whole: the most cited first, then the rest.
       for (const id of ranked()) add(id, false);
-      for (const node of shown()) add(node.id, false);
+      for (const node of drawnNodes()) add(node.id, false);
       return placeLabels(boxes);
     }
     // Zooming in raises the quota, until everything that fits is shown.
@@ -645,7 +770,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
     // The uncited get a label in a graph small enough to label whole, or
     // once zoomed in; at rest in a large one they would be an arbitrary few.
     if ((n <= TOP_LABELS || k > 1) && quota > order.length) {
-      for (const node of shown().slice(0, quota)) add(node.id, false);
+      for (const node of drawnNodes().slice(0, quota)) add(node.id, false);
     }
     return placeLabels(boxes);
   });
@@ -665,7 +790,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
   };
   const showCard = (id: string) => {
     setCardId(id);
-    if (!ghostOf().has(id)) fetchPaper(id);
+    if (!isGhost(id)) fetchPaper(id);
   };
   const want = (id: string) => {
     if (dragging() !== null || panning()) return;
@@ -699,6 +824,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
     const row = rowOf().get(id) ?? null;
     const ghost = ghostOf().get(id) ?? null;
     const p = screen().get(id);
+    // A cited-with ghost speaks through its label; the panel says the rest.
     if ((!row && !ghost) || !p) return null;
     const t = view();
     const { width: W, height: H } = size();
@@ -844,8 +970,16 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
       ? `Nothing missing is cited by $\\geq ${store.state.missing.min}$`
       : `${plural(n, 'missing work')} cited by $\\geq ${store.state.missing.min}$`;
   };
+  const withNote = () => {
+    if (!store.state.citedWith.on || projectId() === null) return null;
+    const n = withGhosts().length;
+    const min = store.state.citedWith.min;
+    return n === 0
+      ? `Nothing is often cited with $\\geq ${min}$ of these`
+      : `${plural(n, 'work')} cited with $\\geq ${min}$ of these`;
+  };
   const notes = createMemo(() =>
-    [emptyNote(), externalNote(), unindexedNote(), missingNote()].filter(
+    [emptyNote(), externalNote(), unindexedNote(), missingNote(), withNote()].filter(
       (t): t is string => t !== null
     )
   );
@@ -951,6 +1085,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
     setDismissed(null);
     const ghost = ghostOf().get(id);
     if (ghost) store.selectGhost(ghost.key);
+    else if (withOf().has(id)) store.selectGhost(id);
     else store.select(id);
   };
   const onNodeClick = (node: { id: string }) => {
@@ -969,7 +1104,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
         break;
       case ' ':
         e.preventDefault();
-        if (!ghostOf().has(node.id)) void openPaper(node.id);
+        if (!isGhost(node.id)) void openPaper(node.id);
         break;
       case 'ArrowLeft':
         e.preventDefault();
@@ -1003,6 +1138,26 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
     const row = allNodes().find((n) => n.id === id) ?? store.state.rows.find((r) => r.id === id);
     return labelText().get(id) ?? (row ? nodeLabel(row) : (store.state.selected?.citeKey ?? id));
   };
+  /* ---- the View popover ---- */
+  const [menuOpen, setMenuOpen] = createSignal(false);
+  let viewButton: HTMLButtonElement | undefined;
+  let menuEl: HTMLDivElement | undefined;
+  const closeMenu = (refocus = true) => {
+    setMenuOpen(false);
+    if (refocus) viewButton?.focus();
+  };
+  // A press outside the popover and its button closes it.
+  createEffect(() => {
+    if (!menuOpen()) return;
+    const onDown = (e: PointerEvent) => {
+      const target = e.target as Node | null;
+      if (target && (menuEl?.contains(target) || viewButton?.contains(target))) return;
+      closeMenu(false);
+    };
+    window.addEventListener('pointerdown', onDown, true);
+    onCleanup(() => window.removeEventListener('pointerdown', onDown, true));
+  });
+
   const onViewKeyDown = (e: KeyboardEvent) => {
     if (e.key !== 'Escape' || e.defaultPrevented || !focus()) return;
     e.preventDefault();
@@ -1064,6 +1219,15 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
             List missing ({ghosts().length})
           </button>
         </Show>
+        <Show when={store.state.citedWith.on && withGhosts().length > 0}>
+          <button
+            type="button"
+            class="paper-verdict-link graph-note-link"
+            onClick={() => store.openCitedWith()}
+          >
+            List cited with ({withGhosts().length})
+          </button>
+        </Show>
       </div>
       <Show when={error()}>
         {(text) => (
@@ -1080,9 +1244,9 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
         class="graph-canvas"
         classList={{
           'is-loading': loading(),
-          'is-empty': !loading() && shown().length === 0,
+          'is-empty': !loading() && drawnNodes().length === 0,
           'has-focus': focusId() !== null,
-          'has-ghosts': ghosts().length > 0,
+          'has-ghosts': ghosts().length > 0 || withGhosts().length > 0,
           'is-dense': edges().length > DENSE_EDGES,
           'is-panning': panning(),
           'is-dragging': dragging() !== null,
@@ -1098,7 +1262,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
             <circle cx="160" cy="80" r="5" />
           </svg>
         </Show>
-        <Show when={graph() && shown().length > 0}>
+        <Show when={graph() && drawnNodes().length > 0}>
           <svg
             ref={svg}
             class="graph-svg"
@@ -1143,7 +1307,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
             <rect class="graph-backdrop" width="100%" height="100%" />
             <g transform={`translate(${view().x} ${view().y})`}>
               <g class="graph-edges">
-                <For each={edges()}>
+                <For each={restEdges()}>
                   {(edge) => (
                     <path
                       class="graph-edge"
@@ -1153,10 +1317,20 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
                     />
                   )}
                 </For>
-                <For each={ghostEdges()}>
+                <For each={restGhostEdges()}>
                   {(edge) => (
                     <path
                       class="graph-edge is-ghost"
+                      d={edgePath(edge, false)}
+                      data-from={edge.from}
+                      data-to={edge.to}
+                    />
+                  )}
+                </For>
+                <For each={restWithEdges()}>
+                  {(edge) => (
+                    <path
+                      class="graph-edge is-ghost is-with"
                       d={edgePath(edge, false)}
                       data-from={edge.from}
                       data-to={edge.to}
@@ -1179,7 +1353,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
                 </For>
               </g>
               <g class="graph-nodes">
-                <For each={shown()}>
+                <For each={drawnNodes()}>
                   {(node) => {
                     const r = () => radius(node.id);
                     const at = () => screen().get(node.id) ?? { x: 0, y: 0 };
@@ -1265,6 +1439,45 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
                     );
                   }}
                 </For>
+                <For each={withGhosts()}>
+                  {(work) => {
+                    const id = withGhostId(work.key);
+                    const at = () => screen().get(id) ?? { x: 0, y: 0 };
+                    return (
+                      <g
+                        class="graph-node is-ghost is-with"
+                        classList={{
+                          'is-selected': isGhostPicked(id),
+                          'is-hover': isHot(id),
+                          'is-neighbour': neighbourFlag[id] === true,
+                          'is-label-on': labelOn[id] === true,
+                          'is-dragged': isDragged(id),
+                        }}
+                        role="button"
+                        tabindex={0}
+                        aria-label={`Cited with ${work.members.length} of these: ${citedWithText(work)}`}
+                        aria-pressed={isGhostPicked(id)}
+                        data-id={id}
+                        data-with={work.key}
+                        transform={`translate(${at().x} ${at().y})`}
+                        onPointerDown={(e) => onNodePointerDown({ id }, e)}
+                        onPointerEnter={() => onNodeEnter({ id })}
+                        onPointerLeave={() => onNodeLeave({ id })}
+                        onFocus={() => onNodeFocus({ id })}
+                        onBlur={() => onNodeLeave({ id })}
+                        onClick={() => onNodeClick({ id })}
+                        onKeyDown={(e) => onNodeKeyDown({ id }, e)}
+                      >
+                        <circle class="graph-node-hit" r={HIT_RADIUS} />
+                        <circle class="graph-node-halo" r={GHOST_RADIUS + 4} />
+                        <circle class="graph-node-dot" r={GHOST_RADIUS} />
+                        <text class="graph-node-label" x={GHOST_RADIUS + LABEL_GAP} dy="0.35em">
+                          {citedWithLabel(work)}
+                        </text>
+                      </g>
+                    );
+                  }}
+                </For>
               </g>
             </g>
           </svg>
@@ -1338,39 +1551,25 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
               Reset layout
             </button>
             <button
+              ref={viewButton}
               type="button"
               class="graph-control is-text"
-              aria-pressed={store.state.missing.on}
-              classList={{ 'is-on': store.state.missing.on }}
-              title="Show works several items here cite that are not in the library"
-              onClick={() => store.setMissing(!store.state.missing.on)}
+              classList={{ 'is-on': menuOpen() }}
+              aria-haspopup="dialog"
+              aria-expanded={menuOpen()}
+              title="What the graph shows"
+              onClick={() => setMenuOpen(!menuOpen())}
             >
-              Missing
+              View
             </button>
-            <Show when={store.state.missing.on}>
-              <span class="graph-control graph-stepper" role="group" aria-label="Cited by at least">
-                <button
-                  type="button"
-                  aria-label="Fewer citers"
-                  disabled={store.state.missing.min <= MISSING_MIN}
-                  onClick={() => store.setMissingMin(store.state.missing.min - 1)}
-                >
-                  -
-                </button>
-                <span class="graph-stepper-value">
-                  <MathText text={`cited by $\\geq ${store.state.missing.min}$`} />
-                </span>
-                <button
-                  type="button"
-                  aria-label="More citers"
-                  disabled={store.state.missing.min >= MISSING_MAX}
-                  onClick={() => store.setMissingMin(store.state.missing.min + 1)}
-                >
-                  +
-                </button>
-              </span>
-            </Show>
           </div>
+          <Show when={menuOpen()}>
+            <ViewMenu
+              ref={(el) => (menuEl = el)}
+              inProject={projectId() !== null}
+              onClose={closeMenu}
+            />
+          </Show>
           <Show when={cardBox()}>
             {(box) => (
               <>

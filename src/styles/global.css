@@ -4265,6 +4265,25 @@ body.is-resizing-sidebar * {
   white-space: nowrap;
 }
 
+/* "3 works are often cited with this project": the count's typography,
+ * a link only on hover. */
+.projects-head-cited {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.projects-head-cited:hover {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .projects-head-spacer {
   flex: 1;
 }
@@ -6174,6 +6193,53 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 }
 
 /* The middle column's list of missing works. */
+.missing-list-switch {
+  padding: 0 8px 8px;
+}
+
+.missing-row .cited-with-add {
+  flex: none;
+  align-self: center;
+  height: 22px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+/* The graph's View choices: a small panel under the controls strip. */
+.graph-view-menu {
+  position: absolute;
+  top: 38px;
+  right: 8px;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.graph-view-menu-label {
+  white-space: nowrap;
+}
+
+.graph-view-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.graph-view-menu .graph-stepper {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
 .missing-list-head {
   display: flex;
   align-items: baseline;
@@ -6387,4 +6453,9 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   margin-top: 4px;
   color: var(--danger);
   white-space: pre-wrap;
+}
+
+/* A cited-with ghost's lines to its members: the ghost edge, dashed. */
+.graph-edge.is-with {
+  stroke-dasharray: 3 3;
 }

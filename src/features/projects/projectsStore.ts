@@ -14,8 +14,18 @@ import { createStore, reconcile } from 'solid-js/store';
 import { engine, isEngineError } from '../../lib/transport/engine';
 import { forgetPapers } from './activePaper';
 import type { GraphFocus } from '../../lib/transport/engine';
+import {
+  CITED_WITH_MAX,
+  CITED_WITH_MIN,
+  loadPrefs,
+  MISSING_MAX,
+  MISSING_MIN,
+  savePrefs,
+} from './graphViewPrefs';
+import type { EdgeMode, LabelMode, UnlinkedMode } from './graphViewPrefs';
 import type {
   BundleReport,
+  CoCitedWork,
   DuplicateGroup,
   LibraryCounts,
   LookupBatch,
@@ -80,10 +90,16 @@ export function duplicateIndex(groups: DuplicateGroup[]): Record<string, Duplica
   return out;
 }
 
-/** Works the view's items cite that the library lacks, drawn as ghosts in
- * the graph. Session-only, like the view. */
-export const MISSING_MIN = 1;
-export const MISSING_MAX = 5;
+export { CITED_WITH_MAX, CITED_WITH_MIN, MISSING_MAX, MISSING_MIN };
+
+/** Which list the missing-works list shows: works the view's items cite
+ * ("Cited by these"), or works the library cites alongside a project's
+ * members ("Cited with these"). */
+export type MissingMode = 'by' | 'with';
+
+/** A cited-with work's key where a picked ghost's key goes: never a
+ * missing-works key, which has no such prefix. */
+export const withKey = (key: string) => `with:${key}`;
 
 interface State {
   initialized: boolean;
@@ -106,8 +122,17 @@ interface State {
   /** The graph narrowed to one item's neighbourhood; null is the scope's
    * whole graph. Cleared by a scope change. */
   focus: GraphFocus | null;
-  /** Ghost nodes for works cited by at least `min` items of the view. */
+  /** Ghost nodes for works cited by at least `min` items of the view.
+   * Kept across sessions with the rest of the graph's View choices. */
   missing: { on: boolean; min: number };
+  /** Ghost nodes for works cited with at least `min` members. */
+  citedWith: { on: boolean; min: number };
+  /** The graph's display choices (graphViewPrefs.ts). */
+  viewPrefs: { edges: EdgeMode; labels: LabelMode; unlinked: UnlinkedMode };
+  /** Works often cited with the project's members; empty outside a project. */
+  coCited: CoCitedWork[];
+  /** Which works the missing-works list shows. */
+  missingMode: MissingMode;
   missingWorks: MissingWork[];
   /** The middle column lists the missing works instead of drawing them. */
   missingList: boolean;
@@ -139,7 +164,16 @@ const [state, setState] = createStore<State>({
   view: 'list',
   duplicates: {},
   focus: null,
-  missing: { on: false, min: 2 },
+  ...(() => {
+    const prefs = loadPrefs();
+    return {
+      missing: prefs.missing,
+      citedWith: prefs.citedWith,
+      viewPrefs: { edges: prefs.edges, labels: prefs.labels, unlinked: prefs.unlinked },
+    };
+  })(),
+  coCited: [],
+  missingMode: 'by',
   missingWorks: [],
   missingList: false,
   ghostKey: null,
@@ -151,6 +185,15 @@ const [state, setState] = createStore<State>({
 let rowsSeq = 0;
 let detailSeq = 0;
 let missingSeq = 0;
+let coCitedSeq = 0;
+
+function persistPrefs(): void {
+  savePrefs({
+    ...state.viewPrefs,
+    missing: { ...state.missing },
+    citedWith: { ...state.citedWith },
+  });
+}
 let queryTimer: ReturnType<typeof setTimeout> | undefined;
 let unlisten: (() => void) | null = null;
 
@@ -217,6 +260,7 @@ export const projectsStore = {
       projectsStore.loadRows(),
       projectsStore.loadDuplicates(),
       projectsStore.loadMissing(),
+      projectsStore.loadCoCited(),
       state.selectedId ? projectsStore.loadDetail(state.selectedId) : Promise.resolve(),
     ]);
   },
@@ -282,8 +326,12 @@ export const projectsStore = {
    * rows; off, it forgets them. */
   async loadMissing(): Promise<void> {
     const seq = ++missingSeq;
-    if (!state.missing.on) {
-      setState({ missingWorks: [], missingList: false, ghostKey: null });
+    // The graph's ghosts, or the list open on "Cited by these".
+    const wanted = state.missing.on || (state.missingList && state.missingMode === 'by');
+    if (!wanted) {
+      setState('missingWorks', []);
+      if (state.missingMode === 'by') setState('missingList', false);
+      if (state.ghostKey && !state.ghostKey.startsWith('with:')) setState('ghostKey', null);
       return;
     }
     const projectId = projectsStore.graphProjectId();
@@ -292,7 +340,36 @@ export const projectsStore = {
     const works = await guarded(() => engine.libraryMissingWorks(projectId, min, focus));
     if (seq !== missingSeq || !works) return;
     setState('missingWorks', reconcile(works, { key: 'key' }));
-    if (state.ghostKey && !works.some((w) => w.key === state.ghostKey)) {
+    const key = state.ghostKey;
+    if (key && !key.startsWith('with:') && !works.some((w) => w.key === key)) {
+      setState('ghostKey', null);
+    }
+  },
+
+  /** Reads the works cited with the project's members, for the header
+   * line, the list and the ghosts alike; outside a project there are none.
+   * The missing-works threshold goes along so the two lists never repeat
+   * each other. */
+  async loadCoCited(): Promise<void> {
+    const seq = ++coCitedSeq;
+    const projectId = state.scope.kind === 'project' ? state.scope.id : null;
+    if (projectId === null) {
+      setState('coCited', []);
+      return;
+    }
+    const min = state.citedWith.min;
+    const byMin = state.missing.min;
+    let works: CoCitedWork[];
+    try {
+      works = await engine.libraryCocitedWorks(projectId, min, byMin);
+    } catch {
+      // A background read: quiet, like the duplicates.
+      works = [];
+    }
+    if (seq !== coCitedSeq) return;
+    setState('coCited', reconcile(works, { key: 'key' }));
+    const key = state.ghostKey;
+    if (key?.startsWith('with:') && !works.some((w) => withKey(w.key) === key)) {
       setState('ghostKey', null);
     }
   },
@@ -300,6 +377,7 @@ export const projectsStore = {
   setMissing(on: boolean): void {
     if (on === state.missing.on) return;
     setState('missing', 'on', on);
+    persistPrefs();
     void projectsStore.loadMissing();
   },
 
@@ -307,11 +385,54 @@ export const projectsStore = {
     const clamped = Math.max(MISSING_MIN, Math.min(MISSING_MAX, Math.round(min)));
     if (clamped === state.missing.min) return;
     setState('missing', 'min', clamped);
+    persistPrefs();
     void projectsStore.loadMissing();
+    void projectsStore.loadCoCited();
+  },
+
+  setCitedWith(on: boolean): void {
+    if (on === state.citedWith.on) return;
+    setState('citedWith', 'on', on);
+    persistPrefs();
+  },
+
+  setCitedWithMin(min: number): void {
+    const clamped = Math.max(CITED_WITH_MIN, Math.min(CITED_WITH_MAX, Math.round(min)));
+    if (clamped === state.citedWith.min) return;
+    setState('citedWith', 'min', clamped);
+    persistPrefs();
+    void projectsStore.loadCoCited();
+  },
+
+  setEdgeMode(edges: EdgeMode): void {
+    setState('viewPrefs', 'edges', edges);
+    persistPrefs();
+  },
+
+  setLabelMode(labels: LabelMode): void {
+    setState('viewPrefs', 'labels', labels);
+    persistPrefs();
+  },
+
+  setUnlinkedMode(unlinked: UnlinkedMode): void {
+    setState('viewPrefs', 'unlinked', unlinked);
+    persistPrefs();
   },
 
   showMissingList(show: boolean): void {
-    setState('missingList', show && state.missing.on);
+    setState('missingList', show && (state.missing.on || state.missingMode === 'with'));
+  },
+
+  /** Switches the list between "Cited by these" and "Cited with these". */
+  setMissingMode(mode: MissingMode): void {
+    if (mode === state.missingMode) return;
+    setState('missingMode', mode);
+    void projectsStore.loadMissing();
+  },
+
+  /** The header line's way in: the graph's list, on "Cited with these". */
+  openCitedWith(): void {
+    setState({ view: 'graph', missingMode: 'with', missingList: true });
   },
 
   /** Picks a missing work for the detail column; null lets it go. */
@@ -356,6 +477,7 @@ export const projectsStore = {
     setState({ focus: null, ghostKey: null, missingList: false });
     void projectsStore.loadRows();
     void projectsStore.loadMissing();
+    void projectsStore.loadCoCited();
   },
 
   /** Debounced, like the library search, so typing does not query per key. */

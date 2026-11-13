@@ -11,6 +11,7 @@ import type {
   LookupCandidate,
   LookupResult,
   MetaPatch,
+  CoCitedWork,
   MissingWork,
   Paper,
   PaperFilter,
@@ -264,6 +265,37 @@ export const MISSING: MissingWork[] = [
   },
 ];
 
+/** Works cited with p1's members: an item outside the project, and a
+ * missing work. */
+export const COCITED: CoCitedWork[] = [
+  {
+    key: 'item:e',
+    paperId: 'e',
+    title: 'A cited-with item outside the project',
+    text: null,
+    year: 1996,
+    doi: null,
+    arxiv: null,
+    members: ['a', 'b'],
+    citers: 3,
+    citedInLibrary: 4,
+    score: 2.5,
+  },
+  {
+    key: 'doi:10.1/w',
+    paperId: null,
+    title: null,
+    text: 'K. Sekimoto, Langevin equation and thermodynamics, Prog. Theor. Phys. Suppl. 130, 17 (1998).',
+    year: 1998,
+    doi: '10.1/w',
+    arxiv: null,
+    members: ['a', 'b', 'g'],
+    citers: 4,
+    citedInLibrary: 9,
+    score: 2,
+  },
+];
+
 /** What the fake engine answers that a test may change, reset by `resetFixture`. */
 export const fixture = {
   duplicates: [] as DuplicateGroup[],
@@ -271,12 +303,15 @@ export const fixture = {
   suggestions: [] as ProjectSuggestion[],
   /** What `libraryRelatedItems` answers, for any item. */
   related: [] as RelatedItem[],
+  /** What `libraryCocitedWorks` answers for p1. */
+  cocited: COCITED as CoCitedWork[],
 };
 
 export function resetFixture(): void {
   fixture.duplicates = [];
   fixture.suggestions = [];
   fixture.related = [];
+  fixture.cocited = COCITED;
 }
 
 const PAPERS: Record<string, Paper> = {
@@ -680,6 +715,10 @@ export function fakeEngine() {
     libraryMissingWorks: vi.fn(
       async (_projectId: string | null, minCitedBy: number): Promise<MissingWork[]> =>
         MISSING.filter((w) => w.citedBy.length >= minCitedBy)
+    ),
+    libraryCocitedWorks: vi.fn(
+      async (projectId: string, minMembers: number): Promise<CoCitedWork[]> =>
+        projectId === 'p1' ? fixture.cocited.filter((w) => w.members.length >= minMembers) : []
     ),
     libraryDuplicates: vi.fn(async (): Promise<DuplicateGroup[]> => fixture.duplicates),
     libraryMergePapers: vi.fn(async (keepId: string): Promise<Paper> => {

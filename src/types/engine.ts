@@ -532,6 +532,28 @@ export interface MissingWork {
   citedBy: string[];
 }
 
+/** A work the library often cites alongside a project's members that is
+ * not in the project: a library item (`paperId`) or a missing work. */
+export interface CoCitedWork {
+  /** `item:<id>` for a library item, else the missing-works key */
+  key: string;
+  paperId: string | null;
+  /** the item's title */
+  title: string | null;
+  /** a missing work's reference as printed */
+  text: string | null;
+  year: number | null;
+  doi: string | null;
+  arxiv: string | null;
+  /** the members it is cited with, in list order */
+  members: string[];
+  /** distinct citing works that cite it with a member */
+  citers: number;
+  /** distinct citing works in the library that cite it at all */
+  citedInLibrary: number;
+  score: number;
+}
+
 /** A project the item might belong in, read off the citation graph. */
 export interface ProjectSuggestion {
   projectId: string;

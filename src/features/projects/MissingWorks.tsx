@@ -12,6 +12,7 @@ import { settings } from '../../stores/settings';
 import type { MissingWork } from '../../types/engine';
 import { projectsStore } from './projectsStore';
 import MathText from '../../components/MathText';
+import { CitedWithRows } from './CitedWith';
 
 /** The ghost node's id in the graph: never a record id. */
 export const ghostId = (key: string) => `missing:${key}`;
@@ -64,7 +65,7 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-function MissingActions(props: { work: MissingWork }) {
+export function MissingWorkActions(props: { work: MissingWork }) {
   const store = projectsStore;
   const [copied, setCopied] = createSignal(false);
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -167,22 +168,50 @@ export function MissingWorkPanel(props: { work: MissingWork }) {
           </For>
         </span>
       </div>
-      <MissingActions work={props.work} />
+      <MissingWorkActions work={props.work} />
     </section>
   );
 }
 
-/** The middle column's list of missing works, reached from the graph. */
+/** The middle column's list of missing works, reached from the graph. In
+ * a project it has a second mode, the works often cited with the members
+ * (CitedWith.tsx); the switch picks which. */
 export function MissingList() {
   const store = projectsStore;
   const works = () => store.state.missingWorks;
+  const inProject = () => store.state.scope.kind === 'project';
+  const mode = () => (inProject() ? store.state.missingMode : 'by');
+  const head = () => {
+    if (mode() === 'with') {
+      const n = store.state.coCited.length;
+      return `${n} ${n === 1 ? 'work' : 'works'} often cited with these, not in the project`;
+    }
+    return `${works().length} ${works().length === 1 ? 'work' : 'works'} cited by $\\geq ${store.state.missing.min}$, not in the library`;
+  };
   return (
     <div class="projects-col-scroll missing-list">
+      <Show when={inProject()}>
+        <div class="missing-list-switch">
+          <div class="projects-launch-toggle" role="radiogroup" aria-label="Which works">
+            <For each={['by', 'with'] as const}>
+              {(m) => (
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={mode() === m}
+                  classList={{ 'is-active': mode() === m }}
+                  onClick={() => store.setMissingMode(m)}
+                >
+                  {m === 'by' ? 'Cited by these' : 'Cited with these'}
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
+      </Show>
       <div class="missing-list-head">
         <span>
-          <MathText
-            text={`${works().length} ${works().length === 1 ? 'work' : 'works'} cited by $\\geq ${store.state.missing.min}$, not in the library`}
-          />
+          <MathText text={head()} />
         </span>
         <button
           type="button"
@@ -192,9 +221,16 @@ export function MissingList() {
           Back to graph
         </button>
       </div>
+      <Show when={mode() === 'with'}>
+        <CitedWithRows />
+      </Show>
       <Show
-        when={works().length > 0}
-        fallback={<p class="library-hint missing-list-empty">Nothing missing at this threshold</p>}
+        when={mode() === 'by' && works().length > 0}
+        fallback={
+          <Show when={mode() === 'by'}>
+            <p class="library-hint missing-list-empty">Nothing missing at this threshold</p>
+          </Show>
+        }
       >
         <div role="listbox" aria-label="Missing works">
           <For each={works()}>

@@ -81,6 +81,15 @@ export default function ProjectsScreen() {
     return `${total} ${noun}${total === 1 ? '' : 's'}`;
   };
 
+  /** "3 works are often cited with this project", only when some are. */
+  const citedWithText = () => {
+    const n = store.state.scope.kind === 'project' ? store.state.coCited.length : 0;
+    if (n === 0) return null;
+    return n === 1
+      ? '1 work is often cited with this project'
+      : `${n} works are often cited with this project`;
+  };
+
   return (
     <div
       class="projects-screen"
@@ -89,6 +98,18 @@ export default function ProjectsScreen() {
       <header class="projects-head">
         <h2>{scopeName()}</h2>
         <span class="projects-head-count">{countText()}</span>
+        <Show when={citedWithText()}>
+          {(text) => (
+            <button
+              type="button"
+              class="projects-head-count projects-head-cited"
+              title="List them"
+              onClick={() => store.openCitedWith()}
+            >
+              {text()}
+            </button>
+          )}
+        </Show>
         <span class="projects-head-spacer" />
         <Show when={narrow()}>
           <button

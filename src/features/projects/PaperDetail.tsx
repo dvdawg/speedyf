@@ -35,6 +35,7 @@ import { formatShortcut } from '../../app/shortcutLabel';
 import MathText from '../../components/MathText';
 import { DuplicateLine, MergedLine } from './MergeConfirm';
 import { MissingWorkPanel } from './MissingWorks';
+import { CitedWithPanel, pickedCitedWith } from './CitedWith';
 import { openPaper } from './openPaper';
 import { openInNewTabOrFocus } from '../document/tabsController';
 import { openInNewWindow, wantsNewWindow } from '../windows/windowController';
@@ -652,7 +653,8 @@ function FilesSection(props: { paper: Paper }) {
 
 export default function PaperDetail(props: { onMoveFocus: (dir: -1 | 1) => void }) {
   const store = projectsStore;
-  const paper = () => (ghost() ? null : store.state.selected);
+  const paper = () => (ghost() || citedWith() ? null : store.state.selected);
+  const citedWith = pickedCitedWith;
   /** A missing work picked in the graph stands in for the record. */
   const ghost = () => {
     const key = store.state.ghostKey;
@@ -768,6 +770,7 @@ export default function PaperDetail(props: { onMoveFocus: (dir: -1 | 1) => void 
   return (
     <div class="projects-col-scroll paper-detail" onKeyDown={onKeyDown}>
       <Show when={ghost()}>{(work) => <MissingWorkPanel work={work()} />}</Show>
+      <Show when={citedWith()}>{(work) => <CitedWithPanel work={work()} />}</Show>
       <Show when={paper()}>
         {(p) => (
           <>
