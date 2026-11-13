@@ -861,10 +861,10 @@ The user sees three things, all quiet. The project header says "3 works
 are often cited with this project" when there are any; clicking it opens
 the missing-works list on its second mode. That list has a two-way switch,
 _Cited by these_ | _Cited with these_; a cited-with row is the title or the
-printed reference with "cited with 4 of these", and a library item has
-**Add** (the membership command). In the graph, cited-with works are ghost
-nodes in the missing works' style, placed near the members they are cited
-with and joined to them by faint dashed lines; they take no part in the
+printed reference with "cited with 4 of these by 3 papers" (members, then
+distinct citing papers), and a library item has **Add** (the membership
+command). In the graph, cited-with works are ghost nodes in the missing
+works' style, placed near the members they are cited with and joined to them by faint dashed lines; they take no part in the
 layout, so nothing moves. Clicking one picks it into the detail column,
 where a library item can be added too. Everything rereads on
 `library:changed`.

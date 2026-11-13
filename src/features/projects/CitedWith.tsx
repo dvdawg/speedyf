@@ -31,8 +31,10 @@ export function citedWithText(work: CoCitedWork): string {
   return referenceText(asMissing(work));
 }
 
-/** "cited with 4 of these" */
-export const citedWithReason = (work: CoCitedWork) => `cited with ${work.members.length} of these`;
+/** "cited with 4 of these by 3 papers": the members alone tie often in a
+ * small project, so the distinct citing papers break the tie for the eye. */
+export const citedWithReason = (work: CoCitedWork) =>
+  `cited with ${work.members.length} of these by ${work.citers} ${work.citers === 1 ? 'paper' : 'papers'}`;
 
 /** "Cited with 4 of these": the ghost's label, on hover or pick only. */
 export const citedWithLabel = (work: CoCitedWork) => `Cited with ${work.members.length} of these`;

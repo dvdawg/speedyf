@@ -27,6 +27,8 @@ vi.mock('../home/HomeScreen', () => ({
 }));
 
 const { default: GraphView } = await import('./GraphView');
+const { citedWithReason } = await import('./CitedWith');
+const { COCITED } = await import('./testFixtures');
 const { default: PaperList } = await import('./PaperList');
 const { default: PaperDetail } = await import('./PaperDetail');
 const { default: ProjectsScreen } = await import('./ProjectsScreen');
@@ -121,9 +123,9 @@ describe('the list', () => {
       screen.getByRole('listbox', { name: 'Cited with these' }).querySelectorAll('.missing-row')
     );
     expect(rows[0]!.textContent).toContain('A cited-with item outside the project');
-    expect(rows[0]!.textContent).toContain('cited with 2 of these');
+    expect(rows[0]!.textContent).toContain('cited with 2 of these by 3 papers');
     expect(rows[1]!.textContent).toContain('K. Sekimoto, Langevin equation');
-    expect(rows[1]!.textContent).toContain('cited with 3 of these');
+    expect(rows[1]!.textContent).toContain('cited with 3 of these by 4 papers');
     expect(
       screen.getByRole('radio', { name: 'Cited with these' }).getAttribute('aria-checked')
     ).toBe('true');
@@ -224,5 +226,13 @@ describe('the ghosts', () => {
     expect(panel.textContent).toContain('In the library, not in this project');
     fireEvent.click(screen.getByRole('button', { name: 'Add' }));
     expect(engine.librarySetMembership).toHaveBeenCalledWith('e', 'p1', true);
+  });
+});
+
+describe('citedWithReason', () => {
+  it('counts the members and the distinct citing papers', () => {
+    const work = COCITED[1]!;
+    expect(citedWithReason(work)).toBe('cited with 3 of these by 4 papers');
+    expect(citedWithReason({ ...work, citers: 1 })).toBe('cited with 3 of these by 1 paper');
   });
 });
