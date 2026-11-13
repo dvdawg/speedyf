@@ -3489,6 +3489,8 @@ mod tests {
             other.clone(),
         ];
         entries[0].cites = Some(vec![CitationIdDto::Doi("10.1000/other".into())]);
+        // The text pass has written the citing document's text.
+        entries[0].text_indexed = true;
         for e in &mut entries[1..] {
             e.cites = Some(Vec::new());
         }
@@ -3617,6 +3619,8 @@ mod tests {
             [4] D. A. Sivak and G. E. Crooks, Thermodynamic geometry of minimum-dissipation driven barrier crossing (2016).";
         let mut entries = vec![citing.clone(), b, c, aps, titled];
         entries[0].cites = Some(super::super::record_citations(&entries[0], text));
+        // The text pass has written the citing document's text.
+        entries[0].text_indexed = true;
         for e in &mut entries[1..] {
             e.cites = Some(Vec::new());
         }

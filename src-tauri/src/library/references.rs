@@ -602,10 +602,17 @@ impl RefsProvider {
             {
                 continue;
             }
+            // No text yet is not a failure: the text pass is still writing
+            // it (every document's, after an upgrade re-extracts the
+            // library). Giving up here left whole libraries without
+            // reference lists until the next launch. Skip, and the next
+            // poll finds it once the sidecar lands.
+            if !entry.text_indexed {
+                continue;
+            }
             let Some(text) =
                 read_sidecar_text(app_data_dir, &entry.path, entry.mtime_ms, entry.size)
             else {
-                self.given_up.insert(issued);
                 continue;
             };
             if self.issued.len() >= MAX_TOKENS {
@@ -1061,6 +1068,33 @@ mod tests {
         entry.cites = Some(Vec::new());
         entry.arxiv = Some("2512.24540".into());
         entry
+    }
+
+    #[test]
+    fn a_document_whose_text_is_not_ready_is_waited_for_not_given_up() {
+        // After an upgrade the text pass rewrites every document's text while
+        // the provider is already asking. A document caught mid-rewrite must
+        // be offered again once its text lands, not dropped for the session.
+        let dir = tempfile::tempdir().expect("dir");
+        let doc = dir.path().join("secret-name.pdf");
+        let mut entry = indexed_entry(&doc, 5, 6);
+        entry.text_indexed = false;
+        let mut cache = RefsCache::default();
+        let mut provider = RefsProvider::default();
+        provider.set_active(Some(PROVIDER.into()));
+        let now = Instant::now();
+        assert!(provider
+            .pending(dir.path(), &[entry.clone()], &mut cache, 10, now)
+            .is_empty());
+        // Marked indexed but the sidecar not written yet: still not a failure.
+        entry.text_indexed = true;
+        assert!(provider
+            .pending(dir.path(), &[entry.clone()], &mut cache, 10, now)
+            .is_empty());
+        // The text lands; the document is offered.
+        let ready = library_with_text(dir.path(), "Body. References [1] A. B, X (2001).");
+        let pending = provider.pending(dir.path(), &[ready], &mut cache, 10, now);
+        assert_eq!(pending.len(), 1);
     }
 
     #[test]
