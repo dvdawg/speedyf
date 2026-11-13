@@ -10,6 +10,7 @@
 //!   highlighting therefore keep working after the search budget is full, and
 //!   revisiting nearby pages does not re-run PDFium extraction.
 
+use crate::engine::ocr::{self, OcrLine};
 use crate::engine::types::{BubbleDto, DocId, MatchDto, PageMatchesDto, SearchQueryDto, TextRun};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -170,6 +171,87 @@ pub struct PageEntry {
     map: OffsetMap,
     pub char_count: u32,
     pub cost: u64,
+    /// Set when the page's searchable text is OCR's rather than PDFium's
+    /// (`ocr_page`): its offsets index the OCR text, not PDFium characters,
+    /// so a hit is highlighted from the OCR line boxes instead.
+    pub ocr: Option<Arc<OcrGeometry>>,
+}
+
+/// One OCR line's place in an OCR page's text and on the page.
+#[derive(Clone, Debug, PartialEq)]
+struct OcrSpan {
+    /// Character range `[start, end)` of the line in the page text.
+    start: u32,
+    end: u32,
+    /// Display space, `[x, y_bottom, w, h]`, y-up: the form
+    /// `text::merge_match_rects` returns.
+    rect: [f32; 4],
+}
+
+/// Where each line of an OCR'd page's text sits on the page. Vision gives
+/// a box per line, not per character, so a hit's rectangle is the share of
+/// its line's box that its characters take, spaced evenly — close for the
+/// proportional type of a journal page, and on the right line always.
+#[derive(Debug, Default)]
+pub struct OcrGeometry {
+    spans: Vec<OcrSpan>,
+}
+
+impl OcrGeometry {
+    /// Rectangles for the OCR text's characters `[start, start + len)`:
+    /// one per line the range touches.
+    pub fn match_rects(&self, start: u32, len: u32) -> Vec<[f32; 4]> {
+        let end = start.saturating_add(len);
+        self.spans
+            .iter()
+            .filter(|span| span.start < end && start < span.end)
+            .map(|span| {
+                let chars = (span.end - span.start).max(1) as f32;
+                let from = start.max(span.start) - span.start;
+                let to = end.min(span.end) - span.start;
+                let [x, y, w, h] = span.rect;
+                let left = x + w * from as f32 / chars;
+                let right = x + w * to as f32 / chars;
+                [left, y, (right - left).max(0.0), h]
+            })
+            .collect()
+    }
+
+    fn cost(&self) -> u64 {
+        (self.spans.len() * std::mem::size_of::<OcrSpan>()) as u64
+    }
+}
+
+/// An OCR'd page as the search index takes it: its text exactly as
+/// `ocr::page_text` joins it (lines under `MIN_LINE_CONFIDENCE` and blank
+/// ones dropped, `\n` between), and each kept line's character range and
+/// box. The boxes are Vision's, normalized to the rendered page with a
+/// top-left origin; `page_w`/`page_h` are the page's display size, which is
+/// what it was rendered at.
+pub fn ocr_page(lines: &[OcrLine], page_w: f32, page_h: f32) -> (String, OcrGeometry) {
+    let mut text = String::new();
+    let mut count = 0u32;
+    let mut spans = Vec::new();
+    for line in lines {
+        if line.confidence < ocr::MIN_LINE_CONFIDENCE || line.text.trim().is_empty() {
+            continue;
+        }
+        if !text.is_empty() {
+            text.push('\n');
+            count += 1;
+        }
+        let kept = line.text.trim_end();
+        let start = count;
+        count += kept.chars().count() as u32;
+        text.push_str(kept);
+        let [x, y, w, h] = line.bbox;
+        spans.push(OcrSpan {
+            start,
+            end: count,
+            rect: [x * page_w, (1.0 - y - h) * page_h, w * page_w, h * page_h],
+        });
+    }
+    (text, OcrGeometry { spans })
 }
 
 impl PageEntry {
@@ -203,6 +285,7 @@ impl PageEntry {
             map,
             char_count,
             cost,
+            ocr: None,
         }
     }
 
@@ -214,6 +297,14 @@ impl PageEntry {
 
     fn new(raw: &str, char_count: u32) -> Self {
         PageEntry::build(normalize(raw), char_count)
+    }
+
+    /// An OCR'd page (`ocr_page`): its offsets index `text`.
+    fn new_ocr(text: &str, geometry: OcrGeometry) -> Self {
+        let mut entry = PageEntry::new(text, text.chars().count() as u32);
+        entry.cost += geometry.cost();
+        entry.ocr = Some(Arc::new(geometry));
+        entry
     }
 
     fn build(normalized: NormalizedText, char_count: u32) -> Self {
@@ -230,6 +321,7 @@ impl PageEntry {
             map,
             char_count,
             cost,
+            ocr: None,
         }
     }
 }
@@ -430,7 +522,47 @@ impl SearchStore {
     /// Store compact search text for one page. Foreground text runs are kept
     /// by `TextLayoutCache`, not here.
     pub fn store_page(&mut self, doc: DocId, src: u32, raw: &str, char_count: u32) -> bool {
-        let entry = Arc::new(PageEntry::new(raw, char_count));
+        self.store_entry(doc, src, PageEntry::new(raw, char_count))
+    }
+
+    /// `store_page` with the word gaps the page's geometry implies
+    /// (`library::word_breaks`) inserted as spaces, as the library's text
+    /// pass indexes it: run-together words are found as words, and a hit's
+    /// offsets are still PDFium character indices.
+    pub fn store_page_spaced(
+        &mut self,
+        doc: DocId,
+        src: u32,
+        raw: &str,
+        char_count: u32,
+        breaks: &[u32],
+    ) -> bool {
+        self.store_entry(doc, src, PageEntry::new_spaced(raw, char_count, breaks))
+    }
+
+    /// Store an OCR'd page's text in place of its text layer's
+    /// (`ocr_page`). Its hits are highlighted through `ocr_geometry`.
+    pub fn store_ocr_page(
+        &mut self,
+        doc: DocId,
+        src: u32,
+        text: &str,
+        geometry: OcrGeometry,
+    ) -> bool {
+        self.store_entry(doc, src, PageEntry::new_ocr(text, geometry))
+    }
+
+    /// The line boxes of a page whose index holds OCR text, if it does.
+    pub fn ocr_geometry(&self, doc: DocId, src: u32) -> Option<Arc<OcrGeometry>> {
+        self.docs
+            .get(&doc)?
+            .pages
+            .get(&src)
+            .and_then(|entry| entry.ocr.clone())
+    }
+
+    fn store_entry(&mut self, doc: DocId, src: u32, entry: PageEntry) -> bool {
+        let entry = Arc::new(entry);
         let old_cost = self
             .docs
             .get(&doc)
@@ -755,6 +887,73 @@ mod tests {
         assert_eq!((found[0].0, found[0].1), (1, 15));
         let found = find_prepared_matches(&entry, &prepare_query("A", true), true, 10);
         assert_eq!((found[0].0, found[0].1), (0, 1));
+    }
+
+    #[test]
+    fn a_run_together_line_is_found_in_an_open_document_at_raw_offsets() {
+        let mut store = SearchStore::new(1_000_000);
+        // PDFium's stream for a LaTeX line whose spaces are only geometry.
+        let raw = "Wepresentanewmethod for saddle escape";
+        // Breaks before "present", "a", "new", "method".
+        assert!(store.store_page_spaced(4, 0, raw, raw.chars().count() as u32, &[2, 9, 10, 13]));
+        let found = store.query(4, "a new method", false, 10);
+        assert_eq!(found.len(), 1);
+        let hit = &found[0].matches[0];
+        // "anewmethod": raw indices 9..19, which is what gets highlighted.
+        assert_eq!((hit.start, hit.len), (9, 10));
+        assert_eq!(&raw[9..19], "anewmethod");
+        assert!(store.ocr_geometry(4, 0).is_none());
+    }
+
+    fn ocr_line(text: &str, confidence: f32, bbox: [f32; 4]) -> OcrLine {
+        OcrLine {
+            text: text.into(),
+            confidence,
+            bbox,
+        }
+    }
+
+    #[test]
+    fn an_ocr_page_is_searchable_and_highlighted_from_its_line_boxes() {
+        let lines = [
+            ocr_line("Arthur-Merlin Games:", 0.9, [0.1, 0.1, 0.5, 0.02]),
+            ocr_line("~", 0.1, [0.9, 0.9, 0.01, 0.01]),
+            ocr_line("a Randomized Proof System", 0.8, [0.2, 0.2, 0.6, 0.025]),
+        ];
+        let (w, h) = (600.0, 800.0);
+        let (text, geometry) = ocr_page(&lines, w, h);
+        assert_eq!(
+            text,
+            ocr::page_text(&lines),
+            "the same text the library indexes"
+        );
+
+        let mut store = SearchStore::new(1_000_000);
+        assert!(store.store_ocr_page(9, 3, &text, geometry));
+        let found = store.query(9, "games: a randomized", false, 10);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].src, 3);
+        let hit = &found[0].matches[0];
+        // Offsets index the OCR text, across its line break.
+        assert_eq!(hit.start, text.find("Games").unwrap() as u32);
+
+        let rects = store
+            .ocr_geometry(9, 3)
+            .expect("an OCR page")
+            .match_rects(hit.start, hit.len);
+        assert_eq!(rects.len(), 2, "one rect per line the hit spans");
+        // "Games:" is the last 6 of 20 characters of the first line's box,
+        // which sits 0.1 down a page of height 800, in display space (y-up).
+        let [x, y, rw, rh] = rects[0];
+        assert!((x - (60.0 + 300.0 * 14.0 / 20.0)).abs() < 0.01, "{x}");
+        assert!((rw - 300.0 * 6.0 / 20.0).abs() < 0.01, "{rw}");
+        assert!((y - (1.0 - 0.1 - 0.02) * h).abs() < 0.01, "{y}");
+        assert!((rh - 0.02 * h).abs() < 0.01);
+        // "a Randomized" starts the second line's box.
+        let [x2, y2, w2, _] = rects[1];
+        assert!((x2 - 120.0).abs() < 0.01);
+        assert!((w2 - 360.0 * 12.0 / 25.0).abs() < 0.01, "{w2}");
+        assert!(y2 < y, "the second line is lower on the page");
     }
 
     #[test]

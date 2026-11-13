@@ -144,7 +144,10 @@ fn elsevier_masthead(lines: &[TextLine]) -> Option<(f32, f32)> {
 /// running text (`is_running_text`), small type in the header or footer
 /// band, text up a narrow left margin, or a line with no letters.
 fn is_noise(line: &TextLine, page_height: f32, body: f32) -> bool {
-    if !line.text.chars().any(char::is_alphabetic) || is_running_text(&line.text) {
+    let alone_ampersand = line.text.trim() == "&";
+    if (!line.text.chars().any(char::is_alphabetic) && !alone_ampersand)
+        || is_running_text(&line.text)
+    {
         return true;
     }
     let large = line.size >= LARGE_TYPE * body;
@@ -852,6 +855,11 @@ fn rows_below<'a>(kept: &[&'a TextLine], title: &Title, page_height: f32) -> Vec
 /// set in a style the affiliations are not (bold, or a different size),
 /// rows in the names' style after an affiliation are read too — the grid
 /// a NeurIPS or ICML title page lays its authors out in.
+///
+/// Older papers stack one author at a time: a name, its affiliation lines,
+/// then "AND" alone on a line, the next name, its affiliations. A
+/// standalone connector carries the block past the affiliations it would
+/// otherwise stop at: the next name-shaped row is another author.
 fn find_authors(
     kept: &[&TextLine],
     title: &Title,
@@ -866,6 +874,10 @@ fn find_authors(
     let mut after_by = false;
     let mut skipped_before_names = 0;
     let mut past_names = false;
+    // Past where the block used to end: only a connector row reopens it.
+    let mut stalled = false;
+    // A connector row was read; rows skipped while waiting for the name.
+    let mut connector: Option<usize> = None;
 
     for row in rows.iter().take(24) {
         let gap = row.top - prev_bottom;
@@ -893,6 +905,30 @@ fn find_authors(
             after_by = true;
             continue;
         }
+        if !block.authors.is_empty() && is_connector(&text) {
+            connector = Some(0);
+            stalled = false;
+            continue;
+        }
+        if let Some(skipped) = connector {
+            let parsed = parse_row(row);
+            if !parsed.names.is_empty() && parsed.rejected == 0 {
+                push_names(&mut block, parsed.names);
+                connector = None;
+                // Its affiliations follow; only another connector goes on.
+                stalled = true;
+                continue;
+            }
+            // The previous author's last affiliation lines, at most two.
+            if skipped >= 2 {
+                break;
+            }
+            connector = Some(skipped + 1);
+            continue;
+        }
+        if stalled {
+            continue;
+        }
 
         if let Some((size, bold)) = name_style {
             let same_style = (row.size - size).abs() <= 0.5 && row.bold == bold;
@@ -904,7 +940,7 @@ fn find_authors(
                 if !same_style {
                     past_names = true;
                     if !distinct {
-                        break;
+                        stalled = true;
                     }
                     continue;
                 }
@@ -926,7 +962,7 @@ fn find_authors(
                 if name_style
                     .is_some_and(|(size, bold)| (row.size - size).abs() < 0.5 && row.bold == bold)
                 {
-                    break;
+                    stalled = true;
                 }
                 continue;
             }
@@ -949,6 +985,12 @@ fn find_authors(
         }
     }
     block
+}
+
+/// "AND", "and", "&" or "with" alone on a line, between two authors.
+fn is_connector(text: &str) -> bool {
+    let word = text.trim().to_lowercase();
+    matches!(word.as_str(), "and" | "&" | "with")
 }
 
 fn push_names(block: &mut AuthorBlock, names: Vec<Author>) {
@@ -1443,6 +1485,129 @@ mod tests {
             names(&page),
             pairs(&[("John E.", "Hopcroft"), ("Jeffrey D.", "Ullman")])
         );
+    }
+
+    /// The 1988 JCSS layout: one author at a time, each followed by its
+    /// affiliation lines, "AND" alone between them.
+    fn jcss_stacked_authors(name_size: f32, rest_size: f32) -> Vec<TextLine> {
+        let mut lines = vec![
+            line(
+                "JOURNAL OF COMPUTER AND SYSTEM SCIENCES 36, 254-276 (1988)",
+                9.0,
+                60.0,
+                90.0,
+            ),
+            line(
+                "ARTHUR-MERLIN GAMES: A RANDOMIZED PROOF",
+                14.0,
+                110.0,
+                130.0,
+            ),
+            line(
+                "SYSTEM, AND A HIERARCHY OF COMPLEXITY CLASSES",
+                14.0,
+                128.0,
+                110.0,
+            ),
+            line("LASZLO BABAI", name_size, 160.0, 250.0),
+            line(
+                "Department of Algebra, Eotvos University,",
+                rest_size,
+                176.0,
+                170.0,
+            ),
+            line("Budapest, Hungary H-1088, and", rest_size, 188.0, 200.0),
+            line(
+                "Department of Computer Science, University of Chicago,",
+                rest_size,
+                200.0,
+                140.0,
+            ),
+            line("Chicago, Illinois 60637", rest_size, 212.0, 230.0),
+            line("AND", rest_size, 230.0, 295.0),
+            line("SHLOMO MORAN", name_size, 248.0, 245.0),
+            line(
+                "Department of Computer Science, Technion,",
+                rest_size,
+                264.0,
+                170.0,
+            ),
+            line("Haifa 32000, Israel", rest_size, 276.0, 240.0),
+            line("Received October 10, 1986", rest_size, 300.0, 220.0),
+        ];
+        lines.extend(body(330.0, 10.0));
+        lines
+    }
+
+    #[test]
+    fn and_alone_between_stacked_authors() {
+        // Names and affiliations in the same type, as an OCR'd scan
+        // reports them; then names set larger than the affiliations.
+        for (name_size, rest_size) in [(10.0, 10.0), (11.0, 9.0)] {
+            let page = extract(&jcss_stacked_authors(name_size, rest_size), W, H);
+            assert_eq!(
+                page.title.as_deref(),
+                Some("Arthur-Merlin Games: a Randomized Proof System, and a Hierarchy of Complexity Classes"),
+                "{name_size}/{rest_size}"
+            );
+            assert_eq!(
+                names(&page),
+                pairs(&[("Laszlo", "Babai"), ("Shlomo", "Moran")]),
+                "{name_size}/{rest_size}"
+            );
+        }
+    }
+
+    #[test]
+    fn and_alone_between_bold_authors_and_three_of_them() {
+        let mut lines = vec![
+            bold(line("On Stacked Author Blocks", 16.0, 100.0, 180.0)),
+            bold(line("ALICE SMITH", 10.0, 140.0, 250.0)),
+            line("University of Toronto", 10.0, 154.0, 230.0),
+            line("and", 10.0, 170.0, 295.0),
+            bold(line("BOB JONES", 10.0, 186.0, 255.0)),
+            line("Bell Laboratories", 10.0, 200.0, 240.0),
+            line("Murray Hill, New Jersey 07974", 10.0, 212.0, 210.0),
+            line("&", 10.0, 228.0, 300.0),
+            bold(line("CAROL LEE", 10.0, 244.0, 255.0)),
+            line("IBM Research", 10.0, 258.0, 245.0),
+        ];
+        lines.extend(body(300.0, 10.0));
+        let page = extract(&lines, W, H);
+        assert_eq!(
+            names(&page),
+            pairs(&[("Alice", "Smith"), ("Bob", "Jones"), ("Carol", "Lee")])
+        );
+    }
+
+    #[test]
+    fn and_alone_does_not_swallow_the_abstract() {
+        let mut lines = vec![
+            bold(line(
+                "Sparse Attention Is All You Need Sometimes",
+                16.0,
+                100.0,
+                130.0,
+            )),
+            line("Alice Smith", 12.0, 140.0, 260.0),
+            line("and", 12.0, 156.0, 295.0),
+            line(
+                "We show that sparse attention matches dense attention on long",
+                10.0,
+                180.0,
+                72.0,
+            ),
+            line(
+                "documents while using a fraction of the memory and compute.",
+                10.0,
+                192.0,
+                72.0,
+            ),
+            line("Bob Jones Carol Lee", 10.0, 204.0, 72.0),
+        ];
+        lines.extend(body(230.0, 10.0));
+        let page = extract(&lines, W, H);
+        assert_eq!(names(&page), pairs(&[("Alice", "Smith")]));
     }
 
     #[test]

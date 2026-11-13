@@ -4,10 +4,10 @@
 //!
 //! The engine does the PDFium side (probing pages, rendering one at 2x) and
 //! Vision does the reading (`engine::ocr`); everything here is pure, so the
-//! rules are tested with the recognizer stubbed. OCR only ever runs from the
-//! idle-priority library jobs: the first Vision call of a session can take
-//! tens of seconds while the model loads, and the worker thread it runs on
-//! is the one renders wait for.
+//! rules are tested with the recognizer stubbed. OCR only ever runs for the
+//! idle-priority library jobs, and on its own thread (`engine::ocr_thread`):
+//! the first Vision call of a session can take tens of seconds while the
+//! model loads, which on the worker thread held every render behind it.
 
 use crate::engine::layout_text::TextLine;
 use crate::engine::ocr::{self, OcrLine};
@@ -114,8 +114,15 @@ impl OcrCache {
         if let Some(parent) = target.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
+        // Whole or not at all: the OCR thread writes a document's cache
+        // while the worker may be reading it.
+        let partial = target.with_extension("json.part");
+        let written = |bytes: Vec<u8>| {
+            std::fs::write(&partial, bytes)?;
+            std::fs::rename(&partial, &target)
+        };
         match serde_json::to_vec(self) {
-            Ok(bytes) => match std::fs::write(&target, bytes) {
+            Ok(bytes) => match written(bytes) {
                 Ok(()) => self.dirty = false,
                 Err(error) => log::warn!("cannot write OCR cache {}: {error}", target.display()),
             },

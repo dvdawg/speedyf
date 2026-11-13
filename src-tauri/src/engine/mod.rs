@@ -17,6 +17,7 @@ pub mod invert;
 pub mod layout_text;
 pub mod links;
 pub mod ocr;
+pub mod ocr_thread;
 pub mod pdfium_init;
 pub mod preview;
 pub mod queue;
@@ -164,6 +165,11 @@ pub enum Work {
     /// its sidecar (projects.md §8). Only for entries indexed before cites
     /// were extracted alongside the text; no PDFium, one entry per job.
     LibraryCitesNext,
+    /// A page the OCR thread has read (`ocr_thread`), back on the worker:
+    /// cached, and the library job that waited for it resumed. Idle.
+    OcrDone {
+        done: ocr_thread::OcrDone,
+    },
     MatchRects {
         doc: DocId,
         src: u32,

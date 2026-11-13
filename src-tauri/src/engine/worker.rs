@@ -7,6 +7,7 @@ use super::bubbles;
 use super::layout_text;
 use super::links;
 use super::ocr::{self, OcrLine};
+use super::ocr_thread::{OcrDone, OcrRequest, OcrService, Refused};
 use super::pdfium_init;
 use super::preview::{self, CropInput, PREVIEW_SCALE_MILLI};
 use super::queue::JobMeta;
@@ -22,11 +23,11 @@ use crate::library::{self, LibraryEntry};
 use crate::search::TextLayoutData;
 use pdfium_render::prelude::*;
 use pdfium_render::prelude::{FPDF_DOCUMENT, FPDF_PAGE};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Instant;
 
 /// Open page handles kept per document to avoid re-parsing page objects on
@@ -48,6 +49,9 @@ struct DocState {
     /// Computed lazily; invalidated (left None) whenever the page set changes,
     /// since every entry carries a page index.
     formal_envs: Option<Vec<FormalEntryDto>>,
+    /// The library's OCR cache for this file, looked up the first time one
+    /// of its pages needs OCR (`cached_page_ocr`); `Some(None)`: it has none.
+    ocr_cache: Option<Option<OcrCache>>,
 }
 
 struct WorkerState<'a> {
@@ -69,9 +73,47 @@ struct WorkerState<'a> {
     /// gain, since only the foreground document's index is ever queried.
     index_active: Option<(DocId, u64)>,
     index_chain_seq: u64,
+    /// Where pages go to be read (`ocr_thread`): Vision runs there, never
+    /// on this thread.
+    ocr: OcrService,
+    /// Whether pages are probed for OCR at all: Vision exists here
+    /// (`ocr::available`).
+    ocr_enabled: bool,
+    /// Documents with a page at the OCR thread. One at a time each.
+    ocr_in_flight: HashSet<PathBuf>,
+    /// The library scan's current file, waiting for a page's OCR: scanned
+    /// again when it is back (`do_ocr_done`).
+    scan_waiting: Option<library::ScanCandidate>,
+    /// The library text pass, waiting for a page's OCR.
+    text_waiting: Option<TextWaiting>,
 }
 
 impl<'a> WorkerState<'a> {
+    fn new(
+        bindings: &'a dyn PdfiumLibraryBindings,
+        pdfium: &'a Pdfium,
+        ocr: OcrService,
+        ocr_enabled: bool,
+    ) -> Self {
+        WorkerState {
+            bindings,
+            pdfium,
+            docs: HashMap::new(),
+            next_id: 1,
+            active_main: None,
+            library_docs: Vec::new(),
+            library_session_docs: Vec::new(),
+            index_pending: Vec::new(),
+            index_active: None,
+            index_chain_seq: 0,
+            ocr,
+            ocr_enabled,
+            ocr_in_flight: HashSet::new(),
+            scan_waiting: None,
+            text_waiting: None,
+        }
+    }
+
     fn doc(&mut self, id: DocId) -> AppResult<&mut DocState> {
         self.docs.get_mut(&id).ok_or(AppError::DocumentNotFound)
     }
@@ -243,18 +285,11 @@ pub fn run(shared: Arc<EngineShared>, hints: Vec<PathBuf>) {
     // The engine lives for the process lifetime; leaking gives us 'static
     // lifetimes for both the raw bindings and the high-level wrapper.
     let pdfium: &'static Pdfium = Box::leak(Box::new(Pdfium::new(bindings)));
-    let mut state = WorkerState {
-        bindings: pdfium.bindings(),
-        pdfium,
-        docs: HashMap::new(),
-        next_id: 1,
-        active_main: None,
-        library_docs: Vec::new(),
-        library_session_docs: Vec::new(),
-        index_pending: Vec::new(),
-        index_active: None,
-        index_chain_seq: 0,
-    };
+    let ocr = OcrService::new(
+        Arc::new(|png: &[u8]| ocr::recognize_png(png, &[])),
+        ocr_done_to_queue(Arc::downgrade(&shared)),
+    );
+    let mut state = WorkerState::new(pdfium.bindings(), pdfium, ocr, ocr::available());
 
     while let Some((meta, work)) = shared.queue.pop_blocking() {
         // Generation/cancel stamps represent render state only. Never let a
@@ -267,6 +302,24 @@ pub fn run(shared: Arc<EngineShared>, hints: Vec<PathBuf>) {
         }
         handle_work(&mut state, &shared, meta, work);
     }
+}
+
+/// What the OCR thread does with a reading once it is cached: queue it
+/// for this thread, at idle, to resume whatever waited for it.
+fn ocr_done_to_queue(shared: Weak<EngineShared>) -> super::ocr_thread::OnDone {
+    Arc::new(move |done: OcrDone| {
+        if let Some(shared) = shared.upgrade() {
+            shared.queue.push(
+                Priority::Idle,
+                JobMeta {
+                    doc: 0,
+                    gen: shared.gens.current(0),
+                    epoch: shared.cancels.current(0),
+                },
+                Work::OcrDone { done },
+            );
+        }
+    })
 }
 
 fn is_generation_cancellable(work: &Work) -> bool {
@@ -301,7 +354,8 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         | Work::IndexNext { .. }
         | Work::LibraryScanNext
         | Work::LibraryTextNext
-        | Work::LibraryCitesNext => {}
+        | Work::LibraryCitesNext
+        | Work::OcrDone { .. } => {}
     }
 }
 
@@ -389,6 +443,7 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
         Work::LibraryScanNext => do_library_scan_next(state, shared),
         Work::LibraryTextNext => do_library_text_next(state, shared),
         Work::LibraryCitesNext => do_library_cites_next(shared),
+        Work::OcrDone { done } => do_ocr_done(state, shared, done),
         Work::MatchRects {
             doc,
             src,
@@ -477,6 +532,7 @@ fn do_open(
             index_cursor: 0,
             form_fields: None,
             formal_envs: None,
+            ocr_cache: None,
         },
     );
     Ok(DocMetaDto {
@@ -562,6 +618,12 @@ fn do_render(
     Ok(bytes)
 }
 
+/// Put one page of an open document in its search index, as the library's
+/// text pass reads a page: word gaps that are only geometry inserted as
+/// spaces (`library::word_breaks`), so a LaTeX paper's run-together words
+/// are found as words, with offsets still PDFium character indices; and a
+/// page whose text layer is unusable indexed from the library's OCR of it,
+/// when there is one (`cached_page_ocr`).
 fn ensure_search_extracted(
     state: &mut WorkerState,
     shared: &EngineShared,
@@ -571,16 +633,80 @@ fn ensure_search_extracted(
     if shared.search.lock().contains_page(doc, src) {
         return Ok((0, true));
     }
+    let [w, h] = state.display_size(doc, src)?;
     let page = state.page_handle(doc, src)?;
-    let extracted = text::extract_search_text(state.bindings, page);
-    let stored = shared
-        .search
-        .lock()
-        .store_page(doc, src, &extracted.raw, extracted.char_count);
+    let glyphs = layout_text::extract_spacing_glyphs(state.bindings, page, w, h);
+    let char_count = glyphs.raw.chars().count() as u32;
+    let breaks = library::word_breaks(&glyphs.raw, &glyphs.boxes, &glyphs.upright);
+    let ocr_lines = if state.ocr_enabled {
+        cached_page_ocr(state, shared, doc, src, page, &glyphs.raw, &breaks, w * h)
+    } else {
+        None
+    };
+    let stored = match ocr_lines {
+        Some(lines) => {
+            let (text, geometry) = crate::search::ocr_page(&lines, w, h);
+            shared
+                .search
+                .lock()
+                .store_ocr_page(doc, src, &text, geometry)
+        }
+        None => shared
+            .search
+            .lock()
+            .store_page_spaced(doc, src, &glyphs.raw, char_count, &breaks),
+    };
     if stored {
         shared.metrics.pages_indexed.fetch_add(1, Ordering::Relaxed);
     }
-    Ok((extracted.char_count, stored))
+    Ok((char_count, stored))
+}
+
+/// The library's OCR of an open document's page, when the page's text
+/// layer needs it (`ocr::needs_ocr`, judged on the same text the text pass
+/// judges) and the OCR cache has read it. Never reads a page itself: OCR
+/// belongs to the idle library jobs, and an open document only uses what
+/// they left.
+#[allow(clippy::too_many_arguments)]
+fn cached_page_ocr(
+    state: &mut WorkerState,
+    shared: &EngineShared,
+    doc: DocId,
+    src: u32,
+    page: FPDF_PAGE,
+    raw: &str,
+    breaks: &[u32],
+    area_pts: f32,
+) -> Option<Vec<OcrLine>> {
+    let text = crate::search::librarytext::normalized_spaced_text(raw, breaks);
+    let (has_images, _) = render::image_coverage(state.bindings, page);
+    if !ocr::needs_ocr(&text, area_pts, has_images) {
+        return None;
+    }
+    let d = state.docs.get_mut(&doc)?;
+    if d.ocr_cache.is_none() {
+        d.ocr_cache = Some(open_document_ocr_cache(shared, Path::new(&d.path)));
+    }
+    let lines = d.ocr_cache.as_ref()?.as_ref()?.get(src)??.to_vec();
+    // Vision finding nothing leaves the text layer, as in the sidecar.
+    (!ocr::page_text(&lines).trim().is_empty()).then_some(lines)
+}
+
+/// The OCR cache the library keeps for the file at `path`, if it has one.
+/// Keyed by the content fingerprint: the library's, or computed when the
+/// file is not in the library.
+fn open_document_ocr_cache(shared: &EngineShared, path: &Path) -> Option<OcrCache> {
+    let (app_data_dir, entry) = {
+        let library = shared.library.lock();
+        (library.app_data_dir(), library.entry_for_path(path))
+    };
+    if !ocrtext::cache_path(&app_data_dir, path).exists() {
+        return None;
+    }
+    let fingerprint = entry
+        .and_then(|entry| entry.fingerprint)
+        .or_else(|| library::content_fingerprint(path));
+    Some(OcrCache::load(&app_data_dir, path, fingerprint.as_deref()))
 }
 
 fn ensure_text_layout(
@@ -598,15 +724,10 @@ fn ensure_text_layout(
 
     // A foreground request can extend search coverage, but failure to retain
     // search text must never erase the freshly extracted selectable layout.
+    // The index wants the spacing glyphs, not these boxes (ink, not advance:
+    // they open false gaps), so it reads the page once more.
     if !shared.search.lock().contains_page(doc, src) {
-        let stored =
-            shared
-                .search
-                .lock()
-                .store_page(doc, src, &extracted.raw, extracted.char_count);
-        if stored {
-            shared.metrics.pages_indexed.fetch_add(1, Ordering::Relaxed);
-        }
+        let _ = ensure_search_extracted(state, shared, doc, src);
     }
     // Bubbles come off the same character stream, so they are found here
     // rather than on demand: by the time anyone asks, the page has already
@@ -811,68 +932,131 @@ fn do_index_next(
 /// not start being readable, and leaving it at the head of the queue would
 /// stall every document behind it forever.
 fn do_library_text_next(state: &mut WorkerState, shared: &EngineShared) {
+    if state.text_waiting.is_some() {
+        // A document waits for a page's OCR; its reading resumes the pass
+        // (`do_ocr_done`), so a second chain would only collide with it.
+        return;
+    }
     let (app_data_dir, candidate) = {
         let library = shared.library.lock();
         (library.app_data_dir(), library.next_text_candidate())
     };
-    if let Some(entry) = candidate {
-        if entry.ocr_deferred && ocr::available() {
-            // Scanned on demand, when OCR was not allowed: read its first
-            // pages again with OCR now, at idle, before its text.
-            rescan_with_ocr(state, shared, &entry);
+    let Some(entry) = candidate else {
+        requeue_library_text(shared);
+        return;
+    };
+    if entry.ocr_deferred && state.ocr_enabled {
+        // Scanned on demand, when OCR was not allowed: read its first
+        // pages again with OCR now, at idle, before its text.
+        if rescan_with_ocr(state, shared, &entry) {
+            state.text_waiting = Some(TextWaiting::Rescan);
+            return;
+        }
+        requeue_library_text(shared);
+        return;
+    }
+    let read = extract_library_text(state, &entry, &app_data_dir);
+    finish_library_text(state, shared, &entry, &app_data_dir, read);
+}
+
+/// The text pass's step after reading a document: its sidecar and cites
+/// written, or the pass left waiting for the OCR thread, or the document
+/// left for the next job when its OCR budget is spent.
+fn finish_library_text(
+    state: &mut WorkerState,
+    shared: &EngineShared,
+    entry: &LibraryEntry,
+    app_data_dir: &Path,
+    read: LibraryText,
+) {
+    let (pages, ocr_pages) = match read {
+        LibraryText::AwaitingOcr(job) => {
+            // No requeue: the reading's `OcrDone` resumes this job.
+            state.text_waiting = Some(TextWaiting::Extract(job));
+            return;
+        }
+        LibraryText::Pending => {
+            // Its OCR budget is spent; the next job resumes it, the
+            // pages read so far cached.
             requeue_library_text(shared);
             return;
         }
-        let (pages, ocr_pages) = match extract_library_text(state, &entry, &app_data_dir) {
-            LibraryText::Pending => {
-                // Its OCR budget is spent; the next job resumes it, the
-                // pages read so far cached.
-                requeue_library_text(shared);
-                return;
-            }
-            LibraryText::Unreadable => (None, Vec::new()),
-            LibraryText::Read { pages, ocr_pages } => (Some(pages), ocr_pages),
-        };
-        if let Some(pages) = &pages {
-            if let Err(error) = crate::search::librarytext::write_spaced_sidecar(
-                &app_data_dir,
-                &entry.path,
-                entry.mtime_ms,
-                entry.size,
-                pages,
-                &ocr_pages,
-            ) {
-                log::warn!("cannot index {} for search: {error}", entry.path.display());
-            }
-        }
-        // A reference list read from the old text describes text that is
-        // gone: drop it, so the provider is handed the new text. Its stamp
-        // alone would not say so — a re-extraction of the same bytes (after
-        // an upgrade that changes the text) keeps the stamp.
-        crate::search::librarytext::remove_refs(&app_data_dir, &entry.path);
-        // The cited identifiers come from the same text while it is in
-        // hand, in the form the sidecar stores it so the backfill would read
-        // the same ones. The reference list is the reference provider's to
-        // read, from the sidecar, at idle. A document that yielded no text
-        // cites nothing, finally — as for the sidecar, it will not start
-        // being readable.
-        let cites = match pages {
-            Some(pages) => {
-                let text = pages
-                    .iter()
-                    .map(|(_, text, breaks)| {
-                        crate::search::librarytext::normalized_spaced_text(text, breaks)
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                library::record_citations(&entry, &text)
-            }
-            None => Vec::new(),
-        };
-        shared.refs_cache.lock().forget(&entry.path);
-        shared.library.lock().finish_text(&entry.path, cites);
+        LibraryText::Unreadable => (None, Vec::new()),
+        LibraryText::Read { pages, ocr_pages } => (Some(pages), ocr_pages),
+    };
+    // A job that waited for OCR may have outlived the bytes it read: the
+    // file changed or left the library meanwhile, and its new entry is the
+    // text pass's to read from scratch.
+    let current = shared.library.lock().entry_for_path(&entry.path);
+    if current
+        .is_none_or(|current| (current.mtime_ms, current.size) != (entry.mtime_ms, entry.size))
+    {
+        requeue_library_text(shared);
+        return;
     }
+    if let Some(pages) = &pages {
+        if let Err(error) = crate::search::librarytext::write_spaced_sidecar(
+            app_data_dir,
+            &entry.path,
+            entry.mtime_ms,
+            entry.size,
+            pages,
+            &ocr_pages,
+        ) {
+            log::warn!("cannot index {} for search: {error}", entry.path.display());
+        }
+    }
+    // A reference list read from the old text describes text that is
+    // gone: drop it, so the provider is handed the new text. Its stamp
+    // alone would not say so — a re-extraction of the same bytes (after
+    // an upgrade that changes the text) keeps the stamp.
+    crate::search::librarytext::remove_refs(app_data_dir, &entry.path);
+    // The cited identifiers come from the same text while it is in
+    // hand, in the form the sidecar stores it so the backfill would read
+    // the same ones. The reference list is the reference provider's to
+    // read, from the sidecar, at idle. A document that yielded no text
+    // cites nothing, finally — as for the sidecar, it will not start
+    // being readable.
+    let cites = match pages {
+        Some(pages) => {
+            let text = pages
+                .iter()
+                .map(|(_, text, breaks)| {
+                    crate::search::librarytext::normalized_spaced_text(text, breaks)
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            library::record_citations(entry, &text)
+        }
+        None => Vec::new(),
+    };
+    shared.refs_cache.lock().forget(&entry.path);
+    shared.library.lock().finish_text(&entry.path, cites);
     requeue_library_text(shared);
+}
+
+/// A page the OCR thread has read, back on this thread. It is cached
+/// already (the OCR thread writes through); here the library jobs that
+/// waited for it go on: the scan's file is scanned again, the text pass's
+/// document picks up where it stopped — its pages extracted, its budget
+/// as spent — or a deferred rescan is tried again.
+fn do_ocr_done(state: &mut WorkerState, shared: &EngineShared, done: OcrDone) {
+    state.ocr_in_flight.remove(&done.path);
+    if let Some(candidate) = state.scan_waiting.take() {
+        scan_step(state, shared, Some(candidate));
+    }
+    match state.text_waiting.take() {
+        Some(TextWaiting::Extract(mut job)) => {
+            if job.entry.path == done.path {
+                job.cache.insert(done.page, done.lines);
+            }
+            let (entry, app_data_dir) = (job.entry.clone(), job.app_data_dir.clone());
+            let read = continue_text_job(state, job);
+            finish_library_text(state, shared, &entry, &app_data_dir, read);
+        }
+        Some(TextWaiting::Rescan) => requeue_library_text(shared),
+        None => {}
+    }
 }
 
 /// Read one already-indexed document's cited identifiers back out of its
@@ -924,11 +1108,35 @@ enum LibraryText {
     Unreadable,
     /// Pages still wait for OCR: this job's budget ran out.
     Pending,
+    /// A page is at the OCR thread; the job resumes when it is back.
+    AwaitingOcr(Box<TextJob>),
     /// Every page's text, and which of them came from OCR.
     Read {
         pages: Vec<(u32, String, Vec<u32>)>,
         ocr_pages: Vec<u32>,
     },
+}
+
+/// The text pass, waiting for the OCR thread.
+enum TextWaiting {
+    /// A file scanned on demand, being scanned again with OCR.
+    Rescan,
+    /// A document's text, part of its OCR still to come.
+    Extract(Box<TextJob>),
+}
+
+/// One document's text job between OCR readings: everything extracted,
+/// the document still open, so a reading resumes it where it stopped
+/// rather than reading every page again.
+struct TextJob {
+    entry: LibraryEntry,
+    app_data_dir: PathBuf,
+    doc: FPDF_DOCUMENT,
+    pages: Vec<(u32, String, Vec<u32>)>,
+    probes: Vec<PageProbe>,
+    cache: OcrCache,
+    /// Pages this job may still send to be read (`TEXT_OCR_BUDGET`).
+    budget: usize,
 }
 
 /// Every page's raw character stream and the word breaks its geometry
@@ -943,9 +1151,10 @@ enum LibraryText {
 /// A page whose text layer is unusable (`ocr::needs_ocr`) gets Vision's
 /// reading of it instead (`ocrtext`), at most `TEXT_OCR_BUDGET` pages read
 /// per job and every reading cached by fingerprint, so a long scan takes
-/// a few jobs and a rescan reads nothing twice. A document whose first
-/// pages all have good text and that is not a scan is never probed past
-/// them, nor rendered.
+/// a few jobs and a rescan reads nothing twice. The reading happens on the
+/// OCR thread (`continue_text_job`). A document whose first pages all have
+/// good text and that is not a scan is never probed past them, nor
+/// rendered.
 fn extract_library_text(
     state: &mut WorkerState,
     entry: &LibraryEntry,
@@ -970,7 +1179,7 @@ fn extract_library_text(
         }
         let [w, h] = render::page_display_size(b, doc, index).unwrap_or([612.0, 792.0]);
         let glyphs = layout_text::extract_spacing_glyphs(b, page, w, h);
-        let (has_images, coverage) = if ocr::available() {
+        let (has_images, coverage) = if state.ocr_enabled {
             render::image_coverage(b, page)
         } else {
             (false, 0.0)
@@ -1001,42 +1210,143 @@ fn extract_library_text(
         .take(ocrtext::PROBE_PAGES as usize)
         .map(probe)
         .collect();
-    let mut ocr_pages = Vec::new();
-    if ocr::available() && ocrtext::wants_ocr(&first) {
+    if state.ocr_enabled && ocrtext::wants_ocr(&first) {
         let probes: Vec<PageProbe> = first
             .into_iter()
             .chain(layout.iter().skip(ocrtext::PROBE_PAGES as usize).map(probe))
             .collect();
-        let mut cache = OcrCache::load(app_data_dir, &entry.path, entry.fingerprint.as_deref());
-        let pass = ocrtext::ocr_pages(
-            &probes,
-            &mut cache,
-            ocrtext::TEXT_OCR_BUDGET,
-            &mut |index| recognize_page(b, doc, index, path),
-        );
-        cache.save(app_data_dir, &entry.path);
-        if pass.pending {
-            b.FPDF_CloseDocument(doc);
-            return LibraryText::Pending;
-        }
-        ocr_pages = ocrtext::substitute(&mut pages, &pass);
+        let cache = OcrCache::load(app_data_dir, &entry.path, entry.fingerprint.as_deref());
+        let job = TextJob {
+            entry: entry.clone(),
+            app_data_dir: app_data_dir.to_path_buf(),
+            doc,
+            pages,
+            probes,
+            cache,
+            budget: ocrtext::TEXT_OCR_BUDGET,
+        };
+        return continue_text_job(state, Box::new(job));
     }
     b.FPDF_CloseDocument(doc);
+    LibraryText::Read {
+        pages,
+        ocr_pages: Vec::new(),
+    }
+}
+
+/// The OCR half of a text job, from wherever it stopped: the first page
+/// that needs OCR and is not cached goes to the OCR thread, and the job
+/// waits for it — one page in flight per document, the budget spent per
+/// page sent. With every page it needs cached, the OCR text takes the text
+/// layer's place (`ocrtext::ocr_pages`, `ocrtext::substitute`) exactly as
+/// it did when the job read them itself.
+fn continue_text_job(state: &mut WorkerState, mut job: Box<TextJob>) -> LibraryText {
+    let b = state.bindings;
+    let mut pending = false;
+    let wanted: Vec<u32> = job
+        .probes
+        .iter()
+        .filter(|probe| probe.needs_ocr())
+        .map(|probe| probe.index)
+        .collect();
+    for index in wanted {
+        if job.cache.get(index).is_some() {
+            continue;
+        }
+        if job.budget == 0 {
+            pending = true;
+            break;
+        }
+        let mut ask = OcrAsk {
+            service: &mut state.ocr,
+            in_flight: &mut state.ocr_in_flight,
+            path: &job.entry.path,
+            fingerprint: job.entry.fingerprint.as_deref(),
+            app_data_dir: &job.app_data_dir,
+        };
+        match ask.page(b, job.doc, index) {
+            Requested::Sent => {
+                job.budget -= 1;
+                return LibraryText::AwaitingOcr(job);
+            }
+            Requested::Wait => return LibraryText::AwaitingOcr(job),
+            Requested::Failed => {
+                job.budget -= 1;
+                job.cache.insert(index, None);
+                job.cache.save(&job.app_data_dir, &job.entry.path);
+            }
+        }
+    }
+    job.cache.save(&job.app_data_dir, &job.entry.path);
+    b.FPDF_CloseDocument(job.doc);
+    if pending {
+        return LibraryText::Pending;
+    }
+    // Every page that needs OCR is cached: nothing is read here.
+    let pass = ocrtext::ocr_pages(&job.probes, &mut job.cache, 0, &mut |_| None);
+    let TextJob { mut pages, .. } = *job;
+    let ocr_pages = ocrtext::substitute(&mut pages, &pass);
     LibraryText::Read { pages, ocr_pages }
 }
 
-/// Render one page at about 2x and read it with Vision. Idle library jobs
-/// only: the first call of a session loads Vision's model, which can take
-/// tens of seconds on the worker thread.
-fn recognize_page(
+/// What became of a request to read a page.
+enum Requested {
+    /// At the OCR thread now.
+    Sent,
+    /// Not sent: this document already has a page there, or the channel is
+    /// full. Either way a reading is coming back to wake the caller.
+    Wait,
+    /// It cannot be read: the page does not render, or there is no OCR
+    /// thread. Cached as a failed reading, as Vision failing on it is.
+    Failed,
+}
+
+/// Sending one document's pages to the OCR thread.
+struct OcrAsk<'a> {
+    service: &'a mut OcrService,
+    in_flight: &'a mut HashSet<PathBuf>,
+    path: &'a Path,
+    fingerprint: Option<&'a str>,
+    app_data_dir: &'a Path,
+}
+
+impl OcrAsk<'_> {
+    /// Render page `index` here — PDFium stays on this thread — and hand
+    /// the image to the OCR thread, unless this document already has a page
+    /// there.
+    fn page(&mut self, b: &dyn PdfiumLibraryBindings, doc: FPDF_DOCUMENT, index: u32) -> Requested {
+        if self.in_flight.contains(self.path) {
+            return Requested::Wait;
+        }
+        let Some(png) = render_for_ocr(b, doc, index) else {
+            return Requested::Failed;
+        };
+        let request = OcrRequest {
+            path: self.path.to_path_buf(),
+            fingerprint: self.fingerprint.map(str::to_owned),
+            app_data_dir: self.app_data_dir.to_path_buf(),
+            page: index,
+            png,
+        };
+        match self.service.submit(request) {
+            Ok(()) => {
+                self.in_flight.insert(self.path.to_path_buf());
+                Requested::Sent
+            }
+            Err(Refused::Busy) => Requested::Wait,
+            Err(Refused::Unavailable) => Requested::Failed,
+        }
+    }
+}
+
+/// One page rendered at about 2x for Vision, as PNG.
+fn render_for_ocr(
     b: &dyn PdfiumLibraryBindings,
     doc: FPDF_DOCUMENT,
     index: u32,
-    label: &str,
-) -> Option<Vec<OcrLine>> {
+) -> Option<Vec<u8>> {
     /// 2x, unless that puts the long side past this many pixels.
     const MAX_SIDE_PX: f32 = 3000.0;
-    let started = Instant::now();
     let size = render::page_display_size(b, doc, index as i32)?;
     let scale = 2f32.min(MAX_SIDE_PX / size[0].max(size[1]).max(1.0));
     let page = b.FPDF_LoadPage(doc, index as i32);
@@ -1045,25 +1355,20 @@ fn recognize_page(
     }
     let rendered = render::render_page(b, page, size, scale, 0, None, false, || false);
     b.FPDF_ClosePage(page);
-    let lines = ocr::recognize_png(&rendered.ok()?.png, &[]);
-    log::info!(
-        "ocr: {label} page {} read {} lines in {:?}",
-        index + 1,
-        lines.as_ref().map_or(0, Vec::len),
-        started.elapsed()
-    );
-    lines
+    Some(rendered.ok()?.png)
 }
 
 /// Scan a file again with OCR allowed, from the idle text pass: it was
 /// scanned on demand, when OCR was not (`LibraryEntry::ocr_deferred`).
-fn rescan_with_ocr(state: &mut WorkerState, shared: &EngineShared, entry: &LibraryEntry) {
+/// True when a page went to the OCR thread instead: the rescan is tried
+/// again once it is back.
+fn rescan_with_ocr(state: &mut WorkerState, shared: &EngineShared, entry: &LibraryEntry) -> bool {
     let Some((mtime_ms, size)) = library::file_stamp(&entry.path) else {
         // Gone or unreadable: nothing to read it again from.
         let mut cleared = entry.clone();
         cleared.ocr_deferred = false;
         shared.library.lock().upsert_entry(cleared);
-        return;
+        return false;
     };
     let candidate = library::ScanCandidate {
         path: entry.path.clone(),
@@ -1073,9 +1378,13 @@ fn rescan_with_ocr(state: &mut WorkerState, shared: &EngineShared, entry: &Libra
         unchanged: false,
     };
     let app_data_dir = shared.library.lock().app_data_dir();
-    let scanned = scan_library_candidate(state, &candidate, &app_data_dir, true);
+    let (scanned, awaiting) = scan_library_candidate(state, &candidate, &app_data_dir, true);
+    if awaiting {
+        return true;
+    }
     shared.library.lock().upsert_entry(scanned.clone());
     shared.reconcile_library_entry(&scanned);
+    false
 }
 
 /// The Info dictionary fields a paper record uses, and the ones the
@@ -1158,6 +1467,7 @@ fn repaired_page_text(
     raw: FPDF_DOCUMENT,
     index: u32,
     layout: bool,
+    probe_images: bool,
 ) -> PageRead {
     let page = b.FPDF_LoadPage(raw, index as i32);
     if page.is_null() {
@@ -1177,7 +1487,7 @@ fn repaired_page_text(
         let lines = layout_text::extract_lines(b, page, w, h);
         library::firstpage::extract(&lines, w, h)
     });
-    let (has_images, image_coverage) = if ocr::available() {
+    let (has_images, image_coverage) = if probe_images {
         render::image_coverage(b, page)
     } else {
         (false, 0.0)
@@ -1199,16 +1509,20 @@ fn repaired_page_text(
 }
 
 /// OCR as the library scan uses it: for the first pages it reads, from the
-/// cache or from Vision. Vision only when `allowed` — the idle scan; a scan
+/// cache or from the OCR thread. The OCR thread only with `ask` — the idle
+/// scan, which then waits for the reading and scans the file again; a scan
 /// on demand reads the cache alone and records what it went without.
 struct ScanOcr<'a> {
     cache: OcrCache,
-    label: &'a str,
-    allowed: bool,
+    /// Where a page not cached goes to be read; `None` on demand.
+    ask: Option<OcrAsk<'a>>,
     /// The file is worth OCR (`ocrtext::wants_ocr`, over the pages read).
     wanted: bool,
     /// OCR was wanted and not allowed.
     deferred: bool,
+    /// A page went to the OCR thread (or waits to): this reading of the
+    /// file is incomplete, and is done again when the page is back.
+    awaiting: bool,
 }
 
 impl ScanOcr<'_> {
@@ -1218,16 +1532,25 @@ impl ScanOcr<'_> {
         raw: FPDF_DOCUMENT,
         index: u32,
     ) -> Option<Vec<OcrLine>> {
-        let mut budget = usize::from(self.allowed);
-        let mut pending = false;
-        let label = self.label;
-        let lines = self
-            .cache
-            .lines_or_read(index, &mut budget, &mut pending, &mut |page| {
-                recognize_page(b, raw, page, label)
-            });
-        self.deferred |= pending;
-        lines
+        if let Some(cached) = self.cache.get(index) {
+            return cached.map(<[OcrLine]>::to_vec);
+        }
+        let Some(ask) = self.ask.as_mut() else {
+            self.deferred = true;
+            return None;
+        };
+        match ask.page(b, raw, index) {
+            Requested::Sent | Requested::Wait => self.awaiting = true,
+            Requested::Failed => {
+                // Saved now, before a later page's reading is written
+                // through by the OCR thread.
+                self.cache.insert(index, None);
+                if let Some(ask) = &self.ask {
+                    self.cache.save(ask.app_data_dir, ask.path);
+                }
+            }
+        }
+        None
     }
 
     /// Put OCR in for what the text layer could not give: the text of a
@@ -1312,7 +1635,8 @@ fn classification_text(
     layout: bool,
     mut ocr: Option<&mut ScanOcr>,
 ) -> (String, Option<library::firstpage::FirstPage>) {
-    let mut first = repaired_page_text(b, raw, 0, layout);
+    let probe_images = ocr.is_some();
+    let mut first = repaired_page_text(b, raw, 0, layout, probe_images);
     if let Some(ocr) = ocr.as_deref_mut() {
         ocr.apply(b, raw, &mut first);
     }
@@ -1320,7 +1644,7 @@ fn classification_text(
     if library::paperness::needs_more_pages(&text, info) {
         let count = b.FPDF_GetPageCount(raw).max(0) as u32;
         for index in 1..count.min(1 + EXTRA_CLASSIFY_PAGES) {
-            let mut page = repaired_page_text(b, raw, index, false);
+            let mut page = repaired_page_text(b, raw, index, false, probe_images);
             if let Some(ocr) = ocr.as_deref_mut() {
                 ocr.apply(b, raw, &mut page);
             }
@@ -1374,12 +1698,15 @@ fn read_info_dictionary(b: &dyn PdfiumLibraryBindings, doc: FPDF_DOCUMENT) -> In
 /// and a scanned first page's title are read by OCR (`ScanOcr`); without
 /// it (a scan on demand) only from the OCR cache, and the entry is marked
 /// for the idle text pass to scan again (`ocr_deferred`).
+///
+/// The second value says a page went to the OCR thread: the entry is not
+/// final, and the caller scans the file again once the page is back.
 fn scan_library_candidate(
     state: &mut WorkerState,
     candidate: &library::ScanCandidate,
     app_data_dir: &Path,
     ocr_allowed: bool,
-) -> LibraryEntry {
+) -> (LibraryEntry, bool) {
     let fingerprint = library::content_fingerprint(&candidate.path);
     let named = library::entry_from_filename(candidate);
     let xmp = library::xmp::read_xmp(&candidate.path);
@@ -1419,53 +1746,82 @@ fn scan_library_candidate(
         entry
     };
     let Some(path) = candidate.path.to_str() else {
-        return finish(library::entry_from_first_page(candidate, ""), None, "");
+        let entry = finish(library::entry_from_first_page(candidate, ""), None, "");
+        return (entry, false);
     };
-    let raw = match render::open_document(state.bindings, path, None) {
+    let b = state.bindings;
+    let raw = match render::open_document(b, path, None) {
         Ok(raw) => raw,
         Err(error) => {
             log::warn!(
                 "cannot scan library PDF {}: {error}",
                 candidate.path.display()
             );
-            return finish(library::entry_from_first_page(candidate, ""), None, "");
+            let entry = finish(library::entry_from_first_page(candidate, ""), None, "");
+            return (entry, false);
         }
     };
-    let info = read_info_dictionary(state.bindings, raw);
-    let mut scan_ocr = ocr::available().then(|| ScanOcr {
+    let info = read_info_dictionary(b, raw);
+    let mut scan_ocr = state.ocr_enabled.then(|| ScanOcr {
         cache: OcrCache::load(app_data_dir, &candidate.path, fingerprint.as_deref()),
-        label: path,
-        allowed: ocr_allowed,
+        ask: ocr_allowed.then(|| OcrAsk {
+            service: &mut state.ocr,
+            in_flight: &mut state.ocr_in_flight,
+            path: &candidate.path,
+            fingerprint: fingerprint.as_deref(),
+            app_data_dir,
+        }),
         wanted: false,
         deferred: false,
+        awaiting: false,
     });
-    let (text, first_page) = classification_text(
-        state.bindings,
-        raw,
-        &info.classifier_fields(),
-        true,
-        scan_ocr.as_mut(),
-    );
-    state.bindings.FPDF_CloseDocument(raw);
+    let (text, first_page) =
+        classification_text(b, raw, &info.classifier_fields(), true, scan_ocr.as_mut());
+    b.FPDF_CloseDocument(raw);
     let mut entry = finish(
         library::entry_from_page(candidate, &text, first_page.as_ref()),
         Some(info),
         &text,
     );
+    let mut awaiting = false;
     if let Some(mut scan_ocr) = scan_ocr {
         scan_ocr.cache.save(app_data_dir, &candidate.path);
         entry.ocr_wanted = scan_ocr.wanted;
         entry.ocr_deferred = scan_ocr.deferred;
+        awaiting = scan_ocr.awaiting;
     }
-    entry
+    (entry, awaiting)
 }
 
 fn do_library_scan_next(state: &mut WorkerState, shared: &EngineShared) {
+    if state.scan_waiting.is_some() {
+        // A file waits for a page's OCR; its reading resumes the scan.
+        return;
+    }
     let candidate = shared.library.lock().next_candidate();
+    scan_step(state, shared, candidate);
+}
+
+/// Scan one candidate (if any) and queue the next — or, when a page of it
+/// went to the OCR thread, park it until the reading is back
+/// (`do_ocr_done`), which scans it again with the page cached.
+fn scan_step(
+    state: &mut WorkerState,
+    shared: &EngineShared,
+    candidate: Option<library::ScanCandidate>,
+) {
     if let Some(candidate) = candidate {
         let app_data_dir = shared.library.lock().app_data_dir();
-        let scanned = (!candidate.unchanged)
-            .then(|| scan_library_candidate(state, &candidate, &app_data_dir, true));
+        let scanned = if candidate.unchanged {
+            None
+        } else {
+            let (entry, awaiting) = scan_library_candidate(state, &candidate, &app_data_dir, true);
+            if awaiting {
+                state.scan_waiting = Some(candidate);
+                return;
+            }
+            Some(entry)
+        };
         // An unchanged file still gets reconciled, from its stored entry:
         // a library.json that starts empty would otherwise never get papers
         // for the files indexed before it existed.
@@ -1516,7 +1872,7 @@ fn do_library_scan_file(
     // On demand — the user is waiting for this paper — so no OCR: the
     // idle text pass reads it again with OCR if it wants it.
     let app_data_dir = shared.library.lock().app_data_dir();
-    let entry = scan_library_candidate(state, &candidate, &app_data_dir, false);
+    let (entry, _) = scan_library_candidate(state, &candidate, &app_data_dir, false);
     shared.library.lock().upsert_entry(entry.clone());
     let paper = {
         let mut papers = shared.papers.lock();
@@ -1594,6 +1950,7 @@ fn open_library_document(
             index_cursor: 0,
             form_fields: None,
             formal_envs: None,
+            ocr_cache: None,
         },
     );
     state.library_docs.push(id);
@@ -1741,6 +2098,12 @@ fn do_match_rects(
     start: u32,
     len: u32,
 ) -> AppResult<Vec<[f32; 4]>> {
+    // A page indexed from OCR: the hit's offsets index the OCR text, and
+    // its place on the page is the OCR lines' boxes.
+    let ocr = shared.search.lock().ocr_geometry(doc, src);
+    if let Some(geometry) = ocr {
+        return Ok(geometry.match_rects(start, len));
+    }
     let layout = ensure_text_layout(state, shared, doc, src)?;
     Ok(text::merge_match_rects(&layout.boxes, start, len))
 }
@@ -1861,6 +2224,7 @@ fn do_save(
                                 form_fields,
                                 // page indices moved; recompute on next ask
                                 formal_envs: None,
+                                ocr_cache: None,
                             },
                         );
                     }
@@ -2568,8 +2932,7 @@ fn decode_pdfium_utf16(units: &[u16]) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn adopting_saved_text_removes_it_from_cached_rasters() {
+    fn test_shared(dir: &Path) -> EngineShared {
         use crate::cache::ByteLru;
         use crate::engine::queue::{GenerationMap, PrioQueue};
         use crate::engine::{LookupGauge, LookupSettings, Metrics};
@@ -2581,6 +2944,327 @@ mod tests {
         use parking_lot::Mutex;
         use std::sync::atomic::{AtomicBool, AtomicU64};
 
+        EngineShared {
+            queue: PrioQueue::new(),
+            gens: GenerationMap::default(),
+            cancels: GenerationMap::default(),
+            page_cache: Mutex::new(ByteLru::new(1_000_000)),
+            thumb_cache: Mutex::new(ByteLru::new(1_000_000)),
+            preview_cache: Mutex::new(ByteLru::new(1_000_000)),
+            search: Mutex::new(SearchStore::new(1_000_000)),
+            text_layouts: Mutex::new(TextLayoutCache::new(1_000_000)),
+            link_cache: Mutex::new(links::LinkCache::new(1_000_000)),
+            library: Arc::new(Mutex::new(LibraryState::load(dir.to_path_buf()))),
+            papers: Arc::new(Mutex::new(PaperStore::load(dir.to_path_buf()))),
+            library_changed: Mutex::new(None),
+            lookup_settings: Arc::new(Mutex::new(LookupSettings::default())),
+            http: lookup::client(),
+            limiter: Arc::new(HostLimiter::new()),
+            lookup_cache: Arc::new(Mutex::new(LookupCache::load(dir))),
+            edges_in_flight: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            refs_cache: Mutex::new(Default::default()),
+            refs_provider: Mutex::new(Default::default()),
+            app_data_dir: dir.to_path_buf(),
+            lookup_activity: LookupGauge::default(),
+            citation_resolver: Mutex::new(None),
+            metrics: Metrics::default(),
+            main_epoch: AtomicU64::new(0),
+            progress: Mutex::new(None),
+            last_metrics: Mutex::new(EngineMetricsDto::default()),
+            gram_index: Mutex::new(None),
+            gram_building: AtomicBool::new(false),
+        }
+    }
+
+    /// A PDF whose `pages` pages are each one picture and no text: a scan
+    /// without a text layer, every page of which needs OCR.
+    fn scanned_pdf(pdfium: &Pdfium, path: &Path, pages: usize) {
+        let mut document = pdfium.create_new_pdf().unwrap();
+        let picture = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            30,
+            40,
+            image::Rgb([200, 200, 200]),
+        ));
+        for _ in 0..pages {
+            let object = PdfPageImageObject::new_with_size(
+                &document,
+                &picture,
+                PdfPoints::new(300.0),
+                PdfPoints::new(400.0),
+            )
+            .unwrap();
+            let mut page = document
+                .pages_mut()
+                .create_page_at_end(PdfPagePaperSize::Custom(
+                    PdfPoints::new(300.0),
+                    PdfPoints::new(400.0),
+                ))
+                .unwrap();
+            page.objects_mut().add_image_object(object).unwrap();
+        }
+        document.save_to_file(path).unwrap();
+    }
+
+    fn idle() -> JobMeta {
+        JobMeta {
+            doc: 0,
+            gen: 0,
+            epoch: 0,
+        }
+    }
+
+    /// The next job on the queue, waiting up to ten seconds for one.
+    fn next_job(shared: &EngineShared) -> (JobMeta, Work) {
+        let deadline = Instant::now() + std::time::Duration::from_secs(10);
+        while shared.queue.is_empty() {
+            assert!(Instant::now() < deadline, "no job arrived");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        shared.queue.pop_blocking().unwrap()
+    }
+
+    /// A stand-in for Vision that reads nothing until the test lets it,
+    /// one page per permit, and numbers its readings.
+    struct SlowOcr {
+        permits: parking_lot::Mutex<std::sync::mpsc::Receiver<()>>,
+        reading: std::sync::atomic::AtomicBool,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl SlowOcr {
+        fn recognizer(self: &Arc<Self>) -> super::super::ocr_thread::Recognizer {
+            let ocr = Arc::clone(self);
+            Arc::new(move |_: &[u8]| {
+                ocr.reading.store(true, Ordering::SeqCst);
+                let _ = ocr.permits.lock().recv();
+                let n = ocr.calls.fetch_add(1, Ordering::SeqCst);
+                ocr.reading.store(false, Ordering::SeqCst);
+                Some(vec![OcrLine {
+                    text: format!("Recovered polynomial hierarchy reading {n}"),
+                    confidence: 1.0,
+                    bbox: [0.1, 0.1, 0.8, 0.05],
+                }])
+            })
+        }
+    }
+
+    #[test]
+    fn the_text_pass_waits_for_ocr_off_the_render_thread_and_resumes_within_budget() {
+        let _guard = pdfium_init::test_guard();
+        let pdfium = Pdfium::new(pdfium_init::init_bindings(&[]).unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let pdf = dir.path().join("scan.pdf");
+        scanned_pdf(&pdfium, &pdf, 8);
+        let shared = Arc::new(test_shared(dir.path()));
+        let (mtime_ms, size) = library::file_stamp(&pdf).unwrap();
+        let candidate = library::ScanCandidate {
+            path: pdf.clone(),
+            mtime_ms,
+            size,
+            epoch: 0,
+            unchanged: false,
+        };
+        let mut entry = library::entry_from_first_page(&candidate, "");
+        entry.fingerprint = library::content_fingerprint(&pdf);
+        shared.library.lock().upsert_entry(entry);
+
+        let (permit, permits) = std::sync::mpsc::channel();
+        let slow = Arc::new(SlowOcr {
+            permits: parking_lot::Mutex::new(permits),
+            reading: Default::default(),
+            calls: Default::default(),
+        });
+        let service = OcrService::new(
+            slow.recognizer(),
+            ocr_done_to_queue(Arc::downgrade(&shared)),
+        );
+        let mut state = WorkerState::new(pdfium.bindings(), &pdfium, service, true);
+        let budget_left = |state: &WorkerState| match &state.text_waiting {
+            Some(TextWaiting::Extract(job)) => Some(job.budget),
+            _ => None,
+        };
+
+        handle_work(&mut state, &shared, idle(), Work::LibraryTextNext);
+        assert_eq!(budget_left(&state), Some(ocrtext::TEXT_OCR_BUDGET - 1));
+        assert!(shared.queue.is_empty(), "the pass waits for the reading");
+        let deadline = Instant::now() + std::time::Duration::from_secs(10);
+        while !slow.reading.load(Ordering::SeqCst) {
+            assert!(Instant::now() < deadline, "OCR never started");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        // A page renders while Vision is busy with the first.
+        let doc = do_open(&mut state, pdf.to_str().unwrap().into(), None)
+            .unwrap()
+            .doc_id;
+        let key = RenderKey {
+            doc,
+            src: 3,
+            rot: 0,
+            scale_milli: 1000,
+            kind: RenderKind::Page,
+            tile: None,
+            invert: false,
+        };
+        let meta = JobMeta {
+            doc,
+            gen: 0,
+            epoch: 0,
+        };
+        assert!(!do_render(&mut state, &shared, meta, &key)
+            .unwrap()
+            .is_empty());
+        assert!(
+            slow.reading.load(Ordering::SeqCst),
+            "the OCR is still in flight"
+        );
+        // A second chain of the pass is absorbed, not run against the first.
+        handle_work(&mut state, &shared, idle(), Work::LibraryTextNext);
+        assert!(shared.queue.is_empty());
+
+        // Six pages a job: each reading resumes the job, which sends the next.
+        for read in 1..=ocrtext::TEXT_OCR_BUDGET {
+            permit.send(()).unwrap();
+            let (meta, work) = next_job(&shared);
+            assert!(matches!(work, Work::OcrDone { .. }));
+            handle_work(&mut state, &shared, meta, work);
+            if read < ocrtext::TEXT_OCR_BUDGET {
+                assert_eq!(
+                    budget_left(&state),
+                    Some(ocrtext::TEXT_OCR_BUDGET - 1 - read)
+                );
+            }
+        }
+        // Budget spent with pages left: the document waits for the next job.
+        assert!(state.text_waiting.is_none());
+        assert_eq!(slow.calls.load(Ordering::SeqCst), ocrtext::TEXT_OCR_BUDGET);
+        assert!(
+            !shared
+                .library
+                .lock()
+                .entry_for_path(&pdf)
+                .unwrap()
+                .text_indexed
+        );
+        let (meta, work) = next_job(&shared);
+        assert!(matches!(work, Work::LibraryTextNext));
+        handle_work(&mut state, &shared, meta, work);
+        for _ in 0..2 {
+            permit.send(()).unwrap();
+            let (meta, work) = next_job(&shared);
+            handle_work(&mut state, &shared, meta, work);
+        }
+        assert_eq!(slow.calls.load(Ordering::SeqCst), 8, "each page read once");
+        assert!(state.text_waiting.is_none() && state.ocr_in_flight.is_empty());
+        assert!(
+            shared
+                .library
+                .lock()
+                .entry_for_path(&pdf)
+                .unwrap()
+                .text_indexed
+        );
+        let text = crate::search::librarytext::read_sidecar_text(dir.path(), &pdf, mtime_ms, size)
+            .unwrap();
+        for n in 0..8 {
+            assert!(text.contains(&format!("hierarchy reading {n}")), "{text}");
+        }
+    }
+
+    #[test]
+    fn the_idle_scan_parks_a_file_on_its_ocr_and_scans_it_again_when_read() {
+        let _guard = pdfium_init::test_guard();
+        let pdfium = Pdfium::new(pdfium_init::init_bindings(&[]).unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let papers = dir.path().join("papers");
+        std::fs::create_dir_all(&papers).unwrap();
+        scanned_pdf(&pdfium, &papers.join("scan.pdf"), 1);
+        let shared = Arc::new(test_shared(dir.path()));
+        let (permit, permits) = std::sync::mpsc::channel();
+        let slow = Arc::new(SlowOcr {
+            permits: parking_lot::Mutex::new(permits),
+            reading: Default::default(),
+            calls: Default::default(),
+        });
+        let service = OcrService::new(
+            slow.recognizer(),
+            ocr_done_to_queue(Arc::downgrade(&shared)),
+        );
+        let mut state = WorkerState::new(pdfium.bindings(), &pdfium, service, true);
+        assert!(shared.library.lock().add_root(papers).unwrap());
+
+        handle_work(&mut state, &shared, idle(), Work::LibraryScanNext);
+        assert!(state.scan_waiting.is_some(), "parked on its first page");
+        assert!(shared.library.lock().all_entries().is_empty());
+        // Another scan job finds it parked and leaves it be.
+        handle_work(&mut state, &shared, idle(), Work::LibraryScanNext);
+        assert!(state.scan_waiting.is_some() && shared.queue.is_empty());
+
+        permit.send(()).unwrap();
+        let (meta, work) = next_job(&shared);
+        assert!(matches!(work, Work::OcrDone { .. }));
+        handle_work(&mut state, &shared, meta, work);
+        assert!(state.scan_waiting.is_none() && state.ocr_in_flight.is_empty());
+        let entries = shared.library.lock().all_entries();
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].ocr_wanted && !entries[0].ocr_deferred);
+        // The scan is done: the text pass is next.
+        assert!(matches!(next_job(&shared).1, Work::LibraryTextNext));
+        assert_eq!(slow.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn an_open_scan_is_searched_from_the_ocr_cache_and_highlighted_from_line_boxes() {
+        let _guard = pdfium_init::test_guard();
+        let pdfium = Pdfium::new(pdfium_init::init_bindings(&[]).unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let pdf = dir.path().join("scan.pdf");
+        scanned_pdf(&pdfium, &pdf, 2);
+        let shared = test_shared(dir.path());
+        // The library has read page 1 of 2.
+        let fingerprint = library::content_fingerprint(&pdf);
+        let mut cache = OcrCache::load(dir.path(), &pdf, fingerprint.as_deref());
+        cache.insert(
+            0,
+            Some(vec![OcrLine {
+                text: "Arthur-Merlin Games".into(),
+                confidence: 0.9,
+                bbox: [0.1, 0.2, 0.5, 0.05],
+            }]),
+        );
+        cache.save(dir.path(), &pdf);
+        let never = OcrService::new(
+            Arc::new(|_: &[u8]| panic!("an open document never runs OCR")),
+            Arc::new(|_| {}),
+        );
+        let mut state = WorkerState::new(pdfium.bindings(), &pdfium, never, true);
+        let doc = do_open(&mut state, pdf.to_str().unwrap().into(), None)
+            .unwrap()
+            .doc_id;
+        for src in 0..2 {
+            ensure_search_extracted(&mut state, &shared, doc, src).unwrap();
+        }
+        assert!(state.ocr_in_flight.is_empty());
+        assert!(shared.search.lock().ocr_geometry(doc, 1).is_none());
+
+        let found = shared.search.lock().query(doc, "merlin games", false, 10);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].src, 0);
+        let hit = &found[0].matches[0];
+        assert_eq!((hit.start, hit.len), (7, 12));
+        let rects = do_match_rects(&mut state, &shared, doc, 0, hit.start, hit.len).unwrap();
+        // The page is 300 x 400 pt; the line's box spans x 30..180, and
+        // "Merlin Games" is its last 12 of 19 characters.
+        assert_eq!(rects.len(), 1);
+        let [x, y, w, h] = rects[0];
+        assert!((x - (30.0 + 150.0 * 7.0 / 19.0)).abs() < 0.01, "{x}");
+        assert!((w - 150.0 * 12.0 / 19.0).abs() < 0.01, "{w}");
+        assert!((y - (1.0 - 0.2 - 0.05) * 400.0).abs() < 0.01, "{y}");
+        assert!((h - 0.05 * 400.0).abs() < 0.01, "{h}");
+    }
+
+    #[test]
+    fn adopting_saved_text_removes_it_from_cached_rasters() {
         let _guard = pdfium_init::test_guard();
         let pdfium = Pdfium::new(pdfium_init::init_bindings(&[]).unwrap());
         let dir = tempfile::tempdir().unwrap();
@@ -2609,48 +3293,13 @@ mod tests {
         document.save_to_file(&source).unwrap();
         drop(document);
 
-        let shared = EngineShared {
-            queue: PrioQueue::new(),
-            gens: GenerationMap::default(),
-            cancels: GenerationMap::default(),
-            page_cache: Mutex::new(ByteLru::new(1_000_000)),
-            thumb_cache: Mutex::new(ByteLru::new(1_000_000)),
-            preview_cache: Mutex::new(ByteLru::new(1_000_000)),
-            search: Mutex::new(SearchStore::new(1_000_000)),
-            text_layouts: Mutex::new(TextLayoutCache::new(1_000_000)),
-            link_cache: Mutex::new(links::LinkCache::new(1_000_000)),
-            library: Arc::new(Mutex::new(LibraryState::load(dir.path().to_path_buf()))),
-            papers: Arc::new(Mutex::new(PaperStore::load(dir.path().to_path_buf()))),
-            library_changed: Mutex::new(None),
-            lookup_settings: Arc::new(Mutex::new(LookupSettings::default())),
-            http: lookup::client(),
-            limiter: Arc::new(HostLimiter::new()),
-            lookup_cache: Arc::new(Mutex::new(LookupCache::load(dir.path()))),
-            edges_in_flight: Arc::new(Mutex::new(std::collections::HashSet::new())),
-            refs_cache: Mutex::new(Default::default()),
-            refs_provider: Mutex::new(Default::default()),
-            app_data_dir: dir.path().to_path_buf(),
-            lookup_activity: LookupGauge::default(),
-            citation_resolver: Mutex::new(None),
-            metrics: Metrics::default(),
-            main_epoch: AtomicU64::new(0),
-            progress: Mutex::new(None),
-            last_metrics: Mutex::new(EngineMetricsDto::default()),
-            gram_index: Mutex::new(None),
-            gram_building: AtomicBool::new(false),
-        };
-        let mut state = WorkerState {
-            bindings: pdfium.bindings(),
-            pdfium: &pdfium,
-            docs: HashMap::new(),
-            next_id: 1,
-            active_main: None,
-            library_docs: Vec::new(),
-            library_session_docs: Vec::new(),
-            index_pending: Vec::new(),
-            index_active: None,
-            index_chain_seq: 0,
-        };
+        let shared = test_shared(dir.path());
+        let mut state = WorkerState::new(
+            pdfium.bindings(),
+            &pdfium,
+            OcrService::new(Arc::new(|_: &[u8]| None), Arc::new(|_| {})),
+            false,
+        );
         let doc = do_open(&mut state, source.to_str().unwrap().into(), None)
             .unwrap()
             .doc_id;
