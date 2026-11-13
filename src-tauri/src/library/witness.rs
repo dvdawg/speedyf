@@ -488,7 +488,7 @@ fn vancouver(words: &[&str]) -> Option<(Vec<Author>, bool, usize)> {
     }
     // A list that never ended in its period is not one.
     let ended = at > 0 && words[at - 1].ends_with('.');
-    Some((authors, et_al, at)).filter(|_| ended)
+    ended.then_some((authors, et_al, at))
 }
 
 /* ---- Title, venue, volume, pages ---- */

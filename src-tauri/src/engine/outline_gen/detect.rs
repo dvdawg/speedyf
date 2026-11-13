@@ -937,10 +937,7 @@ fn text_rejects(text: &str, numbered: bool) -> bool {
     let year = trimmed
         .split(|c: char| !c.is_ascii_digit())
         .any(|run| run.len() == 4 && (run.starts_with("19") || run.starts_with("20")));
-    if year && (commas >= 1 || trimmed.contains('(')) {
-        return true;
-    }
-    false
+    year && (commas >= 1 || trimmed.contains('('))
 }
 
 /// Whether a title (numbering removed) opens with a word that makes it a
