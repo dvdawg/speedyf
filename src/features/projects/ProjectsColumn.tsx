@@ -21,7 +21,7 @@ import type { Project } from '../../types/engine';
 import { exportBib, exportBundle, stopSyncingBib, syncBib } from './bibActions';
 import { dropHover, reorderSlotAt, setDropHover } from './dnd';
 import { beginPointerDrag } from './pointerDrag';
-import { projectsStore, sameScope } from './projectsStore';
+import { healthCount, projectsStore, sameScope } from './projectsStore';
 import type { Scope } from './projectsStore';
 import { newProjectRequested, takeNewProjectRequest } from './screenIntents';
 
@@ -164,14 +164,25 @@ export default function ProjectsColumn(props: { onMoveFocus: (dir: -1 | 1) => vo
     setCreating(true);
   });
 
-  const scopes = (): Scope[] => [
+  /** New and Health are there only while they hold something. */
+  const showNew = () => store.state.newItems.length > 0;
+  const showHealth = () => healthCount(store.state.health) > 0;
+  const fixedScopes = (): Scope[] => [
     { kind: 'all' },
+    ...(showNew() ? [{ kind: 'new' } as Scope] : []),
     { kind: 'unfiled' },
     { kind: 'others' },
+    ...(showHealth() ? [{ kind: 'health' } as Scope] : []),
+  ];
+  const scopes = (): Scope[] => [
+    ...fixedScopes(),
     ...store.state.projects.map((p): Scope => ({ kind: 'project', id: p.id })),
   ];
   /** Rows before the first project, which is also the first project's index. */
-  const FIXED = 3;
+  const fixedCount = () => fixedScopes().length;
+  const indexOf = (scope: Scope) => fixedScopes().findIndex((s) => sameScope(s, scope));
+  /** Under New, a digit files the focused item into the Nth project. */
+  const digitHints = () => store.state.scope.kind === 'new';
   const activeIndex = () =>
     Math.max(
       0,
@@ -289,18 +300,42 @@ export default function ProjectsColumn(props: { onMoveFocus: (dir: -1 | 1) => vo
         onKeyDown={onKeyDown}
       >
         {fixedRow({ kind: 'all' }, 0, 'All items', store.state.counts.all)}
-        {fixedRow({ kind: 'unfiled' }, 1, 'Not filed', store.state.counts.unfiled)}
+        <Show when={showNew()}>
+          {fixedRow(
+            { kind: 'new' },
+            1,
+            'New',
+            store.state.newItems.length,
+            'Items that arrived this week: file each into a project or mark it done'
+          )}
+        </Show>
+        {fixedRow(
+          { kind: 'unfiled' },
+          indexOf({ kind: 'unfiled' }),
+          'Not filed',
+          store.state.counts.unfiled
+        )}
         {/* The files the scan did not take for papers: a manual, a form, a
             slide deck. Kept out of the two rows above, since a library folder
             like Downloads holds more PDFs than papers, and listed here so
             nothing is hidden and a wrong verdict can be fixed. */}
         {fixedRow(
           { kind: 'others' },
-          2,
+          indexOf({ kind: 'others' }),
           'Other PDFs',
           store.state.counts.others,
           'PDFs in the library folders that are not treated as items'
         )}
+        {/* What SpeedyF suspects about the items; gone when nothing is. */}
+        <Show when={showHealth()}>
+          {fixedRow(
+            { kind: 'health' },
+            indexOf({ kind: 'health' }),
+            'Health',
+            healthCount(store.state.health),
+            'Items SpeedyF suspects need a look'
+          )}
+        </Show>
         <div class="projects-rule" role="presentation" />
         <For each={store.state.projects}>
           {(project, index) => {
@@ -319,7 +354,7 @@ export default function ProjectsColumn(props: { onMoveFocus: (dir: -1 | 1) => vo
                 role="option"
                 aria-selected={active()}
                 tabindex={active() ? 0 : -1}
-                data-index={index() + FIXED}
+                data-index={index() + fixedCount()}
                 data-drop-project={project.id}
                 onClick={() => store.setScope(scope())}
                 onDblClick={() => setRenaming(project.id)}
@@ -384,6 +419,14 @@ export default function ProjectsColumn(props: { onMoveFocus: (dir: -1 | 1) => vo
                   >
                     <IconMore />
                   </button>
+                </Show>
+                <Show when={digitHints() && index() < 9}>
+                  <span
+                    class="projects-row-hint"
+                    title={`Press ${index() + 1} on a new item to file it here`}
+                  >
+                    {index() + 1}
+                  </span>
                 </Show>
                 <Show when={menuFor() === project.id}>
                   <ProjectMenu

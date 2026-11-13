@@ -6,6 +6,7 @@ import { vi } from 'vitest';
 import type {
   DuplicateGroup,
   Graph,
+  HealthGroup,
   LibraryCounts,
   LookupBatch,
   LookupCandidate,
@@ -305,6 +306,12 @@ export const fixture = {
   related: [] as RelatedItem[],
   /** What `libraryCocitedWorks` answers for p1. */
   cocited: COCITED as CoCitedWork[],
+  /** What `libraryHealth` answers; none by default, so the row is hidden. */
+  health: [] as HealthGroup[],
+  /** What `libraryNewItems` answers, newest first; none by default. */
+  newItems: [] as PaperRow[],
+  /** What `libraryCitedHere` answers, for any scope. */
+  citedHere: {} as Record<string, number>,
 };
 
 export function resetFixture(): void {
@@ -312,6 +319,9 @@ export function resetFixture(): void {
   fixture.suggestions = [];
   fixture.related = [];
   fixture.cocited = COCITED;
+  fixture.health = [];
+  fixture.newItems = [];
+  fixture.citedHere = {};
 }
 
 const PAPERS: Record<string, Paper> = {
@@ -721,6 +731,15 @@ export function fakeEngine() {
         projectId === 'p1' ? fixture.cocited.filter((w) => w.members.length >= minMembers) : []
     ),
     libraryDuplicates: vi.fn(async (): Promise<DuplicateGroup[]> => fixture.duplicates),
+    libraryHealth: vi.fn(async (): Promise<HealthGroup[]> => fixture.health),
+    libraryHealthIgnore: vi.fn(async (_id: string, _kind: string): Promise<void> => undefined),
+    libraryNewItems: vi.fn(async (query: string): Promise<PaperRow[]> =>
+      fixture.newItems.filter((r) => r.title.toLowerCase().includes(query.toLowerCase()))
+    ),
+    libraryMarkReviewed: vi.fn(async (_ids: string[]): Promise<void> => undefined),
+    libraryCitedHere: vi.fn(
+      async (_filter: PaperFilter): Promise<Record<string, number>> => fixture.citedHere
+    ),
     libraryMergePapers: vi.fn(async (keepId: string): Promise<Paper> => {
       const paper = paperFor(keepId);
       paper.mergedCount = 1;

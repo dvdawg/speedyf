@@ -25,6 +25,8 @@ const h = vi.hoisted(() => {
       ghostKey: null,
       missing: { on: false, min: 2 },
       missingList: false,
+      health: [],
+      newItems: [],
     });
   reset();
   const store = {
@@ -195,6 +197,21 @@ describe('the screen', () => {
     // From a document it is a way back, so it is offered.
     expect(command('library.showAllItems').enabled(readerCtx())).toBe(true);
     expect(command('library.showNotFiled').enabled(screenCtx)).toBe(true);
+  });
+
+  it('offers New and Health only while they hold something', () => {
+    expect(command('library.showNewItems').enabled(screenCtx)).toBe(false);
+    expect(command('library.showLibraryHealth').enabled(screenCtx)).toBe(false);
+    h.store.state.newItems = [{ id: 'a' }];
+    h.store.state.health = [{ kind: 'year', label: 'Year may be wrong', findings: [{}] }];
+    expect(command('library.showNewItems').enabled(screenCtx)).toBe(true);
+    expect(command('library.showLibraryHealth').title).toBe('Show Library Health');
+    command('library.showLibraryHealth').run(screenCtx);
+    expect(h.store.setScope).toHaveBeenLastCalledWith({ kind: 'health' });
+    expect(command('library.showLibraryHealth').enabled(screenCtx)).toBe(false);
+    command('library.showNewItems').run(screenCtx);
+    expect(h.store.setScope).toHaveBeenLastCalledWith({ kind: 'new' });
+    h.reset();
   });
 
   it('toggles between list and graph, landing on the graph from elsewhere', () => {

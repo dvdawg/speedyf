@@ -594,3 +594,25 @@ export interface RelatedItem {
   /** in plain words: "shares 6 references, cited together by 3 items" */
   reason: string;
 }
+
+/** What a library health finding is about (`library_health`). */
+export type HealthKind = 'duplicate' | 'year' | 'missing' | 'weak' | 'title';
+
+export interface HealthFinding {
+  kind: HealthKind;
+  /** the item; the one an Ignore is recorded on */
+  paperId: string;
+  /** for a duplicate, every record of the group, this one first */
+  paperIds: string[];
+  title: string;
+  /** one muted line: why */
+  reason: string;
+  /** what the one-click fix writes: a year, or the first page's title */
+  suggestion: string | null;
+}
+
+export interface HealthGroup {
+  kind: HealthKind;
+  label: string;
+  findings: HealthFinding[];
+}

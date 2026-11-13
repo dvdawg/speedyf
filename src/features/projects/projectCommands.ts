@@ -24,7 +24,7 @@ import { exportBib, exportBundle, stopSyncingBib, syncBib } from './bibActions';
 import { citeSelection } from './citeSelection';
 import { searchFullText } from './fullTextHandoff';
 import { clearPositions, loadPositions, positionsKey } from './graphPositions';
-import { projectsStore, sameScope, type Scope } from './projectsStore';
+import { healthCount, projectsStore, sameScope, type Scope } from './projectsStore';
 import {
   graphControls,
   requestMerge,
@@ -188,6 +188,32 @@ export const PROJECT_COMMANDS: readonly Command[] = [
     'manuals',
     'files',
   ]),
+  // New and Health are rows only while they hold something; so are these.
+  {
+    ...scopeCommand('library.showNewItems', 'Show New Items', { kind: 'new' }, [
+      'new',
+      'arrivals',
+      'triage',
+      'recent',
+    ]),
+    enabled: (ctx) =>
+      store.state.newItems.length > 0 &&
+      !(projectsShowing(ctx) && store.state.scope.kind === 'new'),
+    disabledReason: 'nothing new to file',
+  },
+  {
+    ...scopeCommand('library.showLibraryHealth', 'Show Library Health', { kind: 'health' }, [
+      'health',
+      'problems',
+      'duplicates',
+      'missing',
+      'metadata',
+    ]),
+    enabled: (ctx) =>
+      healthCount(store.state.health) > 0 &&
+      !(projectsShowing(ctx) && store.state.scope.kind === 'health'),
+    disabledReason: 'nothing to check',
+  },
   {
     id: 'library.toggleGraphView',
     title: 'Toggle Graph View',

@@ -4472,6 +4472,16 @@ body.is-resizing-sidebar * {
   font-variant-numeric: tabular-nums;
 }
 
+.projects-row-hint {
+  flex: none;
+  width: 12px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  opacity: 0.7;
+}
+
 .projects-row.is-active .projects-row-count {
   color: inherit;
   opacity: 0.8;
@@ -6458,4 +6468,43 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 /* A cited-with ghost's lines to its members: the ghost edge, dashed. */
 .graph-edge.is-with {
   stroke-dasharray: 3 3;
+}
+
+/* ---------- sort, health, new ---------- */
+/* Quiet text buttons: the sort in the list's header line, and the fixes
+   on a health finding or a new item. No border, no fill. */
+.paper-sort-btn,
+.health-action {
+  flex: none;
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.paper-sort-btn:hover,
+.health-action:hover {
+  color: var(--text);
+}
+
+.paper-sort-btn:focus-visible,
+.health-action:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: 4px;
+}
+
+.health-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.health-merge {
+  padding: 0 8px 8px;
 }
