@@ -696,6 +696,46 @@ id. Computed per request from the same snapshots as citation links, offline;
 about 0.1 s on 3000 items with 80 citations each (release). No list, no
 heading.
 
+**Cited with these.** For a project, `library_cocited_works`
+(`library/cocitation.rs`) names the works the library tends to cite
+alongside the members but that are not in the project: library items
+outside it, and missing works keyed as the missing-works list keys them.
+For a candidate X, its co-citers are the citing works whose bibliography
+holds X and at least one member; records that are versions of one another
+(a shared DOI or arXiv id, aliases included, or the same title under the
+same first author) count as one citing work. Score: the sum over
+co-citers of the members each cites, divided by the square root of how
+many citing works in the library cite X, so a textbook everyone cites does
+not dominate. Shown with at least 2 co-citers and at least 2 members (or
+the user's higher "with >= N of these"); members, versions of members and
+the missing works the "cited by these" list shows at its threshold are
+left out, so the two lists never repeat. Ties go by members, co-citers,
+key; at most 20. One pass builds an inverted index from cited work to
+citing works; only members' co-citers are visited.
+
+The user sees three things, all quiet. The project header says "3 works
+are often cited with this project" when there are any; clicking it opens
+the missing-works list on its second mode. That list has a two-way switch,
+_Cited by these_ | _Cited with these_; a cited-with row is the title or the
+printed reference with "cited with 4 of these", and a library item has
+**Add** (the membership command). In the graph, cited-with works are ghost
+nodes in the missing works' style, placed near the members they are cited
+with and joined to them by faint dashed lines; they take no part in the
+layout, so nothing moves. Clicking one picks it into the detail column,
+where a library item can be added too. Everything rereads on
+`library:changed`.
+
+**View.** The graph's controls carry one _View_ button (beside Reset
+layout) that opens a small popover: Edges (All | Selected: only the
+hovered or selected item's), Labels (Many: as before | Few: the most cited
+only | Hover: none until hovered or picked), Unlinked items (Hide: counted
+in the chip, as before | Show: drawn in rows under the layout, which does
+not rerun), Missing works with its "cited by >= N" stepper, and, in a
+project, Cited with with its "with >= N of these" stepper. Both kinds of
+ghost may be on at once. The defaults draw the graph as before; the
+choices are kept across sessions in their own localStorage key. Escape or
+a press outside closes it.
+
 ---
 
 ## 9. Surfaces
