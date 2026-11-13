@@ -1168,6 +1168,11 @@ html.is-dragging-tab * {
   position: relative;
 }
 
+/* Column zoom holds the view on one column; only it moves sideways. */
+.viewer.is-column-mode {
+  overflow-x: hidden;
+}
+
 .page {
   position: absolute;
   background: var(--page-bg);
@@ -2821,6 +2826,13 @@ html.is-dragging-tab * {
 
 .sb-dirty {
   color: var(--accent);
+}
+
+/* A quiet state, and the first thing to go when the bar runs out of room. */
+@media (max-width: 720px) {
+  .sb-column {
+    display: none;
+  }
 }
 
 .sb-control {

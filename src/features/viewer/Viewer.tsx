@@ -34,6 +34,10 @@ import { TabContext } from '../../app/TabContext';
 import { tabsStore, type TabRecord } from '../../stores/tabsStore';
 import { recentStore } from '../../stores/recentStore';
 import { navigateForMouseButton } from './navHistory';
+import { createColumnMode, registerColumnMode } from './columns/columnMode';
+import { toolState } from '../annotations/toolStore';
+import { modal } from '../../stores/modalStore';
+import { paletteOpen } from '../palette/paletteStore';
 
 /** WebKit's non-standard pinch event. Not in lib.dom, and deliberately typed
  * as only the fields used here — `scale` is cumulative since gesturestart. */
@@ -48,9 +52,43 @@ function ViewerContent(props: { tab: TabRecord }) {
   // TabContext, so `props.tab` is fixed for the life of this instance and
   // nothing destructured here can go stale.
   // eslint-disable-next-line solid/reactivity
-  const { documentStore, viewport: vp, zoom } = props.tab;
+  const { id: tabId, documentStore, viewport: vp, zoom } = props.tab;
   let scroller!: HTMLDivElement;
   const doc = documentStore.state;
+
+  // Column zoom (columns/columnMode.ts). Reads the scroller lazily: the
+  // element is only assigned when the JSX below mounts.
+  const columns = createColumnMode(
+    { documentStore, viewport: vp, zoom },
+    {
+      get scrollTop() {
+        return scroller.scrollTop;
+      },
+      set scrollTop(v: number) {
+        scroller.scrollTop = v;
+      },
+      get scrollLeft() {
+        return scroller.scrollLeft;
+      },
+      set scrollLeft(v: number) {
+        scroller.scrollLeft = v;
+      },
+      scrollTo: (options: ScrollToOptions) => scroller.scrollTo(options),
+    },
+    {
+      fetchLayout: (docId, src) => engine.getColumnLayout(docId, src),
+      now: () => performance.now(),
+      reducedMotion: () =>
+        typeof window !== 'undefined' &&
+        window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true,
+      setTimer: (fn, ms) => {
+        const t = setTimeout(fn, ms);
+        return () => clearTimeout(t);
+      },
+    }
+  );
+  onCleanup(registerColumnMode(tabId, columns));
+  onCleanup(() => columns.dispose());
 
   /** Background tabs stay mounted (see .tab-workspace in global.css) so their
    * scroller, layout and scroll position survive a switch — but they must not
@@ -145,6 +183,7 @@ function ViewerContent(props: { tab: TabRecord }) {
       const current = pageIndexAt(layout(), top + vp.state.containerH * 0.4);
       vp.setState({ scrollTop: top, scrollLeft: scroller.scrollLeft, currentPage: current });
       rememberPosition();
+      columns.scrolled();
     });
   };
 
@@ -211,6 +250,53 @@ function ViewerContent(props: { tab: TabRecord }) {
       document.removeEventListener('copy', onCopy);
     });
   });
+
+  // Column zoom's keys: arrows and Space scroll within the column and move
+  // on at its end. Only for the visible tab, only when nothing else owns the
+  // keyboard (a field, a modal, the palette), and only when the shortcut
+  // table has not already acted on the key.
+  const onColumnKey = (e: KeyboardEvent) => {
+    if (!isActive() || !columns.active() || e.defaultPrevented) return;
+    if (e.metaKey || e.ctrlKey || e.altKey || modal.kind !== null || paletteOpen()) return;
+    const focus = document.activeElement;
+    if (focus && focus !== document.body && !scroller.contains(focus)) return;
+    if (focus instanceof HTMLElement && focus.isContentEditable) return;
+    if (columns.key(e)) e.preventDefault();
+  };
+  const onPointerDown = () => columns.setPointerDown(true);
+  const onPointerUp = () => columns.setPointerDown(false);
+  onMount(() => {
+    window.addEventListener('keydown', onColumnKey);
+    window.addEventListener('pointerdown', onPointerDown, true);
+    window.addEventListener('pointerup', onPointerUp, true);
+    onCleanup(() => {
+      window.removeEventListener('keydown', onColumnKey);
+      window.removeEventListener('pointerdown', onPointerDown, true);
+      window.removeEventListener('pointerup', onPointerUp, true);
+    });
+  });
+
+  /** A double-click on blank page space (not a word, a link, a field or an
+   * annotation, and not with an annotation tool out) zooms the column
+   * there; another one leaves. On text, a double-click still selects the
+   * word: the text layer's spans are the target then, not the layer. */
+  const onDoubleClick = (e: MouseEvent) => {
+    if (e.button !== 0 || toolState.active !== 'select') return;
+    const t = e.target;
+    if (!(t instanceof Element)) return;
+    const blank =
+      t.classList.contains('text-layer') ||
+      t.classList.contains('page-img') ||
+      t.classList.contains('page-space') ||
+      t.classList.contains('page');
+    if (!blank) return;
+    refreshViewportOrigin();
+    void columns.doubleClick(anchorFrom(e.clientX, e.clientY)).then((acted) => {
+      // The browser may have selected the nearest word for the blank
+      // double-click; it was a zoom, not a selection.
+      if (acted) document.getSelection()?.removeAllRanges();
+    });
+  };
 
   // A selection belongs to the document it was made in, so switching away from
   // this tab is where the captured text stops being meaningful.
@@ -291,7 +377,12 @@ function ViewerContent(props: { tab: TabRecord }) {
   const gestureInProgress = () => performance.now() - lastGestureAt < GESTURE_LOCKOUT_MS;
 
   const onWheel = (e: WheelEvent) => {
-    if (!(e.ctrlKey || e.metaKey)) return;
+    if (!(e.ctrlKey || e.metaKey)) {
+      // Column zoom scrolls within the column and decides when a scroll
+      // past its end moves on; the browser's own scroll would not stop.
+      if (columns.wheel(e)) e.preventDefault();
+      return;
+    }
     // Always swallow it, even when the gesture path owns the zoom: otherwise
     // the engine applies its own magnification to the whole app chrome.
     e.preventDefault();
@@ -336,6 +427,7 @@ function ViewerContent(props: { tab: TabRecord }) {
       // which the cached anchor basis depends on.
       refreshViewportOrigin();
       zoom.refreshFit();
+      columns.refit();
     });
     ro.observe(scroller);
     refreshViewportOrigin();
@@ -394,6 +486,7 @@ function ViewerContent(props: { tab: TabRecord }) {
       if (req.kind === 'position') {
         scroller.scrollTop = req.top;
         scroller.scrollLeft = req.left;
+        columns.afterJump(req);
         return;
       }
 
@@ -409,6 +502,7 @@ function ViewerContent(props: { tab: TabRecord }) {
         top - VIEW_PADDING + (req.fraction ?? 0) * height + (req.offsetCss ?? 0)
       );
       if (req.left !== undefined) scroller.scrollLeft = req.left;
+      columns.afterJump(req);
     };
 
     // A restored reading position has to outlast the initial fit: the
@@ -440,6 +534,10 @@ function ViewerContent(props: { tab: TabRecord }) {
       onMouseUp={(e) => {
         if (navigateForMouseButton(e.button, props.tab)) e.preventDefault();
       }}
+      onDblClick={onDoubleClick}
+      onPointerMove={(e) => columns.setPointer(anchorFrom(e.clientX, e.clientY))}
+      onPointerLeave={() => columns.setPointer(null)}
+      classList={{ 'is-column-mode': columns.active() }}
       role="document"
       aria-label="Document pages"
       tabIndex={-1}
