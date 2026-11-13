@@ -1961,6 +1961,13 @@ fn do_library_scan_next(state: &mut WorkerState, shared: &EngineShared) {
         // A file waits for a page's OCR; its reading resumes the scan.
         return;
     }
+    // List the roots outside the lock: walking a folder can block (a
+    // privacy prompt, a slow volume) and nothing else should wait on it.
+    let request = shared.library.lock().listing_request();
+    if let Some((epoch, roots)) = request {
+        let files = library::list_roots(&roots);
+        shared.library.lock().install_listing(epoch, files);
+    }
     let candidate = shared.library.lock().next_candidate();
     scan_step(state, shared, candidate);
 }

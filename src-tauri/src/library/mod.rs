@@ -253,6 +253,12 @@ pub struct LibraryState {
     total: u32,
     scanning: bool,
     scan_epoch: u64,
+    /// The roots still have to be listed for this scan. Listing walks the
+    /// folders, which can block for as long as macOS waits on a privacy
+    /// prompt for Downloads, so it never happens where the scan is
+    /// scheduled (app setup runs on the main thread): the worker lists them
+    /// without holding the lock (`listing_request` / `install_listing`).
+    needs_listing: bool,
     /// Backfilled entries since the index was last written; see
     /// `finish_cites`.
     cites_unsaved: u32,
@@ -329,6 +335,7 @@ impl LibraryState {
             total: 0,
             scanning: false,
             scan_epoch: 0,
+            needs_listing: false,
             cites_unsaved: 0,
             watch_files: VecDeque::new(),
             watch_queued: HashSet::new(),
@@ -415,11 +422,28 @@ impl LibraryState {
         self.scan_epoch = self.scan_epoch.wrapping_add(1);
         self.pending.clear();
         self.processed = 0;
-        let mut files: Vec<PathBuf> = self
-            .roots
-            .iter()
-            .flat_map(|root| collect_pdfs(root))
-            .collect();
+        self.total = 0;
+        self.scanning = true;
+        self.needs_listing = true;
+    }
+
+    /// The roots to list for the scan scheduled last, once: the caller
+    /// walks them without the lock and hands the files to
+    /// `install_listing` with the epoch.
+    pub fn listing_request(&mut self) -> Option<(u64, Vec<PathBuf>)> {
+        if !self.needs_listing {
+            return None;
+        }
+        self.needs_listing = false;
+        Some((self.scan_epoch, self.roots.clone()))
+    }
+
+    /// The files under the roots of scan `epoch`. Dropped when another scan
+    /// was scheduled meanwhile; that one lists its own roots.
+    pub fn install_listing(&mut self, epoch: u64, mut files: Vec<PathBuf>) {
+        if epoch != self.scan_epoch || self.needs_listing {
+            return;
+        }
         // Nested roots would otherwise queue the same file twice.
         files.sort();
         files.dedup();
@@ -432,6 +456,10 @@ impl LibraryState {
     }
 
     pub fn next_candidate(&mut self) -> Option<ScanCandidate> {
+        // A caller that did not list first (tests, mostly) lists here.
+        if let Some((epoch, roots)) = self.listing_request() {
+            self.install_listing(epoch, list_roots(&roots));
+        }
         while let Some(path) = self.pending.pop_front() {
             let Some((mtime_ms, size)) = file_stamp(&path) else {
                 self.processed = self.processed.saturating_add(1);
@@ -1599,6 +1627,12 @@ const FINGERPRINT_EDGE: u64 = 64 * 1024;
 /// renames and moves, different the moment the file is re-saved - cheap
 /// enough to compute during the scan, which is why it is the identity a
 /// paper record falls back on when there is no identifier (projects.md sec. 2).
+/// Every PDF under `roots`, for a scan. Walks the folders: call it without
+/// holding the library lock.
+pub fn list_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
+    roots.iter().flat_map(|root| collect_pdfs(root)).collect()
+}
+
 pub fn content_fingerprint(path: &Path) -> Option<String> {
     let mut file = fs::File::open(path).ok()?;
     let size = file.metadata().ok()?.len();
@@ -2510,7 +2544,10 @@ mod tests {
         .unwrap();
         fs::write(app_data.path().join(INDEX_FILE), b"{broken json").unwrap();
 
-        let state = LibraryState::load(app_data.path().to_path_buf());
+        let mut state = LibraryState::load(app_data.path().to_path_buf());
+        // The worker lists the folders; do it here.
+        let (epoch, roots) = state.listing_request().expect("a scan is due");
+        state.install_listing(epoch, list_roots(&roots));
 
         assert!(state.status().scanning);
         assert_eq!(state.status().total, 1);
@@ -2892,6 +2929,8 @@ mod tests {
         state.add_root(first.path().to_path_buf()).expect("first");
         state.add_root(second.path().to_path_buf()).expect("second");
         assert_eq!(state.roots().len(), 2);
+        let (epoch, roots) = state.listing_request().expect("a scan is due");
+        state.install_listing(epoch, list_roots(&roots));
         assert_eq!(state.status().total, 2);
 
         // Adding the same folder twice is a refresh, not a duplicate.
@@ -3080,5 +3119,45 @@ mod tests {
         assert_eq!(stored.size, size + 1);
         assert!(!stored.text_indexed, "different bytes: the sidecar goes");
         assert!(state.paths().contains(&pdf));
+    }
+}
+
+#[cfg(test)]
+mod listing_tests {
+    use super::*;
+
+    /// Loading and adding a folder never walk it: macOS can hold a walk of
+    /// Downloads for as long as its privacy prompt waits, and both run on
+    /// the main thread. The listing is handed out once, for the worker.
+    #[test]
+    fn scheduling_a_scan_leaves_the_walk_to_the_worker() {
+        let app_data = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("a.pdf"), b"%PDF-1.4 a").unwrap();
+        let mut state = LibraryState::load(app_data.path().to_path_buf());
+        assert!(state.add_root(root.path().to_path_buf()).unwrap());
+        assert!(!state.has_scan_work(), "nothing listed yet");
+        let (epoch, roots) = state.listing_request().expect("a listing is due");
+        assert!(state.listing_request().is_none(), "handed out once");
+        state.install_listing(epoch, list_roots(&roots));
+        assert!(state.has_scan_work());
+        let candidate = state.next_candidate().expect("the file");
+        assert!(candidate.path.ends_with("a.pdf"));
+    }
+
+    /// A listing for a scan that was replaced meanwhile is dropped; the new
+    /// scan lists its own roots.
+    #[test]
+    fn a_stale_listing_is_dropped() {
+        let app_data = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("a.pdf"), b"%PDF-1.4 a").unwrap();
+        let mut state = LibraryState::load(app_data.path().to_path_buf());
+        state.add_root(root.path().to_path_buf()).unwrap();
+        let (old, roots) = state.listing_request().unwrap();
+        state.remove_root(root.path()).unwrap();
+        state.install_listing(old, list_roots(&roots));
+        assert!(!state.has_scan_work());
+        assert!(state.next_candidate().is_none());
     }
 }
