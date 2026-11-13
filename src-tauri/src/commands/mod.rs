@@ -216,6 +216,8 @@ pub async fn library_search(
     state: tauri::State<'_, EngineState>,
     query: String,
     case_sensitive: bool,
+    // One project's papers only; absent or null searches the whole library.
+    project_id: Option<String>,
 ) -> AppResult<LibrarySearchDto> {
     /// Enough hits from one document to show it is the right one; the document
     /// is opened for a full search past that.
@@ -232,7 +234,13 @@ pub async fn library_search(
     }
     let engine = state.0.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        engine.library_search(&query, case_sensitive, PER_DOCUMENT_LIMIT, DOCUMENT_LIMIT)
+        engine.library_search(
+            &query,
+            case_sensitive,
+            project_id.as_deref(),
+            PER_DOCUMENT_LIMIT,
+            DOCUMENT_LIMIT,
+        )
     })
     .await
     .map_err(|error| AppError::Internal(format!("library search failed: {error}")))

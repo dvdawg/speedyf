@@ -293,7 +293,25 @@ describe('full-text hand-off', () => {
     fireEvent.input(screen.getByLabelText('Search items'), { target: { value: 'entropy' } });
     fireEvent.click(screen.getByText(/Search the full text of every item for/));
     expect(libraryStore.state.query).toBe('entropy');
+    expect(libraryStore.state.scope).toBeNull();
     expect(showHomePanel).toHaveBeenCalledWith('library');
     expect(settings.launchScreen).toBe('home');
+  });
+
+  it('under a project, searches that project', async () => {
+    updateSettings({ launchScreen: 'projects' });
+    projectsStore.setScope({ kind: 'project', id: 'p2' });
+    render(() => <PaperList onMoveFocus={() => {}} />);
+    fireEvent.input(screen.getByLabelText('Search items'), { target: { value: 'entropy' } });
+    fireEvent.click(await screen.findByText(/Search the full text of Active matter for/));
+    expect(libraryStore.state.query).toBe('entropy');
+    expect(libraryStore.state.scope).toBe('p2');
+    expect(showHomePanel).toHaveBeenCalledWith('library');
+    expect(settings.launchScreen).toBe('home');
+
+    // Back under All items, the hand-off is to everything again.
+    projectsStore.setScope({ kind: 'all' });
+    fireEvent.click(await screen.findByText(/Search the full text of every item for/));
+    expect(libraryStore.state.scope).toBeNull();
   });
 });

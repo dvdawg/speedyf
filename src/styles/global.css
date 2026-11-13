@@ -1877,6 +1877,38 @@ textarea:focus-visible {
   color: var(--text);
 }
 
+/* Where to search: a quiet part of the field, not a second control beside
+   it. Capped so a long project name cannot squeeze the query out. */
+.library-search-scope {
+  flex: none;
+  max-width: 140px;
+  height: 24px;
+  padding: 0 4px 0 8px;
+  border: none;
+  border-left: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.library-search-scope:hover {
+  color: var(--text);
+}
+
+.library-search-scope:disabled {
+  cursor: not-allowed;
+}
+
+.library-search-scope:focus-visible {
+  outline: none;
+  box-shadow: none;
+  color: var(--text);
+}
+
 /* The shared `--focus-ring` spaces itself with `--bg-elev`, which is white —
    a visible halo against this panel's `--bg`. A soft accent glow sits on the
    panel background in either theme. */
