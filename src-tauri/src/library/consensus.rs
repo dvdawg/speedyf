@@ -21,15 +21,31 @@
 //! value that came from it is dropped and the primary file is reconciled
 //! again, so what the file says comes back.
 //!
+//! **Identifiers.** An item without a DOI (or arXiv id) takes the one its
+//! citing papers print, when at least [`MIN_WITNESSES`] independent citing
+//! items name it by title (`TitleIndex::find`) and print that identifier in
+//! the same entry, no citing item names it with another one, and each
+//! entry's first author and year (when the entry and the item both have
+//! them) fit the item: the same family name (`persons::NameKey`), years at
+//! most [`ID_YEAR_SLACK`] apart. It lands with source `Citations`, below the
+//! file's own identifier, XMP, every lookup and the user: a scan of the
+//! file that finds one replaces it, a lookup that answers with one replaces
+//! it, and it goes when the consensus does. An identifier another item
+//! already holds is never taken; the two are suggested as duplicates
+//! instead ("cited as the same DOI by 3 papers", `CitedAs`).
+//!
 //! **Dating.** A paper is at least as new as what it cites:
 //! [`year_floor`] is the latest year its references give, made robust.
 
-use super::papers::{fold, offer, CitationTables, PaperRecord};
+use super::papers::{fold, normalize_arxiv, offer, CitationTables, PaperRecord};
+use super::persons;
 use super::references::{DocRefs, StoredRef};
 use super::store::{format_rfc3339, PaperStore};
 use super::types::{Author, MetaField, MetaSource};
 use super::witness::{self, Witness};
 use super::{citekey, titlematch, versions, LibraryEntry};
+use crate::engine::citation::fold_arxiv_doi;
+use crate::engine::types::CitationIdDto;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -42,6 +58,9 @@ pub const YEAR_LAG: i32 = 1;
 /// The newest cited year is ignored when only one reference gives it and
 /// it is more than this far above the next: a parse error, most likely.
 pub const OUTLIER_GAP: i32 = 3;
+/// A citing entry's year and the item's may differ this much before the
+/// entry is taken for another work's (identifiers only).
+pub const ID_YEAR_SLACK: i32 = 1;
 
 /// What the citation graph says about one record, kept on it.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
@@ -55,11 +74,33 @@ pub struct CitationFacts {
     /// The year its own reference list says it is at least as new as.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub year_floor: Option<i32>,
+    /// An identifier citing papers print for this item that another item
+    /// holds: offered as a duplicate suggestion, never taken.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cited_as: Option<CitedAs>,
+}
+
+/// "cited as the same DOI by 3 papers": the other item and the evidence.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CitedAs {
+    /// The item holding the identifier.
+    pub paper_id: String,
+    /// "DOI" or "arXiv id".
+    pub kind: String,
+    /// Independent citing items that print it.
+    pub count: u32,
+}
+
+impl CitedAs {
+    pub fn reason(&self) -> String {
+        format!("cited as the same {} by {} papers", self.kind, self.count)
+    }
 }
 
 impl CitationFacts {
     pub fn is_empty(&self) -> bool {
-        self.vouched.is_empty() && self.year_floor.is_none()
+        self.vouched.is_empty() && self.year_floor.is_none() && self.cited_as.is_none()
     }
 }
 
@@ -104,6 +145,8 @@ fn field_source(paper: &PaperRecord, field: &str) -> Option<MetaSource> {
         "venue" => meta.venue.as_ref().map(|f| f.source),
         "volume" => meta.volume.as_ref().map(|f| f.source),
         "pages" => meta.pages.as_ref().map(|f| f.source),
+        "doi" => paper.ids.doi_source,
+        "arxiv" => paper.ids.arxiv_source,
         _ => None,
     }
 }
@@ -275,12 +318,16 @@ fn initial(given: &str) -> Option<char> {
     fold(given).chars().find(|c| c.is_alphabetic())
 }
 
+/// One person as far as citing papers go: the same family and first
+/// initial, or two forms the person rule (`persons::same_name`) calls one
+/// person - "van der Waals" and "Waals", "J. A." and "John".
 fn same_person(a: &Author, b: &Author) -> bool {
-    family_key(&a.family) == family_key(&b.family)
+    (family_key(&a.family) == family_key(&b.family)
         && match (initial(&a.given), initial(&b.given)) {
             (Some(x), Some(y)) => x == y,
             _ => true,
-        }
+        })
+        || persons::same_name(a, b)
 }
 
 /// Two author lists name the same people in the same order.
@@ -473,6 +520,67 @@ impl Groups {
 struct Plan {
     agreed: Agreed,
     year_floor: Option<i32>,
+    doi: Option<CitedId>,
+    arxiv: Option<CitedId>,
+}
+
+/// An identifier the citing papers agree on for one record: its value, the
+/// citing items that print it (one per independent group), and the record
+/// that already holds it, when one does.
+#[derive(Clone, Debug, PartialEq)]
+struct CitedId {
+    value: String,
+    voters: Vec<usize>,
+    owner: Option<usize>,
+}
+
+/// What one independent citing group's entries say of a record's
+/// identifiers.
+#[derive(Default)]
+struct IdVote {
+    voter: usize,
+    dois: Vec<String>,
+    arxivs: Vec<String>,
+}
+
+/// Whether a citing entry's first author and year fit the record, where
+/// both say something: the same family name, years at most
+/// [`ID_YEAR_SLACK`] apart.
+fn entry_fits(read: &Witness, paper: &PaperRecord) -> bool {
+    if let (Some(cited), Some(own)) = (read.authors.first(), paper.authors().first()) {
+        if let (Some(x), Some(y)) = (persons::NameKey::of(cited), persons::NameKey::of(own)) {
+            if x.family != y.family {
+                return false;
+            }
+        }
+    }
+    match (read.year, paper.year()) {
+        (Some(x), Some(y)) => (x - y).abs() <= ID_YEAR_SLACK,
+        _ => true,
+    }
+}
+
+/// The one value every vote that prints any agrees on, with at least
+/// [`MIN_WITNESSES`] votes printing it; none when two differ.
+fn agreed_id(
+    votes: &[IdVote],
+    pick: impl Fn(&IdVote) -> &[String],
+) -> Option<(String, Vec<usize>)> {
+    let mut value: Option<&String> = None;
+    let mut voters = Vec::new();
+    for vote in votes {
+        for printed in pick(vote) {
+            match value {
+                Some(v) if v != printed => return None,
+                _ => value = Some(printed),
+            }
+        }
+        if !pick(vote).is_empty() {
+            voters.push(vote.voter);
+        }
+    }
+    let value = value?.clone();
+    (voters.len() >= MIN_WITNESSES).then_some((value, voters))
 }
 
 impl PaperStore {
@@ -506,17 +614,82 @@ impl PaperStore {
         groups
     }
 
-    /// Every record's votes, consensus and floor, read-only.
+    /// Pairs of records (ids, smaller first) for author identity
+    /// (`persons`): one cites the other, their lists share at least
+    /// [`persons::MIN_SHARED_REFS`] references (`versions::reference_keys`),
+    /// and their author lists hold a candidate pair of names.
+    fn topic_links(
+        &self,
+        tables: &CitationTables<'_>,
+        lists: &[Option<&Arc<Vec<StoredRef>>>],
+    ) -> Vec<(String, String)> {
+        let mut pairs: Vec<(usize, usize)> = Vec::new();
+        for (holder, list) in lists.iter().enumerate() {
+            let Some(list) = list else {
+                continue;
+            };
+            for reference in list.iter() {
+                let Some(target) = tables
+                    .resolve_reference(reference, holder)
+                    .filter(|&t| t != holder)
+                else {
+                    continue;
+                };
+                let pair = (holder.min(target), holder.max(target));
+                if pairs.contains(&pair) {
+                    continue;
+                }
+                let (a, b) = (self.papers[pair.0].authors(), self.papers[pair.1].authors());
+                if a.iter().any(|x| b.iter().any(|y| persons::same_name(x, y))) {
+                    pairs.push(pair);
+                }
+            }
+        }
+        let mut keys: HashMap<usize, Vec<Vec<String>>> = HashMap::new();
+        let mut keyed = |at: usize| -> Vec<Vec<String>> {
+            keys.entry(at)
+                .or_insert_with(|| {
+                    lists[at]
+                        .map(|list| {
+                            list.iter()
+                                .map(|r| versions::reference_keys(r, at, tables))
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                })
+                .clone()
+        };
+        let mut out = Vec::new();
+        for (a, b) in pairs {
+            let (ka, kb) = (keyed(a), keyed(b));
+            let theirs: std::collections::HashSet<&String> = kb.iter().flatten().collect();
+            let shared = ka
+                .iter()
+                .filter(|keys| keys.iter().any(|k| theirs.contains(k)))
+                .count();
+            if shared >= persons::MIN_SHARED_REFS {
+                let (x, y) = (self.papers[a].id.clone(), self.papers[b].id.clone());
+                out.push(if x < y { (x, y) } else { (y, x) });
+            }
+        }
+        out
+    }
+
+    /// Every record's votes, consensus and floor, read-only; and the topic
+    /// links for author identity.
     fn citation_plans(
         &self,
         entries: &[LibraryEntry],
         refs: &DocRefs,
         this_year: i32,
-    ) -> Vec<Plan> {
+    ) -> (Vec<Plan>, Vec<(String, String)>) {
         let tables = self.citation_tables();
         let lists = lists_by_record(self, &tables, entries, refs);
+        let links = self.topic_links(&tables, &lists);
         let mut groups = self.version_groups(&tables, &lists);
         let mut votes: Vec<Vec<(usize, Vote)>> = vec![Vec::new(); self.papers.len()];
+        let mut id_votes: Vec<Vec<(usize, IdVote)>> =
+            (0..self.papers.len()).map(|_| Vec::new()).collect();
         for (holder, list) in lists.iter().enumerate() {
             let Some(list) = list else {
                 continue;
@@ -525,6 +698,41 @@ impl PaperStore {
             for reference in list.iter() {
                 if reference.text.is_empty() {
                     continue;
+                }
+                // Identifiers: by title only, so an entry printing an id
+                // another record holds still names the record it cites.
+                if let Some(target) = tables
+                    .titles
+                    .find(reference, holder)
+                    .filter(|&t| t != holder && groups.find(t) != group)
+                {
+                    let read = witness::parse(&reference.text, reference.year);
+                    if entry_fits(&read, &self.papers[target]) {
+                        let at = match id_votes[target].iter().position(|(g, _)| *g == group) {
+                            Some(at) => at,
+                            None => {
+                                id_votes[target].push((
+                                    group,
+                                    IdVote {
+                                        voter: holder,
+                                        ..IdVote::default()
+                                    },
+                                ));
+                                id_votes[target].len() - 1
+                            }
+                        };
+                        let vote = &mut id_votes[target][at].1;
+                        for id in &reference.ids {
+                            match fold_arxiv_doi(id.clone()) {
+                                CitationIdDto::Doi(doi) => push_unique(&mut vote.dois, doi),
+                                CitationIdDto::ArXiv(arxiv) => {
+                                    if let Some(arxiv) = normalize_arxiv(&arxiv) {
+                                        push_unique(&mut vote.arxivs, arxiv);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 let Some(target) = tables
                     .resolve_reference(reference, holder)
@@ -543,11 +751,33 @@ impl PaperStore {
                 ));
             }
         }
-        votes
+        let owner = |id: CitationIdDto| -> Option<usize> {
+            let folded = fold_arxiv_doi(id.clone());
+            let arxiv_doi = match &folded {
+                CitationIdDto::ArXiv(arxiv) => {
+                    Some(CitationIdDto::Doi(format!("10.48550/arxiv.{arxiv}")))
+                }
+                CitationIdDto::Doi(_) => None,
+            };
+            [Some(id), Some(folded), arxiv_doi]
+                .into_iter()
+                .flatten()
+                .find_map(|id| tables.by_id.get(&id).copied())
+        };
+        let plans = votes
             .into_iter()
+            .zip(id_votes)
             .enumerate()
-            .map(|(index, votes)| {
+            .map(|(index, (votes, id_votes))| {
                 let votes: Vec<Vote> = votes.into_iter().map(|(_, vote)| vote).collect();
+                let id_votes: Vec<IdVote> = id_votes.into_iter().map(|(_, vote)| vote).collect();
+                let cited = |pick: fn(&IdVote) -> &[String], make: fn(String) -> CitationIdDto| {
+                    agreed_id(&id_votes, pick).map(|(value, voters)| CitedId {
+                        owner: owner(make(value.clone())),
+                        value,
+                        voters,
+                    })
+                };
                 Plan {
                     agreed: if votes.len() >= MIN_WITNESSES {
                         agree(&votes)
@@ -555,9 +785,12 @@ impl PaperStore {
                         Agreed::default()
                     },
                     year_floor: lists[index].and_then(|list| year_floor(list, this_year)),
+                    doi: cited(|v| &v.dois, CitationIdDto::Doi),
+                    arxiv: cited(|v| &v.arxivs, CitationIdDto::ArXiv),
                 }
             })
-            .collect()
+            .collect();
+        (plans, links)
     }
 
     /// Bring every record's citation-derived metadata and year floor up to
@@ -572,12 +805,12 @@ impl PaperStore {
         if !self.writable() {
             return false;
         }
-        let plans = self.citation_plans(entries, refs, this_year);
+        let (plans, links) = self.citation_plans(entries, refs, this_year);
+        let mut changed_any = self.persons.set_topic_links(links);
         let ids: Vec<String> = self.papers.iter().map(|p| p.id.clone()).collect();
         let named = |voters: Vec<usize>| -> Vec<String> {
             voters.into_iter().map(|v| ids[v].clone()).collect()
         };
-        let mut changed_any = false;
         let mut reconcile: Vec<String> = Vec::new();
         for (index, plan) in plans.into_iter().enumerate() {
             let base_before = citekey::base_key(&self.papers[index].meta);
@@ -648,9 +881,69 @@ impl PaperStore {
                     |a, b| first_page(a) == first_page(b),
                 ),
             );
+            // Identifiers, each settled on its own.
+            let mut cited_as = None;
+            for (kind, cited) in [("DOI", plan.doi), ("arXiv id", plan.arxiv)] {
+                let doi = kind == "DOI";
+                let alias = |value: &str| {
+                    let id = if doi {
+                        CitationIdDto::Doi(value.to_owned())
+                    } else {
+                        CitationIdDto::ArXiv(value.to_owned())
+                    };
+                    paper.alias_ids.contains(&id)
+                };
+                let (held, source) = if doi {
+                    (&paper.ids.doi, paper.ids.doi_source)
+                } else {
+                    (&paper.ids.arxiv, paper.ids.arxiv_source)
+                };
+                let ours = source == Some(MetaSource::Citations);
+                if held.is_some() && !ours {
+                    continue;
+                }
+                let held = held.clone();
+                let take = match cited {
+                    Some(cited) if cited.owner.is_some_and(|o| o != index) => {
+                        if cited_as.is_none() {
+                            cited_as = Some(CitedAs {
+                                paper_id: ids[cited.owner.unwrap_or(index)].clone(),
+                                kind: kind.to_owned(),
+                                count: cited.voters.len().min(u32::MAX as usize) as u32,
+                            });
+                        }
+                        None
+                    }
+                    Some(cited) if !alias(&cited.value) => Some(cited),
+                    _ => None,
+                };
+                let (slot, slot_source) = if doi {
+                    (&mut paper.ids.doi, &mut paper.ids.doi_source)
+                } else {
+                    (&mut paper.ids.arxiv, &mut paper.ids.arxiv_source)
+                };
+                match take {
+                    Some(cited) => {
+                        if held.as_deref() != Some(cited.value.as_str()) {
+                            *slot = Some(cited.value);
+                            *slot_source = Some(MetaSource::Citations);
+                            changed = true;
+                        }
+                        let field = if doi { "doi" } else { "arxiv" };
+                        vouched.insert(field.to_owned(), named(cited.voters));
+                    }
+                    None if ours => {
+                        *slot = None;
+                        *slot_source = None;
+                        changed = true;
+                    }
+                    None => {}
+                }
+            }
             let facts = CitationFacts {
                 vouched,
                 year_floor: plan.year_floor,
+                cited_as,
             };
             if paper.citation_facts != facts {
                 paper.citation_facts = facts;
@@ -689,6 +982,12 @@ impl PaperStore {
             self.mark_dirty();
         }
         changed_any
+    }
+}
+
+fn push_unique(list: &mut Vec<String>, value: String) {
+    if !list.contains(&value) {
+        list.push(value);
     }
 }
 
@@ -1329,5 +1628,310 @@ mod store_tests {
         let id = c1.id.clone();
         let (bib, _) = store.bibtex_for(std::slice::from_ref(&id)).expect("bibtex");
         assert!(!bib.contains("2001"), "{bib}");
+    }
+}
+
+/// Identifiers from citing papers, and the topic links author identity
+/// reads.
+#[cfg(test)]
+mod id_tests {
+    use super::fixtures::{entry, id_of, refs, store};
+    use super::*;
+    use std::collections::HashMap;
+
+    const TARGET: &str =
+        "Beyond Linear Response: Equivalence between Thermodynamic Geometry and Optimal Transport";
+    const DOI: &str = "10.1103/physrevlett.133.057102";
+    const CITING: [&str; 3] = ["/l/c1.pdf", "/l/c2.pdf", "/l/c3.pdf"];
+
+    /// The entry as one citing paper prints it, with `doi` when given.
+    fn cite(first: &str, year: i32, doi: Option<&str>) -> (String, Option<i32>) {
+        let doi = doi.map(|d| format!(" doi:{d}")).unwrap_or_default();
+        (
+            format!(
+                "{first} and M. R. DeWeese, Beyond linear response: Equivalence between thermodynamic geometry and optimal transport, Optics Letters ({year}).{doi}"
+            ),
+            Some(year),
+        )
+    }
+
+    fn library(extra: Vec<LibraryEntry>) -> (PaperStore, Vec<LibraryEntry>) {
+        let mut store = store();
+        let mut entries = vec![
+            entry("/l/target.pdf", TARGET, &[("", "Zhong")]),
+            entry(
+                CITING[0],
+                "Higher-order response theory in optimal stochastic thermodynamics",
+                &[("Jordan", "Sawchuk")],
+            ),
+            entry(
+                CITING[1],
+                "Optimal control of overdamped systems at finite time",
+                &[("Some", "One")],
+            ),
+            entry(
+                CITING[2],
+                "Thermodynamic geometry of minimum dissipation driven barrier crossing",
+                &[("Other", "Person")],
+            ),
+        ];
+        entries.extend(extra);
+        for e in &entries {
+            store.reconcile_file(e);
+        }
+        (store, entries)
+    }
+
+    /// Each citing paper's one entry, by position in `CITING`.
+    fn lists(cited: &[(String, Option<i32>)]) -> DocRefs {
+        let lists: Vec<(&str, super::fixtures::Listed)> = cited
+            .iter()
+            .zip(CITING)
+            .map(|(entry, path)| (path, vec![entry.clone()]))
+            .collect();
+        refs(&lists)
+    }
+
+    fn target(store: &PaperStore) -> &PaperRecord {
+        let id = id_of(store, "/l/target.pdf");
+        store.papers.iter().find(|p| p.id == id).expect("target")
+    }
+
+    #[test]
+    fn two_citing_papers_printing_one_doi_give_it_to_the_item() {
+        let (mut store, entries) = library(Vec::new());
+        // One is not enough.
+        store.apply_citation_facts(&entries, &lists(&[cite("A. Zhong", 2024, Some(DOI))]), 2026);
+        assert_eq!(target(&store).ids.doi, None);
+
+        let two = lists(&[
+            cite("A. Zhong", 2024, Some(DOI)),
+            cite("A. Zhong", 2024, Some(DOI)),
+            cite("A. Zhong", 2024, None),
+        ]);
+        assert!(store.apply_citation_facts(&entries, &two, 2026));
+        let paper = target(&store);
+        assert_eq!(paper.ids.doi.as_deref(), Some(DOI));
+        assert_eq!(paper.ids.doi_source, Some(MetaSource::Citations));
+        let dto = store.paper_dto(&paper.id).expect("dto");
+        assert_eq!(dto.doi_source, Some(MetaSource::Citations));
+        assert_eq!(dto.vouched.get("doi"), Some(&2));
+        // The identity layer reads it like any other: a citation naming
+        // the DOI resolves to the item.
+        let tables = store.citation_tables();
+        let index = store.index_of(&paper.id).expect("index");
+        assert_eq!(
+            tables.by_id.get(&CitationIdDto::Doi(DOI.into())),
+            Some(&index)
+        );
+        // Settled.
+        assert!(!store.apply_citation_facts(&entries, &two, 2026));
+    }
+
+    #[test]
+    fn a_conflicting_id_or_a_mismatched_entry_blocks_it() {
+        let (mut store, entries) = library(Vec::new());
+        let conflict = lists(&[
+            cite("A. Zhong", 2024, Some(DOI)),
+            cite("A. Zhong", 2024, Some(DOI)),
+            cite("A. Zhong", 2024, Some("10.1103/physrevlett.133.999999")),
+        ]);
+        store.apply_citation_facts(&entries, &conflict, 2026);
+        assert_eq!(target(&store).ids.doi, None, "one citing paper disagrees");
+
+        // Another first author: the entry is about another work, whatever
+        // its title says, and its DOI is no witness.
+        let (mut store, entries) = library(Vec::new());
+        let mismatch = lists(&[
+            cite("A. Zhong", 2024, Some(DOI)),
+            cite("B. Brown", 2024, Some(DOI)),
+        ]);
+        store.apply_citation_facts(&entries, &mismatch, 2026);
+        assert_eq!(target(&store).ids.doi, None, "first author differs");
+
+        // A year more than one off, against a year the item has.
+        let (mut store, entries) = library(Vec::new());
+        let id = id_of(&store, "/l/target.pdf");
+        store
+            .apply_patch(
+                &id,
+                crate::library::types::MetaPatchDto {
+                    year: Some(Some(2024)),
+                    ..Default::default()
+                },
+            )
+            .expect("patch");
+        let late = lists(&[
+            cite("A. Zhong", 2024, Some(DOI)),
+            cite("A. Zhong", 2019, Some(DOI)),
+        ]);
+        store.apply_citation_facts(&entries, &late, 2026);
+        assert_eq!(target(&store).ids.doi, None, "years five apart");
+        let near = lists(&[
+            cite("A. Zhong", 2024, Some(DOI)),
+            cite("A. Zhong", 2023, Some(DOI)),
+        ]);
+        store.apply_citation_facts(&entries, &near, 2026);
+        assert_eq!(target(&store).ids.doi.as_deref(), Some(DOI), "a year apart");
+    }
+
+    #[test]
+    fn an_id_another_item_holds_becomes_a_merge_suggestion() {
+        let mut holder = entry(
+            "/l/holder.pdf",
+            "A record that already holds the identifier somehow",
+            &[("Q.", "Holder")],
+        );
+        holder.doi = Some(DOI.to_owned());
+        let (mut store, entries) = library(vec![holder]);
+        let three = lists(&[
+            cite("A. Zhong", 2024, Some(DOI)),
+            cite("A. Zhong", 2024, Some(DOI)),
+            cite("A. Zhong", 2024, Some(DOI)),
+        ]);
+        store.apply_citation_facts(&entries, &three, 2026);
+        let paper = target(&store);
+        assert_eq!(paper.ids.doi, None, "never two items with one DOI");
+        let holder_id = id_of(&store, "/l/holder.pdf");
+        let cited = paper.citation_facts.cited_as.clone().expect("cited as");
+        assert_eq!(cited.paper_id, holder_id);
+        let groups = store.duplicates(&HashMap::new());
+        let group = groups
+            .iter()
+            .find(|g| g.paper_ids.contains(&holder_id))
+            .expect("suggested");
+        assert!(group.paper_ids.contains(&paper.id));
+        assert_eq!(group.reason, "cited as the same DOI by 3 papers");
+        // Only suggested: both records stay.
+        assert_ne!(
+            id_of(&store, "/l/holder.pdf"),
+            id_of(&store, "/l/target.pdf")
+        );
+    }
+
+    #[test]
+    fn the_files_own_id_wins_and_the_adopted_one_goes_with_its_consensus() {
+        let (mut store, mut entries) = library(Vec::new());
+        let two = lists(&[
+            cite("A. Zhong", 2024, Some(DOI)),
+            cite("A. Zhong", 2024, Some(DOI)),
+        ]);
+        store.apply_citation_facts(&entries, &two, 2026);
+        assert_eq!(target(&store).ids.doi.as_deref(), Some(DOI));
+        // A rescan that finds no DOI in the file keeps it: it was never
+        // the file's to retract.
+        store.reconcile_file(&entries[0]);
+        assert_eq!(target(&store).ids.doi.as_deref(), Some(DOI));
+        // A lost witness drops it.
+        store.apply_citation_facts(&entries, &lists(&[cite("A. Zhong", 2024, Some(DOI))]), 2026);
+        let paper = target(&store);
+        assert_eq!(
+            (paper.ids.doi.as_deref(), paper.ids.doi_source),
+            (None, None)
+        );
+        assert!(!paper.citation_facts.vouched.contains_key("doi"));
+
+        // Back, and then the file is found to print another DOI.
+        store.apply_citation_facts(&entries, &two, 2026);
+        assert_eq!(target(&store).ids.doi.as_deref(), Some(DOI));
+        entries[0].doi = Some("10.1000/own".to_owned());
+        store.reconcile_file(&entries[0]);
+        store.apply_citation_facts(&entries, &two, 2026);
+        let paper = target(&store);
+        assert_eq!(paper.ids.doi.as_deref(), Some("10.1000/own"));
+        assert_eq!(paper.ids.doi_source, Some(MetaSource::FirstPage));
+        assert!(!paper.citation_facts.vouched.contains_key("doi"));
+
+        // The user's beats it too, and a frozen key stays frozen.
+        let (mut store, entries) = library(Vec::new());
+        let id = id_of(&store, "/l/target.pdf");
+        store.freeze_keys(std::slice::from_ref(&id));
+        let key = target(&store).cite_key.clone();
+        store.apply_citation_facts(&entries, &two, 2026);
+        assert_eq!(target(&store).cite_key, key);
+        store
+            .apply_patch(
+                &id,
+                crate::library::types::MetaPatchDto {
+                    doi: Some(Some("10.1000/mine".into())),
+                    ..Default::default()
+                },
+            )
+            .expect("patch");
+        store.apply_citation_facts(&entries, &two, 2026);
+        assert_eq!(target(&store).ids.doi.as_deref(), Some("10.1000/mine"));
+        assert_eq!(target(&store).ids.doi_source, Some(MetaSource::User));
+    }
+
+    #[test]
+    fn an_arxiv_id_is_taken_the_same_way() {
+        let (mut store, entries) = library(Vec::new());
+        let two = lists(&[
+            cite("A. Zhong", 2024, Some("10.48550/arXiv.2404.01286")),
+            (
+                cite("A. Zhong", 2024, None)
+                    .0
+                    .replace("(2024).", "arXiv:2404.01286v2 (2024)."),
+                Some(2024),
+            ),
+        ]);
+        store.apply_citation_facts(&entries, &two, 2026);
+        let paper = target(&store);
+        assert_eq!(paper.ids.arxiv.as_deref(), Some("2404.01286"));
+        assert_eq!(paper.ids.arxiv_source, Some(MetaSource::Citations));
+        assert_eq!(paper.ids.doi, None);
+    }
+
+    #[test]
+    fn a_citation_on_one_topic_makes_two_initials_one_person() {
+        let mut store = store();
+        let shared = |n: usize| {
+            (
+                format!(
+                    "K. Other, A rather specific study of entropy production number {n}, Phys. Rev. E {n}, {n}0 (2019)."
+                ),
+                Some(2019),
+            )
+        };
+        let entries = vec![
+            entry(
+                "/l/early.pdf",
+                "Stochastic thermodynamics of tiny heat engines",
+                &[("J.", "Smith")],
+            ),
+            entry(
+                "/l/late.pdf",
+                "Optimal driving protocols for tiny heat engines revisited",
+                &[("J.", "Smith")],
+            ),
+        ];
+        for e in &entries {
+            store.reconcile_file(e);
+        }
+        let mut late: Vec<(String, Option<i32>)> = (1..=3).map(shared).collect();
+        late.push((
+            "J. Smith, Stochastic thermodynamics of tiny heat engines, Phys. Rev. E 9, 9 (2018)."
+                .to_owned(),
+            Some(2018),
+        ));
+        let lists = refs(&[
+            ("/l/early.pdf", (1..=3).map(shared).collect()),
+            ("/l/late.pdf", late),
+        ]);
+        store.refresh_persons();
+        let early = id_of(&store, "/l/early.pdf");
+        assert!(
+            store.persons().person_at(&early, 0).is_none(),
+            "no evidence yet"
+        );
+        assert!(store.apply_citation_facts(&entries, &lists, 2026));
+        store.refresh_persons();
+        let person = store.persons().person_at(&early, 0).expect("one person");
+        assert_eq!(person.papers.len(), 2);
+        let items = store.person_items(&person.id.clone()).expect("items");
+        assert_eq!(items.name, "J. Smith");
+        assert_eq!(items.rows.len(), 2);
+        let dto = store.paper_dto(&early).expect("dto");
+        assert_eq!(dto.author_persons, [Some(person.id.clone())]);
     }
 }

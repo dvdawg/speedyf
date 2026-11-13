@@ -4094,6 +4094,67 @@ body.is-resizing-sidebar * {
   font-size: 11px;
 }
 
+/* An author who is a person with other items: a quiet link, text-coloured,
+   the link rows' inset on hover. */
+.author-link {
+  margin: 0 -2px;
+  padding: 0 2px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.author-link:hover {
+  background: var(--bg-inset);
+}
+
+.author-link:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.author-lines {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.paper-field-value.is-linked {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: default;
+}
+
+.paper-field-value.is-linked:hover {
+  background: transparent;
+  border-color: transparent;
+}
+
+.paper-field-edit {
+  flex: none;
+  margin-left: auto;
+}
+
+/* "Items by John Smith" over the list: the graph focus bar's shape. */
+.person-bar-head {
+  padding-top: 2px;
+}
+
+.person-bar-name {
+  color: var(--text);
+}
+
+.person-bar-also {
+  padding: 0 16px 8px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
 /* Settings rows for the library: a path and the buttons that change it, in
    the control column of the standard `.home-setting` row. */
 .library-setting-value {

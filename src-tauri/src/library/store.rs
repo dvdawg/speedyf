@@ -11,6 +11,7 @@
 use super::backup::{self, BackupState, LibraryBackupDto};
 use super::bibtex::BibtexOptions;
 use super::papers::PaperRecord;
+use super::persons::PersonsSection;
 use super::projects::ProjectRecord;
 use super::review::ReviewState;
 use super::types::LibraryDataInfoDto;
@@ -47,6 +48,9 @@ struct LibraryFile {
     /// Triage and dismissals (`review`). Absent before it existed.
     #[serde(default)]
     review: Option<ReviewState>,
+    /// Authors as persons (`persons`), with a version of its own.
+    #[serde(default)]
+    persons: PersonsSection,
 }
 
 /// The same shape, borrowed, so a save never clones every record.
@@ -58,6 +62,7 @@ struct LibraryFileRef<'a> {
     projects: &'a [ProjectRecord],
     bibtex_options: &'a BibtexOptions,
     review: &'a ReviewState,
+    persons: &'a PersonsSection,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -80,6 +85,8 @@ pub struct PaperStore {
     pub(super) projects: Vec<ProjectRecord>,
     pub(super) bibtex_options: BibtexOptions,
     pub(super) review: ReviewState,
+    /// Authors clustered into persons; refreshed before every save.
+    pub(super) persons: PersonsSection,
     /// The last backup a save wrote (`backup`).
     backup: BackupState,
     /// Why nothing may be written, when the file on disk is one this build
@@ -112,6 +119,7 @@ impl PaperStore {
             projects: Vec::new(),
             bibtex_options: BibtexOptions::default(),
             review: ReviewState::starting_now(),
+            persons: PersonsSection::default(),
             backup: BackupState::default(),
             write_block: None,
             dirty: false,
@@ -143,6 +151,7 @@ impl PaperStore {
                 if let Some(review) = file.review.filter(|r| r.since.is_some()) {
                     store.review = review;
                 }
+                store.persons = file.persons.loaded();
                 // Duplicates from before automatic merging, or from another
                 // machine's edits, are merged once here; then every item's
                 // main file is chosen again and the items gone for a week
@@ -193,6 +202,7 @@ impl PaperStore {
                 store.write_block = Some(format!("library.json cannot be read: {error}"));
             }
         }
+        store.refresh_persons();
         store
     }
 
@@ -249,6 +259,7 @@ impl PaperStore {
                 })
                 .collect();
         }
+        self.refresh_persons();
         let path = self.file_path();
         let bytes = self.serialized()?;
         write_atomically(&path, &bytes)?;
@@ -274,6 +285,7 @@ impl PaperStore {
             projects: &self.projects,
             bibtex_options: &self.bibtex_options,
             review: &self.review,
+            persons: &self.persons,
         })
         .map_err(|error| AppError::Internal(format!("cannot serialize the library: {error}")))
     }
@@ -350,6 +362,7 @@ impl PaperStore {
         if let Some(review) = restored.review.filter(|r| r.since.is_some()) {
             self.review = review;
         }
+        self.persons = restored.persons.loaded();
         self.mark_dirty();
         Ok(())
     }

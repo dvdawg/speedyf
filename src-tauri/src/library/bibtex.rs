@@ -457,6 +457,9 @@ mod tests {
             vouched: Default::default(),
             year_floor: None,
             year_hint: None,
+            doi_source: None,
+            arxiv_source: None,
+            author_persons: vec![],
         }
     }
 

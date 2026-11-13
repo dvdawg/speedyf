@@ -654,6 +654,12 @@ export function fakeEngine() {
     }),
     libraryCounts: vi.fn(async () => COUNTS),
     libraryPaper: vi.fn(async (id: string) => paperFor(id)),
+    libraryPerson: vi.fn(async (id: string) => ({
+      id,
+      name: 'Christopher Jarzynski',
+      variants: ['C. Jarzynski'],
+      rows: ROWS.filter((r) => r.authors.includes('Jarzynski')),
+    })),
     libraryPaperForPath: vi.fn(async () => null),
     libraryUpdatePaper: vi.fn(async (id: string, patch: MetaPatch) => {
       const paper = paperFor(id);

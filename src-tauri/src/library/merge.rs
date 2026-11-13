@@ -10,7 +10,9 @@
 //! pair's): a shared DOI or arXiv id, aliases included ("same DOI", "same
 //! arXiv id", or "arXiv X is the preprint of D" when only one side has a
 //! journal DOI); an arXiv id the lookup cache says was published as a DOI
-//! another record holds; equal normalized titles of four words or more with
+//! another record holds; an identifier citing papers print for one record
+//! that the other holds ("cited as the same DOI by 3 papers",
+//! `consensus::CitedAs`); equal normalized titles of four words or more with
 //! years at most one apart or unknown ("same title"); a near-identical title
 //! (`titlematch::judge` Near) with known years at most one apart; nearly
 //! the same reference list (`versions`, weakest: "nearly the same 48
@@ -272,6 +274,21 @@ impl PaperStore {
             }
         }
 
+        // An identifier citing papers print for one that the other holds.
+        let position: HashMap<&str, usize> = items
+            .iter()
+            .enumerate()
+            .map(|(at, item)| (item.id.as_str(), at))
+            .collect();
+        for (at, item) in items.iter().enumerate() {
+            let Some(cited) = &item.citation_facts.cited_as else {
+                continue;
+            };
+            if let Some(&other) = position.get(cited.paper_id.as_str()) {
+                groups.join(at, other, 1, || cited.reason());
+            }
+        }
+
         // Titles.
         let titles: Vec<Option<String>> = items
             .iter()
@@ -322,11 +339,6 @@ impl PaperStore {
         }
 
         // Nearly the same reference list.
-        let position: HashMap<&str, usize> = items
-            .iter()
-            .enumerate()
-            .map(|(at, item)| (item.id.as_str(), at))
-            .collect();
         for (a, b, shared) in versions {
             if let (Some(&a), Some(&b)) = (position.get(a.as_str()), position.get(b.as_str())) {
                 groups.join(a, b, 4, || format!("nearly the same {shared} references"));

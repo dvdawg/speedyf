@@ -326,6 +326,23 @@ export interface Paper {
   yearFloor?: number | null;
   /** "cites work from 2021; year may be wrong" */
   yearHint?: string | null;
+  /** where the DOI and arXiv id came from; 'citations' when citing papers
+   * agreed on it (`vouched.doi` / `vouched.arxiv` say how many) */
+  doiSource?: MetaSource | null;
+  arxivSource?: MetaSource | null;
+  /** the person of each author, by position, when that person has other
+   * items in the library; null otherwise */
+  authorPersons?: (string | null)[];
+}
+
+/** A person (name variants of one author clustered) and their items. */
+export interface PersonItems {
+  id: string;
+  /** the fullest given name seen, with the most support: "John A. Smith" */
+  name: string;
+  /** the other forms printed, most frequent first: "J. Smith" */
+  variants: string[];
+  rows: PaperRow[];
 }
 
 /** One row of the paper list: display strings, already resolved. */
