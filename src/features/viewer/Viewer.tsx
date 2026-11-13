@@ -24,8 +24,12 @@ import PageView from './PageView';
 import { openFromDialog } from '../document/tabsController';
 import { IconOpen } from '../../components/icons';
 import { engine } from '../../lib/transport/engine';
-import { smartCopyForSelection } from '../../lib/text/copySelection';
-import { clearSelection, noteSelectionChanged } from '../../stores/selectionStore';
+import { selectedRunRects, smartCopyForSelection } from '../../lib/text/copySelection';
+import {
+  clearSelection,
+  noteSelectionChanged,
+  selectionGeometryFrom,
+} from '../../stores/selectionStore';
 import { TabContext } from '../../app/TabContext';
 import { tabsStore, type TabRecord } from '../../stores/tabsStore';
 import { recentStore } from '../../stores/recentStore';
@@ -160,7 +164,15 @@ function ViewerContent(props: { tab: TabRecord }) {
     if (!scroller.contains(range.commonAncestorContainer)) return;
     // Deferred: this walks every span in the scroller, and selectionchange
     // fires throughout a drag.
-    noteSelectionChanged(() => smartCopyForSelection(selection, scroller));
+    noteSelectionChanged(
+      () => smartCopyForSelection(selection, scroller),
+      () =>
+        selectionGeometryFrom(
+          documentStore.state.docId,
+          selectedRunRects(selection, scroller),
+          (page) => documentStore.state.pages[page]?.heightPt
+        )
+    );
     const rect = range.getBoundingClientRect();
     if (rect.height === 0 && rect.width === 0) return;
     const contentY = rect.top - scroller.getBoundingClientRect().top + scroller.scrollTop;

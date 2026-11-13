@@ -156,7 +156,8 @@ function ExtensionRow(props: { ext: ExtensionRecord }) {
     if (ext().commands.length) parts.push(plural(ext().commands.length, 'command'));
     if (ext().panels.length) parts.push(plural(ext().panels.length, 'panel'));
     if (ext().keybindings.length) parts.push(plural(ext().keybindings.length, 'shortcut'));
-    const actions = ext().selectionActions.length + ext().citationActions.length;
+    const actions =
+      ext().selectionActions.length + ext().citationActions.length + ext().equationActions.length;
     if (actions) parts.push(plural(actions, 'action'));
     if (ext().documentTasks.length) parts.push(plural(ext().documentTasks.length, 'task'));
     return parts.join(', ');
@@ -248,6 +249,18 @@ function ExtensionRow(props: { ext: ExtensionRecord }) {
           </span>
         </Show>
       </div>
+
+      {/* Never folded away, and shown whether it is on or off: enabling an
+          extension that reaches the internet is the consent to it, so what it
+          reaches has to be in front of the user before they do. */}
+      <Show when={ext().network.length > 0}>
+        <div
+          class="ext-network"
+          title={`Requests go through SpeedyF, only to these hosts, while the extension is enabled: ${ext().network.join(', ')}`}
+        >
+          Uses the internet: {ext().network.join(', ')}
+        </div>
+      </Show>
 
       {/* Never folded away: an error is the reason someone opened this page. */}
       <Show when={ext().error}>

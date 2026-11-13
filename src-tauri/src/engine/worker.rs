@@ -4,6 +4,7 @@
 
 use super::annots;
 use super::bubbles;
+use super::glyphs;
 use super::layout_text;
 use super::links;
 use super::ocr::{self, OcrLine};
@@ -52,6 +53,9 @@ struct DocState {
     /// The library's OCR cache for this file, looked up the first time one
     /// of its pages needs OCR (`cached_page_ocr`); `Some(None)`: it has none.
     ocr_cache: Option<Option<OcrCache>>,
+    /// Display equations found per page (`glyphs::equation_blocks`), keyed
+    /// by page in the file, so hovering a page twice costs nothing.
+    equation_blocks: HashMap<u32, Vec<glyphs::EquationBlockDto>>,
 }
 
 struct WorkerState<'a> {
@@ -334,6 +338,9 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         Work::TextLayout { respond, .. } => respond(Err(err())),
         Work::PageLinks { respond, .. } => respond(Err(err())),
         Work::PageBubbles { respond, .. } => respond(Err(err())),
+        Work::PageGlyphs { respond, .. } => respond(Err(err())),
+        Work::MathTags { respond, .. } => respond(Err(err())),
+        Work::EquationBlocks { respond, .. } => respond(Err(err())),
         Work::PreviewRect { respond, .. } => respond(Err(err())),
         Work::ResolveCitation { respond, .. } => respond(Err(err())),
         Work::LibraryPreview { respond, .. } => respond(Err(err())),
@@ -403,6 +410,14 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
         Work::PageBubbles { doc, src, respond } => {
             respond(do_page_bubbles(state, shared, doc, src))
         }
+        Work::PageGlyphs {
+            doc,
+            src,
+            rects,
+            respond,
+        } => respond(do_page_glyphs(state, doc, src, &rects)),
+        Work::MathTags { doc, src, respond } => respond(do_math_tags(state, doc, src)),
+        Work::EquationBlocks { doc, src, respond } => respond(do_equation_blocks(state, doc, src)),
         Work::PreviewRect {
             doc,
             src,
@@ -533,6 +548,7 @@ fn do_open(
             form_fields: None,
             formal_envs: None,
             ocr_cache: None,
+            equation_blocks: HashMap::new(),
         },
     );
     Ok(DocMetaDto {
@@ -773,6 +789,72 @@ fn do_page_bubbles(
         src,
         bubbles: layout.bubbles.as_ref().clone(),
     })
+}
+
+/// Every glyph and rule on a page, in display points from the top-left.
+fn all_page_glyphs(
+    state: &mut WorkerState,
+    doc: DocId,
+    src: u32,
+) -> AppResult<(Vec<glyphs::GlyphDto>, [f32; 2])> {
+    if src >= state.doc(doc)?.page_count {
+        return Err(AppError::Malformed(format!("page {src} is out of range")));
+    }
+    let size = state.display_size(doc, src)?;
+    let page = state.page_handle(doc, src)?;
+    Ok((
+        glyphs::extract_page_glyphs(state.bindings, page, size[0], size[1]),
+        size,
+    ))
+}
+
+fn do_page_glyphs(
+    state: &mut WorkerState,
+    doc: DocId,
+    src: u32,
+    rects: &[[f32; 4]],
+) -> AppResult<Vec<glyphs::GlyphDto>> {
+    let (all, _) = all_page_glyphs(state, doc, src)?;
+    Ok(glyphs::select_in_rects(&all, rects))
+}
+
+fn do_math_tags(
+    state: &mut WorkerState,
+    doc: DocId,
+    src: u32,
+) -> AppResult<Vec<glyphs::MathTagDto>> {
+    if src >= state.doc(doc)?.page_count {
+        return Err(AppError::Malformed(format!("page {src} is out of range")));
+    }
+    let size = state.display_size(doc, src)?;
+    let page = state.page_handle(doc, src)?;
+    Ok(glyphs::page_math_tags(
+        state.bindings,
+        page,
+        size[0],
+        size[1],
+    ))
+}
+
+/// Pages whose equations a document keeps; past this the cache starts over.
+const EQUATION_CACHE_PAGES: usize = 256;
+
+fn do_equation_blocks(
+    state: &mut WorkerState,
+    doc: DocId,
+    src: u32,
+) -> AppResult<Vec<glyphs::EquationBlockDto>> {
+    if let Some(cached) = state.doc(doc)?.equation_blocks.get(&src) {
+        return Ok(cached.clone());
+    }
+    let (all, [w, h]) = all_page_glyphs(state, doc, src)?;
+    let blocks = glyphs::equation_blocks(&all, w, h);
+    let cache = &mut state.doc(doc)?.equation_blocks;
+    if cache.len() >= EQUATION_CACHE_PAGES {
+        cache.clear();
+    }
+    cache.insert(src, blocks.clone());
+    Ok(blocks)
 }
 
 fn do_page_links(
@@ -1951,6 +2033,7 @@ fn open_library_document(
             form_fields: None,
             formal_envs: None,
             ocr_cache: None,
+            equation_blocks: HashMap::new(),
         },
     );
     state.library_docs.push(id);
@@ -2225,6 +2308,7 @@ fn do_save(
                                 // page indices moved; recompute on next ask
                                 formal_envs: None,
                                 ocr_cache: None,
+                                equation_blocks: HashMap::new(),
                             },
                         );
                     }

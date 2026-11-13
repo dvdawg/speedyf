@@ -16,7 +16,19 @@ import { createSignal } from 'solid-js';
 
 const [selectedText, setSelectedTextSignal] = createSignal<string>('');
 
-export { selectedText };
+/** Where the selection is: the page it lies on (the one holding most of it,
+ * when it spans two) and its rectangles there, in page points from the
+ * displayed page's top-left corner. What `selection.glyphs` reads, and where
+ * a popover about the selection is anchored. */
+export interface SelectionGeometry {
+  docId: number;
+  page: number;
+  rects: [number, number, number, number][];
+}
+
+const [selectedGeometry, setSelectedGeometry] = createSignal<SelectionGeometry | null>(null);
+
+export { selectedText, selectedGeometry };
 
 /** True when there is something an action could be performed on. */
 export function hasSelection(): boolean {
@@ -36,7 +48,10 @@ let timer: ReturnType<typeof setTimeout> | undefined;
 
 /** Called by the viewer as the selection changes. `compute` is deferred, so a
  * selection that is still being dragged is never reconstructed. */
-export function noteSelectionChanged(compute: () => string | null): void {
+export function noteSelectionChanged(
+  compute: () => string | null,
+  geometry?: () => SelectionGeometry | null
+): void {
   clearTimeout(timer);
   timer = setTimeout(() => {
     // `compute` reads the *live* Selection, which may have collapsed during the
@@ -45,7 +60,10 @@ export function noteSelectionChanged(compute: () => string | null): void {
     // "what you highlighted a moment ago is void", so the last real capture
     // stands. Only a genuine new selection replaces it.
     const text = compute();
-    if (text && text.length > 0) setSelectedTextSignal(text);
+    if (text && text.length > 0) {
+      setSelectedTextSignal(text);
+      setSelectedGeometry(geometry?.() ?? null);
+    }
   }, SETTLE_MS);
 }
 
@@ -63,4 +81,65 @@ export function noteSelectionChanged(compute: () => string | null): void {
 export function clearSelection(): void {
   clearTimeout(timer);
   setSelectedTextSignal('');
+  setSelectedGeometry(null);
+}
+
+/** The geometry of selected runs, grouped onto the page holding most of them
+ * and turned top-left. Pure, so the choice is testable without a DOM. */
+export function selectionGeometryFrom(
+  docId: number,
+  runs: readonly { page: number; rect: readonly [number, number, number, number] }[],
+  pageHeight: (page: number) => number | undefined
+): SelectionGeometry | null {
+  const counts = new Map<number, number>();
+  for (const run of runs) counts.set(run.page, (counts.get(run.page) ?? 0) + 1);
+  let page = -1;
+  let best = 0;
+  for (const [candidate, count] of counts) {
+    if (count > best || (count === best && candidate < page)) {
+      page = candidate;
+      best = count;
+    }
+  }
+  const height = pageHeight(page);
+  if (page < 0 || height === undefined) return null;
+  const rects = runs
+    .filter((run) => run.page === page)
+    .map(
+      ({ rect: [x, y, w, h] }) => [x, height - (y + h), w, h] as [number, number, number, number]
+    );
+  return { docId, page, rects: mergeRows(rects) };
+}
+
+/** The engine takes at most this many rectangles in one glyph request. */
+export const MAX_SELECTION_RECTS = 64;
+
+type Rect = [number, number, number, number];
+
+/** A long selection is one run per word group, which can be hundreds of
+ * rectangles. Runs on one line (vertical overlap over half the shorter) are
+ * merged first; past the cap, everything becomes one rectangle. */
+function mergeRows(rects: Rect[]): Rect[] {
+  if (rects.length <= MAX_SELECTION_RECTS) return rects;
+  const rows: Rect[] = [];
+  for (const rect of [...rects].sort((a, b) => a[1] - b[1])) {
+    const last = rows.at(-1);
+    const overlap = last
+      ? Math.min(last[1] + last[3], rect[1] + rect[3]) - Math.max(last[1], rect[1])
+      : 0;
+    if (last && overlap > 0.5 * Math.min(last[3], rect[3])) {
+      rows[rows.length - 1] = union(last, rect);
+    } else {
+      rows.push(rect);
+    }
+  }
+  return rows.length <= MAX_SELECTION_RECTS ? rows : [rows.reduce(union)];
+}
+
+function union(a: Rect, b: Rect): Rect {
+  const left = Math.min(a[0], b[0]);
+  const top = Math.min(a[1], b[1]);
+  const right = Math.max(a[0] + a[2], b[0] + b[2]);
+  const bottom = Math.max(a[1] + a[3], b[1] + b[3]);
+  return [left, top, right - left, bottom - top];
 }

@@ -12,7 +12,9 @@ permission model, same API. Only three things differ.
 - **It cannot be removed, only disabled.** Removing files inside a signed bundle
   would either fail or last until the next update, so the panel offers
   Enabled/Disabled instead. The choice is kept in `builtins.json` beside the
-  registry.
+  registry. A built-in is enabled until switched off — except one that
+  declares `network`, which ships **disabled**: enabling it is the user's
+  consent to the hosts its card lists.
 - **Its id is reserved.** Installing an extension whose manifest claims a
   built-in's id is refused, and a hand-installed copy from before it shipped is
   removed at startup. One id, one extension — the id is what commands, storage

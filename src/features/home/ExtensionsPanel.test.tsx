@@ -51,6 +51,8 @@ function extension(overrides: Partial<ExtensionRecord>): ExtensionRecord {
     selectionActions: [],
     citationActions: [],
     documentTasks: [],
+    equationActions: [],
+    network: [],
     settings: [],
     keybindings: [],
     iconUrl: null,
@@ -91,5 +93,32 @@ describe('ExtensionsPanel', () => {
     render(() => <ExtensionsPanel />);
     expect(screen.getAllByText('Built in')).toHaveLength(1);
     expect(screen.getAllByRole('button', { name: 'Remove' })).toHaveLength(1);
+  });
+
+  it('tags an extension that uses the internet with its hosts, on or off', () => {
+    state.extensions = [
+      extension({
+        id: 'dev.speedyf.mathlatex',
+        name: 'Math to LaTeX',
+        builtin: true,
+        enabled: false,
+        permissions: ['network'],
+        network: ['export.arxiv.org', 'api.crossref.org'],
+      }),
+      extension({}),
+    ];
+    render(() => <ExtensionsPanel />);
+    const tags = screen.getAllByText(/^Uses the internet:/);
+    expect(tags).toHaveLength(1);
+    expect(tags[0]!.textContent).toBe('Uses the internet: export.arxiv.org, api.crossref.org');
+    // Off, and offered to be switched on: enabling is the consent.
+    expect(screen.getByRole('button', { name: 'Disabled' })).toBeTruthy();
+
+    cleanup();
+    state.extensions = [
+      extension({ enabled: true, permissions: ['network'], network: ['export.arxiv.org'] }),
+    ];
+    render(() => <ExtensionsPanel />);
+    expect(screen.getByText('Uses the internet: export.arxiv.org')).toBeTruthy();
   });
 });

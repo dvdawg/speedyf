@@ -36,6 +36,33 @@ export function selectedCopyRuns(selection: Selection, root: ParentNode): CopyRu
   return runs;
 }
 
+/** Where the selection lies, page by page: one rectangle per selected run in
+ * the run's own space (display page points, y-up), narrowed in proportion
+ * for the two partially selected runs at the ends. For readers of the
+ * selection's geometry rather than its text (`selection.glyphs`). */
+export function selectedRunRects(
+  selection: Selection,
+  root: ParentNode
+): { page: number; rect: [number, number, number, number] }[] {
+  if (selection.isCollapsed || selection.rangeCount === 0) return [];
+  const range = selection.getRangeAt(0);
+  const startsInText = range.startContainer.nodeType === Node.TEXT_NODE;
+  const endsInText = range.endContainer.nodeType === Node.TEXT_NODE;
+  const out: { page: number; rect: [number, number, number, number] }[] = [];
+  for (const span of root.querySelectorAll('.text-layer span')) {
+    if (!selection.containsNode(span, true)) continue;
+    const run = runForSpan.get(span);
+    if (!run || run.text.length === 0) continue;
+    const from = startsInText && span.contains(range.startContainer) ? range.startOffset : 0;
+    const to = endsInText && span.contains(range.endContainer) ? range.endOffset : run.text.length;
+    if (to <= from) continue;
+    const left = run.x + (run.w * from) / run.text.length;
+    const right = run.x + (run.w * to) / run.text.length;
+    out.push({ page: run.page, rect: [left, run.y, right - left, run.h] });
+  }
+  return out;
+}
+
 /** The text a copy of `selection` should actually put on the clipboard, or
  * null to leave the browser's own handling alone. */
 export function smartCopyForSelection(selection: Selection, root: ParentNode): string | null {

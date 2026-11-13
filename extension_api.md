@@ -195,7 +195,8 @@ custom URI scheme path.
 | `document:contributeText`              | Contribute a text layer and outline for a document                                         | v2               |
 | `library:contributeReferences`         | Read library documents' stored text (never paths) at idle and return their reference lists | v3 (implemented) |
 | `filesystem:read` / `filesystem:write` | User-chosen paths only, via a picker                                                       | v3               |
-| `network`                              | Outbound HTTP                                                                              | v3               |
+| `document:layout`                      | Glyph geometry and math tags of the open document                                          | v3 (implemented) |
+| `network`                              | Outbound HTTPS to the manifest's listed hosts, made by the core                            | v3 (implemented) |
 
 **What `document:read` actually grants.** Page text, in a loop, is the whole
 document's text. The permission means "everything this document says", not "a
@@ -222,6 +223,13 @@ everything and has nowhere to send it. That guarantee holds until v3 opens
 `network` — which is the moment read-breadth starts to matter, and the reason
 the row below is not just another permission.
 
+_Since v3 opened it:_ the worker's CSP is unchanged, so an extension still
+cannot send anything anywhere by itself. One holding `network` can ask the core
+to fetch, and only from the hosts its manifest names — a list the user sees on
+the card before they switch the extension on. `document:read` plus `network`
+therefore means "can send what it reads to these hosts", which is exactly what
+the tag on the card has to make plain.
+
 `network` is not just another row. SpeedyF is entirely local today, and for a
 tool that reads your research that is a feature rather than an accident. The
 moment extensions can phone home, "local-only" becomes "local-only unless you
@@ -241,6 +249,7 @@ allowlist of hosts declared in the manifest.
 | `panels` (custom)      | A sandboxed iframe pane                               | v3               |
 | `documentTasks`        | Batch work over a document, contributing results back | v2               |
 | `referenceProvider`    | The provider slot for library reference lists (below) | v3 (implemented) |
+| `equationActions`      | A button on each detected display equation            | v3 (implemented) |
 
 ## 9. Consumers and contributors
 
@@ -533,8 +542,28 @@ _Capability_
   _Implemented for one:_ `referenceProvider` (library reference lists), as an
   idle batch contributor with a 20 s budget per document and first-enabled
   precedence — see section 9
-- `network` with a manifest host allowlist, install-time consent, and a live
-  in-app indicator
+- **[shipped]** `network` with a manifest host allowlist, install-time
+  consent, and a live in-app indicator. The worker's CSP is unchanged — it
+  still cannot connect anywhere — and `net.fetch` is answered by the core:
+  `https://` only, hosts checked against the manifest's `network` list (exact,
+  or `*.` for subdomains; redirects checked the same way), through the same
+  per-host limiter as the library lookups, capped at 5 MB by default and 20 MB
+  at most, 30 s a request. Consent is enabling: an extension declaring
+  `network` arrives disabled (a built-in ships that way), its card carries
+  "Uses the internet: <hosts>" whether on or off, and the status bar names it
+  while a request is in flight. Reference extension: the built-in Math to
+  LaTeX, which fetches arXiv sources and journal XML for the paper on screen.
+- **[shipped]** `document:layout` — glyph geometry (`selection.glyphs`,
+  `region.glyphs`: Unicode, raw code where PDFium has one, font with its
+  subset prefix stripped, size, loose box, baseline, bold/italic, and fraction
+  and radical rules as `__rule` glyphs) and tagged-PDF Formula elements
+  (`document.mathTags`). Top-left coordinates, which this contract chose for
+  formula reading; the older APIs stay y-up.
+- **[shipped]** `contributes.equationActions` — a button on each display
+  equation the core detects (at idle, cached per page, only while an enabled
+  extension contributes one), invoked with `{ page, bbox, number }`; and
+  `ui.showMath`, a popover SpeedyF owns that typesets the answer with KaTeX
+  and copies it as LaTeX, Markdown or an `align` block on the user's click.
 - `filesystem:read`/`write`, user-chosen paths only, through a picker
 - `document:annotate` and `document:edit`
 - `render:read` — page and region rasters

@@ -12,21 +12,32 @@ import { createSignal } from 'solid-js';
 import { createStore, produce } from 'solid-js/store';
 import { invoke } from '@tauri-apps/api/core';
 import { ExtensionHost, blobWorkerFactory } from './host';
-import type { CallMessage } from './protocol';
+import {
+  INVOKE_TIMEOUT_MS,
+  NETWORK_INVOKE_TIMEOUT_MS,
+  type CallMessage,
+  type EquationTarget,
+  type InvokeValue,
+} from './protocol';
 import { COMMANDS, runCommand } from '../../app/commands';
 import { activeTab } from '../../stores/tabsStore';
 import { reservedChords } from '../../app/shortcuts';
-import { selectedText } from '../../stores/selectionStore';
+import { selectedGeometry, selectedText } from '../../stores/selectionStore';
 import { canRunGroup, refusalReason, resolveBindings, type ExtensionBinding } from './capabilities';
 import {
   apiRefusalReason,
   canCallApi,
   readCitationArg,
+  readFetchArgs,
   readIdArg,
   readPageArg,
   readPlaceArg,
   readQueryArg,
+  readRegionArg,
+  readShowMathArgs,
   toCitations,
+  toGlyphs,
+  toMathTags,
   toDocumentInfo,
   toFigures,
   toLibraryHits,
@@ -45,6 +56,13 @@ import { pdfRectToCssRect } from '../../lib/coordinates/coords';
 import { revealPlace } from '../../stores/revealStore';
 import { parseUi, type UiDescription } from './ui';
 import { ReferenceQueue, chooseProvider, idleWait, readerBusy } from './referenceProvider';
+import {
+  openMathLoading,
+  settleMath,
+  showMath,
+  showMathError,
+  type MathAnchor,
+} from './mathPopoverStore';
 
 export interface ExtensionKeybinding {
   command: string;
@@ -114,6 +132,11 @@ export interface ExtensionRecord {
   selectionActions: ExtensionAction[];
   citationActions: ExtensionAction[];
   documentTasks: ExtensionAction[];
+  /** Buttons on the display equations SpeedyF detects on a page. */
+  equationActions: ExtensionAction[];
+  /** Hosts it may reach through `net.fetch`; empty for one that never
+   * touches the network. Shown on its card whether it is on or off. */
+  network: string[];
   settings: ExtensionSetting[];
   keybindings: ExtensionKeybinding[];
   /** The bare command id SpeedyF invokes to read a library document's
@@ -175,6 +198,8 @@ interface ExtensionDto {
   selectionActions: ExtensionAction[];
   citationActions: ExtensionAction[];
   documentTasks: ExtensionAction[];
+  equationActions?: ExtensionAction[];
+  network?: string[];
   settings: ExtensionSetting[];
   referenceProvider?: string | null;
   iconUrl: string | null;
@@ -195,6 +220,8 @@ export async function loadExtensions(): Promise<void> {
           selectionActions: dto.selectionActions ?? [],
           citationActions: dto.citationActions ?? [],
           documentTasks: dto.documentTasks ?? [],
+          equationActions: dto.equationActions ?? [],
+          network: dto.network ?? [],
           settings: dto.settings ?? [],
           iconUrl: dto.iconUrl ?? null,
           builtin: dto.builtin ?? false,
@@ -246,6 +273,12 @@ export function selectionActions(): ExtensionAction[] {
   return state.extensions.filter((e) => e.enabled && !e.error).flatMap((e) => e.selectionActions);
 }
 
+/** Actions offered on a detected display equation. Empty — and so no
+ * equation buttons at all — unless an enabled extension contributes one. */
+export function equationActions(): ExtensionAction[] {
+  return state.extensions.filter((e) => e.enabled && !e.error).flatMap((e) => e.equationActions);
+}
+
 /** Actions offered on a citation. */
 export function citationActions(): ExtensionAction[] {
   return state.extensions.filter((e) => e.enabled && !e.error).flatMap((e) => e.citationActions);
@@ -261,14 +294,111 @@ export function citationActions(): ExtensionAction[] {
 export async function runExtensionAction(action: ExtensionAction, value: string): Promise<void> {
   const extension = state.extensions.find((e) => e.id === action.extensionId);
   if (!extension || !extension.enabled) return;
+  const onSelection = extension.selectionActions.some((a) => a.id === action.id);
+  await invokeAction(
+    extension,
+    action.localId,
+    action.title,
+    value,
+    onSelection ? selectionAnchor() : null
+  );
+}
+
+/** Run an equation action on the block the user pointed at. `anchor` is the
+ * block on screen, where the answer appears. */
+export async function runEquationAction(
+  action: ExtensionAction,
+  target: EquationTarget,
+  anchor: MathAnchor
+): Promise<void> {
+  const extension = state.extensions.find((e) => e.id === action.extensionId);
+  if (!extension || !extension.enabled) return;
+  await invokeAction(extension, action.localId, action.title, target, anchor, true);
+}
+
+/** Invoke an action, with the math popover around it for an extension that
+ * reads layout: it opens loading at `anchor`, `ui.showMath` fills it, and a
+ * failure shows in it rather than only in the extension's log. An equation
+ * action always has the popover — it is the only thing it can answer with. */
+async function invokeAction(
+  extension: ExtensionRecord,
+  command: string,
+  title: string,
+  value: InvokeValue,
+  anchor: MathAnchor | null,
+  always = false
+): Promise<void> {
+  const popover = anchor !== null && (always || extension.permissions.includes('document:layout'));
+  if (popover) openMathLoading(extension.id, anchor, title);
   try {
-    await hostFor(extension).invoke(action.localId, { value });
+    await hostFor(extension).invoke(command, { value, timeoutMs: invokeTimeout(extension) });
+    if (popover) settleMath(extension.id);
   } catch (err) {
-    appendLog(
-      action.extensionId,
-      'error',
-      `${action.title}: ${err instanceof Error ? err.message : String(err)}`
-    );
+    const message = err instanceof Error ? err.message : String(err);
+    appendLog(extension.id, 'error', `${title}: ${message}`);
+    if (popover) showMathError(extension.id, message);
+  }
+}
+
+/** An extension that waits on the network gets longer to answer: its work is
+ * paced per host, and only its own popover waits on it. */
+function invokeTimeout(extension: ExtensionRecord): number {
+  return extension.permissions.includes('network') ? NETWORK_INVOKE_TIMEOUT_MS : INVOKE_TIMEOUT_MS;
+}
+
+/** The current selection on screen, for a popover about it: the union of
+ * its rectangles on its page, mapped through the page element. On a rotated
+ * page the page's top edge stands in. Null when nothing is selected in the
+ * active document or its page is not mounted. */
+function selectionAnchor(): MathAnchor | null {
+  const geometry = selectedGeometry();
+  const tab = activeTab();
+  if (!geometry || !tab || geometry.docId !== tab.documentStore.state.docId) return null;
+  const geom = tab.zoom.pagesGeom()[geometry.page];
+  if (!geom || geometry.rects.length === 0) return null;
+  const element = [...document.querySelectorAll(`.page[data-page-index="${geometry.page}"]`)].find(
+    (el) => el.getClientRects().length > 0
+  );
+  if (!element) return null;
+  const box = element.getBoundingClientRect();
+  if (geom.rotation !== 0)
+    return { left: box.left, top: box.top, right: box.right, bottom: box.top };
+  const scale = box.width / geom.widthPt;
+  const left = Math.min(...geometry.rects.map((r) => r[0]));
+  const top = Math.min(...geometry.rects.map((r) => r[1]));
+  const right = Math.max(...geometry.rects.map((r) => r[0] + r[2]));
+  const bottom = Math.max(...geometry.rects.map((r) => r[1] + r[3]));
+  return {
+    left: box.left + left * scale,
+    top: box.top + top * scale,
+    right: box.left + right * scale,
+    bottom: box.top + bottom * scale,
+  };
+}
+
+/** Requests in flight per extension id, for the status bar. */
+const [networkActivity, setNetworkActivity] = createStore<Record<string, number>>({});
+
+/** Names of the extensions using the internet right now. */
+export function extensionsOnline(): string[] {
+  return Object.entries(networkActivity)
+    .filter(([, count]) => count > 0)
+    .map(([id]) => record(id)?.name ?? id);
+}
+
+/** `net.fetch`: the core makes the request; the worker never connects. */
+async function netFetch(extension: ExtensionRecord, args: unknown): Promise<unknown> {
+  const { url, kind, maxBytes } = readFetchArgs(args);
+  setNetworkActivity(extension.id, (count) => (count ?? 0) + 1);
+  try {
+    return await invoke('extension_net_fetch', {
+      extensionId: extension.id,
+      url,
+      kind,
+      maxBytes,
+    });
+  } finally {
+    setNetworkActivity(extension.id, (count) => Math.max(0, (count ?? 1) - 1));
   }
 }
 
@@ -455,6 +585,19 @@ async function handleCall(extension: ExtensionRecord, call: CallMessage): Promis
       throw new Error(apiRefusalReason(extension.permissions, call.api));
     }
     return storageCall(extension.id, call.api, call.args);
+  }
+
+  if (call.api === 'ui.showMath') {
+    // No permission: the popover is SpeedyF's, and only a formula goes in it.
+    showMath(extension.id, readShowMathArgs(call.args), selectionAnchor());
+    return { shown: true };
+  }
+
+  if (call.api === 'net.fetch') {
+    if (!canCallApi(extension.permissions, call.api)) {
+      throw new Error(apiRefusalReason(extension.permissions, call.api));
+    }
+    return netFetch(extension, call.args);
   }
 
   if (call.api === 'ui.render') {
@@ -760,6 +903,46 @@ async function readApi(api: string, args: unknown): Promise<unknown> {
 
     case 'document.contributedText':
       return invoke('extension_contributed_text', { document: doc.path });
+
+    case 'selection.glyphs': {
+      const geometry = selectedGeometry();
+      if (!geometry || geometry.docId !== doc.docId) return null;
+      const src = doc.pages[geometry.page]?.srcIndex;
+      if (src === undefined || src === null) return null;
+      const glyphs = await invoke<Parameters<typeof toGlyphs>[1]>('get_page_glyphs', {
+        docId: doc.docId,
+        src,
+        rects: geometry.rects,
+      });
+      return toGlyphs(geometry.page, glyphs);
+    }
+
+    case 'region.glyphs': {
+      const { page, bbox } = readRegionArg(args, doc.pages.length);
+      const src = doc.pages[page]?.srcIndex;
+      if (src === undefined || src === null) return { page, glyphs: [] };
+      const glyphs = await invoke<Parameters<typeof toGlyphs>[1]>('get_page_glyphs', {
+        docId: doc.docId,
+        src,
+        rects: [bbox],
+      });
+      return toGlyphs(page, glyphs);
+    }
+
+    case 'document.mathTags': {
+      const page = readPageArg(args, doc.pages.length);
+      const src = doc.pages[page]?.srcIndex;
+      if (src === undefined || src === null) return [];
+      return toMathTags(
+        await invoke<Parameters<typeof toMathTags>[0]>('get_math_tags', { docId: doc.docId, src })
+      );
+    }
+
+    case 'document.identifiers':
+      return invoke('extension_document_identifiers', {
+        docId: doc.docId,
+        path: doc.path ?? null,
+      });
   }
 
   // Unreachable: `canCallApi` already refused anything not in the catalogue.
@@ -875,6 +1058,10 @@ export async function runBoundCommand(extensionId: string, command: string): Pro
     return;
   }
   try {
+    if (isSelectionAction) {
+      await invokeAction(extension, command, command, selection, selectionAnchor());
+      return;
+    }
     await hostFor(extension).invoke(command, selection ? { value: selection } : undefined);
   } catch (err) {
     appendLog(extensionId, 'error', err instanceof Error ? err.message : String(err));

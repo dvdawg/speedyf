@@ -4,6 +4,7 @@ import { applyLowMemory, effectiveTheme, settings, updateSettings } from '../sto
 import { engine } from '../lib/transport/engine';
 import type { EngineMetrics, LookupActivity } from '../lib/transport/engine';
 import { libraryStore } from '../features/citations/libraryStore';
+import { extensionsOnline } from '../features/extensions/extensionStore';
 
 export default function StatusBar() {
   const doc = () => activeTab()?.documentStore.state;
@@ -109,6 +110,18 @@ export default function StatusBar() {
               {status().total > 0 ? ` ${status().done}/${status().total}` : ''}...
             </span>
           )}
+        </Show>
+        {/* An extension's requests, made by the core on its behalf. Shown for
+            as long as one is in flight, like the lookup indicator. */}
+        <Show when={extensionsOnline().length > 0}>
+          <span
+            class="sb-dim sb-online"
+            title="An extension you enabled is fetching from the hosts listed on its card"
+          >
+            {extensionsOnline().length === 1
+              ? `${extensionsOnline()[0]} is using the internet...`
+              : `${extensionsOnline().length} extensions are using the internet...`}
+          </span>
         </Show>
         <Show when={s()?.truncated}>
           <span class="sb-warn" title="Text index reached its memory budget">

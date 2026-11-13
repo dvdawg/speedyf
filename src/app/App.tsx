@@ -22,6 +22,7 @@ import { loadExtensions } from '../features/extensions/extensionStore';
 import { clearImagePreviews } from '../features/editor/editorActions';
 import { clearFormFields } from '../features/forms/formStore';
 import PreviewPopover from '../features/citations/PreviewPopover';
+import MathPopover from '../features/extensions/MathPopover';
 import HomeScreen from '../features/home/HomeScreen';
 import ProjectsScreen from '../features/projects/ProjectsScreen';
 import { libraryStore } from '../features/citations/libraryStore';
@@ -264,6 +265,7 @@ export default function App() {
         <CommandPalette />
         <QuickOpen />
         <PreviewPopover />
+        <MathPopover />
       </div>
       <Show when={windowTransferPending()}>
         <div class="window-transfer-overlay" role="status">

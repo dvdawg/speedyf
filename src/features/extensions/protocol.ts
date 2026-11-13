@@ -33,6 +33,18 @@ export interface ReferenceRequest {
   text: string;
 }
 
+/** What an equation action's command is invoked with: the display equation
+ * the user pointed at, in page points from the top-left corner of the page as
+ * displayed, and its printed number ("3", "2.4") when it has one. */
+export interface EquationTarget {
+  page: number;
+  bbox: [number, number, number, number];
+  number: string | null;
+}
+
+/** Any value an invoke can carry. */
+export type InvokeValue = string | ReferenceRequest | EquationTarget;
+
 /** Run one of the extension's contributed commands. */
 export interface InvokeMessage {
   type: 'invoke';
@@ -41,7 +53,7 @@ export interface InvokeMessage {
   command: string;
   /** Carried back from a row action, so one command can serve many rows; a
    * `ReferenceRequest` for a reference provider's command. */
-  value?: string | ReferenceRequest;
+  value?: InvokeValue;
   /** Set when the invoke came from a panel becoming visible, so an extension
    * can tell "the user opened my panel" from "the user ran my command". */
   reason?: 'command' | 'panel';
@@ -125,6 +137,12 @@ export const INVOKE_TIMEOUT_MS = 5_000;
  * an ordinary invoke because a thesis is a lot of text to cut up, and safe to
  * be because nothing waits on it: it runs at idle, one document at a time. */
 export const REFERENCE_PROVIDER_TIMEOUT_MS = 20_000;
+
+/** How long an action of an extension holding `network` gets. Its work is
+ * a request or two, paced per host (arXiv asks for one request every three
+ * seconds), so the ordinary five seconds would report a timeout for an answer
+ * that is merely on its way. Nothing waits on it but a loading popover. */
+export const NETWORK_INVOKE_TIMEOUT_MS = 60_000;
 
 /** How long the host waits for a worker to acknowledge activation before
  * treating it as failed to start. */

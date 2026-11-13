@@ -21,8 +21,10 @@
 //! - An extension's entry must be self-contained. Relative `importScripts`
 //!   cannot resolve from a blob, so extensions ship a bundle.
 //! - The worker inherits the app's CSP for its own subresource loads, and
-//!   `connect-src` is `ipc:` only. An extension therefore cannot reach the
-//!   network at all in v1 — denied by the platform rather than by policy.
+//!   `connect-src` is `ipc:` only. A worker therefore cannot reach the
+//!   network itself — denied by the platform rather than by policy. An
+//!   extension with the `network` permission asks SpeedyF to fetch for it
+//!   (`net`), which checks the host against the manifest's list and paces it.
 //!
 //! `resolve_asset` and the `speedyf-ext://` scheme it backs are still here and
 //! still used: sandboxed pane documents (v3) are iframes, and iframes are
@@ -33,6 +35,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 
 pub mod builtin;
+pub mod net;
 
 /// Directory under the app data dir holding every installed extension.
 pub const EXTENSIONS_DIR: &str = "extensions";
@@ -153,6 +156,18 @@ pub enum Permission {
     /// indexing — never their paths — and returning their reference lists.
     #[serde(rename = "library:contributeReferences")]
     LibraryContributeReferences,
+    /// Glyph geometry and math tags of the open document: every character
+    /// with its font, size and box, the rules drawn between them, and the
+    /// tagged-PDF Formula elements. More than `document:read` in detail,
+    /// not in reach: still only the document on screen.
+    #[serde(rename = "document:layout")]
+    DocumentLayout,
+    /// Outbound HTTPS to the hosts listed in the manifest's `network`, and
+    /// nowhere else. The requests are made by SpeedyF on the extension's
+    /// behalf (the worker itself still cannot connect anywhere), paced per
+    /// host, and shown in the status bar while they run.
+    #[serde(rename = "network")]
+    Network,
 }
 
 /// An action offered on something the user picked — a text selection, a
@@ -287,6 +302,10 @@ pub struct Contributions {
     /// is active: the first enabled extension that declares one.
     #[serde(default)]
     pub reference_provider: Option<ReferenceProviderContribution>,
+    /// A button on each display equation the core detects on a page; the
+    /// command is invoked with `{ page, bbox, number }`.
+    #[serde(default)]
+    pub equation_actions: Vec<ActionContribution>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -308,6 +327,11 @@ pub struct Manifest {
     pub icon: Option<String>,
     #[serde(default)]
     pub permissions: Vec<Permission>,
+    /// Hosts the extension may reach through `net.fetch`, with the
+    /// `network` permission: plain lowercase hostnames, or `*.example.org`
+    /// for every subdomain. No schemes, ports, paths or IP addresses.
+    #[serde(default)]
+    pub network: Vec<String>,
     #[serde(default)]
     pub contributes: Contributions,
 }
@@ -329,6 +353,10 @@ pub enum ManifestError {
     DuplicatePanel(String),
     BadPanelId(String),
     ProviderNeedsPermission,
+    BadNetworkHost(String),
+    TooManyNetworkHosts,
+    NetworkWithoutHosts,
+    HostsWithoutNetwork,
 }
 
 impl std::fmt::Display for ManifestError {
@@ -368,6 +396,22 @@ impl std::fmt::Display for ManifestError {
             ManifestError::ProviderNeedsPermission => write!(
                 f,
                 "referenceProvider needs the \"library:contributeReferences\" permission"
+            ),
+            ManifestError::BadNetworkHost(host) => write!(
+                f,
+                "network host \"{host}\" must be a lowercase hostname like \"api.example.org\" or \"*.example.org\", with no scheme, port, path or IP address, listed once"
+            ),
+            ManifestError::TooManyNetworkHosts => write!(
+                f,
+                "network lists more than {MAX_NETWORK_HOSTS} hosts"
+            ),
+            ManifestError::NetworkWithoutHosts => write!(
+                f,
+                "the \"network\" permission needs a non-empty \"network\" list of hosts"
+            ),
+            ManifestError::HostsWithoutNetwork => write!(
+                f,
+                "a \"network\" list of hosts needs the \"network\" permission"
             ),
             ManifestError::UnknownBoundCommand(id) => write!(
                 f,
@@ -457,6 +501,7 @@ pub fn parse_manifest(source: &str) -> Result<Manifest, ManifestError> {
         .iter()
         .chain(&manifest.contributes.citation_actions)
         .chain(&manifest.contributes.document_tasks)
+        .chain(&manifest.contributes.equation_actions)
     {
         if !seen.contains(action.command.as_str()) {
             return Err(ManifestError::UnknownBoundCommand(action.command.clone()));
@@ -476,6 +521,7 @@ pub fn parse_manifest(source: &str) -> Result<Manifest, ManifestError> {
             return Err(ManifestError::ProviderNeedsPermission);
         }
     }
+    validate_network(&manifest)?;
     let mut settings = std::collections::HashSet::new();
     for setting in &manifest.contributes.settings {
         let bad = setting.key.trim().is_empty()
@@ -497,6 +543,83 @@ pub fn parse_manifest(source: &str) -> Result<Manifest, ManifestError> {
         }
     }
     Ok(manifest)
+}
+
+/// Most hosts a manifest may list. A real extension talks to a handful of
+/// services; a long list is a sign it means "anywhere".
+pub const MAX_NETWORK_HOSTS: usize = 20;
+
+/// The `network` list and the `network` permission come together or not at
+/// all, and every host is one an allowlist can mean something for.
+fn validate_network(manifest: &Manifest) -> Result<(), ManifestError> {
+    let wants = manifest.permissions.contains(&Permission::Network);
+    match (wants, manifest.network.is_empty()) {
+        (true, true) => return Err(ManifestError::NetworkWithoutHosts),
+        (false, false) => return Err(ManifestError::HostsWithoutNetwork),
+        _ => {}
+    }
+    if manifest.network.len() > MAX_NETWORK_HOSTS {
+        return Err(ManifestError::TooManyNetworkHosts);
+    }
+    let mut seen = std::collections::HashSet::new();
+    for host in &manifest.network {
+        if !is_valid_network_host(host) || !seen.insert(host.as_str()) {
+            return Err(ManifestError::BadNetworkHost(host.clone()));
+        }
+    }
+    Ok(())
+}
+
+/// Whether a manifest `network` entry is a hostname an allowlist can hold:
+/// lowercase DNS labels, at least two of them, optionally behind a single
+/// leading `*.` that stands for any subdomain. Refused: a scheme, a port, a
+/// path, any other wildcard, an IP address (all-numeric labels), and a
+/// wildcard over a bare top-level domain (`*.org`).
+pub fn is_valid_network_host(host: &str) -> bool {
+    let name = host.strip_prefix("*.").unwrap_or(host);
+    if name.is_empty() || name.len() > 253 {
+        return false;
+    }
+    let labels: Vec<&str> = name.split('.').collect();
+    if labels.len() < 2 {
+        return false;
+    }
+    let label_ok = |label: &&str| {
+        !label.is_empty()
+            && label.len() <= 63
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+            && label
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    };
+    if !labels.iter().all(label_ok) {
+        return false;
+    }
+    // A top-level domain is never all digits; a dotted quad always is.
+    !labels
+        .last()
+        .is_some_and(|tld| tld.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// Whether `host` (from a URL, any case) is one a `network` list allows:
+/// equal to an entry, or a subdomain of a `*.` entry's suffix. The wildcard
+/// does not match the bare suffix itself, which needs its own entry.
+pub fn host_allowed(allowed: &[String], host: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    allowed.iter().any(|entry| match entry.strip_prefix("*.") {
+        Some(suffix) => host
+            .strip_suffix(suffix)
+            .is_some_and(|rest| rest.len() > 1 && rest.ends_with('.')),
+        None => *entry == host,
+    })
+}
+
+/// Whether an extension starts out enabled when it arrives. One that asks
+/// for the network does not: enabling it is the user's consent to its
+/// traffic, so it is never on before they have seen what it reaches.
+pub fn enabled_by_default(manifest: &Manifest) -> bool {
+    !manifest.permissions.contains(&Permission::Network)
 }
 
 /// The palette-facing id for a contributed command: `<extension>/<command>`.
@@ -650,7 +773,9 @@ pub fn install_from_folder(root: &Path, source: &Path) -> AppResult<InstalledExt
         description: manifest.description.clone(),
         source: source.display().to_string(),
         permissions: manifest.permissions.clone(),
-        enabled: true,
+        // Off until the user switches it on when it asks for the network:
+        // the card shows the hosts, and enabling is the consent.
+        enabled: enabled_by_default(&manifest),
     };
     let mut registry = Registry::load(root);
     registry.upsert(entry.clone());
@@ -1230,6 +1355,128 @@ mod tests {
                 "{bad} was allowed"
             );
         }
+    }
+
+    // ---------- network and math ----------
+
+    fn network_manifest(hosts: &str) -> String {
+        manifest_json(&format!(r#","permissions":["network"],"network":{hosts}"#))
+    }
+
+    #[test]
+    fn reads_network_hosts_and_the_new_permissions() {
+        let m = parse_manifest(&manifest_json(
+            r#","permissions":["document:read","document:layout","clipboard:write","network"],
+               "network":["export.arxiv.org","*.ebi.ac.uk","api.crossref.org"]"#,
+        ))
+        .expect("should parse");
+        assert!(m.permissions.contains(&Permission::DocumentLayout));
+        assert!(m.permissions.contains(&Permission::Network));
+        assert_eq!(m.network.len(), 3);
+        assert!(
+            !enabled_by_default(&m),
+            "a network extension starts disabled"
+        );
+        assert!(enabled_by_default(
+            &parse_manifest(&manifest_json("")).unwrap()
+        ));
+    }
+
+    #[test]
+    fn network_and_its_permission_come_together() {
+        assert_eq!(
+            parse_manifest(&manifest_json(r#","permissions":["network"]"#)).unwrap_err(),
+            ManifestError::NetworkWithoutHosts
+        );
+        assert_eq!(
+            parse_manifest(&network_manifest("[]")).unwrap_err(),
+            ManifestError::NetworkWithoutHosts
+        );
+        assert_eq!(
+            parse_manifest(&manifest_json(r#","network":["arxiv.org"]"#)).unwrap_err(),
+            ManifestError::HostsWithoutNetwork
+        );
+    }
+
+    #[test]
+    fn refuses_hosts_an_allowlist_cannot_mean() {
+        for bad in [
+            "https://arxiv.org",
+            "arxiv.org/abs",
+            "arxiv.org:443",
+            "*",
+            "*.org",
+            "a.*.org",
+            "*arxiv.org",
+            "arXiv.org",
+            "localhost",
+            "127.0.0.1",
+            "",
+            "-bad.org",
+            "under_score.org",
+            "two..dots.org",
+        ] {
+            let err = parse_manifest(&network_manifest(&format!(r#"["{bad}"]"#))).unwrap_err();
+            assert_eq!(err, ManifestError::BadNetworkHost(bad.into()), "{bad}");
+        }
+        let dup = parse_manifest(&network_manifest(r#"["arxiv.org","arxiv.org"]"#)).unwrap_err();
+        assert_eq!(dup, ManifestError::BadNetworkHost("arxiv.org".into()));
+        assert!(dup.to_string().contains("no scheme"), "{dup}");
+    }
+
+    #[test]
+    fn at_most_twenty_hosts() {
+        let hosts: Vec<String> = (0..21).map(|i| format!("\"h{i}.example.org\"")).collect();
+        let too_many = format!("[{}]", hosts.join(","));
+        assert_eq!(
+            parse_manifest(&network_manifest(&too_many)).unwrap_err(),
+            ManifestError::TooManyNetworkHosts
+        );
+        let twenty = format!("[{}]", hosts[..20].join(","));
+        assert!(parse_manifest(&network_manifest(&twenty)).is_ok());
+    }
+
+    #[test]
+    fn host_matching_is_exact_or_a_subdomain() {
+        let allowed = vec!["arxiv.org".to_string(), "*.ebi.ac.uk".to_string()];
+        assert!(host_allowed(&allowed, "arxiv.org"));
+        assert!(host_allowed(&allowed, "ARXIV.ORG"));
+        assert!(host_allowed(&allowed, "arxiv.org."));
+        assert!(host_allowed(&allowed, "www.ebi.ac.uk"));
+        assert!(host_allowed(&allowed, "a.b.ebi.ac.uk"));
+        assert!(!host_allowed(&allowed, "export.arxiv.org"));
+        assert!(!host_allowed(&allowed, "ebi.ac.uk"));
+        assert!(!host_allowed(&allowed, "evilebi.ac.uk"));
+        assert!(!host_allowed(&allowed, "arxiv.org.evil.com"));
+    }
+
+    #[test]
+    fn reads_equation_actions_naming_declared_commands() {
+        let m = parse_manifest(&manifest_json(
+            r#","contributes":{"commands":[{"id":"copyEquation","title":"Copy"}],
+               "equationActions":[{"command":"copyEquation","title":"Copy LaTeX"}]}"#,
+        ))
+        .expect("should parse");
+        assert_eq!(m.contributes.equation_actions.len(), 1);
+        let err = parse_manifest(&manifest_json(
+            r#","contributes":{"equationActions":[{"command":"ghost","title":"Copy LaTeX"}]}"#,
+        ))
+        .unwrap_err();
+        assert_eq!(err, ManifestError::UnknownBoundCommand("ghost".into()));
+    }
+
+    #[test]
+    fn a_network_extension_installs_disabled() {
+        let root = tempfile::tempdir().unwrap();
+        let source = tempfile::tempdir().unwrap();
+        write_extension(
+            source.path(),
+            r#"{"id":"com.example.online","apiVersion":1,"name":"Online","version":"1",
+                "entry":"worker.js","permissions":["network"],"network":["arxiv.org"]}"#,
+        );
+        let installed = install_from_folder(root.path(), source.path()).unwrap();
+        assert!(!installed.enabled);
+        assert!(!Registry::load(root.path()).extensions[0].enabled);
     }
 
     #[test]

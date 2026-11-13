@@ -41,7 +41,7 @@ pub struct MathSpan {
 
 /// MathML element names LaTeX's tagging emits. Anything outside this set is
 /// structure rather than mathematics and is walked through, not into.
-fn is_math_tag(tag: &str) -> bool {
+pub(crate) fn is_math_tag(tag: &str) -> bool {
     matches!(
         tag,
         "math"
@@ -124,7 +124,7 @@ fn brace(part: &str) -> String {
 }
 
 /// UTF-16LE string out of a PDFium two-call getter.
-fn utf16_string(fetch: impl Fn(*mut c_void, c_ulong) -> c_ulong) -> String {
+pub(crate) fn utf16_string(fetch: impl Fn(*mut c_void, c_ulong) -> c_ulong) -> String {
     let len = fetch(std::ptr::null_mut(), 0) as usize;
     if !(2..=4096).contains(&len) {
         return String::new();
@@ -142,7 +142,7 @@ fn utf16_string(fetch: impl Fn(*mut c_void, c_ulong) -> c_ulong) -> String {
     String::from_utf16_lossy(&units)
 }
 
-fn element_type(b: &dyn PdfiumLibraryBindings, element: FPDF_STRUCTELEMENT) -> String {
+pub(crate) fn element_type(b: &dyn PdfiumLibraryBindings, element: FPDF_STRUCTELEMENT) -> String {
     utf16_string(|buffer, len| b.FPDF_StructElement_GetType(element, buffer, len))
 }
 
@@ -150,7 +150,7 @@ fn element_type(b: &dyn PdfiumLibraryBindings, element: FPDF_STRUCTELEMENT) -> S
 ///
 /// The structure tree points at content by id; the text page addresses it by
 /// character. This is the join between them.
-fn chars_by_mcid(
+pub(crate) fn chars_by_mcid(
     b: &dyn PdfiumLibraryBindings,
     text_page: FPDF_TEXTPAGE,
 ) -> std::collections::HashMap<i32, Vec<u32>> {

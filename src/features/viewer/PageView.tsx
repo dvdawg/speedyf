@@ -24,6 +24,7 @@ import { engine } from '../../lib/transport/engine';
 import TextLayer from './TextLayer';
 import AnnotationLayer from '../annotations/AnnotationLayer';
 import CitationLayer from '../citations/CitationLayer';
+import EquationLayer from '../extensions/EquationLayer';
 import FormLayer from '../forms/FormLayer';
 import { reveal } from '../../stores/revealStore';
 import type { Rotation } from '../../types/model';
@@ -376,6 +377,15 @@ export default function PageView(props: Props) {
             docId={doc.docId}
             src={srcIndex()!}
             pageHeightPt={props.geom.heightPt}
+            zoom={vp.state.zoom}
+          />
+        </Show>
+        <Show when={srcIndex() !== null}>
+          <EquationLayer
+            docId={doc.docId}
+            page={props.index}
+            src={srcIndex()!}
+            generation={doc.generation}
             zoom={vp.state.zoom}
           />
         </Show>

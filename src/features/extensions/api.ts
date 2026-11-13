@@ -213,6 +213,61 @@ export interface ApiPaperDetail {
   isPaper: boolean;
 }
 
+/** One character as typeset, for reading mathematics back out of a page.
+ *
+ * Its own coordinate space on purpose, as the contract for `document:layout`
+ * fixed it: page points from the *top-left* corner of the page as displayed,
+ * y growing downwards, the way a typesetter thinks about a formula. `ApiBox`
+ * stays y-up for everything older. */
+export interface ApiGlyph {
+  /** The character, from the PDF's ToUnicode map; '' when it has none. */
+  text: string;
+  /** The character code. The raw code in the font when PDFium could not map
+   * it to Unicode (exactly the case a TeX font decoder needs); otherwise the
+   * Unicode scalar, since PDFium does not expose raw codes for mapped text. */
+  code: number;
+  /** Base font name, subset prefix stripped: 'CMMI10', 'CMSY10'. '__rule'
+   * for a thin horizontal rule (a fraction bar, a radical's overbar). */
+  font: string;
+  /** Font size in points, as printed (matrix-scaled). */
+  size: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Baseline, page points from the top. */
+  baseline: number;
+  bold: boolean;
+  italic: boolean;
+}
+
+export interface ApiGlyphs {
+  page: number;
+  glyphs: ApiGlyph[];
+}
+
+/** A tagged-PDF Formula element. */
+export interface ApiMathTag {
+  /** `[x, y, w, h]`, top-left origin, like a glyph. */
+  bbox: [number, number, number, number];
+  alt: string | null;
+  actualText: string | null;
+  mathml: string | null;
+}
+
+export interface ApiIdentifiers {
+  doi: string | null;
+  arxiv: string | null;
+  arxivVersion: number | null;
+}
+
+export interface ApiFetchResult {
+  status: number;
+  contentType: string | null;
+  /** A string for `as: 'text'`, bytes as plain numbers for `as: 'bytes'`. */
+  body: string | number[];
+}
+
 // ---------- mapping ----------
 
 export function toDocumentInfo(
@@ -444,6 +499,58 @@ export function toPaper(paper: Paper): ApiPaperDetail {
   };
 }
 
+/** Glyphs as the engine reports them, copied field by field so a field the
+ * engine adds later does not leak into the contract on its own. */
+export function toGlyphs(
+  page: number,
+  glyphs: readonly {
+    text: string;
+    code: number;
+    font: string;
+    size: number;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    baseline: number;
+    bold: boolean;
+    italic: boolean;
+  }[]
+): ApiGlyphs {
+  return {
+    page,
+    glyphs: glyphs.map((g) => ({
+      text: g.text,
+      code: g.code,
+      font: g.font,
+      size: g.size,
+      x: g.x,
+      y: g.y,
+      w: g.w,
+      h: g.h,
+      baseline: g.baseline,
+      bold: g.bold,
+      italic: g.italic,
+    })),
+  };
+}
+
+export function toMathTags(
+  tags: readonly {
+    bbox: readonly [number, number, number, number];
+    alt?: string | null;
+    actualText?: string | null;
+    mathml?: string | null;
+  }[]
+): ApiMathTag[] {
+  return tags.map((tag) => ({
+    bbox: [tag.bbox[0], tag.bbox[1], tag.bbox[2], tag.bbox[3]],
+    alt: tag.alt ?? null,
+    actualText: tag.actualText ?? null,
+    mathml: tag.mathml ?? null,
+  }));
+}
+
 /** Library hits, without paths or match geometry. */
 export function toLibraryHits(result: LibrarySearchResult): ApiLibraryHit[] {
   return result.documents.map((hit) => ({
@@ -489,8 +596,17 @@ export const API_PERMISSIONS: Readonly<Record<string, string>> = {
   'storage.get': 'storage',
   'storage.set': 'storage',
   'storage.remove': 'storage',
-  // ui.render needs no permission: an extension may only draw into a panel it
-  // declared, and drawing is not access to anything.
+  // Glyph geometry and math tags: what a formula reader needs, still only of
+  // the document on screen.
+  'selection.glyphs': 'document:layout',
+  'region.glyphs': 'document:layout',
+  'document.mathTags': 'document:layout',
+  'document.identifiers': 'document:read',
+  // Outbound HTTPS, made by the core to the hosts the manifest lists.
+  'net.fetch': 'network',
+  // ui.render and ui.showMath need no permission: an extension may only draw
+  // into a panel it declared, or show a formula in the popover SpeedyF owns,
+  // and drawing is not access to anything.
 };
 
 /** Whether `permissions` allow `api`. Unknown APIs are refused, so a typo in an
@@ -641,4 +757,89 @@ export function readQueryArg(args: unknown): string {
     throw new Error('expected a non-empty "query"');
   }
   return query;
+}
+
+/** Read a `{ page, bbox }` region: a page index and `[x, y, w, h]` in page
+ * points, top-left origin, with a positive size. */
+export function readRegionArg(
+  args: unknown,
+  pageCount: number
+): { page: number; bbox: [number, number, number, number] } {
+  const page = readPageArg(args, pageCount);
+  const bbox = (args as { bbox?: unknown } | undefined)?.bbox;
+  if (
+    !Array.isArray(bbox) ||
+    bbox.length !== 4 ||
+    !bbox.every((n) => typeof n === 'number' && Number.isFinite(n))
+  ) {
+    throw new Error('expected "bbox" to be [x, y, w, h] in page points');
+  }
+  const [x, y, w, h] = bbox as [number, number, number, number];
+  if (w <= 0 || h <= 0) throw new Error('expected "bbox" to have a positive width and height');
+  return { page, bbox: [x, y, w, h] };
+}
+
+/** The most `net.fetch` URL text accepted; anything longer is not a URL a
+ * service expects. */
+const MAX_URL = 4096;
+
+/** Read `net.fetch` arguments. The host and scheme are the core's to judge;
+ * this only checks the shape. */
+export function readFetchArgs(args: unknown): {
+  url: string;
+  kind: 'text' | 'bytes';
+  maxBytes: number | null;
+} {
+  const record = (args ?? {}) as { url?: unknown; as?: unknown; maxBytes?: unknown };
+  if (typeof record.url !== 'string' || record.url.length === 0 || record.url.length > MAX_URL) {
+    throw new Error('net.fetch needs a "url" string');
+  }
+  const kind = record.as === undefined ? 'text' : record.as;
+  if (kind !== 'text' && kind !== 'bytes') {
+    throw new Error('net.fetch: "as" must be "text" or "bytes"');
+  }
+  let maxBytes: number | null = null;
+  if (record.maxBytes !== undefined) {
+    if (
+      typeof record.maxBytes !== 'number' ||
+      !Number.isInteger(record.maxBytes) ||
+      record.maxBytes <= 0
+    ) {
+      throw new Error('net.fetch: "maxBytes" must be a positive integer');
+    }
+    maxBytes = record.maxBytes;
+  }
+  return { url: record.url, kind, maxBytes };
+}
+
+export type MathSource = 'tags' | 'arxiv' | 'jats' | 'fonts';
+export type MathConfidence = 'high' | 'medium' | 'low';
+
+export interface ShowMathArgs {
+  latex: string;
+  display: boolean;
+  source: MathSource;
+  confidence: MathConfidence;
+}
+
+/** Longest LaTeX `ui.showMath` takes; an equation page is far shorter. */
+export const MAX_SHOW_MATH = 20_000;
+
+export function readShowMathArgs(args: unknown): ShowMathArgs {
+  const record = (args ?? {}) as Record<string, unknown>;
+  const { latex, display, source, confidence } = record;
+  if (typeof latex !== 'string' || latex.trim().length === 0) {
+    throw new Error('ui.showMath needs a non-empty "latex" string');
+  }
+  if (latex.length > MAX_SHOW_MATH) {
+    throw new Error(`ui.showMath is limited to ${MAX_SHOW_MATH} characters of LaTeX`);
+  }
+  if (typeof display !== 'boolean') throw new Error('ui.showMath needs a boolean "display"');
+  if (source !== 'tags' && source !== 'arxiv' && source !== 'jats' && source !== 'fonts') {
+    throw new Error('ui.showMath: "source" must be "tags", "arxiv", "jats" or "fonts"');
+  }
+  if (confidence !== 'high' && confidence !== 'medium' && confidence !== 'low') {
+    throw new Error('ui.showMath: "confidence" must be "high", "medium" or "low"');
+  }
+  return { latex, display, source, confidence };
 }

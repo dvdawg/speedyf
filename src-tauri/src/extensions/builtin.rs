@@ -8,8 +8,11 @@
 //!
 //! The one thing a built-in needs to persist is whether it has been switched
 //! off, which cannot live in the read-only bundle. That goes in a small file
-//! beside the registry. Absence means enabled, so a built-in that is removed
-//! from a later release leaves nothing behind but a harmless stale id.
+//! beside the registry. Absence means the built-in's default: enabled, except
+//! for one that asks for the network, which ships off — enabling it is the
+//! user's consent to its traffic — and is recorded once switched on. A
+//! built-in removed from a later release leaves nothing behind but a harmless
+//! stale id.
 //!
 //! Search order mirrors `pdfium_init`, for the same reason: the bundle's
 //! resource directory in production, the repository checkout under
@@ -127,13 +130,16 @@ fn manifest_id(dir: &Path) -> Option<String> {
     super::parse_manifest(&text).ok().map(|m| m.id)
 }
 
-/// Which built-ins the user has switched off.
+/// Which built-ins the user has switched off, and which of those that ship
+/// off (`enabled_by_default` is false) they have switched on.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct State {
     pub version: u32,
     #[serde(default)]
     pub disabled: Vec<String>,
+    #[serde(default)]
+    pub enabled: Vec<String>,
 }
 
 impl Default for State {
@@ -141,6 +147,7 @@ impl Default for State {
         State {
             version: STATE_VERSION,
             disabled: Vec::new(),
+            enabled: Vec::new(),
         }
     }
 }
@@ -182,18 +189,38 @@ impl State {
         std::fs::write(&path, text).map_err(|e| AppError::Io(format!("{}: {e}", path.display())))
     }
 
-    pub fn is_enabled(&self, id: &str) -> bool {
-        !self.disabled.iter().any(|d| d == id)
+    /// Whether a built-in is on: what the user last chose, else its default
+    /// (`super::enabled_by_default`).
+    pub fn is_enabled(&self, id: &str, by_default: bool) -> bool {
+        if self.disabled.iter().any(|d| d == id) {
+            return false;
+        }
+        by_default || self.enabled.iter().any(|e| e == id)
     }
 
+    /// Record the user's choice. Both directions are written down, so the
+    /// answer no longer depends on the default once someone has chosen.
     pub fn set_enabled(&mut self, id: &str, enabled: bool) {
-        if enabled {
-            self.disabled.retain(|d| d != id);
-        } else if self.is_enabled(id) {
-            self.disabled.push(id.to_string());
-            self.disabled.sort();
-        }
+        self.disabled.retain(|d| d != id);
+        self.enabled.retain(|e| e != id);
+        let list = if enabled {
+            &mut self.enabled
+        } else {
+            &mut self.disabled
+        };
+        list.push(id.to_string());
+        list.sort();
     }
+}
+
+/// Whether the built-in `id` under `root` starts out enabled: its manifest
+/// says, and an unreadable manifest counts as the ordinary default (on) —
+/// it cannot run anyway, and the panel reports why.
+pub fn enabled_by_default(root: &Path, id: &str) -> bool {
+    std::fs::read_to_string(root.join(id).join(MANIFEST_FILE))
+        .ok()
+        .and_then(|text| super::parse_manifest(&text).ok())
+        .is_none_or(|manifest| super::enabled_by_default(&manifest))
 }
 
 /// Record that a built-in is on or off.
@@ -324,9 +351,31 @@ mod tests {
             .join(BUILTIN_DIR);
         assert_eq!(
             ids(&checked_out),
-            vec!["dev.speedyf.references".to_string()],
+            vec![
+                "dev.speedyf.mathlatex".to_string(),
+                "dev.speedyf.notation".to_string(),
+                "dev.speedyf.references".to_string()
+            ],
             "the extensions/ folder does not contain what this build expects to ship"
         );
+    }
+
+    /// Math to LaTeX reaches the internet, so it must arrive switched off.
+    #[test]
+    fn the_shipped_math_extension_starts_disabled() {
+        let checked_out = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join(BUILTIN_DIR);
+        let text = std::fs::read_to_string(
+            checked_out
+                .join("dev.speedyf.mathlatex")
+                .join(MANIFEST_FILE),
+        )
+        .unwrap();
+        let manifest = super::super::parse_manifest(&text).expect("the shipped manifest parses");
+        assert!(!manifest.network.is_empty());
+        assert!(!enabled_by_default(&checked_out, "dev.speedyf.mathlatex"));
+        assert!(enabled_by_default(&checked_out, "dev.speedyf.references"));
     }
 
     #[test]
@@ -353,14 +402,41 @@ mod tests {
         let root = tmp.path();
         // Nothing has been written yet: absence means enabled, which is the
         // state the app ships in.
-        assert!(State::load(root).is_enabled("speedyf.references"));
+        assert!(State::load(root).is_enabled("speedyf.references", true));
 
         set_enabled(root, "speedyf.references", false).unwrap();
-        assert!(!State::load(root).is_enabled("speedyf.references"));
-        assert!(State::load(root).is_enabled("speedyf.other"));
+        assert!(!State::load(root).is_enabled("speedyf.references", true));
+        assert!(State::load(root).is_enabled("speedyf.other", true));
 
         set_enabled(root, "speedyf.references", true).unwrap();
-        assert!(State::load(root).is_enabled("speedyf.references"));
+        assert!(State::load(root).is_enabled("speedyf.references", true));
+    }
+
+    /// The network rule: a built-in that reaches the internet ships off, and
+    /// stays off until the user switches it on, which is the consent.
+    #[test]
+    fn a_built_in_declaring_network_ships_disabled() {
+        let bundle = tempfile::tempdir().unwrap();
+        let user = tempfile::tempdir().unwrap();
+        plant(bundle.path(), "dev.speedyf.local");
+        let dir = bundle.path().join("dev.speedyf.online");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(MANIFEST_FILE),
+            r#"{"apiVersion":1,"id":"dev.speedyf.online","name":"Online","version":"1.0.0",
+                "entry":"worker.js","permissions":["network"],"network":["export.arxiv.org"]}"#,
+        )
+        .unwrap();
+
+        assert!(enabled_by_default(bundle.path(), "dev.speedyf.local"));
+        let online = enabled_by_default(bundle.path(), "dev.speedyf.online");
+        assert!(!online);
+        assert!(!State::load(user.path()).is_enabled("dev.speedyf.online", online));
+
+        set_enabled(user.path(), "dev.speedyf.online", true).unwrap();
+        assert!(State::load(user.path()).is_enabled("dev.speedyf.online", online));
+        set_enabled(user.path(), "dev.speedyf.online", false).unwrap();
+        assert!(!State::load(user.path()).is_enabled("dev.speedyf.online", online));
     }
 
     #[test]
@@ -369,6 +445,7 @@ mod tests {
         state.set_enabled("speedyf.references", false);
         state.set_enabled("speedyf.references", false);
         assert_eq!(state.disabled, vec!["speedyf.references".to_string()]);
+        assert!(state.enabled.is_empty());
     }
 
     #[test]
@@ -381,14 +458,14 @@ mod tests {
         .unwrap();
         // Falling back to "everything on" is the shipped state; refusing to
         // start over an unreadable preferences file would be the worse trade.
-        assert!(State::load(tmp.path()).is_enabled("speedyf.references"));
+        assert!(State::load(tmp.path()).is_enabled("speedyf.references", true));
     }
 
     #[test]
     fn an_unreadable_state_file_is_ignored() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join(STATE_FILE), "{not json").unwrap();
-        assert!(State::load(tmp.path()).is_enabled("speedyf.references"));
+        assert!(State::load(tmp.path()).is_enabled("speedyf.references", true));
     }
 
     #[test]

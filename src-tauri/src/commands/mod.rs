@@ -562,6 +562,80 @@ pub async fn bump_generation(
     Ok(state.0.bump_generation(doc_id))
 }
 
+// ---------- glyph geometry (document:layout) ----------
+
+use crate::engine::glyphs::{EquationBlockDto, GlyphDto, MathTagDto};
+
+/// Most regions one glyph request may name: a selection over a long
+/// paragraph is a few dozen runs, never hundreds.
+const MAX_GLYPH_RECTS: usize = 64;
+
+/// A page's glyphs and rules inside `rects` (`[x, y, w, h]` in display
+/// points from the top-left; empty for the whole page). Idle priority: an
+/// extension's read never competes with the reader's scrolling.
+#[tauri::command]
+pub async fn get_page_glyphs(
+    state: tauri::State<'_, EngineState>,
+    doc_id: DocId,
+    src: u32,
+    rects: Vec<[f32; 4]>,
+) -> AppResult<Vec<GlyphDto>> {
+    if rects.len() > MAX_GLYPH_RECTS {
+        return Err(AppError::Malformed(format!(
+            "at most {MAX_GLYPH_RECTS} regions can be read at once"
+        )));
+    }
+    if rects.iter().flatten().any(|v| !v.is_finite()) {
+        return Err(AppError::Malformed("a region must be finite".into()));
+    }
+    state
+        .0
+        .call_async(Priority::Idle, doc_id, move |respond| Work::PageGlyphs {
+            doc: doc_id,
+            src,
+            rects,
+            respond,
+        })
+        .await
+}
+
+/// A tagged page's `Formula` elements, with Alt, ActualText and MathML.
+#[tauri::command]
+pub async fn get_math_tags(
+    state: tauri::State<'_, EngineState>,
+    doc_id: DocId,
+    src: u32,
+) -> AppResult<Vec<MathTagDto>> {
+    state
+        .0
+        .call_async(Priority::Idle, doc_id, move |respond| Work::MathTags {
+            doc: doc_id,
+            src,
+            respond,
+        })
+        .await
+}
+
+/// A page's display equations, for the viewer's equation actions. Cached
+/// per page on the engine side.
+#[tauri::command]
+pub async fn get_equation_blocks(
+    state: tauri::State<'_, EngineState>,
+    doc_id: DocId,
+    src: u32,
+) -> AppResult<Vec<EquationBlockDto>> {
+    state
+        .0
+        .call_async(Priority::Idle, doc_id, move |respond| {
+            Work::EquationBlocks {
+                doc: doc_id,
+                src,
+                respond,
+            }
+        })
+        .await
+}
+
 // ---------- extensions ----------
 
 use crate::extensions::{self, builtin, InstalledExtension, Manifest};
@@ -625,6 +699,12 @@ pub struct ExtensionDto {
     /// Settings the extension declared, for the panel to render.
     pub settings: Vec<crate::extensions::SettingContribution>,
     pub document_tasks: Vec<ActionDto>,
+    /// Buttons on detected display equations, ids namespaced like commands.
+    pub equation_actions: Vec<ActionDto>,
+    /// Hosts the extension may reach through `net.fetch`, as its manifest
+    /// lists them; empty for one that never touches the network. The card
+    /// shows them whether the extension is on or off.
+    pub network: Vec<String>,
     /// The bare command id SpeedyF invokes to read a library document's
     /// reference list, when the extension is a reference provider.
     pub reference_provider: Option<String>,
@@ -770,6 +850,8 @@ fn describe(root: &std::path::Path, installed: InstalledExtension, builtin: bool
         citation_actions: Vec::new(),
         settings: Vec::new(),
         document_tasks: Vec::new(),
+        equation_actions: Vec::new(),
+        network: Vec::new(),
         reference_provider: None,
         icon_url: None,
         error: None,
@@ -801,6 +883,8 @@ fn describe(root: &std::path::Path, installed: InstalledExtension, builtin: bool
         citation_actions: actions(&manifest, &manifest.contributes.citation_actions),
         settings: manifest.contributes.settings.clone(),
         document_tasks: actions(&manifest, &manifest.contributes.document_tasks),
+        equation_actions: actions(&manifest, &manifest.contributes.equation_actions),
+        network: manifest.network.clone(),
         reference_provider: manifest
             .contributes
             .reference_provider
@@ -855,7 +939,7 @@ pub async fn list_extensions(app: tauri::AppHandle) -> AppResult<Vec<ExtensionDt
     if let Some(builtin_root) = builtin_root(&app) {
         let state = builtin::State::load(&root);
         for id in builtin::ids(&builtin_root) {
-            let enabled = state.is_enabled(&id);
+            let enabled = state.is_enabled(&id, builtin::enabled_by_default(&builtin_root, &id));
             let row = builtin_row(&builtin_root, &id, enabled);
             out.push(describe(&builtin_root, row, true));
         }
@@ -948,6 +1032,192 @@ pub async fn set_extension_enabled(
     registry.save(&root)
 }
 
+/// The hosts an extension may reach, if it may reach any right now: it is
+/// installed (or built in), switched on, granted `network`, and its manifest
+/// lists them. Read from disk on every call, so disabling an extension stops
+/// its next request without anything to invalidate.
+fn network_hosts(app: &tauri::AppHandle, id: &str) -> AppResult<Vec<String>> {
+    if !extensions::is_valid_id(id) {
+        return Err(AppError::Malformed(format!("bad extension id \"{id}\"")));
+    }
+    let user_root = extensions_root(app)?;
+    let builtin = builtin_root(app).filter(|root| builtin::ids(root).iter().any(|b| b == id));
+    let (root, enabled, granted) = match builtin {
+        Some(root) => {
+            let on = builtin::State::load(&user_root)
+                .is_enabled(id, builtin::enabled_by_default(&root, id));
+            // A built-in's grant is its manifest; see `builtin_row`.
+            (root, on, true)
+        }
+        None => {
+            let registry = extensions::Registry::load(&user_root);
+            let Some(row) = registry.extensions.iter().find(|e| e.id == id) else {
+                return Err(AppError::Unsupported(format!(
+                    "no extension \"{id}\" is installed"
+                )));
+            };
+            let granted = row.permissions.contains(&extensions::Permission::Network);
+            (user_root, row.enabled, granted)
+        }
+    };
+    if !enabled {
+        return Err(AppError::Unsupported(format!(
+            "\"{id}\" is disabled; enabling it allows its network access"
+        )));
+    }
+    let text = std::fs::read_to_string(root.join(id).join(extensions::MANIFEST_FILE))
+        .map_err(|e| AppError::Io(format!("manifest unreadable: {e}")))?;
+    let manifest =
+        extensions::parse_manifest(&text).map_err(|e| AppError::Malformed(e.to_string()))?;
+    if !granted
+        || !manifest
+            .permissions
+            .contains(&extensions::Permission::Network)
+    {
+        return Err(AppError::Unsupported(
+            "net.fetch needs the \"network\" permission".into(),
+        ));
+    }
+    Ok(manifest.network)
+}
+
+/// `net.fetch` for an extension: an HTTPS GET to a host its manifest lists,
+/// through the shared per-host limiter, with a size cap and a timeout
+/// (`extensions::net`). The worker never connects anywhere itself.
+#[tauri::command]
+pub async fn extension_net_fetch(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, EngineState>,
+    extension_id: String,
+    url: String,
+    kind: String,
+    max_bytes: Option<u64>,
+) -> AppResult<extensions::net::FetchResponse> {
+    let kind = extensions::net::BodyKind::parse(&kind)?;
+    let hosts = network_hosts(&app, &extension_id)?;
+    let limiter = std::sync::Arc::clone(&state.0 .0.limiter);
+    extensions::net::fetch(&limiter, &extension_id, &hosts, &url, kind, max_bytes).await
+}
+
+/// What `document.identifiers` answers.
+#[derive(serde::Serialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentIdentifiersDto {
+    pub doi: Option<String>,
+    pub arxiv: Option<String>,
+    pub arxiv_version: Option<u32>,
+}
+
+/// An arXiv id with any `vN` suffix split off: `2101.00001v3` is
+/// (`2101.00001`, 3).
+fn split_arxiv_version(id: &str) -> (String, Option<u32>) {
+    if let Some(at) = id.rfind(['v', 'V']) {
+        let digits = &id[at + 1..];
+        if at > 0 && !digits.is_empty() && digits.len() <= 3 {
+            if let Ok(version) = digits.parse::<u32>() {
+                return (id[..at].to_string(), Some(version));
+            }
+        }
+    }
+    (id.to_string(), None)
+}
+
+/// Assemble the identifiers from what is known, best first: the library's
+/// record (which keeps the user's corrections), then the scan of this file,
+/// then a reading of the open document itself. The version is the file's
+/// own, from the scan or the id or the file name.
+fn document_identifiers(
+    record: Option<(Option<String>, Option<String>)>,
+    scanned: Option<(Option<String>, Option<String>, Option<u32>)>,
+    read: Option<(Option<String>, Option<String>)>,
+    file_name: &str,
+) -> DocumentIdentifiersDto {
+    let (mut doi, mut arxiv) = record.unwrap_or_default();
+    let mut version = None;
+    if let Some((scan_doi, scan_arxiv, scan_version)) = scanned {
+        doi = doi.or(scan_doi);
+        arxiv = arxiv.or(scan_arxiv);
+        version = scan_version;
+    }
+    if let Some((read_doi, read_arxiv)) = read {
+        doi = doi.or(read_doi);
+        arxiv = arxiv.or(read_arxiv);
+    }
+    let arxiv = arxiv.map(|id| {
+        let (bare, from_id) = split_arxiv_version(&id);
+        version = version.or(from_id);
+        bare
+    });
+    if arxiv.is_some() {
+        version = version.or_else(|| crate::library::mainfile::version_from_name(file_name));
+    } else {
+        version = None;
+    }
+    DocumentIdentifiersDto {
+        doi,
+        arxiv,
+        arxiv_version: version,
+    }
+}
+
+/// `document.identifiers` for the open document.
+#[tauri::command]
+pub async fn extension_document_identifiers(
+    state: tauri::State<'_, EngineState>,
+    doc_id: DocId,
+    path: Option<String>,
+) -> AppResult<DocumentIdentifiersDto> {
+    let engine = state.0.clone();
+    let file = path.map(std::path::PathBuf::from);
+    let canonical = file.as_ref().map(|p| p.canonicalize().unwrap_or(p.clone()));
+    let (record, scanned) = match &canonical {
+        Some(path) => {
+            let record = engine
+                .0
+                .papers
+                .lock()
+                .paper_for_path(path)
+                .map(|paper| (paper.doi, paper.arxiv));
+            let scanned = engine
+                .0
+                .library
+                .lock()
+                .entry_for_path(path)
+                .map(|entry| (entry.doi, entry.arxiv, entry.arxiv_version));
+            (record, scanned)
+        }
+        None => (None, None),
+    };
+    let known = record
+        .as_ref()
+        .is_some_and(|(doi, arxiv)| doi.is_some() || arxiv.is_some())
+        || scanned
+            .as_ref()
+            .is_some_and(|(doi, arxiv, _)| doi.is_some() || arxiv.is_some());
+    // A file outside the library has not been scanned: read its first page
+    // the way the scan would, at idle.
+    let read = if known {
+        None
+    } else {
+        engine
+            .call_async(Priority::Idle, doc_id, move |respond| {
+                Work::ClassifyDocument {
+                    doc: doc_id,
+                    respond,
+                }
+            })
+            .await
+            .ok()
+            .map(|paperness| (paperness.doi, paperness.arxiv))
+    };
+    let name = file
+        .as_ref()
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(document_identifiers(record, scanned, read, &name))
+}
+
 /// A page raster for an extension, as PNG bytes.
 ///
 /// A command rather than a `pdfr://` URL because the CSP's `connect-src` is
@@ -1037,6 +1307,67 @@ pub async fn extension_source(app: tauri::AppHandle, id: String) -> AppResult<St
     let entry = extensions::resolve_asset(&root, &format!("/{id}/{}", manifest.entry))
         .ok_or_else(|| AppError::Malformed("entry escapes the extension".into()))?;
     std::fs::read_to_string(&entry).map_err(|e| AppError::Io(format!("{}: {e}", entry.display())))
+}
+
+#[cfg(test)]
+mod identifier_tests {
+    use super::*;
+
+    fn some(value: &str) -> Option<String> {
+        Some(value.to_string())
+    }
+
+    #[test]
+    fn the_record_wins_and_the_scan_supplies_the_version() {
+        let ids = document_identifiers(
+            Some((some("10.1/user"), some("2101.00001"))),
+            Some((some("10.1/scan"), some("2101.00001"), Some(3))),
+            None,
+            "paper.pdf",
+        );
+        assert_eq!(
+            ids,
+            DocumentIdentifiersDto {
+                doi: some("10.1/user"),
+                arxiv: some("2101.00001"),
+                arxiv_version: Some(3),
+            }
+        );
+    }
+
+    #[test]
+    fn a_version_on_the_id_or_the_file_name_is_used() {
+        let from_id = document_identifiers(None, None, Some((None, some("2101.00001v2"))), "x.pdf");
+        assert_eq!(from_id.arxiv.as_deref(), Some("2101.00001"));
+        assert_eq!(from_id.arxiv_version, Some(2));
+        let from_name = document_identifiers(
+            None,
+            None,
+            Some((None, some("2101.00001"))),
+            "2101.00001v4.pdf",
+        );
+        assert_eq!(from_name.arxiv_version, Some(4));
+    }
+
+    #[test]
+    fn nothing_known_is_all_null() {
+        assert_eq!(
+            document_identifiers(None, None, None, "notes_v2.pdf"),
+            DocumentIdentifiersDto::default()
+        );
+    }
+
+    #[test]
+    fn old_style_ids_keep_their_slash() {
+        assert_eq!(
+            split_arxiv_version("hep-th/9901001v1"),
+            ("hep-th/9901001".to_string(), Some(1))
+        );
+        assert_eq!(
+            split_arxiv_version("hep-th/9901001"),
+            ("hep-th/9901001".to_string(), None)
+        );
+    }
 }
 
 #[cfg(test)]

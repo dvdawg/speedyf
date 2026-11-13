@@ -7,6 +7,7 @@
  */
 import { For, Show, createEffect, createSignal } from 'solid-js';
 import IconButton from '../../components/IconButton';
+import MathText from '../../components/MathText';
 import { IconRefresh } from '../../components/icons';
 import { activeTab } from '../../stores/tabsStore';
 import {
@@ -116,9 +117,11 @@ export default function ExtensionPanelView(props: { panel: ExtensionPanel }) {
                         }}
                       >
                         <div class="ext-panel-row-text">
-                          <span class="ext-panel-row-title">{row.title}</span>
+                          {/* TeX between `$...$` is typeset, the way paper titles
+                              are everywhere else; the rest stays escaped text. */}
+                          <MathText class="ext-panel-row-title" text={row.title} />
                           <Show when={row.subtitle}>
-                            <span class="ext-panel-row-subtitle">{row.subtitle}</span>
+                            <MathText class="ext-panel-row-subtitle" text={row.subtitle!} />
                           </Show>
                         </div>
                         <Show when={row.badge}>

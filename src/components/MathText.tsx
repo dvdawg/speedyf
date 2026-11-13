@@ -49,6 +49,36 @@ function renderMath(src: string, display: boolean): string {
   return html;
 }
 
+/** One whole formula, typeset in KaTeX's display mode when `display`: a real
+ * centred block, where `MathText` keeps display math in the line. */
+function renderFormula(src: string, display: boolean): string {
+  const key = (display ? 'B' : 'F') + src;
+  let html = rendered.get(key);
+  if (html === undefined) {
+    html = katex!.renderToString(src, {
+      displayMode: display,
+      throwOnError: false,
+      trust: false,
+      strict: 'ignore',
+      output: 'html',
+    });
+    if (rendered.size >= RENDER_LIMIT) rendered.clear();
+    rendered.set(key, html);
+  }
+  return html;
+}
+
+export function MathFormula(props: { tex: string; display: boolean; class?: string }) {
+  if (!ready()) void loadKatex();
+  return (
+    <Show when={ready()} fallback={<code class="math-raw">{props.tex}</code>}>
+      {/* KaTeX output from `trust: false`, as in MathRun. */}
+      {/* eslint-disable-next-line solid/no-innerhtml */}
+      <div class={props.class} innerHTML={renderFormula(props.tex, props.display)} />
+    </Show>
+  );
+}
+
 function MathRun(props: { segment: Extract<MathSegment, { kind: 'math' }> }) {
   if (!ready()) void loadKatex();
   return (

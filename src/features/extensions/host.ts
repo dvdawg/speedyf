@@ -9,8 +9,10 @@
  * to be same-origin with the creating document, which no CSP setting relaxes
  * and which a custom scheme can never satisfy; blob URLs inherit the creating
  * document's origin, so they do. A useful side effect: the worker inherits the
- * app's CSP, whose `connect-src` is `ipc:` alone, so an extension cannot reach
- * the network at all — denied by the platform rather than by our policy.
+ * app's CSP, whose `connect-src` is `ipc:` alone, so a worker cannot reach the
+ * network itself — denied by the platform rather than by our policy. An
+ * extension granted `network` asks the host (`net.fetch`), which checks the
+ * host list and sends the request from the core.
  *
  * Everything here is defensive by default. A hung extension resolves by
  * timeout, a throwing extension is caught and reported, and a crashed worker
@@ -22,7 +24,7 @@ import {
   parseExtensionMessage,
   type CallMessage,
   type HostMessage,
-  type ReferenceRequest,
+  type InvokeValue,
 } from './protocol';
 
 export type HostStatus = 'stopped' | 'starting' | 'running' | 'failed';
@@ -142,7 +144,7 @@ export class ExtensionHost {
   async invoke(
     command: string,
     extra?: {
-      value?: string | ReferenceRequest;
+      value?: InvokeValue;
       reason?: 'command' | 'panel';
       /** Overrides the invoke timeout for this one call: a reference
        * provider's document gets `REFERENCE_PROVIDER_TIMEOUT_MS`. */

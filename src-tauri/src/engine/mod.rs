@@ -13,6 +13,7 @@ pub mod citation;
 pub mod figures;
 pub mod formal;
 pub mod forms;
+pub mod glyphs;
 pub mod invert;
 pub mod layout_text;
 pub mod links;
@@ -109,6 +110,26 @@ pub enum Work {
         doc: DocId,
         src: u32,
         respond: Respond<PageBubblesDto>,
+    },
+    /// A page's glyphs and rules inside `rects` (top-left `[x, y, w, h]`;
+    /// none means the whole page), for `document:layout` extensions.
+    PageGlyphs {
+        doc: DocId,
+        src: u32,
+        rects: Vec<[f32; 4]>,
+        respond: Respond<Vec<glyphs::GlyphDto>>,
+    },
+    /// A tagged page's `Formula` elements.
+    MathTags {
+        doc: DocId,
+        src: u32,
+        respond: Respond<Vec<glyphs::MathTagDto>>,
+    },
+    /// A page's display equations, cached per page on the document.
+    EquationBlocks {
+        doc: DocId,
+        src: u32,
+        respond: Respond<Vec<glyphs::EquationBlockDto>>,
     },
     PreviewRect {
         doc: DocId,

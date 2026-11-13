@@ -97,6 +97,21 @@ describe('ExtensionPanelView', () => {
     expect(getByText('In your library')).toBeTruthy();
   });
 
+  /** Notation lists symbols as TeX; a row that showed "$\\lambda$" as
+   * written would be unreadable. Math is typeset (or shown raw until KaTeX
+   * loads) inside the title, and the text around it stays text. */
+  it('typesets TeX in a row title and subtitle', () => {
+    ui = {
+      sections: [
+        { rows: [{ id: 'a', title: '$\\lambda$', subtitle: 'the control parameter (p. 3)' }] },
+      ],
+    };
+    const { container, getByText } = render(() => <ExtensionPanelView panel={panel} />);
+    const title = container.querySelector('.ext-panel-row-title')!;
+    expect(title.querySelector('.math-run, .math-raw')).toBeTruthy();
+    expect(getByText('the control parameter (p. 3)')).toBeTruthy();
+  });
+
   it('shows the extensions own empty message rather than a blank box', () => {
     ui = { sections: [], empty: 'No references found' };
     const { getByText } = render(() => <ExtensionPanelView panel={panel} />);

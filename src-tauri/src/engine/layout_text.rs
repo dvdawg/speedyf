@@ -189,7 +189,11 @@ pub fn extract_lines(
 }
 
 /// A character's text matrix (text matrix times CTM), if PDFium has one.
-fn char_matrix(b: &dyn PdfiumLibraryBindings, tp: FPDF_TEXTPAGE, index: i32) -> Option<FS_MATRIX> {
+pub(crate) fn char_matrix(
+    b: &dyn PdfiumLibraryBindings,
+    tp: FPDF_TEXTPAGE,
+    index: i32,
+) -> Option<FS_MATRIX> {
     let mut matrix = FS_MATRIX {
         a: 1.0,
         b: 0.0,
@@ -295,7 +299,11 @@ pub fn extract_spacing_glyphs(
 }
 
 /// The font's name and descriptor flags, or an empty name.
-fn font_info(b: &dyn PdfiumLibraryBindings, tp: FPDF_TEXTPAGE, index: i32) -> (String, c_int) {
+pub(crate) fn font_info(
+    b: &dyn PdfiumLibraryBindings,
+    tp: FPDF_TEXTPAGE,
+    index: i32,
+) -> (String, c_int) {
     let mut flags: c_int = 0;
     let mut buffer = [0u8; 128];
     let written = b.FPDFText_GetFontInfo(

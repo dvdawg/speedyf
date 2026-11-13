@@ -1,0 +1,62 @@
+{
+  "id": "dev.speedyf.mathlatex",
+  "apiVersion": 1,
+  "name": "Math to LaTeX",
+  "version": "1.0.0",
+  "description": "Select math, or click Copy LaTeX on an equation, and get its LaTeX: from the document's own tags, the paper's arXiv source, an open-access journal version, or read from the fonts.",
+  "author": "speedyf",
+  "entry": "worker.js",
+  "icon": "icon.svg",
+  "permissions": ["document:read", "document:layout", "clipboard:write", "network", "storage"],
+  "network": ["arxiv.org", "www.ebi.ac.uk"],
+  "contributes": {
+    "commands": [
+      {
+        "id": "copyLatex",
+        "title": "Math to LaTeX: Copy Selection as LaTeX",
+        "keywords": ["equation", "formula", "tex", "katex"]
+      },
+      {
+        "id": "copyEquation",
+        "title": "Math to LaTeX: Copy Equation as LaTeX",
+        "keywords": ["equation", "formula", "tex", "katex"]
+      }
+    ],
+    "selectionActions": [
+      {
+        "command": "copyLatex",
+        "title": "Copy as LaTeX"
+      }
+    ],
+    "equationActions": [
+      {
+        "command": "copyEquation",
+        "title": "Copy LaTeX"
+      }
+    ],
+    "settings": [
+      {
+        "key": "arxiv",
+        "title": "Use the arXiv source",
+        "type": "checkbox",
+        "default": "true",
+        "description": "For a paper with an arXiv id, fetch its TeX source from arxiv.org and copy the author's own LaTeX."
+      },
+      {
+        "key": "journals",
+        "title": "Use open-access journal versions",
+        "type": "checkbox",
+        "default": "true",
+        "description": "For a paper with a DOI, look for its open-access full text on Europe PMC and copy the formulas from there."
+      },
+      {
+        "key": "prefer",
+        "title": "Prefer",
+        "type": "select",
+        "default": "most exact",
+        "options": ["most exact", "fonts only (offline)"],
+        "description": "\"Fonts only\" never uses the internet: it reads the document's tags and its fonts, nothing else."
+      }
+    ]
+  }
+}

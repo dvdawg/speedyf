@@ -6258,3 +6258,133 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .graph-edge-lit {
   pointer-events: none;
 }
+
+/* ---------- extension network tag ---------- */
+.ext-network {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--border));
+  border-radius: 999px;
+  color: var(--warn);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- display equations (equationActions) ---------- */
+.equation-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.equation-outline {
+  position: absolute;
+  border-radius: 3px;
+  outline: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 2px;
+}
+
+.equation-actions {
+  position: absolute;
+  display: flex;
+  gap: 4px;
+  transform: translate(-100%, -100%);
+  padding-bottom: 3px;
+  pointer-events: auto;
+}
+
+.equation-action {
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-elev);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+
+.equation-action:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.equation-action:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* ---------- math popover (ui.showMath) ---------- */
+.math-popover {
+  position: fixed;
+  z-index: 46;
+  max-height: min(360px, calc(100vh - 16px));
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  color: var(--text);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.2);
+  font-size: 12px;
+}
+
+.math-popover-formula {
+  overflow-x: auto;
+  padding: 6px 4px;
+  border-radius: 7px;
+  background: var(--bg-inset);
+  font-size: 15px;
+}
+
+.math-popover-formula .katex-display {
+  margin: 4px 0;
+}
+
+.math-popover-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.math-popover-label {
+  color: var(--text-dim);
+}
+
+.math-popover-copy {
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.math-popover-copy:hover,
+.math-popover-copy.is-copied {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.math-popover-note {
+  margin-top: 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.math-popover-status {
+  color: var(--text-dim);
+}
+
+.math-popover-error {
+  margin-top: 4px;
+  color: var(--danger);
+  white-space: pre-wrap;
+}
