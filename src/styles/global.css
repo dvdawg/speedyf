@@ -6569,3 +6569,77 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .health-merge {
   padding: 0 8px 8px;
 }
+
+/* ---------- text hover spans: cross-references, footnotes, terms ----------
+   Nothing is drawn on the page. The layer only carries invisible buttons for
+   keyboards and screen readers; the pointer is tracked on the page, so text
+   selection, annotation tools and form fields work as without it. */
+.hover-span-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.hover-span-target {
+  position: absolute;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 1px;
+  background: transparent;
+  color: transparent;
+  pointer-events: none;
+  appearance: none;
+}
+
+.hover-span-target:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.page-space.is-over-hover-span .text-layer {
+  cursor: pointer;
+}
+
+.citation-preview-note {
+  position: absolute;
+  left: 9px;
+  bottom: 7px;
+  color: #5c6570;
+  font-size: 11px;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.hover-term-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hover-term-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--bg-inset);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hover-term-entry:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.hover-term-page {
+  color: var(--text-dim, #5c6570);
+  font-size: 11px;
+}

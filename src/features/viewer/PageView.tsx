@@ -24,6 +24,7 @@ import { engine } from '../../lib/transport/engine';
 import TextLayer from './TextLayer';
 import AnnotationLayer from '../annotations/AnnotationLayer';
 import CitationLayer from '../citations/CitationLayer';
+import HoverSpanLayer from '../hovers/HoverSpanLayer';
 import EquationLayer from '../extensions/EquationLayer';
 import FormLayer from '../forms/FormLayer';
 import { reveal } from '../../stores/revealStore';
@@ -374,6 +375,14 @@ export default function PageView(props: Props) {
         </Show>
         <Show when={srcIndex() !== null}>
           <CitationLayer
+            docId={doc.docId}
+            src={srcIndex()!}
+            pageHeightPt={props.geom.heightPt}
+            zoom={vp.state.zoom}
+          />
+        </Show>
+        <Show when={srcIndex() !== null}>
+          <HoverSpanLayer
             docId={doc.docId}
             src={srcIndex()!}
             pageHeightPt={props.geom.heightPt}
