@@ -281,26 +281,26 @@ impl PaperStore {
                 CitationIdDto::Doi(_) => None,
             });
             let printed: Vec<&StoredRef> = members.iter().filter_map(|&m| cited[m].entry).collect();
-            let text = printed
-                .iter()
-                .map(|entry| entry.text.as_str())
-                .filter(|text| !text.is_empty())
-                .fold(None::<&str>, |best, text| match best {
-                    Some(best) if best.chars().count() >= text.chars().count() => Some(best),
-                    _ => Some(text),
-                })
-                .map(str::to_owned);
             let mut years: HashMap<i32, usize> = HashMap::new();
             for entry in &printed {
                 if let Some(year) = entry.year {
                     *years.entry(year).or_default() += 1;
                 }
             }
-            let year = years
+            let voted = years
                 .into_iter()
                 .max_by_key(|&(year, count)| (count, std::cmp::Reverse(year)))
-                .map(|(year, _)| year)
-                .or_else(|| arxiv.as_deref().and_then(identifiers::year_from_arxiv));
+                .map(|(year, _)| year);
+            // The text shown is the fullest printing from an entry that agrees
+            // with the year shown, so a journal version is never captioned
+            // with its preprint's year. Any entry will do when none dates it.
+            let text = voted
+                .and_then(|year| {
+                    longest_text(printed.iter().copied().filter(|e| e.year == Some(year)))
+                })
+                .or_else(|| longest_text(printed.iter().copied()))
+                .map(str::to_owned);
+            let year = voted.or_else(|| arxiv.as_deref().and_then(identifiers::year_from_arxiv));
             let base = match (&doi, &arxiv) {
                 (Some(doi), _) => format!("doi:{doi}"),
                 (None, Some(arxiv)) => format!("arxiv:{arxiv}"),
@@ -337,6 +337,17 @@ impl PaperStore {
         });
         works
     }
+}
+
+/// The longest non-empty printed text, the first one on a tie.
+fn longest_text<'a>(entries: impl Iterator<Item = &'a StoredRef>) -> Option<&'a str> {
+    entries
+        .map(|entry| entry.text.as_str())
+        .filter(|text| !text.is_empty())
+        .fold(None, |best, text| match best {
+            Some(best) if best.chars().count() >= text.chars().count() => Some(best),
+            _ => Some(text),
+        })
 }
 
 #[cfg(test)]
@@ -535,6 +546,42 @@ mod tests {
             .unwrap();
         assert!(works.iter().all(|w| w.cited_by == [y.clone()]));
         assert_eq!(works.len(), 4);
+    }
+
+    #[test]
+    fn the_printed_text_agrees_with_the_year_shown() {
+        let mut store = store();
+        for name in ["p", "q", "r"] {
+            add(
+                &mut store,
+                name,
+                &format!("Citing paper {name} of the vote"),
+                2023,
+            );
+        }
+        let entries: Vec<LibraryEntry> = ["p", "q", "r"]
+            .iter()
+            .map(|name| entry(name, vec![Doi("10.5555/w".into())]))
+            .collect();
+        const JOURNAL: &str = "A. Writer, The voted work in its journal form with a longer citation, J. Long 40, 1 (2022), doi:10.5555/w.";
+        const PREPRINT: &str = "A. Writer, The voted work as a preprint, doi:10.5555/w (2019).";
+        const PREPRINT_LONGER: &str =
+            "A. Writer, The voted work as a preprint, arXiv, doi:10.5555/w (2019).";
+        let mut refs = DocRefs::new();
+        list(&mut refs, "p", &[(JOURNAL, 2022)]);
+        list(&mut refs, "q", &[(PREPRINT, 2019)]);
+        list(&mut refs, "r", &[(PREPRINT_LONGER, 2019)]);
+        let network = NetworkEdges::default();
+        let works = store
+            .missing_works(None, None, 1, 1, &entries, &refs, &network)
+            .unwrap();
+        let w = works.iter().find(|w| w.key == "doi:10.5555/w").unwrap();
+        assert_eq!(w.year, Some(2019));
+        assert_eq!(
+            w.text.as_deref(),
+            Some(PREPRINT_LONGER),
+            "the longest printing among those of the voted year, not the longest overall"
+        );
     }
 
     /// A -> B -> C -> D, and E on its own in a project.
