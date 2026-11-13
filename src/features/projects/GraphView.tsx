@@ -263,11 +263,14 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
   let seq = 0;
   /** The next answer is the scope's first: it settles in and is fitted. */
   let arriving = true;
-  const load = async () => {
+  /** `quiet` is a background refresh (the library changed): the graph on
+   * screen stays put and nothing flips into a loading state, so a backlog
+   * of small changes does not make the view jump. */
+  const load = async (quiet = false) => {
     const mine = ++seq;
     const id = projectId();
     const f = focus();
-    setLoading(true);
+    if (!quiet || !untrack(graph)) setLoading(true);
     try {
       const result = await (f
         ? engine.libraryGraph(id, { paperId: f.paperId, depth: f.depth })
@@ -320,14 +323,28 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
 
   /** The records may have changed: forget them, and the graph is read
    * again. An open card asks for its record afresh. */
-  function onLibraryChanged() {
+  // Changes arrive in bursts (the References extension rebuilding every
+  // reference list sends one per document). Re-read at most every
+  // REFRESH_EVERY_MS, trailing, so the graph settles instead of twitching.
+  const REFRESH_EVERY_MS = 2000;
+  let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let lastRefresh = 0;
+  function refreshQuietly() {
+    refreshTimer = undefined;
+    lastRefresh = Date.now();
     requested = new Set();
     paperGen += 1;
     setPapers(new Map());
     const open = untrack(cardId);
     if (open) fetchPaper(open);
-    void load();
+    void load(true);
   }
+  function onLibraryChanged() {
+    if (refreshTimer !== undefined) return;
+    const wait = Math.max(0, lastRefresh + REFRESH_EVERY_MS - Date.now());
+    refreshTimer = setTimeout(refreshQuietly, wait);
+  }
+  onCleanup(() => clearTimeout(refreshTimer));
 
   let disposed = false;
   let unlisten: (() => void) | null = null;
@@ -1027,20 +1044,20 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
           </div>
         )}
       </Show>
-      <Show when={!loading() && !error() && notes().length > 0}>
-        <div class="graph-notes">
-          <For each={notes()}>{(text) => <span class="graph-note">{text}</span>}</For>
-          <Show when={store.state.missing.on && ghosts().length > 0}>
-            <button
-              type="button"
-              class="paper-verdict-link graph-note-link"
-              onClick={() => store.showMissingList(true)}
-            >
-              List missing ({ghosts().length})
-            </button>
-          </Show>
-        </div>
-      </Show>
+      {/* Always one line, always there, so the canvas below never moves
+          as notes come and go. The full text is in the tooltip. */}
+      <div class="graph-notes" title={notes().join('\n')}>
+        <span class="graph-note">{error() ? '' : notes().join(' · ')}</span>
+        <Show when={store.state.missing.on && ghosts().length > 0}>
+          <button
+            type="button"
+            class="paper-verdict-link graph-note-link"
+            onClick={() => store.showMissingList(true)}
+          >
+            List missing ({ghosts().length})
+          </button>
+        </Show>
+      </div>
       <Show when={error()}>
         {(text) => (
           <div class="graph-error" role="alert">

@@ -213,14 +213,14 @@ describe('GraphView', () => {
 
   it('shows the external and unindexed notes', async () => {
     render(() => <GraphView />);
-    expect(await screen.findByText('2 citations lead outside this project')).toBeTruthy();
-    expect(screen.getByText('1 item not indexed yet, its citations are not known')).toBeTruthy();
+    expect(await screen.findByText(/2 citations lead outside this project/)).toBeTruthy();
+    expect(screen.getByText(/1 item not indexed yet, its citations are not known/)).toBeTruthy();
   });
 
   it('says so when there are items but no citations, and when there are no items', async () => {
     projectsStore.setScope({ kind: 'project', id: 'p2' });
     const { container, unmount } = render(() => <GraphView />);
-    expect(await screen.findByText('No citations between these items yet')).toBeTruthy();
+    expect(await screen.findByText(/No citations between these items yet/)).toBeTruthy();
     expect(nodes(container)).toHaveLength(0);
     expect(screen.getByText('1 item with no citations here')).toBeTruthy();
     unmount();
@@ -360,7 +360,7 @@ describe('GraphView', () => {
     projectsStore.setScope({ kind: 'all' });
     await waitFor(() => expect(libraryGraph.mock.calls).toHaveLength(2));
     expect(libraryGraph.mock.calls[1]).toEqual([null]);
-    expect(await screen.findByText('2 citations lead outside the library')).toBeTruthy();
+    expect(await screen.findByText(/2 citations lead outside the library/)).toBeTruthy();
     expect(nodes(container)).toHaveLength(3);
 
     const onChanged = engine.onLibraryChanged as unknown as Mocked;

@@ -113,7 +113,7 @@ describe('missing works', () => {
     expect(ghostFor(container, 'm1').querySelector('text')?.textContent).toBe(
       'Missing · cited by 2'
     );
-    expect(screen.getByText('2 missing works cited by ≥ 2')).toBeTruthy();
+    expect(screen.getByText(/2 missing works cited by ≥ 2/)).toBeTruthy();
   });
 
   it('rereads when the threshold steps', async () => {
