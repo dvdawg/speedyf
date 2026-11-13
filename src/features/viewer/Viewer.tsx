@@ -38,6 +38,7 @@ import { createColumnMode, registerColumnMode } from './columns/columnMode';
 import { toolState } from '../annotations/toolStore';
 import { modal } from '../../stores/modalStore';
 import { paletteOpen } from '../palette/paletteStore';
+import { quickOpenOpen } from '../palette/quickOpenStore';
 
 /** WebKit's non-standard pinch event. Not in lib.dom, and deliberately typed
  * as only the fields used here — `scale` is cumulative since gesturestart. */
@@ -257,10 +258,19 @@ function ViewerContent(props: { tab: TabRecord }) {
   // table has not already acted on the key.
   const onColumnKey = (e: KeyboardEvent) => {
     if (!isActive() || !columns.active() || e.defaultPrevented) return;
-    if (e.metaKey || e.ctrlKey || e.altKey || modal.kind !== null || paletteOpen()) return;
+    if (e.metaKey || e.ctrlKey || e.altKey || modal.kind !== null) return;
+    if (paletteOpen() || quickOpenOpen()) return;
     const focus = document.activeElement;
     if (focus && focus !== document.body && !scroller.contains(focus)) return;
-    if (focus instanceof HTMLElement && focus.isContentEditable) return;
+    // Form fields and annotation editors live inside the pages: typing there
+    // (a space, an arrow) is text, not reading.
+    if (
+      focus instanceof HTMLInputElement ||
+      focus instanceof HTMLTextAreaElement ||
+      focus instanceof HTMLSelectElement ||
+      (focus instanceof HTMLElement && focus.isContentEditable)
+    )
+      return;
     if (columns.key(e)) e.preventDefault();
   };
   const onPointerDown = () => columns.setPointerDown(true);
