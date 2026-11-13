@@ -568,7 +568,7 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
           onKeyDown={onKeyDown}
         >
           <Show
-            when={rowItems().some((item) => item.kind === 'row')}
+            when={store.state.rows.length > 0 && rowItems().length > 0}
             fallback={
               <div class="paper-empty">
                 <p class="library-hint">{emptyText()}</p>

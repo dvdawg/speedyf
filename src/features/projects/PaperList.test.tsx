@@ -75,6 +75,25 @@ describe('PaperList under All papers', () => {
     fireEvent.click(head);
     expect(screen.getAllByText(JARZYNSKI)).toHaveLength(2);
   });
+
+  it('keeps every header when every group is folded', async () => {
+    const { container } = render(() => <PaperList onMoveFocus={() => {}} />);
+    await screen.findAllByText(JARZYNSKI);
+    // Fold one at a time, finding the next open header afresh: the list
+    // reuses elements by position, so a header found earlier may now be a row.
+    const toggleAll = (expanded: 'true' | 'false') => {
+      for (let i = 0; i < 3; i++) {
+        const head = container.querySelector(`.paper-group-head[aria-expanded="${expanded}"]`);
+        if (head) fireEvent.click(head);
+      }
+    };
+    toggleAll('true');
+    expect(container.querySelector('.paper-row-title')).toBeNull();
+    expect(groupNames(container)).toEqual(['Noneq stat mech', 'Active matter', 'Not in a project']);
+    expect(container.querySelector('.paper-empty')).toBeNull();
+    toggleAll('false');
+    expect(screen.getAllByText(JARZYNSKI)).toHaveLength(2);
+  });
 });
 
 describe('PaperList under a project', () => {
