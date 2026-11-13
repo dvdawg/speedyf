@@ -33,6 +33,7 @@ import type {
   CoCitedWork,
   DuplicateGroup,
   Graph,
+  HealthGroup,
   BibtexOptions,
   LibraryBackup,
   LibraryCounts,
@@ -46,6 +47,7 @@ import type {
   Paper,
   PaperFilter,
   PaperList,
+  PaperRow,
   Paperness,
   Project,
   ProjectSuggestion,
@@ -253,6 +255,16 @@ export interface EngineApi {
   /** Records that these are not one work, so they are never suggested
    * (or joined through a third record) again. */
   libraryNotDuplicates(paperIds: string[]): Promise<void>;
+  /** What the engine suspects about the items, grouped; empty groups are
+   * left out, as are findings the user ignored. */
+  libraryHealth(): Promise<HealthGroup[]>;
+  /** Never show this finding about this item again. */
+  libraryHealthIgnore(paperId: string, kind: string): Promise<void>;
+  /** Items from the last week the user has not triaged, newest first. */
+  libraryNewItems(query: string): Promise<PaperRow[]>;
+  libraryMarkReviewed(paperIds: string[]): Promise<void>;
+  /** Item id -> how many items of the scope cite it; uncited left out. */
+  libraryCitedHere(filter: PaperFilter): Promise<Record<string, number>>;
   libraryDataDir(): Promise<LibraryDataInfo>;
   libraryMoveData(dir: string): Promise<LibraryDataInfo>;
   /** Backups of library.json, newest first. */
@@ -362,6 +374,11 @@ export const engine: EngineApi = {
   libraryUnmerge: (paperId) => invoke('library_unmerge', { paperId }),
   librarySetPrimaryFile: (paperId, path) => invoke('library_set_primary_file', { paperId, path }),
   libraryNotDuplicates: (paperIds) => invoke('library_not_duplicates', { paperIds }),
+  libraryHealth: () => invoke('library_health'),
+  libraryHealthIgnore: (paperId, kind) => invoke('library_health_ignore', { paperId, kind }),
+  libraryNewItems: (query) => invoke('library_new_items', { query }),
+  libraryMarkReviewed: (paperIds) => invoke('library_mark_reviewed', { paperIds }),
+  libraryCitedHere: (filter) => invoke('library_cited_here', { filter }),
   libraryDataDir: () => invoke('library_data_dir'),
   libraryMoveData: (dir) => invoke('library_move_data', { dir }),
   libraryBackups: () => invoke('library_backups'),

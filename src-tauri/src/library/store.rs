@@ -12,6 +12,7 @@ use super::backup::{self, BackupState, LibraryBackupDto};
 use super::bibtex::BibtexOptions;
 use super::papers::PaperRecord;
 use super::projects::ProjectRecord;
+use super::review::ReviewState;
 use super::types::LibraryDataInfoDto;
 use crate::errors::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
@@ -43,6 +44,9 @@ struct LibraryFile {
     /// options: the defaults, which write what was written then.
     #[serde(default)]
     bibtex_options: BibtexOptions,
+    /// Triage and dismissals (`review`). Absent before it existed.
+    #[serde(default)]
+    review: Option<ReviewState>,
 }
 
 /// The same shape, borrowed, so a save never clones every record.
@@ -53,6 +57,7 @@ struct LibraryFileRef<'a> {
     papers: &'a [PaperRecord],
     projects: &'a [ProjectRecord],
     bibtex_options: &'a BibtexOptions,
+    review: &'a ReviewState,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -74,6 +79,7 @@ pub struct PaperStore {
     pub(super) papers: Vec<PaperRecord>,
     pub(super) projects: Vec<ProjectRecord>,
     pub(super) bibtex_options: BibtexOptions,
+    pub(super) review: ReviewState,
     /// The last backup a save wrote (`backup`).
     backup: BackupState,
     /// Why nothing may be written, when the file on disk is one this build
@@ -105,6 +111,7 @@ impl PaperStore {
             papers: Vec::new(),
             projects: Vec::new(),
             bibtex_options: BibtexOptions::default(),
+            review: ReviewState::starting_now(),
             backup: BackupState::default(),
             write_block: None,
             dirty: false,
@@ -133,6 +140,9 @@ impl PaperStore {
                 store.papers = file.papers;
                 store.projects = file.projects;
                 store.bibtex_options = file.bibtex_options;
+                if let Some(review) = file.review.filter(|r| r.since.is_some()) {
+                    store.review = review;
+                }
                 // Duplicates from before automatic merging, or from another
                 // machine's edits, are merged once here; then every item's
                 // main file is chosen again and the items gone for a week
@@ -263,6 +273,7 @@ impl PaperStore {
             papers: &self.papers,
             projects: &self.projects,
             bibtex_options: &self.bibtex_options,
+            review: &self.review,
         })
         .map_err(|error| AppError::Internal(format!("cannot serialize the library: {error}")))
     }
@@ -336,6 +347,9 @@ impl PaperStore {
         self.papers = restored.papers;
         self.projects = restored.projects;
         self.bibtex_options = restored.bibtex_options;
+        if let Some(review) = restored.review.filter(|r| r.since.is_some()) {
+            self.review = review;
+        }
         self.mark_dirty();
         Ok(())
     }

@@ -39,6 +39,8 @@ import { copyCite, registerCiteSelection } from './citeSelection';
 import { projectRowAt, setDropHover } from './dnd';
 import { searchFullText } from './fullTextHandoff';
 import GraphView from './GraphView';
+import HealthList from './HealthList';
+import { nextSort, SORT_LABEL, sortRows } from './listSortPrefs';
 import { MergeConfirm } from './MergeConfirm';
 import { MissingList } from './MissingWorks';
 import { openPaper } from './openPaper';
@@ -67,6 +69,18 @@ export function alsoIn(row: PaperRow, projects: Project[], except: string | null
   return `also in ${shown.join(', ')}${rest > 0 ? ` +${rest}` : ''}`;
 }
 
+/** "cited by 5 here", for the meta line while the list sorts by it. */
+export function citedHereText(count: number | undefined): string {
+  return count ? `cited by ${count} here` : '';
+}
+
+/** The digit pressed on a new item, as a 0-based project index; null for
+ * any other key, or a digit with a modifier held (a shortcut, not triage). */
+export function triageDigit(e: KeyboardEvent): number | null {
+  if (e.metaKey || e.ctrlKey || e.altKey || !/^[1-9]$/.test(e.key)) return null;
+  return Number(e.key) - 1;
+}
+
 const VIEWS: { id: ProjectsView; label: string }[] = [
   { id: 'list', label: 'List' },
   { id: 'graph', label: 'Graph' },
@@ -88,6 +102,21 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
   const store = projectsStore;
   const hasQuery = () => store.state.query.trim().length > 0;
   const grouped = () => store.state.scope.kind === 'all';
+  /** New items are triaged newest first; Health is not a list of rows. */
+  const triage = () => store.state.scope.kind === 'new';
+  const health = () => store.state.scope.kind === 'health';
+  const sortable = () => !triage() && !health();
+  /** The rows in the chosen order; under All items the groups below keep
+   * it, so the sort applies within each. */
+  const sortedRows = createMemo(() =>
+    sortable()
+      ? sortRows(store.state.rows, store.state.sort, store.state.citedHere)
+      : store.state.rows.slice()
+  );
+  const rowMeta = (row: PaperRow) => {
+    const cited = store.state.sort === 'cited' && sortable() ? store.state.citedHere[row.id] : 0;
+    return [metaLine(row), citedHereText(cited)].filter(Boolean).join(', ');
+  };
   const project = () => {
     const scope = store.state.scope;
     return scope.kind === 'project'
@@ -111,7 +140,7 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
   };
 
   const rowItems = createMemo<Item[]>(() => {
-    const rows = store.state.rows;
+    const rows = sortedRows();
     if (!grouped()) return rows.map((row) => ({ kind: 'row', key: row.id, row }));
     const groups = [
       ...store.state.projects.map((p) => ({
@@ -269,6 +298,26 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
     for (const id of ids) {
       if (!already.has(id)) void store.setMembership(id, projectId, true);
     }
+    // Filing a new item is triaging it.
+    if (triage()) void store.markReviewed(ids);
+  };
+
+  /** Under New: a digit files the item into that project, D or Backspace
+   * marks it done. Either way it leaves the list. */
+  const triageKey = (e: KeyboardEvent, row: PaperRow): boolean => {
+    const digit = triageDigit(e);
+    if (digit !== null) {
+      const target = store.state.projects[digit];
+      if (!target) return false;
+      void store.fileNew(row.id, target.id);
+      return true;
+    }
+    if (e.metaKey || e.ctrlKey || e.altKey) return false;
+    if (e.key === 'd' || e.key === 'D' || e.key === 'Backspace') {
+      void store.markReviewed([row.id]);
+      return true;
+    }
+    return false;
   };
 
   const onRowPointerDown = (row: PaperRow, e: PointerEvent) => {
@@ -307,6 +356,10 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
   const onKeyDown = (e: KeyboardEvent) => {
     const all = items();
     const item = all[current()];
+    if (triage() && item?.kind === 'row' && triageKey(e, item.row)) {
+      e.preventDefault();
+      return;
+    }
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault();
@@ -485,7 +538,7 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
           </Show>
           {/* The search filters rows; the graph is the whole scope, so under
               it the field would promise something it does not do. */}
-          <Show when={view() === 'list'}>
+          <Show when={view() === 'list' && !health()}>
             <div class="library-search-field paper-search">
               <IconSearch />
               <input
@@ -516,6 +569,26 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
                 </button>
               </Show>
             </div>
+            <Show when={sortable()}>
+              <button
+                type="button"
+                class="paper-sort-btn"
+                title="Sort by: Default, Year, Title, or how many items here cite each"
+                onClick={() => store.setSort(nextSort(store.state.sort))}
+              >
+                Sort: {SORT_LABEL[store.state.sort]}
+              </button>
+            </Show>
+            <Show when={triage() && store.state.rows.length > 1 && !hasQuery()}>
+              <button
+                type="button"
+                class="paper-sort-btn"
+                title="Mark every new item done without filing it"
+                onClick={() => void store.markReviewed(store.state.rows.map((r) => r.id))}
+              >
+                All done
+              </button>
+            </Show>
             <Show when={multi().length >= 1 && !merging()}>
               <button
                 type="button"
@@ -559,7 +632,10 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
       <Show when={view() === 'graph' && store.state.missingList}>
         <MissingList />
       </Show>
-      <Show when={view() === 'list'}>
+      <Show when={health()}>
+        <HealthList />
+      </Show>
+      <Show when={view() === 'list' && !health()}>
         <div
           ref={list}
           class="projects-col-scroll paper-list"
@@ -647,8 +723,8 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
                           >
                             <span class="paper-row-main">
                               <MathText class="paper-row-title" text={row().title} />
-                              <Show when={metaLine(row())}>
-                                <span class="paper-row-meta">{metaLine(row())}</span>
+                              <Show when={rowMeta(row())}>
+                                <span class="paper-row-meta">{rowMeta(row())}</span>
                               </Show>
                             </span>
                             <Show when={(row().fileCount ?? 0) > 1}>
@@ -675,6 +751,21 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
                               >
                                 duplicate?
                               </span>
+                            </Show>
+                            <Show when={triage()}>
+                              <button
+                                type="button"
+                                class="health-action"
+                                tabindex={-1}
+                                title="Mark done without filing (D)"
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void store.markReviewed([row().id]);
+                                }}
+                              >
+                                Done
+                              </button>
                             </Show>
                             <Show when={alsoText(found())}>
                               {(text) => <span class="paper-row-also">{text()}</span>}

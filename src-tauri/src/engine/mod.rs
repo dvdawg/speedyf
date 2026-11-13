@@ -357,6 +357,7 @@ impl EngineShared {
     /// write has reached the disk, never while the store is locked: the
     /// windows answer by reading it back.
     pub fn notify_library_changed(&self) {
+        crate::library::health::bump_generation();
         if let Some(cb) = self.library_changed.lock().as_ref() {
             cb();
         }

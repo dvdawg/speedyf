@@ -17,7 +17,7 @@ import LaunchToggle from './LaunchToggle';
 import PaperDetail from './PaperDetail';
 import PaperList from './PaperList';
 import ProjectsColumn from './ProjectsColumn';
-import { projectsStore } from './projectsStore';
+import { healthCount, projectsStore } from './projectsStore';
 import { IconClose } from '../../components/icons';
 
 /** Below this the detail column folds behind a Details button; the sidebar
@@ -69,11 +69,19 @@ export default function ProjectsScreen() {
         return 'Not filed';
       case 'others':
         return 'Other PDFs';
+      case 'new':
+        return 'New';
+      case 'health':
+        return 'Health';
       case 'project':
         return store.state.projects.find((p) => p.id === scope.id)?.name ?? 'Project';
     }
   };
   const countText = () => {
+    if (store.state.scope.kind === 'health') {
+      const n = healthCount(store.state.health);
+      return `${n} to check`;
+    }
     const total = store.state.total;
     if (store.state.query.trim()) return `${total} matching`;
     // Under Other PDFs the rows are, by definition, not items.

@@ -23,10 +23,13 @@ import {
   savePrefs,
 } from './graphViewPrefs';
 import type { EdgeMode, LabelMode, UnlinkedMode } from './graphViewPrefs';
+import { loadSort, saveSort } from './listSortPrefs';
+import type { ListSort } from './listSortPrefs';
 import type {
   BundleReport,
   CoCitedWork,
   DuplicateGroup,
+  HealthGroup,
   LibraryCounts,
   LookupBatch,
   MetaPatch,
@@ -39,12 +42,21 @@ import type {
 
 /** What the middle column shows. */
 export type Scope =
-  { kind: 'all' } | { kind: 'unfiled' } | { kind: 'others' } | { kind: 'project'; id: string };
+  | { kind: 'all' }
+  | { kind: 'unfiled' }
+  | { kind: 'others' }
+  | { kind: 'project'; id: string }
+  /** items from the last week not yet triaged */
+  | { kind: 'new' }
+  /** what the engine suspects (library_health) */
+  | { kind: 'health' };
 
 export function filterFor(scope: Scope, query: string): PaperFilter {
   const trimmed = query.trim();
   switch (scope.kind) {
     case 'all':
+    case 'new':
+    case 'health':
       return { query: trimmed };
     case 'unfiled':
       return { unfiled: true, query: trimmed };
@@ -143,6 +155,14 @@ interface State {
   /** The graph's labels for its items ("ZD24a"), so the missing works'
    * cited-by lists name items the way the graph does. */
   graphLabels: Record<string, string>;
+  /** Library health findings, grouped; empty when nothing is suspected. */
+  health: HealthGroup[];
+  /** Untriaged new items, newest first, for the New row's count. */
+  newItems: PaperRow[];
+  /** How the list is sorted (listSortPrefs.ts), for every scope. */
+  sort: ListSort;
+  /** Item id -> items of the scope citing it, while sorting by it. */
+  citedHere: Record<string, number>;
   error: string | null;
   /** The outcome of a one-off action worth reading (an exported bundle),
    * shown in the screen's bar until dismissed or replaced. */
@@ -178,6 +198,10 @@ const [state, setState] = createStore<State>({
   missingList: false,
   ghostKey: null,
   graphLabels: {},
+  health: [],
+  newItems: [],
+  sort: loadSort(),
+  citedHere: {},
   error: null,
   notice: null,
 });
@@ -186,6 +210,12 @@ let rowsSeq = 0;
 let detailSeq = 0;
 let missingSeq = 0;
 let coCitedSeq = 0;
+let citedSeq = 0;
+
+/** How many findings the health list holds. */
+export function healthCount(groups: readonly HealthGroup[]): number {
+  return groups.reduce((sum, group) => sum + group.findings.length, 0);
+}
 
 function persistPrefs(): void {
   savePrefs({
@@ -261,6 +291,9 @@ export const projectsStore = {
       projectsStore.loadDuplicates(),
       projectsStore.loadMissing(),
       projectsStore.loadCoCited(),
+      projectsStore.loadHealth(),
+      projectsStore.loadNew(),
+      projectsStore.loadCitedHere(),
       state.selectedId ? projectsStore.loadDetail(state.selectedId) : Promise.resolve(),
     ]);
   },
@@ -284,7 +317,18 @@ export const projectsStore = {
     // Snapshot before the await: the filter must describe the scope the
     // request was made for, not whatever the user has clicked since.
     const filter = filterFor(state.scope, state.query);
-    const list = await guarded(() => engine.libraryPapers(filter));
+    const kind = state.scope.kind;
+    if (kind === 'health') {
+      setState({ loadingRows: false, rows: [], total: 0 });
+      return;
+    }
+    const list =
+      kind === 'new'
+        ? await guarded(async () => {
+            const rows = await engine.libraryNewItems(filter.query ?? '');
+            return { rows, total: rows.length };
+          })
+        : await guarded(() => engine.libraryPapers(filter));
     if (seq !== rowsSeq) return;
     setState('loadingRows', false);
     if (!list) return;
@@ -314,6 +358,79 @@ export const projectsStore = {
     } catch {
       setState('duplicates', reconcile({}));
     }
+  },
+
+  /** A background read, quiet like the duplicates. With nothing left the
+   * Health row goes, and a screen showing it falls back to All items. */
+  async loadHealth(): Promise<void> {
+    let groups: HealthGroup[];
+    try {
+      groups = await engine.libraryHealth();
+    } catch {
+      groups = [];
+    }
+    setState('health', reconcile(groups));
+    if (groups.length === 0 && state.scope.kind === 'health') {
+      projectsStore.setScope({ kind: 'all' });
+    }
+  },
+
+  /** The New row's items, unfiltered. When the last one is triaged the row
+   * goes, and a screen showing it falls back to All items. */
+  async loadNew(): Promise<void> {
+    let rows: PaperRow[];
+    try {
+      rows = await engine.libraryNewItems('');
+    } catch {
+      rows = [];
+    }
+    setState('newItems', reconcile(rows, { key: 'id' }));
+    if (rows.length === 0 && state.scope.kind === 'new') {
+      projectsStore.setScope({ kind: 'all' });
+    }
+  },
+
+  /** The "Cited here" counts for the scope, read only while that sort is
+   * on. A background read: quiet. */
+  async loadCitedHere(): Promise<void> {
+    const seq = ++citedSeq;
+    const scope = state.scope.kind;
+    if (state.sort !== 'cited' || scope === 'health' || scope === 'new') {
+      setState('citedHere', reconcile({}));
+      return;
+    }
+    let counts: Record<string, number>;
+    try {
+      counts = await engine.libraryCitedHere(filterFor(state.scope, ''));
+    } catch {
+      counts = {};
+    }
+    if (seq !== citedSeq) return;
+    setState('citedHere', reconcile(counts));
+  },
+
+  setSort(sort: ListSort): void {
+    if (sort === state.sort) return;
+    setState('sort', sort);
+    saveSort(sort);
+    void projectsStore.loadCitedHere();
+  },
+
+  /** Never show this finding again; the change event refreshes the list. */
+  async ignoreFinding(paperId: string, kind: string): Promise<void> {
+    await guarded(() => engine.libraryHealthIgnore(paperId, kind));
+  },
+
+  /** Triaged: these new items leave the New list. */
+  async markReviewed(paperIds: string[]): Promise<void> {
+    if (paperIds.length === 0) return;
+    await guarded(() => engine.libraryMarkReviewed(paperIds));
+  },
+
+  /** Files a new item into a project, which also triages it. */
+  async fileNew(paperId: string, projectId: string): Promise<void> {
+    await guarded(() => engine.librarySetMembership(paperId, projectId, true));
+    await projectsStore.markReviewed([paperId]);
   },
 
   /** The project the graph and the missing works are read for; null for
@@ -478,6 +595,7 @@ export const projectsStore = {
     void projectsStore.loadRows();
     void projectsStore.loadMissing();
     void projectsStore.loadCoCited();
+    void projectsStore.loadCitedHere();
   },
 
   /** Debounced, like the library search, so typing does not query per key. */
