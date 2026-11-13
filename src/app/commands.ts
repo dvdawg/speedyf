@@ -40,6 +40,7 @@ import { setUi, ui, type SidebarMode } from '../stores/uiStore';
 import { tabsStore, type TabRecord } from '../stores/tabsStore';
 import type { Paper } from '../types/engine';
 import { canGoBack, canGoForward, goBack, goForward } from '../features/viewer/navHistory';
+import { columnModeFor } from '../features/viewer/columns/columnMode';
 
 /** Listed rather than only typed so a test can check every group is used —
  * an empty heading is a palette section nobody can reach. */
@@ -447,6 +448,17 @@ export const COMMANDS: readonly Command[] = [
     group: 'View',
     enabled: loaded,
     run: (ctx) => ctx.tab?.zoom.applyFit('fit-width'),
+  },
+  // Column zoom (features/viewer/columns): the column under the pointer, or
+  // at the reading position, fills the width; run again to leave.
+  {
+    id: 'view.zoomToColumn',
+    title: 'Zoom to Column',
+    group: 'View',
+    shortcut: 'mod+alt+0',
+    keywords: ['column', 'two-column', 'reading', 'fit column', 'paper'],
+    enabled: (ctx) => loaded(ctx) && columnModeFor(ctx.tab?.id) !== null,
+    run: (ctx) => void columnModeFor(ctx.tab?.id)?.command(),
   },
   {
     id: 'view.actualSize',
