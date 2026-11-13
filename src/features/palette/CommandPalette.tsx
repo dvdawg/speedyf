@@ -18,6 +18,7 @@ import {
 import { COMMANDS, describeDisabled, formatShortcut, type CommandCtx } from '../../app/commands';
 import { activeTab, tabsStore } from '../../stores/tabsStore';
 import { activateTab } from '../document/tabsController';
+import { wantsNewWindow } from '../windows/windowController';
 import { jumpToAnchor } from '../outline/jumpToAnchor';
 import { flattenOutline } from '../outline/structureStore';
 import { closePalette, mostUsed, paletteOpen, recordUse, usesOf } from './paletteStore';
@@ -264,12 +265,13 @@ export default function CommandPalette() {
     el?.scrollIntoView({ block: 'nearest' });
   });
 
-  const runAt = (index: number) => {
+  const runAt = (index: number, alt = false) => {
     const row = rows()[index];
     if (!row || !row.enabled) return;
     recordUse(row.key);
     closePalette();
-    row.run();
+    if (alt && row.runAlt) row.runAlt();
+    else row.run();
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
@@ -281,7 +283,7 @@ export default function CommandPalette() {
     }
     if (e.key === 'Enter') {
       e.preventDefault();
-      runAt(cursor());
+      runAt(cursor(), e.metaKey || e.ctrlKey);
       return;
     }
     if (total === 0) return;
@@ -361,7 +363,7 @@ export default function CommandPalette() {
                           }}
                           disabled={!item.enabled}
                           onPointerEnter={() => pointerDriving() && setCursor(at)}
-                          onClick={() => runAt(at)}
+                          onClick={(e) => runAt(at, wantsNewWindow(e))}
                         >
                           <span class="palette-title">{item.title}</span>
                           <Show when={item.context}>

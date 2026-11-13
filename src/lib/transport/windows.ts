@@ -45,6 +45,9 @@ export const windowApi = {
   focusWindowForPath: (path: string): Promise<boolean> => invoke('focus_window_for_path', { path }),
   /** Opens a window that reopens `restore` — one window of a restored session. */
   restoreWindow: (restore: WindowTabs): Promise<void> => invoke('new_window', { restore }),
+  /** Opens `path` in a window of its own; a window already showing it is
+   * raised instead. Answers whether a new window was made. */
+  openInNewWindow: (path: string): Promise<boolean> => invoke('open_in_new_window', { path }),
   /** The tabs this window was opened to restore, if any. Drained by the read. */
   takeRestore: (): Promise<WindowTabs | null> => invoke('take_window_restore'),
 };

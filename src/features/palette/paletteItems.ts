@@ -19,6 +19,9 @@ export interface Candidate {
   /** Shown instead of the shortcut when a disabled row is surfaced. */
   reason?: string;
   run(): void;
+  /** The same row with Cmd (Ctrl) or Alt held: a file opened in a new
+   * window. Rows without one just run. */
+  runAlt?(): void;
 }
 
 export interface Section {

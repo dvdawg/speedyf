@@ -223,6 +223,46 @@ pub async fn new_window(app: tauri::AppHandle, restore: Option<WindowTabs>) -> R
     Ok(())
 }
 
+/// Opens `path` in a window of its own (quick open's Cmd+Enter, Cmd-click on
+/// a file's Open). A path some window already shows, or one a window still
+/// coming up was created for, raises that window instead: nobody opens a
+/// second copy of a document. Answers whether a new window was made.
+#[tauri::command]
+pub async fn open_in_new_window(app: tauri::AppHandle, path: String) -> Result<bool, String> {
+    let state = app.state::<Windows>();
+    let label = next_label(&state);
+    let existing = state
+        .0
+        .lock()
+        .unwrap()
+        .claim_new_window(&label, path.clone());
+    if let Some(existing) = existing {
+        let Some(other) = app.get_webview_window(&existing) else {
+            return Ok(false);
+        };
+        let mut registry = state.0.lock().unwrap();
+        if registry.ready.contains(&existing) {
+            let _ = app.emit_to(existing.as_str(), "file-open-requested", vec![path]);
+        } else {
+            registry
+                .pending_opens
+                .entry(existing)
+                .or_default()
+                .push(path);
+        }
+        drop(registry);
+        let _ = other.unminimize();
+        let _ = other.show();
+        let _ = other.set_focus();
+        return Ok(false);
+    }
+    if let Err(error) = build_window(&app, &label, None, true) {
+        state.0.lock().unwrap().restores.remove(&label);
+        return Err(error);
+    }
+    Ok(true)
+}
+
 /// The tabs this window was created to restore, if any. Drained by the read.
 #[tauri::command]
 pub fn take_window_restore(
@@ -461,6 +501,35 @@ impl Registry {
             .collect();
         labels.sort_by_key(|label| window_order(label));
         labels.first().map(|label| (*label).clone())
+    }
+
+    /// Either the window that already has `path` (open, or waiting to be
+    /// restored with it), or — when none does — `path` queued as the opening
+    /// tab of the new window `label`, which takes it at startup the way a
+    /// restored window takes its session.
+    fn claim_new_window(&mut self, label: &str, path: String) -> Option<String> {
+        let mut found = self.window_with_path(&path, label);
+        if found.is_none() {
+            let mut waiting: Vec<&String> = self
+                .restores
+                .iter()
+                .filter(|(_, tabs)| tabs.tabs.contains(&path))
+                .map(|(label, _)| label)
+                .collect();
+            waiting.sort_by_key(|label| window_order(label));
+            found = waiting.first().map(|label| (*label).clone());
+        }
+        if found.is_some() {
+            return found;
+        }
+        self.restores.insert(
+            label.into(),
+            WindowTabs {
+                tabs: vec![path.clone()],
+                active_path: Some(path),
+            },
+        );
+        None
     }
 
     fn roster(&self, exclude: &str) -> Vec<WindowSummaryDto> {
@@ -813,6 +882,40 @@ mod tests {
             receiver.recv_timeout(Duration::from_secs(5)),
             Err(mpsc::RecvTimeoutError::Disconnected)
         );
+    }
+
+    #[test]
+    fn a_new_window_for_a_path_takes_it_as_its_opening_tab() {
+        let mut registry = registry_with(&[("main", &["/a.pdf"])]);
+        assert_eq!(
+            registry.claim_new_window("speedyf-1", "/b.pdf".into()),
+            None
+        );
+        let restore = registry.restores.remove("speedyf-1").unwrap();
+        assert_eq!(restore.tabs, vec!["/b.pdf".to_string()]);
+        assert_eq!(restore.active_path.as_deref(), Some("/b.pdf"));
+    }
+
+    #[test]
+    fn a_path_already_open_or_on_its_way_raises_that_window_instead() {
+        let mut registry = registry_with(&[("main", &["/a.pdf"])]);
+        // Open in a window (the asking one included): that window, no new one.
+        assert_eq!(
+            registry.claim_new_window("speedyf-1", "/a.pdf".into()),
+            Some("main".to_string())
+        );
+        assert!(registry.restores.is_empty());
+        // A second Cmd+Enter before the first new window has published its
+        // tabs still finds it.
+        assert_eq!(
+            registry.claim_new_window("speedyf-2", "/b.pdf".into()),
+            None
+        );
+        assert_eq!(
+            registry.claim_new_window("speedyf-3", "/b.pdf".into()),
+            Some("speedyf-2".to_string())
+        );
+        assert_eq!(registry.restores.len(), 1);
     }
 
     #[test]

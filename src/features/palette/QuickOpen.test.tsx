@@ -101,12 +101,14 @@ vi.mock('../document/tabsController', () => ({
   goHome: vi.fn(),
 }));
 vi.mock('../projects/fullTextHandoff', () => ({ searchFullText: vi.fn() }));
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => true) }));
 vi.mock('../../stores/modalStore', () => ({ showError: vi.fn(), modal: { kind: null } }));
 
 const { default: QuickOpen } = await import('./QuickOpen');
 const { closeQuickOpen, openQuickOpen, quickOpenOpen } = await import('./quickOpenStore');
 const { openInNewTabOrFocus, goHome } = await import('../document/tabsController');
 const { searchFullText } = await import('../projects/fullTextHandoff');
+const { invoke } = await import('@tauri-apps/api/core');
 const { recentStore } = await import('../../stores/recentStore');
 const { runCommand, commandById } = await import('../../app/commands');
 const { rankRows, prepare, fold } = await import('./quickOpenItems');
@@ -239,6 +241,33 @@ describe('keys', () => {
     fireEvent.keyDown(input(), { key: 'Enter' });
     await waitFor(() => expect(openInNewTabOrFocus).toHaveBeenCalledWith('/lib/erdos.pdf'));
     expect(quickOpenOpen()).toBe(false);
+  });
+
+  it('opens the item in a new window on Cmd+Enter', async () => {
+    await openWith('random graphs');
+    fireEvent.keyDown(input(), { key: 'Enter', metaKey: true });
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('open_in_new_window', { path: '/lib/erdos.pdf' })
+    );
+    expect(openInNewTabOrFocus).not.toHaveBeenCalled();
+    expect(quickOpenOpen()).toBe(false);
+  });
+
+  it('opens in a new window on Ctrl+Enter too', async () => {
+    await openWith('entropy');
+    fireEvent.keyDown(input(), { key: 'Enter', ctrlKey: true });
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('open_in_new_window', { path: '/lib/crooks.pdf' })
+    );
+  });
+
+  it('opens in a new window on Cmd-click', async () => {
+    await openWith('random graphs');
+    fireEvent.click(document.querySelector('.quick-open-row')!, { metaKey: true });
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('open_in_new_window', { path: '/lib/erdos.pdf' })
+    );
+    expect(openInNewTabOrFocus).not.toHaveBeenCalled();
   });
 
   it('skips a missing file for the next one on disk', async () => {

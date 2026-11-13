@@ -7,6 +7,7 @@
  * full-text search for when the words are in the paper rather than about it.
  */
 import { batch, createEffect, createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
+import { formatShortcut } from '../../app/shortcutLabel';
 import MathText from '../../components/MathText';
 import { engine } from '../../lib/transport/engine';
 import { showError } from '../../stores/modalStore';
@@ -14,6 +15,7 @@ import { recentStore } from '../../stores/recentStore';
 import type { Paper, PaperRow } from '../../types/engine';
 import { goHome, openInNewTabOrFocus } from '../document/tabsController';
 import { searchFullText } from '../projects/fullTextHandoff';
+import { openInNewWindow, wantsNewWindow } from '../windows/windowController';
 import { closeQuickOpen, quickOpenOpen } from './quickOpenStore';
 import { defaultRows, detailLine, prepare, rankRows, type Prepared } from './quickOpenItems';
 
@@ -116,7 +118,7 @@ export default function QuickOpen() {
     if (target?.isConnected) queueMicrotask(() => target.focus());
   };
 
-  const openRow = async (row: PaperRow) => {
+  const openRow = async (row: PaperRow, newWindow: boolean) => {
     closeQuickOpen();
     returnFocus = null;
     let path: string | null;
@@ -130,14 +132,17 @@ export default function QuickOpen() {
       showError('This item has no file to open.');
       return;
     }
-    await openInNewTabOrFocus(path);
+    if (newWindow) await openInNewWindow(path);
+    else await openInNewTabOrFocus(path);
   };
 
-  const runAt = (index: number) => {
+  /** `newWindow` (Cmd+Enter, Cmd-click) opens the item's file in a window of
+   * its own; the full-text row has no file and ignores it. */
+  const runAt = (index: number, newWindow = false) => {
     const entry = shown()[index];
     if (!entry) return;
     if (entry.kind === 'item') {
-      void openRow(entry.row);
+      void openRow(entry.row, newWindow);
       return;
     }
     closeQuickOpen();
@@ -159,7 +164,7 @@ export default function QuickOpen() {
       dismiss();
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      runAt(cursor());
+      runAt(cursor(), e.metaKey || e.ctrlKey);
     } else if (e.key === 'ArrowDown' || (e.ctrlKey && !e.metaKey && e.key === 'n')) {
       e.preventDefault();
       move(1);
@@ -227,7 +232,7 @@ export default function QuickOpen() {
                       'is-fulltext': entry.kind === 'fulltext',
                     }}
                     onPointerEnter={() => pointerDriving() && setCursor(index())}
-                    onClick={() => runAt(index())}
+                    onClick={(e) => runAt(index(), wantsNewWindow(e))}
                   >
                     <Show
                       when={entry.kind === 'item' ? entry.row : null}
@@ -263,6 +268,9 @@ export default function QuickOpen() {
             </span>
             <span>
               <b>Enter</b> open
+            </span>
+            <span>
+              <b>{formatShortcut('mod')}+Enter</b> new window
             </span>
             <span>
               <b>esc</b> close
