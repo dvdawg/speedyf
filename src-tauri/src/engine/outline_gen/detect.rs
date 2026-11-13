@@ -155,6 +155,17 @@ fn generate_typeset(doc: &Doc) -> Vec<Heading> {
         if super::toc::covers(&typeset, &toc) {
             return typeset;
         }
+        // A contents page that comes after the document's first numbered
+        // section lists only part of it - an appendix's own contents. (A
+        // book's preface may precede its contents; its chapters do not.)
+        let contents_page = stats.toc_pages.iter().min().map(|&p| doc.pages[p].index);
+        let first_numbered = typeset
+            .iter()
+            .find(|h| numbering::parse(&h.title).is_some())
+            .map(|h| h.page);
+        if first_numbered.is_some_and(|first| contents_page.is_some_and(|c| c > first)) {
+            return typeset;
+        }
         return in_page_order(toc);
     }
     typeset
@@ -1933,6 +1944,21 @@ fn finish(doc: &Doc, mut cands: Vec<Cand>) -> Vec<Heading> {
     });
     // The same heading twice at one spot (a line read twice) is one.
     cands.dedup_by(|b, a| a.p == b.p && (a.top - b.top).abs() < 1.0 && a.title == b.title);
+    // A back-matter name over and over ("References" closing every chapter
+    // of an edited volume) is clutter at the top of an outline whose
+    // chapters were not found to hold it.
+    let mut repeats: HashMap<String, usize> = HashMap::new();
+    for c in cands.iter().filter(|c| c.known && c.numbering.is_none()) {
+        *repeats.entry(normalize::letters(&c.title)).or_default() += 1;
+    }
+    cands.retain(|c| {
+        !(c.known
+            && c.numbering.is_none()
+            && is_back_matter(&c.title)
+            && repeats
+                .get(&normalize::letters(&c.title))
+                .is_some_and(|n| *n >= 3))
+    });
     let mut used: Vec<usize> = cands.iter().filter_map(|c| c.depth).collect();
     used.sort_unstable();
     used.dedup();
@@ -2880,5 +2906,55 @@ pub(crate) mod tests {
         let out = generate(&doc(pages));
         let order: Vec<&str> = out.iter().map(|h| h.title.as_str()).collect();
         assert_eq!(order, vec!["1 Introduction", "2 Methods", "3 Results"]);
+    }
+
+    #[test]
+    fn text_inside_figures_is_not_a_heading() {
+        // A plot's title in the figure's own font, as large and bold as a
+        // section heading, and its axis labels.
+        let mut pages = article();
+        pages[1] = PageBuilder::new(1)
+            .body(6)
+            .heading("Accuracy against noise", 12.0, true)
+            .with_font(2)
+            .line("Noise level", 8.0, false, 200.0, 260.0, 4.0)
+            .line("Accuracy", 8.0, false, 80.0, 120.0, 4.0)
+            .body(4)
+            .heading("2 Methods", 12.0, true)
+            .body(5)
+            .heading("2.1 Data", 10.0, true)
+            .body(10)
+            .heading("2.2 Model", 10.0, true)
+            .body(8)
+            .build();
+        let out = generate(&doc(pages));
+        assert!(out.iter().all(|h| !h.title.contains("Accuracy")), "{out:?}");
+        assert!(out.iter().all(|h| !h.title.contains("Noise")));
+        assert!(out.iter().any(|h| h.title == "2.1 Data"));
+    }
+
+    #[test]
+    fn a_single_page_poster_gets_nothing() {
+        let page = PageBuilder::new(0)
+            .heading("Introduction", 40.0, true)
+            .line("A point", 28.0, false, 72.0, 300.0, 20.0)
+            .heading("Methods", 40.0, true)
+            .line("Another point", 28.0, false, 72.0, 300.0, 20.0)
+            .heading("Results", 40.0, true)
+            .build();
+        assert!(generate(&doc(vec![page])).is_empty());
+    }
+
+    #[test]
+    fn pages_never_go_backwards() {
+        let h = |page: u32| Heading {
+            level: 0,
+            title: format!("p{page}"),
+            page,
+            y: None,
+        };
+        let kept = in_page_order(vec![h(31), h(18), h(24), h(31), h(36)]);
+        let pages: Vec<u32> = kept.iter().map(|h| h.page).collect();
+        assert_eq!(pages, vec![18, 24, 31, 36]);
     }
 }
