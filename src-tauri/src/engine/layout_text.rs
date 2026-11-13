@@ -118,15 +118,7 @@ pub fn extract_lines(
             });
             continue;
         }
-        let mut matrix = FS_MATRIX {
-            a: 1.0,
-            b: 0.0,
-            c: 0.0,
-            d: 1.0,
-            e: 0.0,
-            f: 0.0,
-        };
-        let has_matrix = b.FPDFText_GetMatrix(tp, index, &mut matrix) != 0;
+        let matrix = char_matrix(b, tp, index);
         let nominal = b.FPDFText_GetFontSize(tp, index) as f32;
         let (mut ox, mut oy) = (0f64, 0f64);
         let has_origin = b.FPDFText_GetCharOrigin(tp, index, &mut ox, &mut oy) != 0;
@@ -160,20 +152,10 @@ pub fn extract_lines(
             [left, page_h - (y + h), right, page_h - y]
         });
 
-        // Direction on the displayed page: the glyph's x axis, mapped.
-        let upright = if has_matrix && has_origin {
-            let (x0, y0) = mapper.map(ox, oy);
-            let (x1, y1) = mapper.map(ox + matrix.a as f64, oy + matrix.b as f64);
-            let (dx, dy) = (x1 - x0, y1 - y0);
-            dx > 0.0 && dy.abs() <= 0.2 * dx
-        } else {
-            true
-        };
-        let scale = if has_matrix {
+        let upright = matrix.is_none_or(|matrix| runs_left_to_right(&mapper, &matrix));
+        let scale = matrix.map_or(1.0, |matrix| {
             (matrix.c * matrix.c + matrix.d * matrix.d).sqrt()
-        } else {
-            1.0
-        };
+        });
         let mut size = nominal * scale;
         if size.is_nan() || size <= 0.5 {
             // No usable size: the glyph's ink is about 0.7 em tall.
@@ -204,6 +186,112 @@ pub fn extract_lines(
     }
     b.FPDFText_ClosePage(tp);
     assemble_lines(&glyphs)
+}
+
+/// A character's text matrix (text matrix times CTM), if PDFium has one.
+fn char_matrix(b: &dyn PdfiumLibraryBindings, tp: FPDF_TEXTPAGE, index: i32) -> Option<FS_MATRIX> {
+    let mut matrix = FS_MATRIX {
+        a: 1.0,
+        b: 0.0,
+        c: 0.0,
+        d: 1.0,
+        e: 0.0,
+        f: 0.0,
+    };
+    (b.FPDFText_GetMatrix(tp, index, &mut matrix) != 0).then_some(matrix)
+}
+
+/// Whether a glyph set with `matrix` runs left to right on the displayed
+/// page: its x axis, mapped, points right and no more than about 11° off
+/// level. The arXiv stamp up the margin, and rotated figure and table
+/// labels, do not.
+pub(crate) fn runs_left_to_right(mapper: &DispMapper, matrix: &FS_MATRIX) -> bool {
+    let (dx, dy) = mapper.map_vector(matrix.a as f64, matrix.b as f64);
+    dx > 0.0 && dy.abs() <= 0.2 * dx
+}
+
+/// A page's characters as the word-spacing repair reads them
+/// (`library::text_from_page`, `library::word_breaks`): one entry per
+/// PDFium character index in each field.
+pub struct SpacingGlyphs {
+    /// One char per PDFium index, as `text::extract_page` keeps it.
+    pub raw: String,
+    /// Display-space `[x, y_bottom, w, h]`, y-up, the same form as
+    /// `ExtractedPage::boxes` — but from each glyph's *loose* box, spanning
+    /// its advance rather than its ink, so letters within a word sit flush
+    /// and narrow-inked glyphs open no false gaps ("Maj ority", "20 16").
+    /// The loose box is stood on the glyph's baseline: its bottom is the
+    /// font's descent, which a math font states wildly (CMSY's), and a
+    /// superscript asterisk measured from there landed on a line of its
+    /// own. A zero box where PDFium reports none.
+    pub boxes: Vec<[f32; 4]>,
+    /// Whether each glyph runs left to right (`runs_left_to_right`).
+    pub upright: Vec<bool>,
+}
+
+/// Read a page's characters for the word-spacing repair: four FFI calls a
+/// character — its code point, loose box, origin and matrix — and none of
+/// the font queries `extract_page` and `extract_lines` make.
+pub fn extract_spacing_glyphs(
+    b: &dyn PdfiumLibraryBindings,
+    page: FPDF_PAGE,
+    page_w: f32,
+    page_h: f32,
+) -> SpacingGlyphs {
+    let tp = b.FPDFText_LoadPage(page);
+    if tp.is_null() {
+        return SpacingGlyphs {
+            raw: String::new(),
+            boxes: Vec::new(),
+            upright: Vec::new(),
+        };
+    }
+    let mapper = DispMapper::new(b, page, page_w, page_h);
+    let count = b.FPDFText_CountChars(tp).max(0);
+    let mut raw = String::with_capacity(count as usize);
+    let mut boxes = vec![[0.0f32; 4]; count as usize];
+    let mut upright = vec![true; count as usize];
+    for index in 0..count {
+        let ch = char::from_u32(b.FPDFText_GetUnicode(tp, index)).unwrap_or(' ');
+        raw.push(ch);
+        if ch == '\n' || ch == '\r' {
+            continue;
+        }
+        let slot = index as usize;
+        let mut loose = FS_RECTF {
+            left: 0.0,
+            top: 0.0,
+            right: 0.0,
+            bottom: 0.0,
+        };
+        if b.FPDFText_GetLooseCharBox(tp, index, &mut loose) != 0
+            && loose.right > loose.left
+            && loose.top > loose.bottom
+        {
+            let (x, y, w, h) = mapper.map_box(
+                loose.left as f64,
+                loose.right as f64,
+                loose.bottom as f64,
+                loose.top as f64,
+            );
+            let (mut ox, mut oy) = (0f64, 0f64);
+            let baseline = if b.FPDFText_GetCharOrigin(tp, index, &mut ox, &mut oy) != 0 {
+                mapper.map(ox, oy).1
+            } else {
+                y
+            };
+            boxes[slot] = [x, baseline, w, h];
+        }
+        if let Some(matrix) = char_matrix(b, tp, index) {
+            upright[slot] = runs_left_to_right(&mapper, &matrix);
+        }
+    }
+    b.FPDFText_ClosePage(tp);
+    SpacingGlyphs {
+        raw,
+        boxes,
+        upright,
+    }
 }
 
 /// The font's name and descriptor flags, or an empty name.
@@ -535,6 +623,30 @@ mod tests {
         let lines = assemble_lines(&glyphs);
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].text, "Title of the Paper");
+    }
+
+    fn matrix(a: f32, b: f32) -> FS_MATRIX {
+        FS_MATRIX {
+            a,
+            b,
+            c: -b,
+            d: a,
+            e: 0.0,
+            f: 0.0,
+        }
+    }
+
+    #[test]
+    fn direction_tells_running_text_from_a_rotated_stamp() {
+        let mapper = DispMapper::identity(792.0);
+        assert!(runs_left_to_right(&mapper, &matrix(10.0, 0.0)));
+        // A slight slant is still running text.
+        assert!(runs_left_to_right(&mapper, &matrix(10.0, 1.0)));
+        // The arXiv stamp runs up the margin; a label may run down it.
+        assert!(!runs_left_to_right(&mapper, &matrix(0.0, 20.0)));
+        assert!(!runs_left_to_right(&mapper, &matrix(0.0, -20.0)));
+        // Upside down is not left to right either.
+        assert!(!runs_left_to_right(&mapper, &matrix(-10.0, 0.0)));
     }
 
     #[test]

@@ -16,6 +16,7 @@ pub mod forms;
 pub mod invert;
 pub mod layout_text;
 pub mod links;
+pub mod ocr;
 pub mod pdfium_init;
 pub mod preview;
 pub mod queue;
@@ -699,7 +700,8 @@ impl EngineHandle {
         Ok(())
     }
 
-    /// Search every indexed document in the library.
+    /// Search every indexed document in the library, or, with `project_id`,
+    /// only the files of that project's papers (`search_scope`).
     ///
     /// Off the engine thread entirely — it reads sidecars, never PDFium — so a
     /// query cannot stall rendering however large the library is.
@@ -707,9 +709,11 @@ impl EngineHandle {
         &self,
         query: &str,
         case_sensitive: bool,
+        project_id: Option<&str>,
         per_document_limit: usize,
         document_limit: usize,
     ) -> LibrarySearchDto {
+        let scope = search_scope(&self.0.papers.lock(), project_id);
         let (app_data_dir, documents) = {
             let library = self.0.library.lock();
             (
@@ -727,7 +731,11 @@ impl EngineHandle {
                     .collect::<Vec<_>>(),
             )
         };
+        // The index describes the whole library; a scope narrows the
+        // documents it is asked about, never the set it is built for, so
+        // switching scope does not invalidate it.
         let index = self.gram_index_for(&app_data_dir, &documents);
+        let documents = in_scope(documents, scope.as_ref());
         let (documents, truncated) = crate::search::librarytext::search_library(
             &app_data_dir,
             &documents,
@@ -870,9 +878,85 @@ impl EngineHandle {
     }
 }
 
+/// The files a library search may read: `None` for the whole library, or
+/// the files on disk of the project's papers. An unknown project — deleted
+/// while its scope was still selected — scopes to nothing rather than
+/// widening to everything.
+fn search_scope(
+    papers: &PaperStore,
+    project_id: Option<&str>,
+) -> Option<std::collections::HashSet<PathBuf>> {
+    project_id.map(|id| papers.project_files(id).unwrap_or_default())
+}
+
+/// `documents` narrowed to `scope`, order kept.
+fn in_scope(
+    documents: Vec<crate::search::librarytext::LibraryDocument>,
+    scope: Option<&std::collections::HashSet<PathBuf>>,
+) -> Vec<crate::search::librarytext::LibraryDocument> {
+    match scope {
+        None => documents,
+        Some(scope) => documents
+            .into_iter()
+            .filter(|document| scope.contains(&document.path))
+            .collect(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn document(path: &str) -> crate::search::librarytext::LibraryDocument {
+        crate::search::librarytext::LibraryDocument {
+            path: PathBuf::from(path),
+            title: None,
+            mtime_ms: 1,
+            size: 1,
+        }
+    }
+
+    fn paths(documents: &[crate::search::librarytext::LibraryDocument]) -> Vec<&str> {
+        documents
+            .iter()
+            .map(|document| document.path.to_str().unwrap())
+            .collect()
+    }
+
+    /// Membership itself is `PaperStore::project_files`'s, tested there;
+    /// here, that a scope narrows the documents and an unknown project
+    /// narrows them to nothing.
+    #[test]
+    fn a_project_scope_searches_its_members_files_only() {
+        let library = || {
+            vec![
+                document("/lib/outsider.pdf"),
+                document("/lib/member.pdf"),
+                document("/lib/unfiled.pdf"),
+            ]
+        };
+        let dir = tempfile::tempdir().expect("dir");
+        let mut papers = PaperStore::load(dir.path().to_path_buf());
+
+        let everything = search_scope(&papers, None);
+        assert!(everything.is_none());
+        assert_eq!(paths(&in_scope(library(), everything.as_ref())).len(), 3);
+
+        let project = papers.create_project("Thesis").unwrap().id;
+        let empty = search_scope(&papers, Some(&project));
+        assert!(in_scope(library(), empty.as_ref()).is_empty(), "no members");
+
+        let members: std::collections::HashSet<PathBuf> =
+            [PathBuf::from("/lib/member.pdf")].into_iter().collect();
+        assert_eq!(
+            paths(&in_scope(library(), Some(&members))),
+            vec!["/lib/member.pdf"]
+        );
+
+        let unknown = search_scope(&papers, Some("no-such-project"));
+        assert_eq!(unknown, Some(Default::default()));
+        assert!(in_scope(library(), unknown.as_ref()).is_empty());
+    }
 
     /// A gauge whose callback appends to a shared log.
     fn gauge_with_log() -> (LookupGauge, Arc<Mutex<Vec<LookupProgress>>>) {

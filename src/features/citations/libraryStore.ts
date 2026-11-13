@@ -22,6 +22,9 @@ const [state, setState] = createStore<{
   library: LibraryStatus;
   libraryError: string | null;
   query: string;
+  /** The project a search is limited to; `null` searches everything. Kept
+   * for the session, like the query. */
+  scope: string | null;
   results: LibraryHit[];
   searching: boolean;
   truncated: boolean;
@@ -29,6 +32,7 @@ const [state, setState] = createStore<{
   library: defaultLibraryStatus,
   libraryError: null,
   query: '',
+  scope: null,
   results: [],
   searching: false,
   truncated: false,
@@ -128,10 +132,21 @@ export const libraryStore = {
     searchTimer = setTimeout(() => void libraryStore.runSearch(query), 250);
   },
 
+  /** Limit searching to one project's papers, or `null` for everything. A
+   * search in progress is run again, at once, in the new scope. */
+  setScope(projectId: string | null): void {
+    if (projectId === state.scope) return;
+    setState('scope', projectId);
+    if (!state.query.trim()) return;
+    clearTimeout(searchTimer);
+    setState('searching', true);
+    void libraryStore.runSearch(state.query);
+  },
+
   async runSearch(query: string): Promise<void> {
     const seq = ++searchSeq;
     try {
-      const result = await engine.librarySearch(query, false);
+      const result = await engine.librarySearch(query, false, state.scope);
       // A slower earlier query must not overwrite a faster later one.
       if (seq !== searchSeq) return;
       setState({

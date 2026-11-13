@@ -13,8 +13,9 @@
  *
  * Results carry a file and a page, never a docId: nothing is open yet, and
  * choosing what to open is the entire point. */
-import { createMemo, For, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, onMount, Show } from 'solid-js';
 import { libraryStore } from '../../features/citations/libraryStore';
+import { projectsStore } from '../projects/projectsStore';
 import { openInNewTabOrFocus } from '../document/tabsController';
 import { tabsStore } from '../../stores/tabsStore';
 import { IconPlus, IconSearch } from '../../components/icons';
@@ -29,6 +30,21 @@ export default function LibraryPanel() {
   const library = () => libraryStore.state.library;
   const hasFolders = () => library().roots.length > 0;
   const hasQuery = () => libraryStore.state.query.trim().length > 0;
+  const projects = () => projectsStore.state.projects;
+
+  const [projectsLoaded, setProjectsLoaded] = createSignal(false);
+
+  // The picker lists projects, which Home has no other reason to load.
+  onMount(() => {
+    void projectsStore.loadProjects().then(() => setProjectsLoaded(true));
+  });
+  // A project deleted while it was the scope: back to everything, rather
+  // than a picker naming nothing and a search that finds nothing.
+  createEffect(() => {
+    const scope = libraryStore.state.scope;
+    if (scope === null || !projectsLoaded()) return;
+    if (!projects().some((p) => p.id === scope)) libraryStore.setScope(null);
+  });
 
   const scanPercent = createMemo(() => {
     const { indexed, total } = library();
@@ -76,7 +92,13 @@ export default function LibraryPanel() {
             <IconSearch />
             <input
               type="text"
-              placeholder={hasFolders() ? 'Search every paper…' : 'Add a folder to search it'}
+              placeholder={
+                !hasFolders()
+                  ? 'Add a folder to search it'
+                  : libraryStore.state.scope === null
+                    ? 'Search every paper…'
+                    : 'Search this project…'
+              }
               disabled={!hasFolders()}
               value={libraryStore.state.query}
               onInput={(e) => libraryStore.setQuery(e.currentTarget.value)}
@@ -97,6 +119,21 @@ export default function LibraryPanel() {
               >
                 ×
               </button>
+            </Show>
+            <Show when={projects().length > 0}>
+              <select
+                class="library-search-scope"
+                aria-label="Search in"
+                title="Search in"
+                disabled={!hasFolders()}
+                value={libraryStore.state.scope ?? ''}
+                onChange={(e) => libraryStore.setScope(e.currentTarget.value || null)}
+              >
+                <option value="">All items</option>
+                <For each={projects()}>
+                  {(project) => <option value={project.id}>{project.name}</option>}
+                </For>
+              </select>
             </Show>
           </div>
           <Show when={status()}>

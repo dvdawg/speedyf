@@ -44,6 +44,14 @@ quick-xml = "0.37"
 tokio = { version = "1", features = ["time"] }
 futures-util = "0.3"
 
+# Native OCR for scanned pages (engine/ocr.rs): Apple's Vision framework.
+# Only the features the module uses — the crate's defaults pull in CoreML,
+# CoreMedia, AVFoundation and friends.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSDictionary", "NSString", "NSError"] }
+objc2-vision = { version = "0.3", default-features = false, features = ["std", "objc2-core-foundation", "VNObservation", "VNRecognizeTextRequest", "VNRequest", "VNRequestHandler", "VNTypes"] }
+
 # Windows and Linux start a fresh process for every "open with"; without this
 # a second PDF opens a second copy of the app instead of reaching the one
 # already running. macOS needs none of it — the OS keeps a bundle single and

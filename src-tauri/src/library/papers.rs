@@ -2228,6 +2228,8 @@ mod tests {
             first_page_authors: Vec::new(),
             first_page_title_confident: false,
             first_page_authors_confident: false,
+            ocr_wanted: false,
+            ocr_deferred: false,
             doi_source: None,
             arxiv_source: None,
         }

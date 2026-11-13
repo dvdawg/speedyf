@@ -73,6 +73,14 @@ struct NormalizedText {
 /// Normalize one raw character stream while retaining a compact mapping back
 /// to PDFium's character indices.
 fn normalize(raw: &str) -> NormalizedText {
+    normalize_spaced(raw, &[])
+}
+
+/// `normalize`, with whitespace inserted before each raw index in `breaks`
+/// (ascending): word gaps a file encodes only as position
+/// (`library::word_breaks`). An inserted space maps back to the index it
+/// precedes, so a match's raw offsets stay PDFium character indices.
+fn normalize_spaced(raw: &str, breaks: &[u32]) -> NormalizedText {
     let mut text = String::with_capacity(raw.len());
     let mut map = OffsetMap::default();
     let mut norm_index = 0u32;
@@ -88,8 +96,19 @@ fn normalize(raw: &str) -> NormalizedText {
         *norm_index += 1;
     };
 
+    let mut breaks = breaks.iter().copied().peekable();
     for (raw_index, value) in raw.chars().enumerate() {
         let raw_index = raw_index as u32;
+        let mut gap = false;
+        while let Some(at) = breaks.next_if(|at| *at <= raw_index) {
+            gap |= at == raw_index;
+        }
+        if gap {
+            if !in_ws && !text.is_empty() {
+                push(&mut text, &mut map, &mut norm_index, raw_index, ' ');
+            }
+            in_ws = true;
+        }
         if value.is_whitespace() {
             if !in_ws && !text.is_empty() {
                 push(&mut text, &mut map, &mut norm_index, raw_index, ' ');
@@ -187,15 +206,21 @@ impl PageEntry {
         }
     }
 
-    pub(crate) fn new_indexed(raw: &str, char_count: u32) -> Self {
-        PageEntry::new(raw, char_count)
+    /// A page whose word gaps are partly geometry: whitespace is inserted
+    /// before each raw index in `breaks` (`normalize_spaced`).
+    pub(crate) fn new_spaced(raw: &str, char_count: u32, breaks: &[u32]) -> Self {
+        PageEntry::build(normalize_spaced(raw, breaks), char_count)
     }
 
     fn new(raw: &str, char_count: u32) -> Self {
+        PageEntry::build(normalize(raw), char_count)
+    }
+
+    fn build(normalized: NormalizedText, char_count: u32) -> Self {
         let NormalizedText {
             text: normalized,
             map,
-        } = normalize(raw);
+        } = normalized;
         let folded = fold_text(&normalized);
         // Count actual retained bytes, not a decoded/worst-case multiplier.
         let cost = 64 + normalized.len() as u64 + folded.len() as u64 + map.cost();
@@ -715,6 +740,21 @@ mod tests {
         assert_eq!(normalized.map.raw_index(0), 0);
         assert_eq!(normalized.map.raw_index(1), 0);
         assert_eq!(normalized.map.raw_index(2), 1);
+    }
+
+    #[test]
+    fn geometric_word_gaps_become_spaces_that_map_to_raw_indices() {
+        let raw = "ATheoryof Saddle";
+        // Breaks before "T", "o", and the "S" a real space already precedes.
+        let entry = PageEntry::new_spaced(raw, raw.chars().count() as u32, &[1, 7, 10]);
+        assert_eq!(entry.indexed_parts().0, "A Theory of Saddle");
+        let found =
+            find_prepared_matches(&entry, &prepare_query("theory of saddle", false), false, 10);
+        assert_eq!(found.len(), 1);
+        // Raw indices 1..16: "Theoryof Saddle" in the stream as PDFium has it.
+        assert_eq!((found[0].0, found[0].1), (1, 15));
+        let found = find_prepared_matches(&entry, &prepare_query("A", true), true, 10);
+        assert_eq!((found[0].0, found[0].1), (0, 1));
     }
 
     #[test]

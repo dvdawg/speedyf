@@ -249,7 +249,7 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
     if (!item) return;
     if (item.kind === 'header') store.toggleGroup(item.groupId);
     else if (item.kind === 'row') void openPaper(item.row.id);
-    else searchFullText(store.state.query);
+    else searchFullText(store.state.query, project()?.id ?? null);
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
@@ -630,10 +630,12 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
               class="paper-fulltext"
               tabindex={current() === rowItems().length ? 0 : -1}
               data-index={rowItems().length}
-              onClick={() => searchFullText(store.state.query)}
+              onClick={() => searchFullText(store.state.query, project()?.id ?? null)}
             >
               <IconSearch />
-              <span>Search the full text of every item for “{store.state.query}”</span>
+              <span>
+                Search the full text of {project()?.name ?? 'every item'} for “{store.state.query}”
+              </span>
             </button>
           </Show>
         </div>

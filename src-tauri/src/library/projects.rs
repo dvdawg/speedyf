@@ -16,10 +16,10 @@ use super::store::{now_rfc3339, PaperStore};
 use super::types::{PaperDto, ProjectDto};
 use crate::errors::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -252,6 +252,19 @@ impl PaperStore {
             .filter_map(|id| by_id.get(id.as_str()).copied())
             .collect();
         Ok(self.in_list_order(members))
+    }
+
+    /// The files on disk of every paper in a project: what a full-text
+    /// search scoped to it reads. Missing files are left out; an unknown
+    /// project is an error.
+    pub fn project_files(&self, project_id: &str) -> AppResult<HashSet<PathBuf>> {
+        Ok(self
+            .project_members(project_id)?
+            .into_iter()
+            .flat_map(|paper| paper.files.iter())
+            .filter(|file| !file.missing)
+            .map(|file| PathBuf::from(&file.path))
+            .collect())
     }
 
     /// The project's `.bib`, header included, and the ids of the papers in
@@ -571,6 +584,43 @@ mod tests {
         assert_eq!(store.projects().len(), 1);
         assert_eq!(store.projects()[0].order, 0, "renumbered");
         assert_eq!(store.paper_dto(&a).unwrap().project_ids, vec![other]);
+    }
+
+    #[test]
+    fn project_files_are_the_members_files_on_disk() {
+        let mut store = store();
+        let a = add_paper(&mut store);
+        let b = add_paper(&mut store);
+        let outside = add_paper(&mut store);
+        let file = |path: &str, missing: bool| crate::library::types::PaperFile {
+            path: path.to_owned(),
+            name: path.to_owned(),
+            size: 1,
+            mtime_ms: 1,
+            fingerprint: None,
+            missing,
+        };
+        let index =
+            |store: &PaperStore, id: &str| store.papers.iter().position(|p| p.id == id).unwrap();
+        let (ia, ib, io) = (
+            index(&store, &a),
+            index(&store, &b),
+            index(&store, &outside),
+        );
+        store.papers[ia].files = vec![file("/lib/a.pdf", false), file("/lib/a-v2.pdf", false)];
+        store.papers[ib].files = vec![file("/lib/b.pdf", true)];
+        store.papers[io].files = vec![file("/lib/o.pdf", false)];
+        let project = store.create_project("P").unwrap().id;
+        store.set_membership(&a, &project, true).unwrap();
+        store.set_membership(&b, &project, true).unwrap();
+
+        let files = store.project_files(&project).unwrap();
+        let expected: HashSet<PathBuf> = ["/lib/a.pdf", "/lib/a-v2.pdf"]
+            .into_iter()
+            .map(PathBuf::from)
+            .collect();
+        assert_eq!(files, expected, "members only, missing files left out");
+        assert!(store.project_files("nope").is_err());
     }
 
     #[test]

@@ -23,6 +23,7 @@ pub mod identifiers;
 pub mod lookup;
 pub mod merge;
 pub mod missing;
+pub mod ocrtext;
 pub mod paperness;
 pub mod papers;
 pub mod projects;
@@ -119,6 +120,17 @@ pub struct LibraryEntry {
     pub first_page_title_confident: bool,
     #[serde(default)]
     pub first_page_authors_confident: bool,
+    /// Whether the scan found the file worth OCR (`ocrtext::wants_ocr`):
+    /// one of its first pages has an unusable text layer, or the first is
+    /// a scanned image. The text pass OCRs such a file's pages.
+    #[serde(default)]
+    pub ocr_wanted: bool,
+    /// The scan wanted OCR it was not allowed to run — a file scanned on
+    /// demand (the inbox), outside the idle jobs — so its first-page
+    /// reading is the text layer's. The idle text pass scans it again
+    /// with OCR before extracting its text.
+    #[serde(default)]
+    pub ocr_deferred: bool,
 }
 
 /// The shape written to disk today. Both persisted files carry a version now:
@@ -152,10 +164,27 @@ pub struct LibraryEntry {
 /// v10: the scan reads the first page's layout for its title and authors
 /// (`firstpage`). Rescanned once, since that needs PDFium; same bytes keep
 /// their text, cites and refs sidecars, so only the metadata pass repeats.
-const FORMAT_VERSION: u32 = 10;
+/// v11: the word-spacing repair works. It read PDFium's `[x, y, w, h]`
+/// character boxes as `[l, b, r, t]`, measured no advance and silently
+/// did nothing, so a LaTeX paper's first-page text and full text ran its
+/// words together ("Privateandpolynomialtime…"); it now reads loose boxes
+/// in the right form and leaves rotated glyphs (the arXiv stamp) whole.
+/// Rescanned once (the scan's identifiers, ISBN and classification come
+/// from the repaired first pages) and every document's text extracted
+/// again: text sidecars rewritten (v2), `cites` re-derived from the new
+/// text as each finishes, and its refs sidecar dropped so the reference
+/// provider is handed the new text (`do_library_text_next`).
+/// v12: scanned papers are OCR'd (`ocrtext`, macOS Vision). Rescanned
+/// once — metadata only — so a scan's first page is read by OCR for its
+/// title, authors and identifiers. Text is extracted again only for the
+/// files that rescan finds worth OCR (`ocr_wanted`, see
+/// `keep_text_state`); every other sidecar stands.
+const FORMAT_VERSION: u32 = 12;
 /// Indexes older than this are rescanned on upgrade: what changed after
 /// it is re-derived from the text sidecars instead.
-const RESCAN_BELOW_VERSION: u32 = 10;
+const RESCAN_BELOW_VERSION: u32 = 12;
+/// Indexes older than this have every document's text extracted again.
+const TEXT_SINCE_VERSION: u32 = 11;
 /// Indexes older than this have their `cites` re-derived by the backfill.
 const CITES_SINCE_VERSION: u32 = 9;
 
@@ -406,8 +435,7 @@ impl LibraryState {
                 Some(existing)
                     if existing.mtime_ms == entry.mtime_ms && existing.size == entry.size =>
                 {
-                    entry.text_indexed = existing.text_indexed;
-                    entry.cites = existing.cites.clone();
+                    keep_text_state(&mut entry, existing);
                 }
                 _ => crate::search::librarytext::remove_sidecar(&self.app_data_dir, &entry.path),
             }
@@ -432,8 +460,7 @@ impl LibraryState {
             Some(existing)
                 if existing.mtime_ms == entry.mtime_ms && existing.size == entry.size =>
             {
-                entry.text_indexed = existing.text_indexed;
-                entry.cites = existing.cites.clone();
+                keep_text_state(&mut entry, existing);
             }
             _ => crate::search::librarytext::remove_sidecar(&self.app_data_dir, &entry.path),
         }
@@ -567,6 +594,15 @@ impl CitationResolver for LocalLibraryResolver {
     }
 }
 
+/// A rescan of the same bytes keeps the text pass's work — unless this
+/// scan is the first to find the file worth OCR, whose text is then
+/// extracted again with it (the v12 upgrade's one text pass, limited to
+/// scanned papers).
+fn keep_text_state(entry: &mut LibraryEntry, existing: &LibraryEntry) {
+    entry.text_indexed = existing.text_indexed && (existing.ocr_wanted || !entry.ocr_wanted);
+    entry.cites = existing.cites.clone();
+}
+
 /// Read a persisted index, accepting both the versioned envelope and the bare
 /// array that shipped before it.
 fn read_index(bytes: &[u8]) -> Vec<LibraryEntry> {
@@ -589,6 +625,14 @@ fn read_index(bytes: &[u8]) -> Vec<LibraryEntry> {
                 // at idle priority; sidecars carry over.
                 for entry in &mut entries {
                     entry.fingerprint = None;
+                }
+            }
+            if file.version < TEXT_SINCE_VERSION {
+                // The text pass extracts differently now: every document is
+                // read again at idle priority, its sidecar rewritten and its
+                // cites re-derived. The old cites stand until then.
+                for entry in &mut entries {
+                    entry.text_indexed = false;
                 }
             }
             if file.version < CITES_SINCE_VERSION {
@@ -631,59 +675,145 @@ const WORD_GAP_RATIO: f32 = 0.3;
 /// belongs to the next line.
 const LINE_BREAK_RATIO: f32 = 0.6;
 
+/// What PDFium reports in place of a hyphen it removed at a line end,
+/// having joined the word across the break.
+const SOFT_HYPHEN_MARK: char = '\u{2}';
+
+/// What the geometry puts before a character: a word space the file
+/// encoded as position, or the start of a new line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Separator {
+    Space,
+    Line,
+}
+
+/// `[x, y_bottom, w, h]` (y-up, as `text::extract_page` and
+/// `layout_text::extract_spacing_glyphs` report a character) as
+/// `[left, bottom, right, top]`, the form the repair measures in.
+///
+/// Reading the first form as the second was the bug that silently turned
+/// the repair off: `w - x` is negative for nearly every glyph, so no
+/// advance was ever measured and every caller got PDFium's own lines back,
+/// words run together.
+pub fn edges_from_rect([x, y, w, h]: [f32; 4]) -> [f32; 4] {
+    [x, y, x + w, y + h]
+}
+
+/// The separator before each character, or `None` when the page has too
+/// little geometry to measure — the caller then keeps the file's own
+/// lines. `boxes` are `[l, b, r, t]`; `upright` says which characters run
+/// left to right (missing entries do).
+///
+/// Characters that do not run left to right — the arXiv stamp up the
+/// margin, a rotated axis label — take no part in the geometry. Each run
+/// of them is its own line, its text as the file spells it: measured, a
+/// stamp's characters stack vertically and every one would read as a new
+/// line, one fragment per character. Nor do they count toward the median
+/// advance or stand as the "previous" glyph a gap is measured from.
+fn separators(
+    chars: &[char],
+    boxes: &[[f32; 4]],
+    upright: &[bool],
+) -> Option<Vec<Option<Separator>>> {
+    let turned = |index: usize| upright.get(index) == Some(&false);
+    // Geometry may be absent or shorter than the text. Characters past it are
+    // still emitted — losing text to recover spacing would be a bad trade.
+    let measured = chars.len().min(boxes.len());
+    let level: Vec<[f32; 4]> = (0..measured)
+        .filter(|&index| !turned(index))
+        .map(|index| boxes[index])
+        .collect();
+    let advance = median_advance(&level)?;
+    let gap_threshold = WORD_GAP_RATIO * advance;
+
+    let mut out = vec![None; chars.len()];
+    let mut previous: Option<[f32; 4]> = None;
+    let mut in_turned = false;
+    // Whether the line so far ends in a character that is not whitespace:
+    // only then can a gap add a space.
+    let mut open_word = false;
+    // Whether the word so far ends in PDFium's mark for a line-end hyphen it
+    // removed (U+0002): the word goes on at the start of the next line, and
+    // PDFium has already joined it ("mi\u{2}crostate"). Breaking there would
+    // split it, in the search text too.
+    let mut hyphenated = false;
+
+    for (index, &ch) in chars.iter().enumerate() {
+        let bx = boxes.get(index).copied().unwrap_or([0.0; 4]);
+        let has_box = bx[2] > bx[0] && bx[3] > bx[1];
+        let printing = !ch.is_whitespace() && !ch.is_control();
+
+        if printing && turned(index) != in_turned {
+            in_turned = !in_turned;
+            out[index] = Some(Separator::Line);
+            previous = None;
+            open_word = false;
+        }
+        if !in_turned && !turned(index) {
+            if let (Some(prev), true) = (previous, has_box) {
+                let height = (prev[3] - prev[1]).max(bx[3] - bx[1]).max(1.0);
+                if (prev[1] - bx[1]).abs() > LINE_BREAK_RATIO * height {
+                    out[index] = Some(Separator::Line);
+                    open_word = false;
+                } else if !ch.is_whitespace() && open_word && bx[0] - prev[2] > gap_threshold {
+                    out[index] = Some(Separator::Space);
+                }
+            }
+            if has_box {
+                previous = Some(bx);
+            }
+        }
+
+        if hyphenated && printing {
+            out[index] = None;
+        }
+        if ch == SOFT_HYPHEN_MARK {
+            hyphenated = true;
+        } else if !ch.is_control() {
+            hyphenated = false;
+        }
+        if ch.is_whitespace() {
+            open_word = false;
+        } else if !ch.is_control() {
+            open_word = true;
+        }
+    }
+    Some(out)
+}
+
 /// Rebuild page lines from the character stream and its geometry.
 ///
-/// Works from `ExtractedPage`'s `raw` and `boxes`, which carry exactly one
-/// entry per PDFium character index and so line up by construction. An earlier
-/// version indexed `boxes` by `run.start + offset` instead, which silently read
-/// the wrong glyph's geometry for every character after the run builder skipped
+/// Works from one entry per PDFium character index in `raw`, `boxes` and
+/// `upright`, which therefore line up by construction. An earlier version
+/// indexed `boxes` by `run.start + offset` instead, which silently read the
+/// wrong glyph's geometry for every character after the run builder skipped
 /// one — and produced no spaces at all on the files that needed them.
 ///
 /// Many PDFs, LaTeX output above all, encode word gaps as position rather than
 /// as space characters; those files yield titles like
 /// "ATheoryofSaddleEscapeinDeepNonlinear" unless the gaps are read back here.
-pub fn lines_from_chars(raw: &str, boxes: &[[f32; 4]]) -> Vec<String> {
+/// `boxes` are `[l, b, r, t]` (`edges_from_rect`).
+pub fn lines_from_glyphs(raw: &str, boxes: &[[f32; 4]], upright: &[bool]) -> Vec<String> {
     let chars: Vec<char> = raw.chars().collect();
     if chars.is_empty() {
         return Vec::new();
     }
-
-    // Geometry may be absent or shorter than the text. Characters past it are
-    // still emitted — losing text to recover spacing would be a bad trade.
-    let measured = chars.len().min(boxes.len());
-    let advance = (measured > 0)
-        .then(|| median_advance(&boxes[..measured]))
-        .flatten();
-    let Some(advance) = advance else {
+    let Some(separators) = separators(&chars, boxes, upright) else {
         return raw
             .lines()
             .map(|line| line.trim().to_string())
             .filter(|line| !line.is_empty())
             .collect();
     };
-    let gap_threshold = WORD_GAP_RATIO * advance;
 
     let mut lines: Vec<String> = Vec::new();
     let mut line = String::new();
-    let mut previous: Option<[f32; 4]> = None;
-
-    for (index, &ch) in chars.iter().enumerate() {
-        let bx = boxes.get(index).copied().unwrap_or([0.0; 4]);
-        let has_box = bx[2] > bx[0] && bx[3] > bx[1];
-
-        if let (Some(prev), true) = (previous, has_box) {
-            let height = (prev[3] - prev[1]).max(bx[3] - bx[1]).max(1.0);
-            if (prev[1] - bx[1]).abs() > LINE_BREAK_RATIO * height {
-                push_line(&mut lines, &mut line);
-            } else if !ch.is_whitespace()
-                && !line.is_empty()
-                && !line.ends_with(char::is_whitespace)
-                && bx[0] - prev[2] > gap_threshold
-            {
-                line.push(' ');
-            }
+    for (&ch, separator) in chars.iter().zip(separators) {
+        match separator {
+            Some(Separator::Line) => push_line(&mut lines, &mut line),
+            Some(Separator::Space) => line.push(' '),
+            None => {}
         }
-
         if ch == '\n' || ch == '\r' {
             // A break the file stated outright.
             push_line(&mut lines, &mut line);
@@ -692,12 +822,15 @@ pub fn lines_from_chars(raw: &str, boxes: &[[f32; 4]]) -> Vec<String> {
         {
             line.push(ch);
         }
-        if has_box {
-            previous = Some(bx);
-        }
     }
     push_line(&mut lines, &mut line);
     lines
+}
+
+/// `lines_from_glyphs` for a page whose characters all run left to right.
+#[cfg(test)]
+pub fn lines_from_chars(raw: &str, boxes: &[[f32; 4]]) -> Vec<String> {
+    lines_from_glyphs(raw, boxes, &[])
 }
 
 fn push_line(lines: &mut Vec<String>, line: &mut String) {
@@ -724,8 +857,32 @@ fn median_advance(boxes: &[[f32; 4]]) -> Option<f32> {
 }
 
 /// Page text with word spacing recovered, lines separated by newlines.
-pub fn text_from_page(raw: &str, boxes: &[[f32; 4]]) -> String {
-    lines_from_chars(raw, boxes).join("\n")
+/// `rects` are `[x, y_bottom, w, h]` as PDFium extraction reports them
+/// (`layout_text::SpacingGlyphs`).
+pub fn text_from_page(raw: &str, rects: &[[f32; 4]], upright: &[bool]) -> String {
+    let boxes: Vec<[f32; 4]> = rects.iter().copied().map(edges_from_rect).collect();
+    lines_from_glyphs(raw, &boxes, upright).join("\n")
+}
+
+/// The character indices before which the geometry puts a word space or a
+/// line break, ascending — for the library's search sidecar, which keeps
+/// the raw stream (its offsets are how a hit is highlighted) and inserts
+/// these as whitespace that maps back to the index it precedes
+/// (`librarytext::write_spaced_sidecar`). Empty when the page has no usable
+/// geometry. `rects` as for `text_from_page`.
+pub fn word_breaks(raw: &str, rects: &[[f32; 4]], upright: &[bool]) -> Vec<u32> {
+    let chars: Vec<char> = raw.chars().collect();
+    let boxes: Vec<[f32; 4]> = rects.iter().copied().map(edges_from_rect).collect();
+    separators(&chars, &boxes, upright)
+        .map(|separators| {
+            separators
+                .iter()
+                .enumerate()
+                .filter(|(_, separator)| separator.is_some())
+                .map(|(index, _)| index.min(u32::MAX as usize) as u32)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 pub fn entry_from_filename(candidate: &ScanCandidate) -> Option<LibraryEntry> {
@@ -760,6 +917,8 @@ pub fn entry_from_filename(candidate: &ScanCandidate) -> Option<LibraryEntry> {
         first_page_authors: Vec::new(),
         first_page_title_confident: false,
         first_page_authors_confident: false,
+        ocr_wanted: false,
+        ocr_deferred: false,
     })
 }
 
@@ -891,6 +1050,8 @@ pub fn entry_from_page(
         first_page_authors,
         first_page_title_confident: title_confident,
         first_page_authors_confident,
+        ocr_wanted: false,
+        ocr_deferred: false,
     }
 }
 
@@ -1097,7 +1258,7 @@ pub fn cited_identifiers(
 /// cutting the reference list into entries is the reference provider
 /// extension's job (`references`), and with no provider these are all the
 /// edges there are. `text` is the sidecar's form
-/// (`librarytext::normalized_text`, pages joined by newlines), so the text
+/// (`librarytext::normalized_spaced_text`, pages joined by newlines), so the text
 /// pass and the backfill read the same identifiers out of the same
 /// document.
 pub fn record_citations(entry: &LibraryEntry, text: &str) -> Vec<CitationIdDto> {
@@ -1317,6 +1478,8 @@ mod tests {
             first_page_authors: Vec::new(),
             first_page_title_confident: false,
             first_page_authors_confident: false,
+            ocr_wanted: false,
+            ocr_deferred: false,
             doi_source: None,
             arxiv_source: None,
         }
@@ -1680,9 +1843,13 @@ mod tests {
             old[0].fingerprint, None,
             "and rescanned once, for the first page's layout (v10)"
         );
+        assert!(!old[0].text_indexed, "and its text extracted again (v11)");
 
         let mut state = LibraryState::load(dir.path().to_path_buf());
-        state.entries.insert(path.clone(), old[0].clone());
+        // The backfill, for text already on disk whose cites are unknown.
+        let mut entry = old[0].clone();
+        entry.text_indexed = true;
+        state.entries.insert(path.clone(), entry);
         let entry = state.next_cites_candidate().expect("backfill work");
         let cites = backfill_cites(dir.path(), &entry);
         assert_eq!(
@@ -1814,7 +1981,7 @@ mod tests {
     #[test]
     fn no_characters_is_empty() {
         assert!(lines_from_chars("", &[]).is_empty());
-        assert_eq!(text_from_page("", &[]), "");
+        assert_eq!(text_from_page("", &[], &[]), "");
     }
 
     #[test]
@@ -1825,7 +1992,143 @@ mod tests {
             let x = 72.0 + i as f32 * 5.0;
             boxes.push([x, 680.0, x + 5.0, 690.0]);
         }
-        assert_eq!(text_from_page(text, &boxes), "Title\nAuthor");
+        let rects: Vec<[f32; 4]> = boxes
+            .iter()
+            .map(|b| [b[0], b[1], b[2] - b[0], b[3] - b[1]])
+            .collect();
+        assert_eq!(text_from_page(text, &rects, &[]), "Title\nAuthor");
+    }
+
+    /// Per-character advances, in ems, of Times-Roman, near enough: what
+    /// makes a fixture's median advance look like a real page's.
+    fn em_width(ch: char) -> f32 {
+        match ch {
+            'i' | 'j' | 'l' | 't' | 'f' | 'r' | 'I' => 0.28,
+            'm' | 'w' | 'M' | 'W' => 0.78,
+            c if c.is_ascii_uppercase() => 0.67,
+            c if c.is_ascii_digit() => 0.5,
+            _ => 0.47,
+        }
+    }
+
+    /// A line as PDFium reports it from a LaTeX PDF: no space characters,
+    /// each glyph's loose box in the real `[x, y_bottom, w, h]` form,
+    /// letters flush, `gap_em` of clear space at each word boundary.
+    fn latex_line(
+        words: &[&str],
+        size: f32,
+        left: f32,
+        baseline: f32,
+        gap_em: f32,
+    ) -> (String, Vec<[f32; 4]>) {
+        let mut raw = String::new();
+        let mut rects = Vec::new();
+        let mut x = left;
+        for (i, word) in words.iter().enumerate() {
+            if i > 0 {
+                x += gap_em * size;
+            }
+            for ch in word.chars() {
+                let w = em_width(ch) * size;
+                raw.push(ch);
+                rects.push([x, baseline - 0.22 * size, w, 1.1 * size]);
+                x += w;
+            }
+        }
+        (raw, rects)
+    }
+
+    /// The bug, end to end: real-form boxes from a LaTeX title with no
+    /// spaces in its character stream come back as words.
+    #[test]
+    fn a_latex_line_in_real_box_form_gets_its_word_spaces() {
+        let words = [
+            "Private",
+            "and",
+            "polynomial",
+            "time",
+            "algorithms",
+            "for",
+            "learning",
+            "Gaussians",
+        ];
+        let (raw, rects) = latex_line(&words, 17.0, 72.0, 700.0, 0.25);
+        assert!(!raw.contains(' '));
+        assert_eq!(
+            text_from_page(&raw, &rects, &[]),
+            "Private and polynomial time algorithms for learning Gaussians"
+        );
+        // Tightly justified body text: a word space squeezed to 0.17 em.
+        let (raw, rects) = latex_line(&["Majority", "of", "Three"], 10.0, 72.0, 600.0, 0.17);
+        assert_eq!(text_from_page(&raw, &rects, &[]), "Majority of Three");
+    }
+
+    /// The arXiv stamp runs up the left margin. Its characters stack
+    /// vertically, so measured like running text each one starts a new line.
+    /// Excluded from the geometry, it reads as the file spells it, on its
+    /// own line, and the running text around it is unaffected.
+    #[test]
+    fn a_rotated_stamp_stays_whole_and_apart() {
+        let stamp = "arXiv:2103.01234v1 [cs.LG] 1 Mar 2021";
+        let mut raw = String::new();
+        let mut rects = Vec::new();
+        let mut upright = Vec::new();
+        let (title, title_rects) =
+            latex_line(&["Private", "and", "polynomial"], 17.0, 72.0, 700.0, 0.25);
+        raw.push_str(&title);
+        rects.extend(title_rects);
+        upright.extend(std::iter::repeat_n(true, title.chars().count()));
+        let mut y = 250.0f32;
+        for ch in stamp.chars() {
+            raw.push(ch);
+            // Rotated 90°: the glyph's advance runs up the page.
+            let advance = em_width(ch) * 20.0;
+            rects.push(if ch == ' ' {
+                [0.0; 4]
+            } else {
+                [14.0, y, 22.0, advance]
+            });
+            upright.push(false);
+            y += advance;
+        }
+        let (body, body_rects) = latex_line(&["We", "study", "learning"], 10.0, 72.0, 600.0, 0.3);
+        raw.push_str(&body);
+        rects.extend(body_rects);
+        upright.extend(std::iter::repeat_n(true, body.chars().count()));
+
+        assert_eq!(
+            text_from_page(&raw, &rects, &upright),
+            format!("Private and polynomial\n{stamp}\nWe study learning")
+        );
+        // What the flags prevent: the same page read as all running text
+        // shreds the stamp.
+        let shredded = text_from_page(&raw, &rects, &[]);
+        assert!(shredded.lines().count() > 10, "{shredded}");
+    }
+
+    /// PDFium joins a word hyphenated across lines and marks the join with
+    /// U+0002; the next line's baseline must not split it again.
+    #[test]
+    fn a_word_hyphenated_across_lines_stays_whole() {
+        let (first, mut rects) = latex_line(&["the", "mi"], 10.0, 72.0, 700.0, 0.3);
+        rects.push([0.0; 4]);
+        let (second, second_rects) = latex_line(&["crostate", "x"], 10.0, 72.0, 688.0, 0.3);
+        rects.extend(second_rects);
+        let raw = format!("{first}\u{2}{second}");
+        assert_eq!(text_from_page(&raw, &rects, &[]), "the microstate x");
+        assert!(!word_breaks(&raw, &rects, &[]).contains(&6));
+    }
+
+    #[test]
+    fn word_breaks_name_the_index_each_space_goes_before() {
+        let (raw, rects) = latex_line(&["A", "Theory", "of"], 10.0, 72.0, 700.0, 0.3);
+        assert_eq!(word_breaks(&raw, &rects, &[]), vec![1, 7]);
+        // Two lines: the break before the second is a line break.
+        let (second, second_rects) = latex_line(&["Saddle"], 10.0, 72.0, 680.0, 0.3);
+        let raw = format!("{raw}{second}");
+        let rects: Vec<_> = rects.into_iter().chain(second_rects).collect();
+        assert_eq!(word_breaks(&raw, &rects, &[]), vec![1, 7, 9]);
+        assert!(word_breaks("no geometry", &[], &[]).is_empty());
     }
 
     #[test]
@@ -2004,17 +2307,24 @@ mod tests {
             entries[0].fingerprint.is_none(),
             "no fingerprint means rescan"
         );
-        assert!(entries[0].text_indexed, "the sidecar is still good");
+        assert!(
+            !entries[0].text_indexed,
+            "v11: the text is extracted again, with its word spaces"
+        );
 
         let current = read_index(
             serde_json::json!({
                 "version": FORMAT_VERSION,
-                "entries": [{ "path": "/lib/a.pdf", "mtime_ms": 1, "size": 2, "fingerprint": "2-abc" }]
+                "entries": [{
+                    "path": "/lib/a.pdf", "mtime_ms": 1, "size": 2,
+                    "fingerprint": "2-abc", "text_indexed": true
+                }]
             })
             .to_string()
             .as_bytes(),
         );
         assert_eq!(current[0].fingerprint.as_deref(), Some("2-abc"));
+        assert!(current[0].text_indexed, "a current sidecar is kept");
     }
 
     fn layout_of(
@@ -2078,11 +2388,12 @@ mod tests {
         );
     }
 
-    /// v10 rescans every entry once for the first page's layout. The bytes
-    /// have not changed, so the text, cites and refs sidecars all survive
-    /// and only the metadata pass repeats.
+    /// v10 rescans every entry once for the first page's layout, and v11
+    /// once more for the repaired first-page text. The bytes have not
+    /// changed, so the cites and refs survive the rescan; the text is
+    /// queued for extraction again (v11), which is what replaces them.
     #[test]
-    fn the_v10_rescan_keeps_text_cites_and_refs() {
+    fn the_v11_rescan_keeps_cites_and_refs_and_requeues_the_text() {
         let app_data = tempfile::tempdir().expect("app data");
         let root = tempfile::tempdir().expect("root");
         let pdf = root.path().join("paper.pdf");
@@ -2124,7 +2435,11 @@ mod tests {
         scanned.fingerprint = Some("fp".into());
         assert!(state.finish_candidate(&candidate, Some(scanned)));
         let stored = state.entry_for_path(&pdf).unwrap();
-        assert!(stored.text_indexed, "same bytes keep their text sidecar");
+        assert!(!stored.text_indexed, "v11: the text is extracted again");
+        assert_eq!(
+            state.next_text_candidate().map(|entry| entry.path),
+            Some(pdf.clone())
+        );
         assert_eq!(
             stored.cites,
             Some(vec![CitationIdDto::ArXiv("2401.00003".into())]),
@@ -2133,6 +2448,67 @@ mod tests {
         assert!(crate::search::librarytext::refs_path(app_data.path(), &pdf).exists());
         assert_eq!(stored.first_page_authors.len(), 1);
         assert_eq!(stored.title.as_deref(), Some("A Paper Title"));
+    }
+
+    #[test]
+    fn the_v12_rescan_reextracts_text_only_for_files_worth_ocr() {
+        let app_data = tempfile::tempdir().expect("app data");
+        let root = tempfile::tempdir().expect("root");
+        let mut pdfs = Vec::new();
+        for name in ["born-digital.pdf", "scan.pdf"] {
+            let pdf = root.path().join(name);
+            fs::write(&pdf, name.as_bytes()).unwrap();
+            pdfs.push(pdf.canonicalize().unwrap());
+        }
+        fs::write(
+            app_data.path().join(ROOT_FILE),
+            serde_json::json!({ "version": 2, "roots": [root.path()] }).to_string(),
+        )
+        .unwrap();
+        let entries: Vec<_> = pdfs
+            .iter()
+            .map(|pdf| {
+                let (mtime_ms, size) = file_stamp(pdf).unwrap();
+                serde_json::json!({
+                    "path": pdf, "mtime_ms": mtime_ms, "size": size, "fingerprint": "fp",
+                    "title": null, "doi": null, "arxiv": null, "text_indexed": true, "cites": []
+                })
+            })
+            .collect();
+        fs::write(
+            app_data.path().join(INDEX_FILE),
+            serde_json::json!({ "version": 11, "entries": entries }).to_string(),
+        )
+        .unwrap();
+
+        let mut state = LibraryState::load(app_data.path().to_path_buf());
+        assert!(
+            state.all_entries().iter().all(|entry| entry.text_indexed),
+            "v11 text stands until the rescan says otherwise"
+        );
+        while let Some(candidate) = state.next_candidate() {
+            assert!(!candidate.unchanged, "v11: rescanned once");
+            let mut scanned = entry_from_page(&candidate, "", None);
+            scanned.fingerprint = Some("fp".into());
+            scanned.ocr_wanted = candidate.path.ends_with("scan.pdf");
+            assert!(state.finish_candidate(&candidate, Some(scanned)));
+        }
+        assert!(state.entry_for_path(&pdfs[0]).unwrap().text_indexed);
+        assert!(
+            !state.entry_for_path(&pdfs[1]).unwrap().text_indexed,
+            "the scan's text is extracted again, with OCR"
+        );
+        assert_eq!(
+            state.next_text_candidate().map(|e| e.path),
+            Some(pdfs[1].clone())
+        );
+
+        // Once OCR'd, a later rescan of the same bytes keeps it.
+        state.finish_text(&pdfs[1], Vec::new());
+        let mut again = state.entry_for_path(&pdfs[1]).unwrap();
+        again.text_indexed = false;
+        state.upsert_entry(again);
+        assert!(state.entry_for_path(&pdfs[1]).unwrap().text_indexed);
     }
 
     #[test]
@@ -2220,6 +2596,8 @@ mod tests {
                     first_page_authors: Vec::new(),
                     first_page_title_confident: false,
                     first_page_authors_confident: false,
+                    ocr_wanted: false,
+                    ocr_deferred: false,
                     doi_source: None,
                     arxiv_source: None,
                 },
@@ -2343,8 +2721,8 @@ mod tests {
         entry.fingerprint = content_fingerprint(&pdf);
         assert!(state.finish_candidate(&candidate, Some(entry)));
         assert!(
-            state.entry_for_path(&pdf).unwrap().text_indexed,
-            "same bytes keep their sidecar"
+            !state.entry_for_path(&pdf).unwrap().text_indexed,
+            "same bytes keep their text state, which v11 reset for extraction"
         );
 
         state.add_root(root.path().to_path_buf()).unwrap();

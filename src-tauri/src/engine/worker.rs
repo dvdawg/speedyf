@@ -6,6 +6,7 @@ use super::annots;
 use super::bubbles;
 use super::layout_text;
 use super::links;
+use super::ocr::{self, OcrLine};
 use super::pdfium_init;
 use super::preview::{self, CropInput, PREVIEW_SCALE_MILLI};
 use super::queue::JobMeta;
@@ -15,6 +16,7 @@ use super::text;
 use super::types::*;
 use super::{EngineShared, Work};
 use crate::errors::{AppError, AppResult};
+use crate::library::ocrtext::{self, OcrCache, PageProbe};
 use crate::library::types::{PaperDto, PapernessDto};
 use crate::library::{self, LibraryEntry};
 use crate::search::TextLayoutData;
@@ -814,18 +816,40 @@ fn do_library_text_next(state: &mut WorkerState, shared: &EngineShared) {
         (library.app_data_dir(), library.next_text_candidate())
     };
     if let Some(entry) = candidate {
-        let pages = extract_library_text(state, &entry.path);
+        if entry.ocr_deferred && ocr::available() {
+            // Scanned on demand, when OCR was not allowed: read its first
+            // pages again with OCR now, at idle, before its text.
+            rescan_with_ocr(state, shared, &entry);
+            requeue_library_text(shared);
+            return;
+        }
+        let (pages, ocr_pages) = match extract_library_text(state, &entry, &app_data_dir) {
+            LibraryText::Pending => {
+                // Its OCR budget is spent; the next job resumes it, the
+                // pages read so far cached.
+                requeue_library_text(shared);
+                return;
+            }
+            LibraryText::Unreadable => (None, Vec::new()),
+            LibraryText::Read { pages, ocr_pages } => (Some(pages), ocr_pages),
+        };
         if let Some(pages) = &pages {
-            if let Err(error) = crate::search::librarytext::write_sidecar(
+            if let Err(error) = crate::search::librarytext::write_spaced_sidecar(
                 &app_data_dir,
                 &entry.path,
                 entry.mtime_ms,
                 entry.size,
                 pages,
+                &ocr_pages,
             ) {
                 log::warn!("cannot index {} for search: {error}", entry.path.display());
             }
         }
+        // A reference list read from the old text describes text that is
+        // gone: drop it, so the provider is handed the new text. Its stamp
+        // alone would not say so — a re-extraction of the same bytes (after
+        // an upgrade that changes the text) keeps the stamp.
+        crate::search::librarytext::remove_refs(&app_data_dir, &entry.path);
         // The cited identifiers come from the same text while it is in
         // hand, in the form the sidecar stores it so the backfill would read
         // the same ones. The reference list is the reference provider's to
@@ -836,7 +860,9 @@ fn do_library_text_next(state: &mut WorkerState, shared: &EngineShared) {
             Some(pages) => {
                 let text = pages
                     .iter()
-                    .map(|(_, text)| crate::search::librarytext::normalized_text(text))
+                    .map(|(_, text, breaks)| {
+                        crate::search::librarytext::normalized_spaced_text(text, breaks)
+                    })
                     .collect::<Vec<_>>()
                     .join("\n");
                 library::record_citations(&entry, &text)
@@ -892,26 +918,164 @@ fn requeue_library_text(shared: &EngineShared) {
     );
 }
 
-/// Every page's text, using the cheap extraction path — no character boxes, no
-/// font info, which is thousands of FFI calls a page the index does not need.
-fn extract_library_text(state: &mut WorkerState, path: &Path) -> Option<Vec<(u32, String)>> {
-    let path = path.to_str()?;
-    let doc = render::open_document(state.bindings, path, None).ok()?;
-    let count = state.bindings.FPDF_GetPageCount(doc).max(0);
+/// What the text pass got from one document.
+enum LibraryText {
+    /// PDFium cannot open it.
+    Unreadable,
+    /// Pages still wait for OCR: this job's budget ran out.
+    Pending,
+    /// Every page's text, and which of them came from OCR.
+    Read {
+        pages: Vec<(u32, String, Vec<u32>)>,
+        ocr_pages: Vec<u32>,
+    },
+}
+
+/// Every page's raw character stream and the word breaks its geometry
+/// implies (`library::word_breaks`). The stream stays raw because a hit's
+/// offsets are PDFium character indices, which is how it is highlighted
+/// once the document is open; the breaks become whitespace in the sidecar's
+/// normalized text, so a LaTeX paper's words are searchable — and handed to
+/// the cites pass and the reference provider — as words. Four FFI calls a
+/// character (`layout_text::extract_spacing_glyphs`) where the raw stream
+/// alone costs one, at idle priority, once per document; no font queries.
+///
+/// A page whose text layer is unusable (`ocr::needs_ocr`) gets Vision's
+/// reading of it instead (`ocrtext`), at most `TEXT_OCR_BUDGET` pages read
+/// per job and every reading cached by fingerprint, so a long scan takes
+/// a few jobs and a rescan reads nothing twice. A document whose first
+/// pages all have good text and that is not a scan is never probed past
+/// them, nor rendered.
+fn extract_library_text(
+    state: &mut WorkerState,
+    entry: &LibraryEntry,
+    app_data_dir: &Path,
+) -> LibraryText {
+    let Some(path) = entry.path.to_str() else {
+        return LibraryText::Unreadable;
+    };
+    let Ok(doc) = render::open_document(state.bindings, path, None) else {
+        return LibraryText::Unreadable;
+    };
+    let b = state.bindings;
+    let count = b.FPDF_GetPageCount(doc).max(0);
     let mut pages = Vec::new();
+    // (page, area, has images, image coverage) for every page, to probe
+    // with once it is known whether this document is worth OCR.
+    let mut layout = Vec::new();
     for index in 0..count {
-        let page = state.bindings.FPDF_LoadPage(doc, index);
+        let page = b.FPDF_LoadPage(doc, index);
         if page.is_null() {
             continue;
         }
-        let extracted = crate::engine::text::extract_search_text(state.bindings, page);
-        state.bindings.FPDF_ClosePage(page);
-        if !extracted.raw.trim().is_empty() {
-            pages.push((index as u32, extracted.raw));
+        let [w, h] = render::page_display_size(b, doc, index).unwrap_or([612.0, 792.0]);
+        let glyphs = layout_text::extract_spacing_glyphs(b, page, w, h);
+        let (has_images, coverage) = if ocr::available() {
+            render::image_coverage(b, page)
+        } else {
+            (false, 0.0)
+        };
+        b.FPDF_ClosePage(page);
+        layout.push((index as u32, w * h, has_images, coverage));
+        if !glyphs.raw.trim().is_empty() {
+            let breaks = library::word_breaks(&glyphs.raw, &glyphs.boxes, &glyphs.upright);
+            pages.push((index as u32, glyphs.raw, breaks));
         }
     }
-    state.bindings.FPDF_CloseDocument(doc);
-    Some(pages)
+    let probe = |&(index, area_pts, has_images, image_coverage): &(u32, f32, bool, f32)| {
+        let text = pages
+            .iter()
+            .find(|(page, _, _)| *page == index)
+            .map(|(_, raw, breaks)| crate::search::librarytext::normalized_spaced_text(raw, breaks))
+            .unwrap_or_default();
+        PageProbe {
+            index,
+            text,
+            area_pts,
+            has_images,
+            image_coverage,
+        }
+    };
+    let first: Vec<PageProbe> = layout
+        .iter()
+        .take(ocrtext::PROBE_PAGES as usize)
+        .map(probe)
+        .collect();
+    let mut ocr_pages = Vec::new();
+    if ocr::available() && ocrtext::wants_ocr(&first) {
+        let probes: Vec<PageProbe> = first
+            .into_iter()
+            .chain(layout.iter().skip(ocrtext::PROBE_PAGES as usize).map(probe))
+            .collect();
+        let mut cache = OcrCache::load(app_data_dir, &entry.path, entry.fingerprint.as_deref());
+        let pass = ocrtext::ocr_pages(
+            &probes,
+            &mut cache,
+            ocrtext::TEXT_OCR_BUDGET,
+            &mut |index| recognize_page(b, doc, index, path),
+        );
+        cache.save(app_data_dir, &entry.path);
+        if pass.pending {
+            b.FPDF_CloseDocument(doc);
+            return LibraryText::Pending;
+        }
+        ocr_pages = ocrtext::substitute(&mut pages, &pass);
+    }
+    b.FPDF_CloseDocument(doc);
+    LibraryText::Read { pages, ocr_pages }
+}
+
+/// Render one page at about 2x and read it with Vision. Idle library jobs
+/// only: the first call of a session loads Vision's model, which can take
+/// tens of seconds on the worker thread.
+fn recognize_page(
+    b: &dyn PdfiumLibraryBindings,
+    doc: FPDF_DOCUMENT,
+    index: u32,
+    label: &str,
+) -> Option<Vec<OcrLine>> {
+    /// 2x, unless that puts the long side past this many pixels.
+    const MAX_SIDE_PX: f32 = 3000.0;
+    let started = Instant::now();
+    let size = render::page_display_size(b, doc, index as i32)?;
+    let scale = 2f32.min(MAX_SIDE_PX / size[0].max(size[1]).max(1.0));
+    let page = b.FPDF_LoadPage(doc, index as i32);
+    if page.is_null() {
+        return None;
+    }
+    let rendered = render::render_page(b, page, size, scale, 0, None, false, || false);
+    b.FPDF_ClosePage(page);
+    let lines = ocr::recognize_png(&rendered.ok()?.png, &[]);
+    log::info!(
+        "ocr: {label} page {} read {} lines in {:?}",
+        index + 1,
+        lines.as_ref().map_or(0, Vec::len),
+        started.elapsed()
+    );
+    lines
+}
+
+/// Scan a file again with OCR allowed, from the idle text pass: it was
+/// scanned on demand, when OCR was not (`LibraryEntry::ocr_deferred`).
+fn rescan_with_ocr(state: &mut WorkerState, shared: &EngineShared, entry: &LibraryEntry) {
+    let Some((mtime_ms, size)) = library::file_stamp(&entry.path) else {
+        // Gone or unreadable: nothing to read it again from.
+        let mut cleared = entry.clone();
+        cleared.ocr_deferred = false;
+        shared.library.lock().upsert_entry(cleared);
+        return;
+    };
+    let candidate = library::ScanCandidate {
+        path: entry.path.clone(),
+        mtime_ms,
+        size,
+        epoch: 0,
+        unchanged: false,
+    };
+    let app_data_dir = shared.library.lock().app_data_dir();
+    let scanned = scan_library_candidate(state, &candidate, &app_data_dir, true);
+    shared.library.lock().upsert_entry(scanned.clone());
+    shared.reconcile_library_entry(&scanned);
 }
 
 /// The Info dictionary fields a paper record uses, and the ones the
@@ -956,7 +1120,7 @@ fn do_classify_document(state: &mut WorkerState, doc: DocId) -> AppResult<Papern
     let info = read_info_dictionary(b, raw);
     // A page that cannot be read classifies as unknown, not as an error: the
     // panel's answer to "unknown" is the quiet one.
-    let (text, _) = classification_text(b, raw, &info.classifier_fields(), false);
+    let (text, _) = classification_text(b, raw, &info.classifier_fields(), false, None);
     Ok(library::paperness::classify(
         &text,
         &info.classifier_fields(),
@@ -968,13 +1132,23 @@ fn do_classify_document(state: &mut WorkerState, doc: DocId) -> AppResult<Papern
 /// copyright page behind its half-title.
 const EXTRA_CLASSIFY_PAGES: u32 = 3;
 
+/// One page as the scan reads it: its repaired text, its printed title
+/// and authors when asked for, and what OCR would need to know about it.
+struct PageRead {
+    text: String,
+    first_page: Option<library::firstpage::FirstPage>,
+    probe: PageProbe,
+    size: [f32; 2],
+}
+
 /// One page's text with its word spaces repaired, uncapped; empty for a
-/// page that cannot be loaded. Positioned runs, not the raw character
-/// stream: many PDFs — LaTeX output above all — encode word gaps as
+/// page that cannot be loaded. Character geometry, not the raw character
+/// stream alone: many PDFs — LaTeX output above all — encode word gaps as
 /// position rather than as space characters, so the raw stream yields
 /// titles like "PrivateandpolynomialtimealgorithmsforlearningGaussians".
-/// Runs carry geometry, so `lines_from_runs` can put the spaces back. Same
-/// extraction as `page_text_and_title`, which keeps only enough for a
+/// `library::text_from_page` puts the spaces back from each glyph's loose
+/// box, leaving rotated glyphs (the arXiv stamp) whole on their own line.
+/// Same extraction as `page_text_and_title`, which keeps only enough for a
 /// hover; a publisher's footer is at the bottom of the page.
 ///
 /// With `layout`, the page's typeset lines are also read, while it is
@@ -984,21 +1158,141 @@ fn repaired_page_text(
     raw: FPDF_DOCUMENT,
     index: u32,
     layout: bool,
-) -> (String, Option<library::firstpage::FirstPage>) {
+) -> PageRead {
     let page = b.FPDF_LoadPage(raw, index as i32);
     if page.is_null() {
-        return (String::new(), None);
+        return PageRead {
+            text: String::new(),
+            first_page: None,
+            probe: PageProbe {
+                index,
+                ..PageProbe::default()
+            },
+            size: [612.0, 792.0],
+        };
     }
     let [w, h] = render::page_display_size(b, raw, index as i32).unwrap_or([612.0, 792.0]);
-    let extracted = text::extract_page(b, page, w, h);
+    let glyphs = layout_text::extract_spacing_glyphs(b, page, w, h);
     let first_page = layout.then(|| {
         let lines = layout_text::extract_lines(b, page, w, h);
         library::firstpage::extract(&lines, w, h)
     });
+    let (has_images, image_coverage) = if ocr::available() {
+        render::image_coverage(b, page)
+    } else {
+        (false, 0.0)
+    };
     b.FPDF_ClosePage(page);
-    // `extracted.boxes` are `[x, y, w, h]` but `lines_from_chars` reads `[l, b, r, t]`, so its gap repair finds no advance and falls back to PDFium's own lines.
-    let text = library::text_from_page(&extracted.raw, &extracted.boxes);
-    (text, first_page)
+    let text = library::text_from_page(&glyphs.raw, &glyphs.boxes, &glyphs.upright);
+    PageRead {
+        probe: PageProbe {
+            index,
+            text: text.clone(),
+            area_pts: w * h,
+            has_images,
+            image_coverage,
+        },
+        text,
+        first_page,
+        size: [w, h],
+    }
+}
+
+/// OCR as the library scan uses it: for the first pages it reads, from the
+/// cache or from Vision. Vision only when `allowed` — the idle scan; a scan
+/// on demand reads the cache alone and records what it went without.
+struct ScanOcr<'a> {
+    cache: OcrCache,
+    label: &'a str,
+    allowed: bool,
+    /// The file is worth OCR (`ocrtext::wants_ocr`, over the pages read).
+    wanted: bool,
+    /// OCR was wanted and not allowed.
+    deferred: bool,
+}
+
+impl ScanOcr<'_> {
+    fn lines(
+        &mut self,
+        b: &dyn PdfiumLibraryBindings,
+        raw: FPDF_DOCUMENT,
+        index: u32,
+    ) -> Option<Vec<OcrLine>> {
+        let mut budget = usize::from(self.allowed);
+        let mut pending = false;
+        let label = self.label;
+        let lines = self
+            .cache
+            .lines_or_read(index, &mut budget, &mut pending, &mut |page| {
+                recognize_page(b, raw, page, label)
+            });
+        self.deferred |= pending;
+        lines
+    }
+
+    /// Put OCR in for what the text layer could not give: the text of a
+    /// page whose layer is unusable, and the printed title and authors of a
+    /// scanned first page. A scan's capture layer often has everything but
+    /// the title, which was set too large or too decorated for the capture
+    /// tool and stays a picture — the JCSS 1988 scan's layer reads "hh"
+    /// where the first title line is, and its layout reader then takes the
+    /// second line for the whole title, confidently.
+    fn apply(&mut self, b: &dyn PdfiumLibraryBindings, raw: FPDF_DOCUMENT, page: &mut PageRead) {
+        let needs = page.probe.needs_ocr();
+        let scan = page.probe.index == 0 && page.probe.is_scan();
+        self.wanted |= needs || scan;
+        let for_title = page.first_page.is_some() && scan;
+        if !needs && !for_title {
+            return;
+        }
+        let Some(lines) = self.lines(b, raw, page.probe.index) else {
+            return;
+        };
+        if needs {
+            let text = ocr::page_text(&lines);
+            if !text.trim().is_empty() {
+                page.text = text;
+            }
+        }
+        if let Some(current) = &page.first_page {
+            let [w, h] = page.size;
+            let read = library::firstpage::extract(&ocrtext::text_lines(&lines, w, h), w, h);
+            if ocr_reading_is_better(current, &read, needs) {
+                page.first_page = Some(read);
+            }
+        }
+    }
+}
+
+/// Whether OCR's reading of a first page should replace the text layer's:
+/// it found a title, and the layer's is unusable, absent or unsure — or
+/// both are sure and OCR's title holds the layer's whole and more (the
+/// part the capture tool left a picture).
+fn ocr_reading_is_better(
+    layer: &library::firstpage::FirstPage,
+    ocr: &library::firstpage::FirstPage,
+    layer_unusable: bool,
+) -> bool {
+    use library::firstpage::Confidence;
+    let Some(ocr_title) = &ocr.title else {
+        return false;
+    };
+    let sure = ocr.title_confidence == Confidence::High;
+    let Some(layer_title) = layer.title.as_deref() else {
+        return true;
+    };
+    if layer_unusable || layer.title_confidence != Confidence::High {
+        return sure;
+    }
+    let key = |title: &str| {
+        title
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect::<String>()
+    };
+    let (layer_key, ocr_key) = (key(layer_title), key(ocr_title));
+    sure && !layer_key.is_empty() && ocr_key.len() > layer_key.len() && ocr_key.contains(&layer_key)
 }
 
 /// The text the classifier reads: the first page and, when that says
@@ -1008,22 +1302,33 @@ fn repaired_page_text(
 /// found on its copyright page. This costs the character boxes for one
 /// page per document, and four for the few that need them.
 ///
-/// With `layout`, also the first page's printed title and authors.
+/// With `layout`, also the first page's printed title and authors. With
+/// `ocr`, pages whose text layer is unusable are read by OCR instead
+/// (`ScanOcr::apply`).
 fn classification_text(
     b: &dyn PdfiumLibraryBindings,
     raw: FPDF_DOCUMENT,
     info: &library::paperness::InfoFields,
     layout: bool,
+    mut ocr: Option<&mut ScanOcr>,
 ) -> (String, Option<library::firstpage::FirstPage>) {
-    let (mut text, first_page) = repaired_page_text(b, raw, 0, layout);
+    let mut first = repaired_page_text(b, raw, 0, layout);
+    if let Some(ocr) = ocr.as_deref_mut() {
+        ocr.apply(b, raw, &mut first);
+    }
+    let mut text = first.text;
     if library::paperness::needs_more_pages(&text, info) {
         let count = b.FPDF_GetPageCount(raw).max(0) as u32;
         for index in 1..count.min(1 + EXTRA_CLASSIFY_PAGES) {
+            let mut page = repaired_page_text(b, raw, index, false);
+            if let Some(ocr) = ocr.as_deref_mut() {
+                ocr.apply(b, raw, &mut page);
+            }
             text.push('\n');
-            text.push_str(&repaired_page_text(b, raw, index, false).0);
+            text.push_str(&page.text);
         }
     }
-    (text, first_page)
+    (text, first.first_page)
 }
 
 fn read_info_dictionary(b: &dyn PdfiumLibraryBindings, doc: FPDF_DOCUMENT) -> InfoDictionary {
@@ -1064,9 +1369,16 @@ fn read_info_dictionary(b: &dyn PdfiumLibraryBindings, doc: FPDF_DOCUMENT) -> In
 /// an XMP packet (plain bytes, no parser), and classified from nothing:
 /// `Unknown`, which puts it among the other PDFs until the user says
 /// otherwise.
+///
+/// With `ocr_allowed` (the idle scan), a page whose text layer is unusable
+/// and a scanned first page's title are read by OCR (`ScanOcr`); without
+/// it (a scan on demand) only from the OCR cache, and the entry is marked
+/// for the idle text pass to scan again (`ocr_deferred`).
 fn scan_library_candidate(
     state: &mut WorkerState,
     candidate: &library::ScanCandidate,
+    app_data_dir: &Path,
+    ocr_allowed: bool,
 ) -> LibraryEntry {
     let fingerprint = library::content_fingerprint(&candidate.path);
     let named = library::entry_from_filename(candidate);
@@ -1120,20 +1432,40 @@ fn scan_library_candidate(
         }
     };
     let info = read_info_dictionary(state.bindings, raw);
-    let (text, first_page) =
-        classification_text(state.bindings, raw, &info.classifier_fields(), true);
+    let mut scan_ocr = ocr::available().then(|| ScanOcr {
+        cache: OcrCache::load(app_data_dir, &candidate.path, fingerprint.as_deref()),
+        label: path,
+        allowed: ocr_allowed,
+        wanted: false,
+        deferred: false,
+    });
+    let (text, first_page) = classification_text(
+        state.bindings,
+        raw,
+        &info.classifier_fields(),
+        true,
+        scan_ocr.as_mut(),
+    );
     state.bindings.FPDF_CloseDocument(raw);
-    finish(
+    let mut entry = finish(
         library::entry_from_page(candidate, &text, first_page.as_ref()),
         Some(info),
         &text,
-    )
+    );
+    if let Some(mut scan_ocr) = scan_ocr {
+        scan_ocr.cache.save(app_data_dir, &candidate.path);
+        entry.ocr_wanted = scan_ocr.wanted;
+        entry.ocr_deferred = scan_ocr.deferred;
+    }
+    entry
 }
 
 fn do_library_scan_next(state: &mut WorkerState, shared: &EngineShared) {
     let candidate = shared.library.lock().next_candidate();
     if let Some(candidate) = candidate {
-        let scanned = (!candidate.unchanged).then(|| scan_library_candidate(state, &candidate));
+        let app_data_dir = shared.library.lock().app_data_dir();
+        let scanned = (!candidate.unchanged)
+            .then(|| scan_library_candidate(state, &candidate, &app_data_dir, true));
         // An unchanged file still gets reconciled, from its stored entry:
         // a library.json that starts empty would otherwise never get papers
         // for the files indexed before it existed.
@@ -1181,7 +1513,10 @@ fn do_library_scan_file(
         epoch: 0,
         unchanged: false,
     };
-    let entry = scan_library_candidate(state, &candidate);
+    // On demand — the user is waiting for this paper — so no OCR: the
+    // idle text pass reads it again with OCR if it wants it.
+    let app_data_dir = shared.library.lock().app_data_dir();
+    let entry = scan_library_candidate(state, &candidate, &app_data_dir, false);
     shared.library.lock().upsert_entry(entry.clone());
     let paper = {
         let mut papers = shared.papers.lock();
@@ -1276,8 +1611,8 @@ fn open_library_document(
 fn page_text_and_title(state: &mut WorkerState, doc: DocId) -> AppResult<(String, Option<String>)> {
     let [w_pt, h_pt] = state.display_size(doc, 0)?;
     let page = state.page_handle(doc, 0)?;
-    let extracted = text::extract_page(state.bindings, page, w_pt, h_pt);
-    let repaired = library::text_from_page(&extracted.raw, &extracted.boxes);
+    let glyphs = layout_text::extract_spacing_glyphs(state.bindings, page, w_pt, h_pt);
+    let repaired = library::text_from_page(&glyphs.raw, &glyphs.boxes, &glyphs.upright);
 
     let text = repaired
         .lines()
@@ -2368,6 +2703,57 @@ mod tests {
                 "a cached appearance would draw a second copy under the editable text"
             );
         }
+    }
+
+    #[test]
+    fn ocr_reading_replaces_a_scan_title_only_when_it_adds_to_it() {
+        use library::firstpage::{Confidence, FirstPage};
+        let reading = |title: Option<&str>, confidence| FirstPage {
+            title: title.map(str::to_owned),
+            authors: Vec::new(),
+            title_confidence: confidence,
+            authors_confidence: Confidence::Low,
+        };
+        let ocr = reading(
+            Some("Arthur Merlin Games: A Randomized Proof System, and a Hierarchy of Complexity Classes"),
+            Confidence::High,
+        );
+        // The capture layer lost the first line and read the second, sure.
+        let layer = reading(
+            Some("and a Hierarchy of Complexity Classes"),
+            Confidence::High,
+        );
+        assert!(ocr_reading_is_better(&layer, &ocr, false));
+        // A sure, different title from the layer stands.
+        let other = reading(Some("Interactive Proofs"), Confidence::High);
+        assert!(!ocr_reading_is_better(&other, &ocr, false));
+        // No title, or an unsure one, gives way to a sure OCR reading.
+        assert!(ocr_reading_is_better(
+            &reading(None, Confidence::Low),
+            &ocr,
+            false
+        ));
+        assert!(ocr_reading_is_better(
+            &reading(Some("hh"), Confidence::Low),
+            &ocr,
+            false
+        ));
+        assert!(
+            ocr_reading_is_better(&other, &ocr, true),
+            "the layer is garbage"
+        );
+        // OCR with no title never replaces anything.
+        assert!(!ocr_reading_is_better(
+            &layer,
+            &reading(None, Confidence::Low),
+            true
+        ));
+        let unsure = reading(Some("Arthur"), Confidence::Low);
+        assert!(!ocr_reading_is_better(
+            &reading(Some("x"), Confidence::Low),
+            &unsure,
+            false
+        ));
     }
 
     #[test]

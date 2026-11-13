@@ -114,8 +114,13 @@ export interface EngineApi {
   resolveCitation(id: CitationId): Promise<ResolvedCitation | null>;
   /** Adds a folder to the library, or removes one. */
   changeLibraryRoot(path: string, add: boolean): Promise<void>;
-  /** Searches every document whose text has been indexed. */
-  librarySearch(query: string, caseSensitive: boolean): Promise<LibrarySearchResult>;
+  /** Searches every document whose text has been indexed — or, with a
+   * project id, only the files of that project's papers. */
+  librarySearch(
+    query: string,
+    caseSensitive: boolean,
+    projectId?: string | null
+  ): Promise<LibrarySearchResult>;
   libraryStatus(): Promise<LibraryStatus>;
   startIndexing(docId: number): Promise<void>;
   searchQuery(docId: number, query: string, caseSensitive: boolean): Promise<SearchQueryResult>;
@@ -244,7 +249,8 @@ export const engine: EngineApi = {
   getPreviewRect: (docId, src, x, y) => invoke('get_preview_rect', { docId, src, x, y }),
   resolveCitation: (id) => invoke('resolve_citation', { id }),
   changeLibraryRoot: (path, add) => invoke('change_library_root', { path, add }),
-  librarySearch: (query, caseSensitive) => invoke('library_search', { query, caseSensitive }),
+  librarySearch: (query, caseSensitive, projectId) =>
+    invoke('library_search', { query, caseSensitive, projectId: projectId ?? null }),
   libraryStatus: () => invoke('library_status'),
   startIndexing: (docId) => invoke('start_indexing', { docId }),
   searchQuery: (docId, query, caseSensitive) =>
