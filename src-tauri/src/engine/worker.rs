@@ -93,6 +93,8 @@ struct WorkerState<'a> {
     scan_waiting: Option<library::ScanCandidate>,
     /// The library text pass, waiting for a page's OCR.
     text_waiting: Option<TextWaiting>,
+    /// Outlines being generated for documents that ship none, by document.
+    outline_gens: HashMap<DocId, crate::engine::outline_gen::OutlineGen>,
 }
 
 impl<'a> WorkerState<'a> {
@@ -118,6 +120,7 @@ impl<'a> WorkerState<'a> {
             ocr_in_flight: HashSet::new(),
             scan_waiting: None,
             text_waiting: None,
+            outline_gens: HashMap::new(),
         }
     }
 
@@ -196,6 +199,7 @@ impl<'a> WorkerState<'a> {
 
     fn close_doc(&mut self, id: DocId, shared: &EngineShared) {
         self.close_one(id, shared, true);
+        self.outline_gens.remove(&id);
         self.library_session_docs
             .retain(|candidate| *candidate != id);
         if self.active_main == Some(id) {
@@ -354,6 +358,7 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         Work::BuildPrintPdf { respond, .. } => respond(Err(err())),
         Work::FormFields { respond, .. } => respond(Err(err())),
         Work::Outline { respond, .. } => respond(Err(err())),
+        Work::GeneratedOutline { respond, .. } => respond(Err(err())),
         Work::FormalEnvs { respond, .. } => respond(Err(err())),
         Work::Figures { respond, .. } => respond(Err(err())),
         Work::Annotations { respond, .. } => respond(Err(err())),
@@ -486,6 +491,9 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
         } => respond(do_build_print_pdf(state, doc, plan, &dest)),
         Work::FormFields { doc, respond } => respond(do_form_fields(state, doc)),
         Work::Outline { doc, respond } => respond(do_outline(state, doc)),
+        Work::GeneratedOutline { doc, respond } => {
+            respond(do_generated_outline(state, shared, doc))
+        }
         Work::FormalEnvs { doc, respond } => respond(do_formal_envs(state, doc)),
         Work::Figures { doc, respond } => {
             let result = do_figures(state, doc);
@@ -2709,6 +2717,24 @@ fn do_outline(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<OutlineNodeD
         return Ok(bookmarks);
     }
     Ok(nest_headings(headings_from_destinations(state, doc)))
+}
+
+/// One slice of outline generation for a document with no outline of its
+/// own (`outline_gen`). The caller asks again until the answer is done.
+fn do_generated_outline(
+    state: &mut WorkerState,
+    shared: &EngineShared,
+    doc: DocId,
+) -> AppResult<crate::engine::outline_gen::GeneratedOutlineDto> {
+    let (raw, page_count, path) = {
+        let d = state.doc(doc)?;
+        (d.raw, d.page_count, PathBuf::from(&d.path))
+    };
+    let b = state.bindings;
+    let generator = state.outline_gens.entry(doc).or_insert_with(|| {
+        crate::engine::outline_gen::OutlineGen::new(b, raw, page_count, &path, &shared.app_data_dir)
+    });
+    Ok(generator.step(b, raw, &shared.app_data_dir))
 }
 
 /// Formal environments (theorems, figures, ...) recovered from hyperref's named
