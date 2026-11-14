@@ -12,7 +12,13 @@
  *
  * Undo and redo are the note's own history in this window, across blocks
  * and modes: each entry is an edit and its inverse, kept in step with edits
- * from elsewhere. */
+ * from elsewhere.
+ *
+ * Decorations are what a view draws in the note that is not in its text: a
+ * placeholder where something being sent will go, and a status line under
+ * a block being checked. They live here only, never in the file, and their
+ * places map through every edit the way a caret does, so a crash leaves
+ * nothing behind. */
 import { createSignal, type Accessor } from 'solid-js';
 import { applyOp, diffOp, invertOp, mapPos, transformOp, type Op } from './ops';
 
@@ -53,6 +59,68 @@ interface HistoryEntry {
  * step. */
 const COALESCE_MS = 800;
 const HISTORY_LIMIT = 500;
+/** Confirmed edits kept, to place another window's decorations made
+ * against an older revision. */
+const OP_LOG_LIMIT = 200;
+
+/** What a placeholder stands in for. */
+export interface PendingShape {
+  kind: 'equation' | 'image' | 'text';
+  /** The expected content's proportions (an image's drawn region). */
+  shape: { w: number; h: number } | null;
+  /** The line under it, as it will read ("Equation (3), [@key, p. 4]"). */
+  caption: string | null;
+}
+
+interface DecorationBase {
+  id: string;
+  /** The extension it belongs to. */
+  owner: string;
+  /** The window that made it: this one's origin, or another's. */
+  origin: string;
+  created: number;
+  expires: number;
+}
+
+/** A placeholder at `at`, where its content will be inserted. */
+export interface PendingDecoration extends DecorationBase {
+  type: 'pending';
+  at: number;
+  pending: PendingShape;
+}
+
+/** A tracked range of the note, `[from, to)`: an inserted block. With a
+ * `label`, a dim status line is drawn under it; without, it is only
+ * tracked. An edit inside it (or over it) drops it. */
+export interface MarkDecoration extends DecorationBase {
+  type: 'mark';
+  from: number;
+  to: number;
+  label: string | null;
+}
+
+export type Decoration = PendingDecoration | MarkDecoration;
+
+/** Decorations as another window sends them: places in the confirmed text
+ * at `rev`. */
+export interface DecorationSnapshot {
+  key: NoteKey;
+  origin: string;
+  rev: number;
+  list: Decoration[];
+}
+
+/** Where a decoration lands once `op` is applied, or null when the edit
+ * drops it (a mark edited inside or over). Text inserted exactly at a
+ * placeholder goes before it, so two sends in a row keep their order; text
+ * typed at a mark's edges stays outside it. */
+export function mapDecoration(d: Decoration, op: Op): Decoration | null {
+  if (d.type === 'pending') return { ...d, at: mapPos(op, d.at, true) };
+  const overlaps = op.from < d.to && op.to > d.from;
+  const inside = op.from === op.to && op.from > d.from && op.from < d.to;
+  if (overlaps || inside) return null;
+  return { ...d, from: mapPos(op, d.from, true), to: mapPos(op, d.to, false) };
+}
 /** How long local edits gather before they are sent. */
 const SEND_DELAY_MS = 40;
 
@@ -70,12 +138,23 @@ export class NoteSession {
    * another window's, a reload), with the edit as it applies to `text()`:
    * views map their caret through it. `null` for a whole reload. */
   readonly external: Accessor<{ op: Op | null; seq: number }>;
+  /** Placeholders and marks, at places in `text()`. */
+  readonly decorations: Accessor<Decoration[]>;
+  /** Called when a decoration of this window's expires, or an edit drops
+   * it. */
+  onExpire: ((d: Decoration) => void) | null = null;
 
   private setText: (text: string) => void;
   private setStatus: (status: SessionStatus) => void;
   private setReason: (reason: string | null) => void;
   private setNotice: (notice: string | null) => void;
   private setExternal: (value: { op: Op | null; seq: number }) => void;
+  private setDecorations: (list: Decoration[]) => void;
+  private expiryTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Confirmed edits by revision, newest last. */
+  private opLog: { rev: number; op: Op }[] = [];
+  /** Another window's decorations made against a revision not seen yet. */
+  private early = new Map<string, DecorationSnapshot>();
   private seq = 0;
   private confirmed = '';
   private rev = 0;
@@ -113,6 +192,9 @@ export class NoteSession {
     this.setNotice = setNotice;
     this.external = external;
     this.setExternal = setExternal;
+    const [decorations, setDecorations] = createSignal<Decoration[]>([]);
+    this.decorations = decorations;
+    this.setDecorations = setDecorations;
     this.ready = this.load();
   }
 
@@ -135,8 +217,14 @@ export class NoteSession {
 
   /** Apply a local edit. `caret` is where the cursor was before and is after,
    * for undo to put it back. Typing next to the previous edit within a
-   * moment joins its undo step. */
-  edit(op: Op, caretBefore: number, caretAfter: number, opts?: { history?: boolean }): void {
+   * moment joins its undo step. `outside`: made by no view (an extension's
+   * insert), so every view hears of it as of another's. */
+  edit(
+    op: Op,
+    caretBefore: number,
+    caretAfter: number,
+    opts?: { history?: boolean; outside?: boolean }
+  ): void {
     if (this.status() !== 'ready') return;
     const before = this.text();
     const after = applyOp(before, op);
@@ -179,7 +267,9 @@ export class NoteSession {
       }
       this.redoStack = [];
     }
+    this.mapDecorations(op);
     this.setText(after);
+    if (opts?.outside) this.setExternal({ op, seq: ++this.seq });
     this.scheduleSend();
   }
 
@@ -196,6 +286,7 @@ export class NoteSession {
     const entry = this.undoStack.pop();
     if (!entry || this.status() !== 'ready') return null;
     const before = this.text();
+    this.mapDecorations(entry.inverse);
     this.setText(applyOp(before, entry.inverse));
     this.redoStack.push(entry);
     this.scheduleSend();
@@ -205,6 +296,7 @@ export class NoteSession {
   redo(): number | null {
     const entry = this.redoStack.pop();
     if (!entry || this.status() !== 'ready') return null;
+    this.mapDecorations(entry.op);
     this.setText(applyOp(this.text(), entry.op));
     this.undoStack.push(entry);
     this.scheduleSend();
@@ -270,9 +362,11 @@ export class NoteSession {
     switch (event.kind) {
       case 'edit': {
         if (event.rev <= this.rev) return;
+        this.logOp(event.rev, event.op);
         if (event.origin === this.origin) {
           this.confirmed = applyOp(this.confirmed, event.op);
           this.rev = event.rev;
+          this.adoptEarly();
           this.inflight = false;
           if (this.text() !== this.confirmed) this.scheduleSend();
           this.wakeIdle();
@@ -290,8 +384,10 @@ export class NoteSession {
           shown = transformOp(event.op, pending, false);
         }
         this.mapHistory(shown);
+        this.mapDecorations(shown);
         this.setText(local);
         this.setExternal({ op: shown, seq: ++this.seq });
+        this.adoptEarly();
         if (!pending && this.confirmed.length !== event.len) void this.resync();
         return;
       }
@@ -301,6 +397,16 @@ export class NoteSession {
         this.inflight = false;
         this.undoStack = [];
         this.redoStack = [];
+        this.opLog = [];
+        // The text was replaced whole: a mark no longer means anything, and
+        // a placeholder keeps its place as near as the new text allows.
+        this.setDecorations(
+          this.decorations().flatMap((d) => {
+            if (d.type === 'pending') return [{ ...d, at: Math.min(d.at, event.text.length) }];
+            this.dropped(d);
+            return [];
+          })
+        );
         this.setText(event.text);
         this.setExternal({ op: null, seq: ++this.seq });
         this.wakeIdle();
@@ -318,6 +424,126 @@ export class NoteSession {
 
   dismissNotice(): void {
     this.setNotice(null);
+  }
+
+  /* ---- decorations ---- */
+
+  decoration(id: string): Decoration | undefined {
+    return this.decorations().find((d) => d.id === id);
+  }
+
+  /** Add or replace a decoration (by id). */
+  putDecoration(d: Decoration): void {
+    const list = this.decorations().filter((x) => x.id !== d.id);
+    list.push(d);
+    this.setDecorations(list);
+    this.scheduleExpiry();
+  }
+
+  /** Remove a decoration; returns it, or undefined when it was gone. */
+  removeDecoration(id: string): Decoration | undefined {
+    const found = this.decoration(id);
+    if (found) this.setDecorations(this.decorations().filter((d) => d.id !== id));
+    return found;
+  }
+
+  /** Remove every decoration an extension made. */
+  clearDecorations(owner: string): Decoration[] {
+    const gone = this.decorations().filter((d) => d.owner === owner);
+    if (gone.length > 0) this.setDecorations(this.decorations().filter((d) => d.owner !== owner));
+    return gone;
+  }
+
+  /** This window's decorations as places in the confirmed text, for other
+   * windows. */
+  snapshot(): DecorationSnapshot {
+    const pending = diffOp(this.confirmed, this.text());
+    const back = pending ? invertOp(pending, this.confirmed) : null;
+    const toConfirmed = (pos: number) => (back ? mapPos(back, pos, true) : pos);
+    const list = this.decorations()
+      .filter((d) => d.origin === this.origin)
+      .map((d) =>
+        d.type === 'pending'
+          ? { ...d, at: toConfirmed(d.at) }
+          : { ...d, from: toConfirmed(d.from), to: toConfirmed(d.to) }
+      );
+    return { key: this.key, origin: this.origin, rev: this.rev, list };
+  }
+
+  /** Another window's decorations: they replace what it showed here
+   * before. */
+  receiveDecorations(snapshot: DecorationSnapshot): void {
+    if (snapshot.origin === this.origin) return;
+    if (snapshot.rev > this.rev) {
+      // Made against edits this window has not heard yet: wait for them.
+      this.early.set(snapshot.origin, snapshot);
+      return;
+    }
+    this.early.delete(snapshot.origin);
+    const since = this.opLog.filter((e) => e.rev > snapshot.rev);
+    const complete =
+      snapshot.rev === this.rev || (since.length > 0 && since[0]!.rev === snapshot.rev + 1);
+    const pending = diffOp(this.confirmed, this.text());
+    const placed: Decoration[] = [];
+    if (complete) {
+      for (const raw of snapshot.list) {
+        let d: Decoration | null = { ...raw, origin: snapshot.origin };
+        for (const entry of since) d = d && mapDecoration(d, entry.op);
+        if (d && pending) d = mapDecoration(d, pending);
+        if (d) placed.push(d);
+      }
+    }
+    this.setDecorations([
+      ...this.decorations().filter((d) => d.origin !== snapshot.origin),
+      ...placed,
+    ]);
+    this.scheduleExpiry();
+  }
+
+  private adoptEarly(): void {
+    for (const snapshot of [...this.early.values()]) {
+      if (snapshot.rev <= this.rev) this.receiveDecorations(snapshot);
+    }
+  }
+
+  private logOp(rev: number, op: Op): void {
+    this.opLog.push({ rev, op });
+    if (this.opLog.length > OP_LOG_LIMIT) this.opLog.shift();
+  }
+
+  private mapDecorations(op: Op): void {
+    const list = this.decorations();
+    if (list.length === 0) return;
+    const next: Decoration[] = [];
+    for (const d of list) {
+      const moved = mapDecoration(d, op);
+      if (moved) next.push(moved);
+      else this.dropped(d);
+    }
+    this.setDecorations(next);
+  }
+
+  /** Tell the owner, once the edit that dropped it is in. */
+  private dropped(d: Decoration): void {
+    if (d.origin === this.origin) queueMicrotask(() => this.onExpire?.(d));
+  }
+
+  /** Drop what has expired, and wake for the next to. */
+  private scheduleExpiry(): void {
+    if (this.expiryTimer !== null) clearTimeout(this.expiryTimer);
+    this.expiryTimer = null;
+    const list = this.decorations();
+    if (list.length === 0) return;
+    const now = this.now();
+    const expired = list.filter((d) => d.expires <= now);
+    if (expired.length > 0) {
+      this.setDecorations(list.filter((d) => d.expires > now));
+      for (const d of expired) if (d.origin === this.origin) this.onExpire?.(d);
+    }
+    const left = this.decorations();
+    if (left.length === 0) return;
+    const next = Math.min(...left.map((d) => d.expires));
+    this.expiryTimer = setTimeout(() => this.scheduleExpiry(), Math.max(0, next - this.now()));
   }
 
   /** Keep undo steps pointing at the right text after someone else's edit. */

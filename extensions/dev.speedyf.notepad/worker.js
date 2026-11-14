@@ -276,17 +276,37 @@ async function readerTarget() {
   return { context, projectId };
 }
 
-/** Put `text` at the end of the project's notepad and show it there, in
- * the reader's drawer (opened if it was shut). */
-async function append(projectId, text) {
+/** Hold a place at the end of the project's notepad for something on its
+ * way: SpeedyF draws a placeholder of its `pending` shape there (writing
+ * nothing to the file), opens the reader's drawer on the note when no view
+ * of it is on screen, and here it is scrolled into view. Returns the
+ * handle to fill it with. */
+async function hold(projectId, pending) {
+  const { handle } = await call('editor.insert', { projectId, at: 'end', pending });
   try {
-    await call('pane.open', { pane: 'notepad', projectId });
+    await call('editor.reveal', { projectId, handle });
   } catch (err) {
-    log('info', `drawer: ${String((err && err.message) || err)}`);
+    log('info', `reveal: ${String((err && err.message) || err)}`);
   }
-  const { offset } = await call('editor.insert', { projectId, text, at: 'end' });
-  if (Number.isInteger(offset) && offset >= 0) {
-    await call('editor.reveal', { projectId, offset });
+  return handle;
+}
+
+/** Put `text` where the placeholder is, as one undoable edit. A placeholder
+ * that expired meanwhile (a very slow picture) is not lost: the text goes
+ * at the end instead. Returns the handle that now tracks the text. */
+async function fill(projectId, handle, text) {
+  const { resolved } = await call('editor.resolve', { handle, text });
+  if (resolved) return handle;
+  const inserted = await call('editor.insert', { projectId, text, at: 'end' });
+  return inserted.handle;
+}
+
+/** Give up a placeholder: the send failed. */
+async function drop(handle) {
+  try {
+    await call('editor.cancel', { handle });
+  } catch {
+    /* it expires on its own */
   }
 }
 
@@ -298,13 +318,21 @@ async function quote(text) {
   const selection = context.selection;
   const page = selection ? selection.page : context.page;
   const box = selection ? selection.box : null;
-  await append(projectId, quoteBlock(text, context.item.citeKey, page, box));
+  // Filled at once: the placeholder is drawn only if this ever takes long.
+  const handle = await hold(projectId, { kind: 'text' });
+  await fill(projectId, handle, quoteBlock(text, context.item.citeKey, page, box));
 }
 
-/** `equations.convert` in one mode; null when there is no answer. */
-async function convert(equation, mode) {
+/** `equations.convert` in one mode; null when there is no answer. In exact
+ * mode `status` is the handle whose status line the converter names its
+ * source in. */
+async function convert(equation, mode, status) {
   try {
-    const answer = await call('equations.convert', { equation, mode });
+    const answer = await call('equations.convert', {
+      equation,
+      mode,
+      ...(status ? { status } : {}),
+    });
     return answer && typeof answer.latex === 'string' && answer.latex.trim() ? answer : null;
   } catch (err) {
     log('info', `no ${mode} LaTeX for this equation: ${String((err && err.message) || err)}`);
@@ -329,9 +357,10 @@ function stopwatch(label) {
   };
 }
 
-/** Send an equation: in at once, from what the page itself says (its tags
- * or its fonts, else a picture of it), then upgraded quietly to the
- * author's own LaTeX when an exact source online has it. */
+/** Send an equation: a placeholder with its caption at once, filled from
+ * what the page itself says (its tags or its fonts, else a picture of it),
+ * then upgraded quietly to the author's own LaTeX when an exact source
+ * online has it, with a status line under it meanwhile. */
 async function sendEquation(value) {
   if (!value || typeof value !== 'object' || typeof value.equation !== 'string') {
     log('info', 'Send to Notepad works from the button on an equation.');
@@ -344,42 +373,69 @@ async function sendEquation(value) {
   const { context, projectId } = target;
   const name = value.number ? `Equation (${value.number})` : 'Equation';
   const caption = `${name}, ${pageLink(context.item.citeKey, value.page, value.bbox)}`;
-  const local = await convert(value.equation, 'local');
-  clock.lap('convert');
+  const placeholder = await hold(projectId, { kind: 'equation', caption });
+  clock.lap('placeholder');
   let block;
   let asset = null;
-  if (local) {
-    block = `${displayMath(local.latex)}\n\n${caption}`;
-  } else {
-    const shot = await call('equations.snapshot', { equation: value.equation });
-    asset = assetName('equation');
-    await call('projectFiles.write', { projectId, path: asset, bytes: shot.png });
-    clock.lap('picture');
-    block = `![${name}](${asset})\n\n${caption}`;
+  let local = null;
+  try {
+    local = await convert(value.equation, 'local');
+    clock.lap('convert');
+    if (local) {
+      block = `${displayMath(local.latex)}\n\n${caption}`;
+    } else {
+      const shot = await call('equations.snapshot', { equation: value.equation });
+      asset = assetName('equation');
+      await call('projectFiles.write', { projectId, path: asset, bytes: shot.png });
+      clock.lap('picture');
+      block = `![${name}](${asset})\n\n${caption}`;
+    }
+  } catch (err) {
+    await drop(placeholder);
+    throw err;
   }
-  await append(projectId, block);
+  const handle = await fill(projectId, placeholder, block);
   clock.lap('insert');
   clock.log(local ? `LaTeX from ${local.source || 'the converter'}` : 'picture');
   // The document's own tags are the author's LaTeX already.
-  if (local && local.source === 'tags' && local.confidence === 'high') return;
+  if (local && local.source === 'tags' && local.confidence === 'high') {
+    await call('editor.unmark', { handle });
+    return;
+  }
   // Not awaited: the send is done; this only ever improves it.
-  void upgrade({ equation: value.equation, projectId, block, caption, asset });
+  void upgrade({ equation: value.equation, handle, block, caption, asset, projectId });
 }
 
 /** Swap an equation just sent for an exact source's LaTeX, when there is
  * one and it differs, and only while the inserted text is still there as
- * it was: an equation the user has edited is theirs. */
-async function upgrade({ equation, projectId, block, caption, asset }) {
+ * it was: an equation the user has edited is theirs. A dim "checking ...
+ * source" line sits under it meanwhile. */
+async function upgrade({ equation, handle, block, caption, asset, projectId }) {
   const started = Date.now();
   const done = (outcome) => log('info', `upgrade: ${outcome} in ${Date.now() - started}ms`);
-  const exact = await convert(equation, 'exact');
-  if (!exact) return done('no exact source');
+  const clear = () => call('editor.unmark', { handle }).catch(() => {});
+  let marked = false;
+  try {
+    ({ marked } = await call('editor.mark', { handle, label: 'checking source' }));
+  } catch (err) {
+    log('info', `no status line: ${String((err && err.message) || err)}`);
+  }
+  if (!marked) return done('edited meanwhile; left alone');
+  const exact = await convert(equation, 'exact', handle);
+  if (!exact) {
+    await clear();
+    return done('no exact source');
+  }
   const better = `${displayMath(exact.latex)}\n\n${caption}`;
-  if (better === block) return done('already exact');
+  if (better === block) {
+    await clear();
+    return done('already exact');
+  }
   let replaced = false;
   try {
-    ({ replaced } = await call('editor.replace', { projectId, find: block, replace: better }));
+    ({ replaced } = await call('editor.replaceMarked', { handle, text: better }));
   } catch (err) {
+    await clear();
     return done(`not replaced: ${String((err && err.message) || err)}`);
   }
   if (!replaced) return done('edited meanwhile; left alone');
@@ -401,10 +457,23 @@ async function sendRegion() {
     prompt: 'Notepad: drag a rectangle around a figure. Escape cancels.',
   });
   if (!region) return;
-  const path = assetName('region');
-  await call('projectFiles.write', { projectId, path, bytes: region.png });
+  const [, , w, h] = Array.isArray(region.box) ? region.box : [];
+  const shape = w > 0 && h > 0 ? { w, h } : null;
   const link = pageLink(context.item.citeKey, region.page, region.box);
-  await append(projectId, `![Region, p. ${region.page + 1}](${path})\n\n${link}`);
+  const placeholder = await hold(projectId, { kind: 'image', shape, caption: link });
+  const path = assetName('region');
+  try {
+    await call('projectFiles.write', { projectId, path, bytes: region.png });
+  } catch (err) {
+    await drop(placeholder);
+    throw err;
+  }
+  const handle = await fill(
+    projectId,
+    placeholder,
+    `![Region, p. ${region.page + 1}](${path})\n\n${link}`
+  );
+  await call('editor.unmark', { handle });
 }
 
 /** Open Notepad: the reader's drawer for a paper in a project, else the

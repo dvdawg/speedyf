@@ -246,30 +246,48 @@ async function until(condition: () => boolean, ms = 1_000) {
   }
 }
 
+/** The note's side of a send, answering as the core does: a placeholder
+ * handle, then the same handle tracking the text once it is filled. */
+const EDITOR: Record<string, Api> = {
+  'editor.insert': () => ({ handle: 'h1', offset: 0 }),
+  'editor.reveal': () => ({ revealed: true }),
+  'editor.resolve': () => ({ resolved: true, offset: 0 }),
+  'editor.cancel': () => ({ cancelled: true }),
+  'editor.mark': () => ({ marked: true, handle: 'h1' }),
+  'editor.unmark': () => ({ cleared: true }),
+  'editor.replaceMarked': () => ({ replaced: true }),
+};
+
+/** The editor calls, in order, without the reveal. */
+const editorCalls = (calls: { api: string; args: Record<string, unknown> }[]) =>
+  calls.filter((c) => c.api.startsWith('editor.') && c.api !== 'editor.reveal');
+
 describe('notepad: reader actions', () => {
-  it('quotes into the project the paper was opened from', async () => {
-    const { calls, invoke } = boot({
-      'reader.context': readerIn('p2'),
-      'editor.insert': () => ({ offset: 10 }),
-      'editor.reveal': () => ({ revealed: true }),
-    });
+  it('quotes into the project the paper was opened from, filling its placeholder at once', async () => {
+    const { calls, invoke } = boot({ ...EDITOR, 'reader.context': readerIn('p2') });
     expect(await invoke('quote', 'Some text')).toEqual({ type: 'done', requestId: 1, ok: true });
-    const insert = calls.find((c) => c.api === 'editor.insert')!;
-    expect(insert.args).toEqual({
-      projectId: 'p2',
+    // The fast path: the placeholder is filled straight away, nothing in
+    // between (the editor draws a text placeholder only if it lingers).
+    expect(calls.map((c) => c.api)).toEqual([
+      'reader.context',
+      'editor.insert',
+      'editor.reveal',
+      'editor.resolve',
+    ]);
+    expect(calls[1]!.args).toEqual({ projectId: 'p2', at: 'end', pending: { kind: 'text' } });
+    expect(calls[2]!.args).toEqual({ projectId: 'p2', handle: 'h1' });
+    expect(calls[3]!.args).toEqual({
+      handle: 'h1',
       text: '> Some text [@attias2022quantum, p. 5]{box=10,20,30,40}',
-      at: 'end',
     });
-    expect(calls.map((c) => c.api)).not.toContain('reader.chooseProject');
   });
 
   it('asks which project for a paper in two opened from neither, and stops when dismissed', async () => {
     const answers = ['p1', null];
     const { calls, invoke } = boot({
+      ...EDITOR,
       'reader.context': readerIn(null),
       'reader.chooseProject': () => answers.shift(),
-      'editor.insert': () => ({ offset: 0 }),
-      'editor.reveal': () => ({}),
     });
     await invoke('quote', 'first');
     expect(calls.filter((c) => c.api === 'reader.chooseProject')).toHaveLength(1);
@@ -278,105 +296,161 @@ describe('notepad: reader actions', () => {
     expect(calls.filter((c) => c.api === 'editor.insert')).toHaveLength(1);
   });
 
-  it('sends an equation as LaTeX when a converter reads it, else as a picture', async () => {
+  it('puts the text at the end when its placeholder expired meanwhile', async () => {
+    const { calls, invoke } = boot({
+      ...EDITOR,
+      'reader.context': readerIn('p1'),
+      'editor.resolve': () => ({ resolved: false, offset: -1 }),
+    });
+    await invoke('quote', 'late');
+    const inserts = calls.filter((c) => c.api === 'editor.insert');
+    expect(inserts).toHaveLength(2);
+    expect(inserts[1]!.args).toEqual({
+      projectId: 'p1',
+      text: '> late [@attias2022quantum, p. 5]{box=10,20,30,40}',
+      at: 'end',
+    });
+  });
+
+  it('sends an equation: placeholder, then its LaTeX, then a status line while checking', async () => {
     let converted: unknown = { latex: 'E = mc^2', display: true, source: 'fonts' };
     const { calls, invoke, logs } = boot({
+      ...EDITOR,
       'reader.context': readerIn('p1'),
       'equations.convert': () => converted,
       'equations.snapshot': () => ({ page: 2, box: [1, 2, 3, 4], png: [137, 80, 78, 71] }),
       'projectFiles.write': () => ({ written: 4 }),
-      'editor.insert': () => ({ offset: 0 }),
-      'editor.reveal': () => ({}),
     });
     await invoke('equation', EQUATION);
-    const first = calls.filter((c) => c.api === 'editor.insert')[0]!;
-    expect(first.args.text).toBe(`$$ E = mc^2 $$\n\n${CAPTION}`);
-    expect(calls.map((c) => c.api)).not.toContain('equations.snapshot');
-    // The exact answer is the same: nothing to replace.
+    // The exact answer is the same: the status line goes, nothing replaced.
     await until(() => logs.some((l) => l.startsWith('upgrade: already exact')));
-    expect(calls.map((c) => c.api)).not.toContain('editor.replace');
+    const order = calls
+      .filter((c) => c.api.startsWith('editor.') || c.api === 'equations.convert')
+      .map((c) => (c.api === 'equations.convert' ? `convert ${String(c.args.mode)}` : c.api));
+    expect(order).toEqual([
+      'editor.insert',
+      'editor.reveal',
+      'convert local',
+      'editor.resolve',
+      'editor.mark',
+      'convert exact',
+      'editor.unmark',
+    ]);
+    expect(calls.find((c) => c.api === 'editor.insert')!.args).toEqual({
+      projectId: 'p1',
+      at: 'end',
+      pending: { kind: 'equation', caption: CAPTION },
+    });
+    expect(calls.find((c) => c.api === 'editor.resolve')!.args).toEqual({
+      handle: 'h1',
+      text: `$$ E = mc^2 $$\n\n${CAPTION}`,
+    });
+    expect(calls.find((c) => c.api === 'editor.mark')!.args).toEqual({
+      handle: 'h1',
+      label: 'checking source',
+    });
+    // The converter names its source in that status line.
+    expect(calls.filter((c) => c.api === 'equations.convert')[1]!.args).toEqual({
+      equation: 'eq-1',
+      mode: 'exact',
+      status: 'h1',
+    });
+    expect(calls.map((c) => c.api)).not.toContain('equations.snapshot');
+    expect(calls.map((c) => c.api)).not.toContain('editor.replaceMarked');
 
     converted = null;
     await invoke('equation', EQUATION);
     const write = calls.find((c) => c.api === 'projectFiles.write')!;
     expect(write.args.path).toMatch(/^assets\/equation-\d{8}-\d{6}-[a-z0-9]+\.png$/);
     expect(write.args.bytes).toEqual([137, 80, 78, 71]);
-    const second = calls.filter((c) => c.api === 'editor.insert')[1]!;
+    const second = calls.filter((c) => c.api === 'editor.resolve')[1]!;
     expect(second.args.text).toBe(`![Equation (3)](${String(write.args.path)})\n\n${CAPTION}`);
   });
 
-  it('inserts the local LaTeX at once, then replaces it with an exact source that differs', async () => {
+  it('replaces exactly the marked LaTeX with an exact source that differs', async () => {
     let releaseExact: () => void = () => {};
     const exactGate = new Promise<void>((resolve) => (releaseExact = resolve));
     const { calls, invoke, logs } = boot({
+      ...EDITOR,
       'reader.context': readerIn('p1'),
       'equations.convert': async (args) => {
         if (args.mode === 'local') return { latex: 'e^{-E}', source: 'fonts', confidence: 'high' };
         await exactGate;
         return { latex: 'e^{-\\beta E_s}', source: 'arxiv', confidence: 'high' };
       },
-      'editor.insert': () => ({ offset: 0 }),
-      'editor.reveal': () => ({}),
-      'editor.replace': () => ({ replaced: true }),
     });
     // The send is done before the exact source answers.
     await invoke('equation', EQUATION);
-    const modes = calls.filter((c) => c.api === 'equations.convert').map((c) => c.args.mode);
-    expect(modes).toEqual(['local', 'exact']);
-    const inserted = String(calls.find((c) => c.api === 'editor.insert')!.args.text);
-    expect(inserted).toBe(`$$ e^{-E} $$\n\n${CAPTION}`);
-    expect(calls.map((c) => c.api)).not.toContain('editor.replace');
+    expect(calls.map((c) => c.api)).not.toContain('editor.replaceMarked');
     releaseExact();
     await until(() => logs.some((l) => l.startsWith('upgrade: replaced')));
-    expect(calls.find((c) => c.api === 'editor.replace')!.args).toEqual({
-      projectId: 'p1',
-      find: inserted,
-      replace: `$$ e^{-\\beta E_s} $$\n\n${CAPTION}`,
+    expect(editorCalls(calls).map((c) => c.api)).toEqual([
+      'editor.insert',
+      'editor.resolve',
+      'editor.mark',
+      'editor.replaceMarked',
+    ]);
+    expect(calls.find((c) => c.api === 'editor.replaceMarked')!.args).toEqual({
+      handle: 'h1',
+      text: `$$ e^{-\\beta E_s} $$\n\n${CAPTION}`,
     });
+    expect(calls.map((c) => c.api)).not.toContain('editor.replace');
     expect(calls.map((c) => c.api)).not.toContain('projectFiles.remove');
-    expect(logs.some((l) => /^send equation: project \d+ms, convert \d+ms, insert/.test(l))).toBe(
-      true
-    );
+    expect(
+      logs.some((l) => /^send equation: project \d+ms, placeholder \d+ms, convert \d+ms/.test(l))
+    ).toBe(true);
   });
 
   it('leaves an equation the user edited meanwhile alone', async () => {
     const { calls, invoke, logs } = boot({
+      ...EDITOR,
       'reader.context': readerIn('p1'),
       'equations.convert': (args) =>
         args.mode === 'local'
           ? { latex: 'a', source: 'fonts', confidence: 'medium' }
           : { latex: 'b', source: 'jats', confidence: 'high' },
-      'editor.insert': () => ({ offset: 0 }),
-      'editor.reveal': () => ({}),
-      // The inserted text is no longer in the note.
-      'editor.replace': () => ({ replaced: false }),
+      // The marked text was edited: the core refuses.
+      'editor.replaceMarked': () => ({ replaced: false }),
       'projectFiles.remove': () => ({ removed: true }),
     });
     await invoke('equation', EQUATION);
     await until(() => logs.some((l) => l.startsWith('upgrade: edited meanwhile')));
-    expect(calls.filter((c) => c.api === 'editor.replace')).toHaveLength(1);
+    expect(calls.filter((c) => c.api === 'editor.replaceMarked')).toHaveLength(1);
     expect(calls.map((c) => c.api)).not.toContain('projectFiles.remove');
+  });
+
+  it('does not check online when the text was edited before the status line went up', async () => {
+    const { calls, invoke, logs } = boot({
+      ...EDITOR,
+      'reader.context': readerIn('p1'),
+      'equations.convert': () => ({ latex: 'a', source: 'fonts', confidence: 'medium' }),
+      'editor.mark': () => ({ marked: false, handle: 'h1' }),
+    });
+    await invoke('equation', EQUATION);
+    await until(() => logs.some((l) => l.startsWith('upgrade: edited meanwhile')));
+    const modes = calls.filter((c) => c.api === 'equations.convert').map((c) => c.args.mode);
+    expect(modes).toEqual(['local']);
   });
 
   it('swaps a picture for the exact LaTeX and removes the picture', async () => {
     const { calls, invoke, logs } = boot({
+      ...EDITOR,
       'reader.context': readerIn('p1'),
       'equations.convert': (args) =>
         args.mode === 'local' ? null : { latex: 'x^2', source: 'arxiv', confidence: 'high' },
       'equations.snapshot': () => ({ page: 2, box: [1, 2, 3, 4], png: [1, 2] }),
       'projectFiles.write': () => ({ written: 2 }),
-      'editor.insert': () => ({ offset: 0 }),
-      'editor.reveal': () => ({}),
-      'editor.replace': () => ({ replaced: true }),
       'projectFiles.remove': () => ({ removed: true }),
     });
     await invoke('equation', EQUATION);
     const path = String(calls.find((c) => c.api === 'projectFiles.write')!.args.path);
     await until(() => logs.some((l) => l.startsWith('upgrade: replaced')));
-    expect(calls.find((c) => c.api === 'editor.replace')!.args).toEqual({
-      projectId: 'p1',
-      find: `![Equation (3)](${path})\n\n${CAPTION}`,
-      replace: `$$ x^2 $$\n\n${CAPTION}`,
+    expect(calls.find((c) => c.api === 'editor.resolve')!.args.text).toBe(
+      `![Equation (3)](${path})\n\n${CAPTION}`
+    );
+    expect(calls.find((c) => c.api === 'editor.replaceMarked')!.args).toEqual({
+      handle: 'h1',
+      text: `$$ x^2 $$\n\n${CAPTION}`,
     });
     expect(calls.find((c) => c.api === 'projectFiles.remove')!.args).toEqual({
       projectId: 'p1',
@@ -384,36 +458,72 @@ describe('notepad: reader actions', () => {
     });
   });
 
+  it('drops the placeholder when the picture cannot be saved', async () => {
+    const { calls, invoke } = boot({
+      ...EDITOR,
+      'reader.context': readerIn('p1'),
+      'equations.convert': () => null,
+      'equations.snapshot': () => ({ page: 2, box: [1, 2, 3, 4], png: [1, 2] }),
+      'projectFiles.write': () => {
+        throw new Error('disk full');
+      },
+    });
+    expect((await invoke('equation', EQUATION)).ok).toBe(false);
+    expect(calls.find((c) => c.api === 'editor.cancel')!.args).toEqual({ handle: 'h1' });
+    expect(calls.map((c) => c.api)).not.toContain('editor.resolve');
+  });
+
   it("does not look online when the document's own tags gave the LaTeX", async () => {
     const { calls, invoke } = boot({
+      ...EDITOR,
       'reader.context': readerIn('p1'),
       'equations.convert': () => ({ latex: 'a', source: 'tags', confidence: 'high' }),
-      'editor.insert': () => ({ offset: 0 }),
-      'editor.reveal': () => ({}),
     });
     await invoke('equation', EQUATION);
     await new Promise((resolve) => setTimeout(resolve, 20));
     const modes = calls.filter((c) => c.api === 'equations.convert').map((c) => c.args.mode);
     expect(modes).toEqual(['local']);
+    expect(editorCalls(calls).map((c) => c.api)).toEqual([
+      'editor.insert',
+      'editor.resolve',
+      'editor.unmark',
+    ]);
   });
 
-  it('saves a captured region and does nothing when it is cancelled', async () => {
+  it('holds a region the shape it was drawn, and does nothing when it is cancelled', async () => {
     let region: unknown = null;
     const { calls, invoke } = boot({
+      ...EDITOR,
       'reader.context': readerIn('p1'),
       'region.capture': () => region,
       'projectFiles.write': () => ({ written: 3 }),
-      'editor.insert': () => ({ offset: 0 }),
-      'editor.reveal': () => ({}),
     });
     await invoke('region');
     expect(calls.map((c) => c.api)).not.toContain('editor.insert');
-    region = { page: 0, box: [1, 2, 3, 4], png: [1, 2, 3] };
+    region = { page: 0, box: [1, 2, 300, 120], png: [1, 2, 3] };
     await invoke('region');
     const insert = calls.find((c) => c.api === 'editor.insert')!;
-    expect(String(insert.args.text)).toMatch(
-      /^!\[Region, p\. 1\]\(assets\/region-.*\.png\)\n\n\[@attias2022quantum, p\. 1\]\{box=1,2,3,4\}$/
+    expect(insert.args).toEqual({
+      projectId: 'p1',
+      at: 'end',
+      pending: {
+        kind: 'image',
+        shape: { w: 300, h: 120 },
+        caption: '[@attias2022quantum, p. 1]{box=1,2,300,120}',
+      },
+    });
+    // The placeholder is up before the picture is written.
+    const apis = calls.map((c) => c.api);
+    expect(apis.indexOf('editor.insert')).toBeLessThan(apis.indexOf('projectFiles.write'));
+    const resolve = calls.find((c) => c.api === 'editor.resolve')!;
+    expect(String(resolve.args.text)).toMatch(
+      /^!\[Region, p\. 1\]\(assets\/region-.*\.png\)\n\n\[@attias2022quantum, p\. 1\]\{box=1,2,300,120\}$/
     );
+    expect(editorCalls(calls).map((c) => c.api)).toEqual([
+      'editor.insert',
+      'editor.resolve',
+      'editor.unmark',
+    ]);
   });
 });
 

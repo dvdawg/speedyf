@@ -294,6 +294,37 @@ label, title, detail, pick, aliases }`. A citation of `key` or of any of its
 locator, page, box }` (`page` zero-based from a "p." locator). Typically
   `navigate.openItem`.
 
+**Sending into a note.** `editor.insert` writes text (at the end, or after
+the block being edited with `at: 'cursor'`) as one undoable edit, and
+returns a `handle` that tracks it. When the note is shown in no view in
+the window, the reader's drawer opens on it first (if the paper on screen
+is in that project); `editor.reveal { handle }` then scrolls to it.
+
+For something that takes a moment (a conversion, a picture), hold its place
+first: `editor.insert { projectId, pending: { kind, shape?, caption? } }`.
+Nothing is written to the file; every view of the note, in every window,
+draws a soft placeholder there instead - two bars for an `equation`, a box
+in `shape`'s proportions for an `image`, three thin bars for `text` (shown
+only if it is still waiting after 150 ms) - with `caption` under it as it
+will read. The place moves with every edit. Then `editor.resolve { handle,
+text }` puts the text there as one undoable edit (`resolved: false` when the
+placeholder is gone: put the text somewhere yourself), or `editor.cancel {
+handle }` takes the placeholder away.
+
+While a background check runs on text you inserted, `editor.mark { handle,
+label }` (or `{ projectId, range: { from, to }, label }`) draws one dim line
+under it, such as "checking source", with a slow ellipsis. Hand the handle
+to `equations.convert { ..., status: handle }` and the converter's
+`equations.checking` names the source it tries in that line. Then
+`editor.replaceMarked { handle, text }` replaces exactly the tracked text,
+or `editor.unmark { handle }` clears the line. Once the user edits inside
+the tracked text (or deletes it) the line goes and `replaceMarked` answers
+`replaced: false`, touching nothing: the text is theirs now.
+
+A placeholder or mark that is not resolved, cleared or renewed (by
+`editor.mark`) within 30 seconds goes away by itself, and all of an
+extension's go when it is disabled. None is ever written to the file.
+
 ### `itemDetailLines`
 
 When the Projects detail column shows an item, your command is invoked with
@@ -317,7 +348,9 @@ result instead of being shown. Math to LaTeX is the converter that ships.
   `mode`: as your own action would.
 - `ticket`: echo it in `ui.showMath { ..., ticket }`. Two conversions can be
   in flight at once (a quick local one while an exact one fetches), and the
-  ticket says which your answer is for. A `ui.showMath` with no ticket is
+  ticket says which your answer is for. Before trying a source online, say
+  which with `equations.checking { ticket, source: 'arxiv' | 'journal' }`
+  (not awaited): the asker's status line reads "checking arXiv source". A `ui.showMath` with no ticket is
   taken as the latest conversion's answer only from a converter that has
   never sent one.
 - `{ mode: 'prefetch' }` (and nothing else): the pointer has just revealed
@@ -493,55 +526,61 @@ self.onmessage = (event) => {
 All reads are scoped to the **active document**. You never name a document, and
 cannot reach a tab the user is not looking at. Pages are zero-based.
 
-| API                        | Args                                              | Returns                                                                                                                        | Needs                          |
-| -------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------ |
-| `document.info`            | -                                                 | `{ name, pageCount, currentPage }`                                                                                             | `document:read`                |
-| `document.pageText`        | `{ page }`                                        | `string`                                                                                                                       | `document:read`                |
-| `document.outline`         | -                                                 | `[{ title, page, children }]`                                                                                                  | `document:read`                |
-| `document.figures`         | -                                                 | `[{ label, caption, page }]`                                                                                                   | `document:read`                |
-| `citations.list`           | `{ page }`                                        | `[{ kind, value, page }]`                                                                                                      | `citations:read`               |
-| `citations.resolve`        | `{ kind, value }`                                 | `{ inLibrary, title, fileName, pageCount, citeKey }`                                                                           | `citations:read`               |
-| `library.search`           | `{ query }`                                       | `[{ name, title, matches }]`                                                                                                   | `library:read`                 |
-| `library.papers`           | -                                                 | `{ papers: [{ id, title, authors, year, venue, citeKey, projectIds, isPaper }] }`                                              | `library:read`                 |
-| `library.projects`         | -                                                 | `[{ id, name, paperCount }]`                                                                                                   | `library:read`                 |
-| `library.paper`            | `{ id }`                                          | the record: `meta` with a `source` per field, `doi`, `arxiv`, `citeKey`, `projectIds`, `isPaper`, `files: [{ name, missing }]` | `library:read`                 |
-| `commands.run`             | `{ id }`                                          | `{ ran }`                                                                                                                      | `commands:run`                 |
-| `render.page`              | `{ page, scaleMilli? }`                           | `number[]` - PNG bytes                                                                                                         | `render:read`                  |
-| `document.contributeText`  | `{ page, text }`                                  | `{ stored }`                                                                                                                   | `document:contributeText`      |
-| `document.contributedText` | -                                                 | `{ extensionId, pages } \| null`                                                                                               | `document:contributeText`      |
-| `references.contribute`    | `{ document, entries }`                           | `{ stored }` - only for the document you are being invoked with                                                                | `library:contributeReferences` |
-| `terms.contribute`         | `{ document, terms }`                             | `{ stored }` - only while that document is still on screen                                                                     | `document:contributeTerms`     |
-| `clipboard.write`          | `{ text }`                                        | `{ written }`                                                                                                                  | `clipboard:write`              |
-| `storage.get`              | `{ key }`                                         | `string \| null`                                                                                                               | `storage`                      |
-| `storage.set`              | `{ key, value }`                                  | `{ stored }`                                                                                                                   | `storage`                      |
-| `storage.remove`           | `{ key }`                                         | `{ removed }`                                                                                                                  | `storage`                      |
-| `settings.get`             | `{ key }`                                         | `string`                                                                                                                       | -                              |
-| `ui.render`                | `{ panel, ui }`                                   | `{ rendered }`                                                                                                                 | -                              |
-| `selection.glyphs`         | -                                                 | `{ page, glyphs: Glyph[] } \| null` - the current text selection                                                               | `document:layout`              |
-| `region.glyphs`            | `{ page, bbox }`                                  | `{ page, glyphs: Glyph[] }`                                                                                                    | `document:layout`              |
-| `document.mathTags`        | `{ page }`                                        | `[{ bbox, alt, actualText, mathml }]` - tagged-PDF Formula elements                                                            | `document:layout`              |
-| `document.identifiers`     | -                                                 | `{ doi, arxiv, arxivVersion }`, each `null` when unknown                                                                       | `document:read`                |
-| `net.fetch`                | `{ url, as?, maxBytes? }`                         | `{ status, contentType, body }` - `body` a string for `as: 'text'` (the default), `number[]` for `as: 'bytes'`                 | `network` (host listed)        |
-| `ui.showMath`              | `{ latex, display, source, confidence, ticket? }` | `{ shown }`                                                                                                                    | -                              |
-| `projects.list`            | -                                                 | `[{ id, name, itemCount }]`                                                                                                    | `projects:read`                |
-| `projects.items`           | `{ projectId? }`                                  | `[{ id, citeKey, keyHistory, title, authors, firstAuthor, alphaLabel, year, projectIds }]` - a project's items, or every item  | `projects:read`                |
-| `reader.context`           | -                                                 | `{ item: { id, citeKey, title } \| null, projectIds, projectId, page, selection: { page, box, text } \| null }`                | `projects:read`                |
-| `reader.chooseProject`     | -                                                 | a project id or `null`: asks once which of the paper's projects, kept for the session                                          | `projects:read`                |
-| `navigate.openItem`        | `{ itemId, projectId?, page?, box? }`             | `{ opened }` - opens it (at a page and box), with Back                                                                         | `projects:read`                |
-| `projectFiles.read`        | `{ projectId, path, as? }`                        | a string (`as: 'text'`, the default; the live text of an open editor), `number[]` for `as: 'bytes'`, or `null`                 | `projects:files`               |
-| `projectFiles.write`       | `{ projectId, path, text \| bytes }`              | `{ written }` - atomically; into an open editor as an edit                                                                     | `projects:files`               |
-| `projectFiles.list`        | `{ projectId }`                                   | `[{ path, size }]`                                                                                                             | `projects:files`               |
-| `projectFiles.remove`      | `{ projectId, path }`                             | `{ removed }` - not a file open in an editor                                                                                   | `projects:files`               |
-| `editor.citations`         | `{ projectId, entries }`                          | `{ stored }`                                                                                                                   | `projects:files`               |
-| `editor.insert`            | `{ projectId, text, at?, file? }`                 | `{ offset }` - at the end after a blank line, or `at: 'cursor'` in an editor showing it                                        | `projects:files`               |
-| `editor.replace`           | `{ projectId, find, replace, file? }`             | `{ replaced }` - the first exact occurrence, as one undoable edit through the note's session; `false` when it is not there     | `projects:files`               |
-| `editor.reveal`            | `{ projectId, offset, file? }`                    | `{ revealed }` - scrolls an editor there, now or when one opens                                                                | `projects:files`               |
-| `region.capture`           | `{ prompt? }`                                     | `{ page, box, png }` or `null` when the user pressed Escape                                                                    | `render:region`                |
-| `equations.snapshot`       | `{ equation }`                                    | `{ page, box, png }` of the equation you were invoked with                                                                     | `render:region`                |
-| `equations.convert`        | `{ equation, mode? }`                             | `{ latex, display, source, confidence }` from the enabled `equationConverter`, or `null`                                       | -                              |
-| `ui.itemLine`              | `{ itemId, text, action? }`                       | `{ shown }`                                                                                                                    | -                              |
-| `pane.open`                | `{ pane, projectId? }`                            | `{ opened }` - your reader pane, when its `when` holds                                                                         | -                              |
-| `projectView.open`         | `{ view, projectId?, offset? }`                   | `{ opened }` - your pane of a project (the selected one by default), in the detail column, its item let go                     | -                              |
+| API                        | Args                                                        | Returns                                                                                                                                                                          | Needs                          |
+| -------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| `document.info`            | -                                                           | `{ name, pageCount, currentPage }`                                                                                                                                               | `document:read`                |
+| `document.pageText`        | `{ page }`                                                  | `string`                                                                                                                                                                         | `document:read`                |
+| `document.outline`         | -                                                           | `[{ title, page, children }]`                                                                                                                                                    | `document:read`                |
+| `document.figures`         | -                                                           | `[{ label, caption, page }]`                                                                                                                                                     | `document:read`                |
+| `citations.list`           | `{ page }`                                                  | `[{ kind, value, page }]`                                                                                                                                                        | `citations:read`               |
+| `citations.resolve`        | `{ kind, value }`                                           | `{ inLibrary, title, fileName, pageCount, citeKey }`                                                                                                                             | `citations:read`               |
+| `library.search`           | `{ query }`                                                 | `[{ name, title, matches }]`                                                                                                                                                     | `library:read`                 |
+| `library.papers`           | -                                                           | `{ papers: [{ id, title, authors, year, venue, citeKey, projectIds, isPaper }] }`                                                                                                | `library:read`                 |
+| `library.projects`         | -                                                           | `[{ id, name, paperCount }]`                                                                                                                                                     | `library:read`                 |
+| `library.paper`            | `{ id }`                                                    | the record: `meta` with a `source` per field, `doi`, `arxiv`, `citeKey`, `projectIds`, `isPaper`, `files: [{ name, missing }]`                                                   | `library:read`                 |
+| `commands.run`             | `{ id }`                                                    | `{ ran }`                                                                                                                                                                        | `commands:run`                 |
+| `render.page`              | `{ page, scaleMilli? }`                                     | `number[]` - PNG bytes                                                                                                                                                           | `render:read`                  |
+| `document.contributeText`  | `{ page, text }`                                            | `{ stored }`                                                                                                                                                                     | `document:contributeText`      |
+| `document.contributedText` | -                                                           | `{ extensionId, pages } \| null`                                                                                                                                                 | `document:contributeText`      |
+| `references.contribute`    | `{ document, entries }`                                     | `{ stored }` - only for the document you are being invoked with                                                                                                                  | `library:contributeReferences` |
+| `terms.contribute`         | `{ document, terms }`                                       | `{ stored }` - only while that document is still on screen                                                                                                                       | `document:contributeTerms`     |
+| `clipboard.write`          | `{ text }`                                                  | `{ written }`                                                                                                                                                                    | `clipboard:write`              |
+| `storage.get`              | `{ key }`                                                   | `string \| null`                                                                                                                                                                 | `storage`                      |
+| `storage.set`              | `{ key, value }`                                            | `{ stored }`                                                                                                                                                                     | `storage`                      |
+| `storage.remove`           | `{ key }`                                                   | `{ removed }`                                                                                                                                                                    | `storage`                      |
+| `settings.get`             | `{ key }`                                                   | `string`                                                                                                                                                                         | -                              |
+| `ui.render`                | `{ panel, ui }`                                             | `{ rendered }`                                                                                                                                                                   | -                              |
+| `selection.glyphs`         | -                                                           | `{ page, glyphs: Glyph[] } \| null` - the current text selection                                                                                                                 | `document:layout`              |
+| `region.glyphs`            | `{ page, bbox }`                                            | `{ page, glyphs: Glyph[] }`                                                                                                                                                      | `document:layout`              |
+| `document.mathTags`        | `{ page }`                                                  | `[{ bbox, alt, actualText, mathml }]` - tagged-PDF Formula elements                                                                                                              | `document:layout`              |
+| `document.identifiers`     | -                                                           | `{ doi, arxiv, arxivVersion }`, each `null` when unknown                                                                                                                         | `document:read`                |
+| `net.fetch`                | `{ url, as?, maxBytes? }`                                   | `{ status, contentType, body }` - `body` a string for `as: 'text'` (the default), `number[]` for `as: 'bytes'`                                                                   | `network` (host listed)        |
+| `ui.showMath`              | `{ latex, display, source, confidence, ticket? }`           | `{ shown }`                                                                                                                                                                      | -                              |
+| `projects.list`            | -                                                           | `[{ id, name, itemCount }]`                                                                                                                                                      | `projects:read`                |
+| `projects.items`           | `{ projectId? }`                                            | `[{ id, citeKey, keyHistory, title, authors, firstAuthor, alphaLabel, year, projectIds }]` - a project's items, or every item                                                    | `projects:read`                |
+| `reader.context`           | -                                                           | `{ item: { id, citeKey, title } \| null, projectIds, projectId, page, selection: { page, box, text } \| null }`                                                                  | `projects:read`                |
+| `reader.chooseProject`     | -                                                           | a project id or `null`: asks once which of the paper's projects, kept for the session                                                                                            | `projects:read`                |
+| `navigate.openItem`        | `{ itemId, projectId?, page?, box? }`                       | `{ opened }` - opens it (at a page and box), with Back                                                                                                                           | `projects:read`                |
+| `projectFiles.read`        | `{ projectId, path, as? }`                                  | a string (`as: 'text'`, the default; the live text of an open editor), `number[]` for `as: 'bytes'`, or `null`                                                                   | `projects:files`               |
+| `projectFiles.write`       | `{ projectId, path, text \| bytes }`                        | `{ written }` - atomically; into an open editor as an edit                                                                                                                       | `projects:files`               |
+| `projectFiles.list`        | `{ projectId }`                                             | `[{ path, size }]`                                                                                                                                                               | `projects:files`               |
+| `projectFiles.remove`      | `{ projectId, path }`                                       | `{ removed }` - not a file open in an editor                                                                                                                                     | `projects:files`               |
+| `editor.citations`         | `{ projectId, entries }`                                    | `{ stored }`                                                                                                                                                                     | `projects:files`               |
+| `editor.insert`            | `{ projectId, text \| pending, at?, file? }`                | `{ offset, handle }` - at the end after a blank line, or `at: 'cursor'` in an editor showing it; `pending: { kind, shape?, caption? }` holds the place instead (nothing written) | `projects:files`               |
+| `editor.resolve`           | `{ handle, text }`                                          | `{ resolved, offset }` - the text where the placeholder is, one undoable edit; `resolved: false` when it expired                                                                 | `projects:files`               |
+| `editor.cancel`            | `{ handle }`                                                | `{ cancelled }` - the placeholder (or mark) removed                                                                                                                              | `projects:files`               |
+| `editor.mark`              | `{ handle, label }` or `{ projectId, range, label, file? }` | `{ marked, handle }` - a dim status line under the tracked text, for 30 s                                                                                                        | `projects:files`               |
+| `editor.unmark`            | `{ handle }`                                                | `{ cleared }`                                                                                                                                                                    | `projects:files`               |
+| `editor.replaceMarked`     | `{ handle, text }`                                          | `{ replaced }` - exactly the tracked text, one undoable edit; `false` once the user edited it                                                                                    | `projects:files`               |
+| `editor.replace`           | `{ projectId, find, replace, file? }`                       | `{ replaced }` - the first exact occurrence, as one undoable edit through the note's session; `false` when it is not there                                                       | `projects:files`               |
+| `editor.reveal`            | `{ projectId, offset, file? }` or `{ handle }`              | `{ revealed }` - scrolls an editor there (or to a handle's placeholder or text), now or when one opens                                                                           | `projects:files`               |
+| `region.capture`           | `{ prompt? }`                                               | `{ page, box, png }` or `null` when the user pressed Escape                                                                                                                      | `render:region`                |
+| `equations.snapshot`       | `{ equation }`                                              | `{ page, box, png }` of the equation you were invoked with                                                                                                                       | `render:region`                |
+| `equations.convert`        | `{ equation, mode?, status? }`                              | `{ latex, display, source, confidence }` from the enabled `equationConverter`, or `null`; `status` a mark handle the converter names its source in                               | -                              |
+| `equations.checking`       | `{ ticket, source }`                                        | `{ shown }` - for a converter: the source (`'arxiv'`, `'journal'`) it is trying for that conversion                                                                              | -                              |
+| `ui.itemLine`              | `{ itemId, text, action? }`                                 | `{ shown }`                                                                                                                                                                      | -                              |
+| `pane.open`                | `{ pane, projectId? }`                                      | `{ opened }` - your reader pane, when its `when` holds                                                                                                                           | -                              |
+| `projectView.open`         | `{ view, projectId?, offset? }`                             | `{ opened }` - your pane of a project (the selected one by default), in the detail column, its item let go                                                                       | -                              |
 
 `kind` is `'doi'` or `'arxiv'`. `document.links` reports **every** outbound
 link, including the many references cited by URL alone - a JMLR paper, a book on
@@ -694,7 +733,8 @@ anything unreadable is ignored rather than costing you the whole panel.
 | Time to answer an `invoke` with `network` | 60 s                                                                                      |
 | `ui.showMath` LaTeX                       | 20 000 characters                                                                         |
 | A project file                            | 8 MB; a path is plain names (letters, digits, `.`, `_`, `-`), at most four parts          |
-| `editor.insert` text                      | 200 000 characters                                                                        |
+| `editor.insert`, `editor.resolve` text    | 200 000 characters                                                                        |
+| Placeholder or mark, unresolved           | 30 seconds                                                                                |
 | `editor.replace` find, replace            | 200 000 characters each                                                                   |
 | `editor.citations` entries                | 20 000                                                                                    |
 | An invoke waiting on the user             | the clock stops while SpeedyF waits for a rectangle or a project pick                     |

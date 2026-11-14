@@ -1230,6 +1230,36 @@ offered.
   enters a crosshair mode: drag a rectangle on a page, Escape cancels. The
   PNG goes into `assets/` and the note gets the image and a page link.
 
+**Sends in progress** (implemented 2026-11-14). A send shows where it will
+land at once, and says when it is still being checked, without ever
+writing anything temporary to the file:
+
+- **Placeholder.** Notepad asks for a pending insert (`editor.insert {
+pending }`): the core keeps a zero-width place in the note's session that
+  moves with every edit, and every view of the note in every window draws a
+  skeleton there - for an equation two soft rounded grey bars, centred, about
+  60% and 40% wide, at display-equation height; for a region a box in the
+  drawn rectangle's proportions; for a quote three thin bars, shown only if
+  the quote has not landed within 150 ms (it nearly always has). Under it,
+  the caption as it will read ("Equation (3), [ZD24a, p. 4]"). A gentle
+  shimmer, still under reduced motion; no borders, no new colours. Filled
+  in (`editor.resolve`), it becomes the text in one undoable edit.
+- **Checking line.** After the local LaTeX goes in (unless it came from the
+  document's own tags), a dim small line sits under the equation, "checking
+  arXiv source" or "checking journal source" (Math to LaTeX names the source
+  it tries), with a slow ellipsis, appearing only once the check has run
+  for 400 ms (a prefetched source usually answers first). A different
+  exact answer replaces exactly the inserted text (`editor.replaceMarked`);
+  the line goes on completion or failure. Editing inside the equation drops
+  the line and the upgrade with it.
+- **Expiry.** A placeholder or line not resolved within 30 s goes away by
+  itself (a placeholder whose text arrives later is appended at the end);
+  disabling Notepad clears them at once.
+- **The drawer opens on send.** When a send targets a note that no view in
+  the window shows (the drawer shut), the drawer opens on that project's
+  note and scrolls to the placeholder. When the Projects notepad is the
+  view showing it, it just scrolls there.
+
 ### Storage
 
 ```

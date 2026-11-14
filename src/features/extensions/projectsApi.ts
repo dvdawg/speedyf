@@ -9,14 +9,23 @@ import { selectedGeometry, selectedText } from '../../stores/selectionStore';
 import { activeTab } from '../../stores/tabsStore';
 import { readBoxArg, readProjectIdArg, readProjectPathArg, toProjectItems } from './api';
 import {
+  cancelHandle,
   equationFor,
+  handlePlace,
   insertIntoNote,
+  insertPending,
+  markHandle,
+  markRange,
+  noteShown,
   readCitationEntries,
   replaceInNote,
+  replaceMarked,
+  resolvePending,
   revealInEditor,
   setCitations,
   setItemLine,
 } from './editorHost';
+import type { NoteKey, PendingShape } from './editor/noteSession';
 import type {
   ConvertMode,
   ConvertedEquation,
@@ -62,6 +71,55 @@ function editorFile(extension: ExtensionRecord, args: unknown): string {
     throw new Error('"file" must be a file one of this extension\'s editors is bound to');
   }
   return wanted;
+}
+
+/** `editor.insert`'s `pending`: what is on its way. */
+function readPending(raw: unknown): PendingShape {
+  if (typeof raw !== 'object' || raw === null)
+    throw new Error('expected "pending" to be an object');
+  const r = raw as Record<string, unknown>;
+  if (r.kind !== 'equation' && r.kind !== 'image' && r.kind !== 'text') {
+    throw new Error('"pending.kind" must be "equation", "image" or "text"');
+  }
+  let shape: PendingShape['shape'] = null;
+  if (r.shape !== undefined && r.shape !== null) {
+    const s = r.shape as { w?: unknown; h?: unknown };
+    const ok = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0;
+    if (typeof s !== 'object' || !ok(s.w) || !ok(s.h)) {
+      throw new Error('"pending.shape" must be { w, h }, both positive');
+    }
+    // Proportions only, kept sane: a sliver is drawn as a thin band.
+    shape = { w: s.w, h: Math.min(Math.max(s.h, s.w / 20), s.w * 4) };
+  }
+  if (r.caption !== undefined && r.caption !== null && typeof r.caption !== 'string') {
+    throw new Error('expected "pending.caption" to be a string');
+  }
+  const caption =
+    typeof r.caption === 'string' && r.caption.trim() ? r.caption.slice(0, 2000) : null;
+  return { kind: r.kind, shape, caption };
+}
+
+/** A status line's words. */
+function readLabel(raw: unknown): string {
+  if (typeof raw !== 'string' || !raw.trim()) throw new Error('expected a non-empty "label"');
+  return raw.trim().slice(0, 120);
+}
+
+/** Text for the note, checked for size. */
+function readNoteText(raw: unknown, api: string): string {
+  if (typeof raw !== 'string' || !raw.trim()) throw new Error('expected a non-empty "text"');
+  if (raw.length > 200_000) throw new Error(`${api} takes at most 200 000 characters`);
+  return raw;
+}
+
+/** A send is about to land in `key`'s note: when no view of it is on
+ * screen in this window, open the reader's drawer on it (when the paper on
+ * screen is in that project), so the user sees it arrive. */
+function showNote(extension: ExtensionRecord, key: NoteKey): void {
+  if (noteShown(key)) return;
+  const pane = extension.readerPanes.find((p) => p.editor.file === key.file);
+  if (!pane || !readerItem()?.projectIds.includes(key.projectId)) return;
+  openReaderPane(pane.id, key.projectId);
 }
 
 /** `reader.context`: the reader's item, its projects, the project the
@@ -210,12 +268,57 @@ export async function projectsApi(
     case 'editor.insert': {
       const projectId = readProjectIdArg(args);
       const file = editorFile(extension, args);
-      const text = record.text;
-      if (typeof text !== 'string' || !text.trim()) throw new Error('expected a non-empty "text"');
-      if (text.length > 200_000) throw new Error('editor.insert takes at most 200 000 characters');
+      const key = { extensionId: extension.id, projectId, file };
       const at = record.at === 'cursor' ? 'cursor' : 'end';
-      const offset = await insertIntoNote({ extensionId: extension.id, projectId, file }, text, at);
-      return { offset };
+      if (record.pending !== undefined) {
+        const pending = readPending(record.pending);
+        showNote(extension, key);
+        return insertPending(key, pending, at, extension.id);
+      }
+      const text = readNoteText(record.text, 'editor.insert');
+      showNote(extension, key);
+      return insertIntoNote(key, text, at, extension.id);
+    }
+    case 'editor.resolve': {
+      const text = readNoteText(record.text, 'editor.resolve');
+      const done = await resolvePending(extension.id, record.handle, text);
+      return done ? { resolved: true, offset: done.offset } : { resolved: false, offset: -1 };
+    }
+    case 'editor.cancel':
+      return { cancelled: cancelHandle(extension.id, record.handle) };
+    case 'editor.mark': {
+      const label = readLabel(record.label);
+      if (record.handle !== undefined) {
+        return {
+          marked: markHandle(extension.id, record.handle, label),
+          handle: record.handle,
+        };
+      }
+      const projectId = readProjectIdArg(args);
+      const file = editorFile(extension, args);
+      const range = record.range as { from?: unknown; to?: unknown } | undefined;
+      const int = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
+      if (!range || !int(range.from) || !int(range.to)) {
+        throw new Error('editor.mark needs a "handle", or a "range" { from, to }');
+      }
+      const handle = await markRange(
+        { extensionId: extension.id, projectId, file },
+        extension.id,
+        range.from,
+        range.to,
+        label
+      );
+      return { marked: true, handle };
+    }
+    case 'editor.unmark':
+      return { cleared: cancelHandle(extension.id, record.handle) };
+    case 'editor.replaceMarked': {
+      const text = record.text;
+      if (typeof text !== 'string') throw new Error('expected a string "text"');
+      if (text.length > 200_000) {
+        throw new Error('editor.replaceMarked takes at most 200 000 characters');
+      }
+      return { replaced: await replaceMarked(extension.id, record.handle, text) };
     }
     case 'editor.replace': {
       const projectId = readProjectIdArg(args);
@@ -234,6 +337,12 @@ export async function projectsApi(
       return { replaced };
     }
     case 'editor.reveal': {
+      if (record.handle !== undefined) {
+        const place = handlePlace(extension.id, record.handle);
+        if (!place) return { revealed: false };
+        revealInEditor(place.key, place.offset, record.handle as string);
+        return { revealed: true };
+      }
       const projectId = readProjectIdArg(args);
       const file = editorFile(extension, args);
       const offset = record.offset;
@@ -255,7 +364,8 @@ export async function openApi(
   convert: (
     token: string,
     ref: ReturnType<typeof equationFor>,
-    mode?: ConvertMode
+    mode?: ConvertMode,
+    status?: { owner: string; handle: string }
   ) => Promise<ConvertedEquation | null>
 ): Promise<unknown> {
   const record = (args ?? {}) as Record<string, unknown>;
@@ -267,7 +377,12 @@ export async function openApi(
       if (mode !== undefined && mode !== 'local' && mode !== 'exact') {
         throw new Error('equations.convert: "mode" must be "local" or "exact"');
       }
-      const answer = await convert(token as string, ref, mode);
+      // A status line the converter may name its source in, while it looks.
+      const status =
+        typeof record.status === 'string'
+          ? { owner: extension.id, handle: record.status }
+          : undefined;
+      const answer = await convert(token as string, ref, mode, status);
       return answer
         ? {
             latex: answer.latex,

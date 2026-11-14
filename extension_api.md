@@ -334,6 +334,33 @@ it still cannot touch the DOM (principle 1), the editor matches the app
 editor's internals (principle 3). The iframe pane stays v3 and unbuilt
 until an extension needs a surface that is not text.
 
+**Sends in progress: placeholders and marks.** A send that takes a moment
+(an equation being converted, a region being saved) should show where it
+will land at once, and a quiet upgrade afterwards should say it is
+running. Both live in the note's session, never in the file: the file is
+valid Markdown at every moment and a crash leaves nothing behind.
+`editor.insert { pending: { kind, shape?, caption? } }` writes nothing and
+returns a handle for a zero-width place that maps through every edit
+(`ops.ts` `mapPos`, text typed exactly there going before it, so two sends
+keep their order); each view draws a skeleton there (equation, image in
+its drawn proportions, or text) with the caption under it.
+`editor.resolve { handle, text }` inserts at the mapped place as one
+undoable edit and leaves the handle tracking the inserted range;
+`editor.cancel` drops it. `editor.mark { handle | range, label }` puts a
+dim status line under a tracked range, and `editor.replaceMarked { handle,
+text }` replaces exactly that range, refused (`replaced: false`) once an
+edit has touched it - the session drops a mark on any edit inside or over
+it, which is a sounder test than finding the old text again, so it
+supersedes `editor.replace` for upgrades (kept for compatibility). The
+converter feeds the status line through `equations.checking { ticket,
+source }` for a conversion asked with `status: handle`. A window sends its
+decorations to the others as places in the core's text at a revision, and
+each maps them on through the edits it has seen, as it maps its caret.
+Unresolved for 30 s, a placeholder is removed and a mark cleared; a
+disabled extension's go at once. All under `projects:files`. And when a
+send targets a note no view in the window shows, `editor.insert` opens the
+reader's drawer on it first, so the user sees it land.
+
 ## 9. Consumers and contributors
 
 Five of the six test extensions share one shape: the user acts, then the
