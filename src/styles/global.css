@@ -2302,7 +2302,8 @@ html.is-dragging-tab * {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 4px 6px 8px;
+  /* On the rows' content edge (their 8px padding). */
+  padding: 4px 8px 8px;
   color: var(--text-dim);
   font-size: 12px;
 }
@@ -3486,7 +3487,8 @@ html.is-dragging-tab * {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 2px 4px 8px;
+  /* On the rows' content edge: their 1px border and 8px padding. */
+  padding: 2px 9px 8px;
 }
 
 .ext-panel-title {
@@ -3524,7 +3526,7 @@ html.is-dragging-tab * {
 }
 
 .ext-panel-section-title {
-  padding: 4px 4px 6px;
+  padding: 4px 9px 6px;
   color: var(--text-dim);
   font-size: 11px;
   text-transform: uppercase;
