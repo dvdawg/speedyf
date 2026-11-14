@@ -5,6 +5,7 @@ import TabStrip from './TabStrip';
 import {
   activateTab,
   closeOtherTabs,
+  closeTab,
   closeTabsToTheRight,
   detachTab,
   moveTabToWindow,
@@ -260,4 +261,21 @@ it('tab menu closes neighbours and detaches through the same paths as the strip'
   fireEvent.click(screen.getByRole('menuitem', { name: 'Move to New Window' }));
   expect(detachTab).toHaveBeenCalledWith(id);
   expect(closeTabsToTheRight).not.toHaveBeenCalled();
+});
+
+it('middle-click closes a tab through the x button path, without autoscroll', () => {
+  const { tabs } = setup();
+  const id = tabsStore.state.tabs[1]!.id;
+  const down = new MouseEvent('mousedown', { button: 1, bubbles: true, cancelable: true });
+  tabs[1]!.dispatchEvent(down);
+  expect(down.defaultPrevented).toBe(true);
+  tabs[1]!.dispatchEvent(new MouseEvent('auxclick', { button: 2, bubbles: true }));
+  expect(closeTab).not.toHaveBeenCalled();
+  tabs[1]!.dispatchEvent(new MouseEvent('auxclick', { button: 1, bubbles: true }));
+  expect(closeTab).toHaveBeenCalledTimes(1);
+  expect(closeTab).toHaveBeenCalledWith(id);
+  expect(activateTab).not.toHaveBeenCalled();
+
+  fireEvent.click(tabs[2]!.querySelector('.tab-pill-close')!);
+  expect(closeTab).toHaveBeenLastCalledWith(tabsStore.state.tabs[2]!.id);
 });

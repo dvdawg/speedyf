@@ -154,7 +154,8 @@ within the strip to reorder; press Escape to cancel a drag. You can also use
 **File -> New Window**, the tab-bar window buttons, or the command palette's
 **New Window** and **Move Tab to New Window** commands. A tab's right-click
 menu also closes the other tabs or the tabs to its right, and moves the tab
-into a new window or into any other open window, edits and all.
+into a new window or into any other open window, edits and all. A
+middle-click on a tab closes it, as its x button does.
 
 **Reopen Closed Tab** (`Cmd+Shift+T`, or the command palette) brings back the
 most recently closed tab at the page, offset, zoom and rotation it was left
@@ -181,6 +182,17 @@ there with Cmd+O (Ctrl+O), Home's **Open PDF...** button or the palette. Theme, 
 | Fit page / 100%            | `Cmd+0` / `Cmd+1`       | `Ctrl+0` / `Ctrl+1`       |
 | Previous/next page         | Page Up / Page Down     | Page Up / Page Down       |
 | Close panel/tool/selection | Escape                  | Escape                    |
+| Keyboard shortcuts         | `Cmd+/`                 | `Ctrl+/`                  |
+
+**Keyboard Shortcuts** (`Cmd+/`, `Ctrl+/` elsewhere, or the palette) lists
+every key SpeedyF answers, grouped by area, including the ones your
+extensions bind, each named with its extension. Type to filter; Escape or
+`Cmd+/` again closes it.
+
+**Selecting text.** Drag across a page to select, double-click for a word,
+triple-click for the paragraph under the pointer: the lines of that block,
+stopping at a paragraph gap, an indent, a heading or the edge of a column.
+A paragraph selection copies and quotes like a dragged one.
 
 **Quoting into the Notepad.** In a paper that belongs to a project, select
 text and let go: a small **Quote** button appears just past the end of the

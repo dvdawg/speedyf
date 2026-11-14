@@ -57,6 +57,21 @@ const GROUP_ORDER = [
   'Extensions',
 ];
 
+/** Recent commands listed first on an empty query. */
+export const RECENT_LIMIT = 5;
+/** What the most recently run command adds to a typed match's score, falling
+ * by a step for each older one. Small beside a word-start hit (about 70 a
+ * character), so it settles near ties and never overturns a clearly better
+ * match. */
+export const RECENT_BOOST = 24;
+const RECENT_BOOST_STEP = 4;
+
+/** The boost for a command at `index` in the recent list (-1: not recent). */
+export function recencyBoost(index: number): number {
+  if (index < 0 || index >= RECENT_LIMIT) return 0;
+  return RECENT_BOOST - index * RECENT_BOOST_STEP;
+}
+
 function groupRank(group: string): number {
   const at = GROUP_ORDER.indexOf(group);
   return at < 0 ? GROUP_ORDER.length : at;
@@ -74,7 +89,8 @@ function sectionize(items: Candidate[], perGroup: number): Section[] {
     .filter((section) => section.items.length > 0);
 }
 
-/** The untyped list: what you reach for most, then everything available.
+/** The untyped list: the commands run last (`recentKeys`, most recent
+ * first), then everything available.
  *
  * A remembered command that is not currently runnable is dropped rather than
  * shown greyed — offering "Delete Page" on the home screen and doing nothing
@@ -91,7 +107,7 @@ export function defaultSections(
   const recent = recentKeys
     .map((key) => byKey.get(key))
     .filter((candidate): candidate is Candidate => candidate !== undefined)
-    .slice(0, 4);
+    .slice(0, RECENT_LIMIT);
   const recentKeySet = new Set(recent.map((candidate) => candidate.key));
 
   const rest = sectionize(
@@ -112,7 +128,8 @@ export function rankCandidates(
   candidates: readonly Candidate[],
   query: string,
   uses: (key: string) => number,
-  perGroup: number = PER_GROUP
+  perGroup: number = PER_GROUP,
+  recentKeys: readonly string[] = []
 ): Section[] {
   const trimmed = query.trim();
   if (trimmed.length === 0) return [];
@@ -126,7 +143,9 @@ export function rankCandidates(
     const score = matchScore(candidate.title, candidate.keywords, trimmed);
     if (score === null) continue;
     // A disabled row is only ever a footnote, never a ranked answer.
-    const boosted = candidate.enabled ? score + usageBoost(uses(candidate.key)) : score - 10_000;
+    const boosted = candidate.enabled
+      ? score + usageBoost(uses(candidate.key)) + recencyBoost(recentKeys.indexOf(candidate.key))
+      : score - 10_000;
     scored.push({ candidate, score: boosted, prefix: lower.startsWith(exact) });
   }
 

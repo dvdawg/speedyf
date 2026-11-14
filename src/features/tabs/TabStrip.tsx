@@ -144,6 +144,10 @@ export default function TabStrip() {
           {(tab, i) => {
             const doc = () => tab.documentStore.state;
             const isActive = () => tabsStore.state.activeId === tab.id;
+            const close = () => {
+              clearHover();
+              void closeTab(tab.id);
+            };
             return (
               <div
                 class="tab-pill"
@@ -171,6 +175,17 @@ export default function TabStrip() {
                   }
                 }}
                 onContextMenu={(e) => openMenu(e, tab.id)}
+                // A middle-click closes the tab, by the same path as its x
+                // button. Its mousedown is swallowed so the webview does not
+                // start autoscroll.
+                onMouseDown={(e) => {
+                  if (e.button === 1) e.preventDefault();
+                }}
+                onAuxClick={(e) => {
+                  if (e.button !== 1) return;
+                  e.preventDefault();
+                  close();
+                }}
                 onPointerEnter={(e) => hoverTab(tab.id, e.currentTarget)}
                 onPointerLeave={clearHover}
                 onPointerDown={(e) => {
@@ -261,8 +276,7 @@ export default function TabStrip() {
                   aria-label={`Close ${doc().name || 'tab'}`}
                   onClick={(e) => {
                     e.stopPropagation();
-                    clearHover();
-                    void closeTab(tab.id);
+                    close();
                   }}
                 >
                   <IconClose />

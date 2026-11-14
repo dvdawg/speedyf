@@ -9,6 +9,7 @@ import Sidebar from '../components/Sidebar';
 import StatusBar from '../components/StatusBar';
 import Modals from '../components/Modals';
 import CommandPalette from '../features/palette/CommandPalette';
+import ShortcutSheet from '../features/shortcuts/ShortcutSheet';
 import QuickOpen from '../features/palette/QuickOpen';
 import Viewer from '../features/viewer/Viewer';
 import ContextHeader from '../features/viewer/ContextHeader';
@@ -273,6 +274,7 @@ export default function App() {
         </Show>
         <Modals />
         <CommandPalette />
+        <ShortcutSheet />
         <QuickOpen />
         <PreviewPopover />
         <MathPopover />

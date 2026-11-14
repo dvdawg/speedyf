@@ -13,6 +13,14 @@ const MAC_PARTS: Record<string, string> = {
   pagedown: 'PgDn',
   pageup: 'PgUp',
   tab: 'Tab',
+  delete: 'Delete',
+  escape: 'Escape',
+  enter: 'Enter',
+  space: 'Space',
+  arrowleft: 'Left',
+  arrowright: 'Right',
+  arrowup: 'Up',
+  arrowdown: 'Down',
 };
 
 const PC_PARTS: Record<string, string> = {
@@ -32,6 +40,6 @@ export function formatShortcut(spec: string, isMac: boolean = IS_MAC): string {
   const table = isMac ? MAC_PARTS : PC_PARTS;
   return spec
     .split('+')
-    .map((part) => table[part] ?? part.toUpperCase())
+    .map((part) => table[part.toLowerCase()] ?? part.toUpperCase())
     .join('+');
 }

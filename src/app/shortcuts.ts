@@ -24,6 +24,8 @@ import {
 } from '../features/extensions/extensionStore';
 import { toggleReaderPane } from '../features/extensions/surfaces';
 import { parseChord } from '../features/extensions/capabilities';
+import { closeShortcutSheet, shortcutSheetOpen } from '../features/shortcuts/shortcutSheetStore';
+import type { ShortcutArea } from '../features/shortcuts/shortcutRows';
 
 const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.userAgent);
 
@@ -96,6 +98,14 @@ const BINDINGS: readonly Binding[] = [
     whileTyping: true,
     preventAlways: true,
   },
+  // The shortcut sheet, on the chord editors use for help with keys.
+  {
+    key: '/',
+    mod: true,
+    id: 'view.keyboardShortcuts',
+    whileTyping: true,
+    preventAlways: true,
+  },
 
   // Below here the typing guard applies: the browser owns text-editing
   // undo/redo and the rest while an input has focus.
@@ -146,6 +156,34 @@ const NAV_ALT: readonly Binding[] = [
   { key: 'ArrowLeft', alt: true, id: 'nav.back' },
   { key: 'ArrowRight', alt: true, id: 'nav.forward' },
 ];
+
+/** The chords handled outside the table, which have no command to carry a
+ * `shortcut`: what the shortcut sheet lists for them. Keep in step with the
+ * handler below and with `reservedChords`. */
+export const UNLISTED_SHORTCUTS: readonly { spec: string; title: string; area: ShortcutArea }[] = [
+  { spec: 'mod+shift+p', title: 'Command Palette', area: 'View' },
+  { spec: 'mod+1-9', title: 'Go to Tab 1 to 9', area: 'Navigation' },
+  { spec: 'Escape', title: 'Close Search, Selection or Tool', area: 'View' },
+];
+
+/** A binding's chord as a neutral spec (`mod+shift+s`), for display. */
+function bindingSpec(binding: Binding): string {
+  const parts: string[] = [];
+  if (binding.mod) parts.push('mod');
+  if (binding.alt) parts.push('alt');
+  if (binding.shift) parts.push('shift');
+  const named: Record<string, string> = { '+': 'plus', '-': 'minus' };
+  parts.push(named[binding.key] ?? binding.key.toLowerCase());
+  return parts.join('+');
+}
+
+/** Every chord in the table that reaches a command on this platform, as
+ * `{ id, spec }`: what the shortcut sheet lists beside each command's own
+ * `shortcut`, so a second chord (Cmd+= beside Cmd+Plus) shows too. */
+export function boundShortcuts(mac: boolean = isMac): { id: string; spec: string }[] {
+  const bindings = mac ? BINDINGS : [...BINDINGS, REDO_Y, ...NAV_ALT];
+  return bindings.map((binding) => ({ id: binding.id, spec: bindingSpec(binding) }));
+}
 
 /** Every chord SpeedyF binds for itself.
  *
@@ -240,6 +278,15 @@ export function installShortcuts(): () => void {
     // The palette (and quick open) owns the keyboard too, or its arrow keys would also scroll
     // the document underneath it. It handles its own Escape.
     if (paletteOpen() || quickOpenOpen()) return;
+    // The shortcut sheet answers only its own closing keys.
+    if (shortcutSheetOpen()) {
+      const closes = e.key === 'Escape' || (e.key === '/' && (isMac ? e.metaKey : e.ctrlKey));
+      if (closes) {
+        e.preventDefault();
+        closeShortcutSheet();
+      }
+      return;
+    }
     const mod = isMac ? e.metaKey : e.ctrlKey;
     const typing = isTypingTarget(e.target);
     const ctx: CommandCtx = { tab: activeTab() };

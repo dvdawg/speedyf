@@ -37,14 +37,6 @@ export function usesOf(id: string): number {
   return uses()[id] ?? 0;
 }
 
-/** Commands most recently reached, most-used first. */
-export function mostUsed(limit: number): string[] {
-  return Object.entries(uses())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, limit)
-    .map(([id]) => id);
-}
-
 export function recordUse(id: string): void {
   const next = { ...uses(), [id]: (uses()[id] ?? 0) + 1 };
   const trimmed = Object.fromEntries(
@@ -57,6 +49,46 @@ export function recordUse(id: string): void {
     localStorage.setItem(USES_KEY, JSON.stringify(trimmed));
   } catch {
     // Ranking is a nicety; failing to persist it must not fail the command.
+  }
+}
+
+const RECENT_KEY = 'speedyf.palette.recent';
+/** Kept a little longer than shown, so a recent command that is unavailable
+ * right now leaves room for the one run before it. */
+const MAX_RECENT = 10;
+
+/** Rows that are places, not commands: a tab, a section, a page. Reaching
+ * one is not running a command, and its key means nothing next session. */
+const NOT_COMMANDS = /^(tab|sec|env|page):/;
+
+const [recent, setRecent] = createSignal<readonly string[]>(readRecent());
+
+function readRecent(): string[] {
+  try {
+    const raw = localStorage.getItem(RECENT_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((id): id is string => typeof id === 'string').slice(0, MAX_RECENT);
+  } catch {
+    return [];
+  }
+}
+
+/** Commands run from the palette, most recent first, by id. */
+export function recentCommands(): readonly string[] {
+  return recent();
+}
+
+/** Note a command run from the palette. Places are ignored. */
+export function recordRecent(id: string): void {
+  if (NOT_COMMANDS.test(id)) return;
+  const next = [id, ...recent().filter((other) => other !== id)].slice(0, MAX_RECENT);
+  setRecent(next);
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+  } catch {
+    // Remembering is a nicety; failing to must not fail the command.
   }
 }
 
