@@ -354,6 +354,7 @@ mod tests {
             vec![
                 "dev.speedyf.mathlatex".to_string(),
                 "dev.speedyf.notation".to_string(),
+                "dev.speedyf.notepad".to_string(),
                 "dev.speedyf.references".to_string()
             ],
             "the extensions/ folder does not contain what this build expects to ship"
@@ -376,6 +377,44 @@ mod tests {
         assert!(!manifest.network.is_empty());
         assert!(!enabled_by_default(&checked_out, "dev.speedyf.mathlatex"));
         assert!(enabled_by_default(&checked_out, "dev.speedyf.references"));
+    }
+
+    /// Notepad keeps the user's notes and never goes online: it ships on,
+    /// its manifest parses, and the tauri.conf.json bundle carries it.
+    #[test]
+    fn the_shipped_notepad_starts_enabled_and_is_bundled() {
+        let checked_out = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join(BUILTIN_DIR);
+        let text =
+            std::fs::read_to_string(checked_out.join("dev.speedyf.notepad").join(MANIFEST_FILE))
+                .unwrap();
+        let manifest = super::super::parse_manifest(&text).expect("the shipped manifest parses");
+        assert!(manifest.network.is_empty());
+        assert!(enabled_by_default(&checked_out, "dev.speedyf.notepad"));
+        assert_eq!(manifest.contributes.reader_panes.len(), 1);
+        assert_eq!(manifest.contributes.project_views.len(), 1);
+        let conf = std::fs::read_to_string(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tauri.conf.json"),
+        )
+        .unwrap();
+        assert!(conf.contains("\"../extensions/dev.speedyf.notepad/*\""));
+        // Math to LaTeX is the equation converter the notepad asks through
+        // the core.
+        let math = std::fs::read_to_string(
+            checked_out
+                .join("dev.speedyf.mathlatex")
+                .join(MANIFEST_FILE),
+        )
+        .unwrap();
+        let math = super::super::parse_manifest(&math).unwrap();
+        assert_eq!(
+            math.contributes
+                .equation_converter
+                .map(|c| c.command)
+                .as_deref(),
+            Some("copyEquation")
+        );
     }
 
     #[test]

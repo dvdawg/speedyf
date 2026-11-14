@@ -172,6 +172,74 @@ pub enum Permission {
     /// against its pages and preview on hover (`termProvider`).
     #[serde(rename = "document:contributeTerms")]
     DocumentContributeTerms,
+    /// The library's projects, which items each holds, and those items'
+    /// cite keys (with their history), titles, authors and years - never a
+    /// path. Also the reader's item and opening an item at a place.
+    #[serde(rename = "projects:read")]
+    ProjectsRead,
+    /// Files of the extension's own, per project, kept by SpeedyF beside the
+    /// library: written atomically, backed up, carried in a project bundle,
+    /// and set aside when the project is deleted.
+    #[serde(rename = "projects:files")]
+    ProjectsFiles,
+    /// A PNG of a region the user picked: a rectangle they drew on a page,
+    /// or an equation they clicked. Narrower than `render:read`.
+    #[serde(rename = "render:region")]
+    RenderRegion,
+}
+
+/// A condition a contribution is offered under. One so far.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum When {
+    /// The reader's document is an item in at least one project.
+    #[serde(rename = "documentInProject")]
+    DocumentInProject,
+}
+
+/// A Markdown editor SpeedyF draws, bound to one file of the extension's
+/// project files (`projects:files`). The command is invoked with editor
+/// events (`{ event, projectId, file, ... }`).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EditorContribution {
+    /// A project file path, such as `notepad.md`.
+    pub file: String,
+    /// One of this extension's declared command ids.
+    pub command: String,
+}
+
+/// A drawer on the right side of the reader.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReaderPaneContribution {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub when: Option<When>,
+    /// A chord that toggles the drawer, refused like a keybinding when
+    /// SpeedyF already uses it.
+    #[serde(default)]
+    pub key: Option<String>,
+    pub editor: EditorContribution,
+}
+
+/// A view of one project in the Projects screen's middle column, beside
+/// List and Graph.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProjectViewContribution {
+    pub id: String,
+    pub title: String,
+    pub editor: EditorContribution,
+}
+
+/// The command SpeedyF invokes for a slot that names one (`itemDetailLines`,
+/// `equationConverter`).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CommandSlot {
+    /// One of this extension's declared command ids.
+    pub command: String,
 }
 
 /// An action offered on something the user picked - a text selection, a
@@ -218,6 +286,9 @@ pub struct ActionContribution {
     /// One of this extension's declared command ids.
     pub command: String,
     pub title: String,
+    /// Offered only while this holds.
+    #[serde(default)]
+    pub when: Option<When>,
 }
 
 /// One command an extension contributes to the palette.
@@ -230,6 +301,13 @@ pub struct CommandContribution {
     pub title: String,
     #[serde(default)]
     pub keywords: Vec<String>,
+    /// Not listed in the palette: reached only through the contribution
+    /// that names it (an action, an editor, a slot).
+    #[serde(default)]
+    pub hidden: bool,
+    /// Listed in the palette only while this holds.
+    #[serde(default)]
+    pub when: Option<When>,
 }
 
 /// A key an extension asks to bind to one of its own commands.
@@ -323,6 +401,21 @@ pub struct Contributions {
     /// and previewed on hover. The command is invoked with `{ document }`.
     #[serde(default)]
     pub term_provider: Option<TermProviderContribution>,
+    /// Drawers on the right side of the reader.
+    #[serde(default)]
+    pub reader_panes: Vec<ReaderPaneContribution>,
+    /// Views of one project in the Projects screen.
+    #[serde(default)]
+    pub project_views: Vec<ProjectViewContribution>,
+    /// One quiet line in the Projects item detail column. Needs
+    /// `projects:read`.
+    #[serde(default)]
+    pub item_detail_lines: Option<CommandSlot>,
+    /// An equation as LaTeX, for whoever asks the core
+    /// (`equations.convert`). Invoked like an equation action; its
+    /// `ui.showMath` is the answer.
+    #[serde(default)]
+    pub equation_converter: Option<CommandSlot>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -372,6 +465,11 @@ pub enum ManifestError {
     ProviderNeedsPermission,
     TermProviderNeedsPermission,
     BadNetworkHost(String),
+    EditorNeedsPermission,
+    ItemLinesNeedsPermission,
+    BadProjectFile(String),
+    BadSurfaceId(String),
+    DuplicateSurface(String),
     TooManyNetworkHosts,
     NetworkWithoutHosts,
     HostsWithoutNetwork,
@@ -423,6 +521,23 @@ impl std::fmt::Display for ManifestError {
                 f,
                 "network host \"{host}\" must be a lowercase hostname like \"api.example.org\" or \"*.example.org\", with no scheme, port, path or IP address, listed once"
             ),
+            ManifestError::EditorNeedsPermission => write!(
+                f,
+                "readerPanes and projectViews edit project files, which needs the \"projects:files\" permission"
+            ),
+            ManifestError::ItemLinesNeedsPermission => write!(
+                f,
+                "itemDetailLines needs the \"projects:read\" permission"
+            ),
+            ManifestError::BadProjectFile(file) => write!(
+                f,
+                "editor file \"{file}\" must be a relative path of plain names (letters, digits, . _ -), at most four parts"
+            ),
+            ManifestError::BadSurfaceId(id) => write!(
+                f,
+                "pane or view id \"{id}\" needs a non-empty id free of \"/\" and a title"
+            ),
+            ManifestError::DuplicateSurface(id) => write!(f, "two panes or two views share the id \"{id}\""),
             ManifestError::TooManyNetworkHosts => write!(
                 f,
                 "network lists more than {MAX_NETWORK_HOSTS} hosts"
@@ -554,6 +669,54 @@ pub fn parse_manifest(source: &str) -> Result<Manifest, ManifestError> {
             return Err(ManifestError::TermProviderNeedsPermission);
         }
     }
+    for slot in [
+        &manifest.contributes.item_detail_lines,
+        &manifest.contributes.equation_converter,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if !seen.contains(slot.command.as_str()) {
+            return Err(ManifestError::UnknownBoundCommand(slot.command.clone()));
+        }
+    }
+    if manifest.contributes.item_detail_lines.is_some()
+        && !manifest.permissions.contains(&Permission::ProjectsRead)
+    {
+        return Err(ManifestError::ItemLinesNeedsPermission);
+    }
+    let editors = manifest
+        .contributes
+        .reader_panes
+        .iter()
+        .map(|pane| (&pane.id, &pane.title, &pane.editor))
+        .collect::<Vec<_>>();
+    let views = manifest
+        .contributes
+        .project_views
+        .iter()
+        .map(|view| (&view.id, &view.title, &view.editor))
+        .collect::<Vec<_>>();
+    for surfaces in [&editors, &views] {
+        let mut ids = std::collections::HashSet::new();
+        for (id, title, editor) in surfaces {
+            if id.trim().is_empty() || id.contains('/') || title.trim().is_empty() {
+                return Err(ManifestError::BadSurfaceId((*id).clone()));
+            }
+            if !ids.insert(id.as_str()) {
+                return Err(ManifestError::DuplicateSurface((*id).clone()));
+            }
+            if !seen.contains(editor.command.as_str()) {
+                return Err(ManifestError::UnknownBoundCommand(editor.command.clone()));
+            }
+            if !is_valid_project_file(&editor.file) {
+                return Err(ManifestError::BadProjectFile(editor.file.clone()));
+            }
+            if !manifest.permissions.contains(&Permission::ProjectsFiles) {
+                return Err(ManifestError::EditorNeedsPermission);
+            }
+        }
+    }
     validate_network(&manifest)?;
     let mut settings = std::collections::HashSet::new();
     for setting in &manifest.contributes.settings {
@@ -576,6 +739,27 @@ pub fn parse_manifest(source: &str) -> Result<Manifest, ManifestError> {
         }
     }
     Ok(manifest)
+}
+
+/// Whether `path` may name a project file: relative, made of plain names
+/// (ASCII letters, digits, `.`, `_`, `-`; not starting with a dot), at most
+/// four parts and 200 characters. The same rule the core applies to every
+/// `projectFiles.*` call, so a manifest cannot declare an editor on a file
+/// it could never open.
+pub fn is_valid_project_file(path: &str) -> bool {
+    if path.is_empty() || path.len() > 200 {
+        return false;
+    }
+    let parts: Vec<&str> = path.split('/').collect();
+    parts.len() <= 4
+        && parts.iter().all(|part| {
+            !part.is_empty()
+                && !part.starts_with('.')
+                && part.len() <= 100
+                && part
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        })
 }
 
 /// Most hosts a manifest may list. A real extension talks to a handful of
@@ -1750,6 +1934,86 @@ mod tests {
                 .as_deref(),
             Some("refs")
         );
+    }
+
+    #[test]
+    fn reads_editor_surfaces_slots_and_conditions() {
+        let m = parse_manifest(&manifest_json(
+            r#","permissions":["projects:read","projects:files","render:region"],
+               "contributes":{"commands":[
+                 {"id":"open","title":"Open Notepad"},
+                 {"id":"editor","title":"Editor","hidden":true},
+                 {"id":"quote","title":"Quote","hidden":true,"when":"documentInProject"},
+                 {"id":"lines","title":"Lines","hidden":true}],
+               "selectionActions":[{"command":"quote","title":"Quote to Notepad","when":"documentInProject"}],
+               "readerPanes":[{"id":"notepad","title":"Notepad","when":"documentInProject","key":"mod+shift+n",
+                 "editor":{"file":"notepad.md","command":"editor"}}],
+               "projectViews":[{"id":"notepad","title":"Notepad","editor":{"file":"notepad.md","command":"editor"}}],
+               "itemDetailLines":{"command":"lines"},
+               "equationConverter":{"command":"open"}}"#,
+        ))
+        .expect("valid");
+        assert_eq!(
+            m.contributes.reader_panes[0].when,
+            Some(When::DocumentInProject)
+        );
+        assert_eq!(m.contributes.project_views[0].editor.file, "notepad.md");
+        assert!(m.contributes.commands[1].hidden);
+        assert_eq!(
+            m.contributes.selection_actions[0].when,
+            Some(When::DocumentInProject)
+        );
+
+        let no_files = parse_manifest(&manifest_json(
+            r#","contributes":{"commands":[{"id":"e","title":"E"}],
+               "projectViews":[{"id":"v","title":"V","editor":{"file":"n.md","command":"e"}}]}"#,
+        ));
+        assert_eq!(no_files.unwrap_err(), ManifestError::EditorNeedsPermission);
+        let bad_file = parse_manifest(&manifest_json(
+            r#","permissions":["projects:files"],"contributes":{"commands":[{"id":"e","title":"E"}],
+               "projectViews":[{"id":"v","title":"V","editor":{"file":"../n.md","command":"e"}}]}"#,
+        ));
+        assert_eq!(
+            bad_file.unwrap_err(),
+            ManifestError::BadProjectFile("../n.md".into())
+        );
+        let lines = parse_manifest(&manifest_json(
+            r#","contributes":{"commands":[{"id":"l","title":"L"}],"itemDetailLines":{"command":"l"}}"#,
+        ));
+        assert_eq!(lines.unwrap_err(), ManifestError::ItemLinesNeedsPermission);
+        let unknown_when = parse_manifest(&manifest_json(
+            r#","contributes":{"commands":[{"id":"l","title":"L","when":"always"}]}"#,
+        ));
+        assert!(matches!(unknown_when, Err(ManifestError::Syntax(_))));
+        let twice = parse_manifest(&manifest_json(
+            r#","permissions":["projects:files"],"contributes":{"commands":[{"id":"e","title":"E"}],
+               "projectViews":[{"id":"v","title":"V","editor":{"file":"n.md","command":"e"}},
+                               {"id":"v","title":"W","editor":{"file":"m.md","command":"e"}}]}"#,
+        ));
+        assert_eq!(
+            twice.unwrap_err(),
+            ManifestError::DuplicateSurface("v".into())
+        );
+    }
+
+    #[test]
+    fn project_file_paths_are_plain_names() {
+        for ok in ["notepad.md", "assets/eq-3.png", "a/b/c/d.txt"] {
+            assert!(is_valid_project_file(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "/x",
+            "../x",
+            "a/../b",
+            ".x",
+            "a//b",
+            "a b",
+            "a/b/c/d/e",
+            "x\\y",
+        ] {
+            assert!(!is_valid_project_file(bad), "{bad}");
+        }
     }
 
     #[test]

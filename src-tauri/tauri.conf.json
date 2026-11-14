@@ -40,7 +40,8 @@
       "pdfium/*": "pdfium/",
       "../extensions/dev.speedyf.references/*": "extensions/dev.speedyf.references/",
       "../extensions/dev.speedyf.notation/*": "extensions/dev.speedyf.notation/",
-      "../extensions/dev.speedyf.mathlatex/*": "extensions/dev.speedyf.mathlatex/"
+      "../extensions/dev.speedyf.mathlatex/*": "extensions/dev.speedyf.mathlatex/",
+      "../extensions/dev.speedyf.notepad/*": "extensions/dev.speedyf.notepad/"
     },
     "fileAssociations": [
       {
