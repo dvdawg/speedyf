@@ -144,6 +144,9 @@ function citationEntries(items, projectId) {
     detail: detail(item),
     pick: item.projectIds.includes(projectId),
     aliases: item.keyHistory || [],
+    // A DOI or arXiv id pasted into the note becomes a citation of this item.
+    doi: item.doi || null,
+    arxiv: item.arxiv || null,
   }));
 }
 

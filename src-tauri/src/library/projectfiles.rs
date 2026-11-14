@@ -589,6 +589,86 @@ pub fn copy_tree_if_absent(from: &Path, to: &Path) -> AppResult<usize> {
     Ok(copied)
 }
 
+/// What exporting a note wrote (`project_note_export`).
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteExportDto {
+    /// The Markdown file written.
+    pub path: String,
+    /// Pictures copied beside it.
+    pub assets: u32,
+    /// Pictures the note links to that are not in its folder.
+    pub missing: Vec<String>,
+}
+
+/// Where a note's picture goes inside the export's asset folder: its path
+/// in the project's files, less a leading `assets/` (`assets/fig.png` ->
+/// `fig.png`). The window rewrites the note's links by the same rule.
+pub fn export_asset_name(rel: &str) -> &str {
+    rel.strip_prefix("assets/").unwrap_or(rel)
+}
+
+/// A folder name of one part beside the exported file: no separators, not
+/// `.` or `..`.
+fn is_plain_folder_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 255
+        && name != "."
+        && name != ".."
+        && !name.contains(['/', '\\', '\0'])
+}
+
+/// Export a note: `text` written to `target`, and each picture of
+/// `assets` (paths in the project's files) copied into `folder` beside it,
+/// at `export_asset_name`. A picture that is not there, or is not a
+/// project file path, is listed as missing rather than failing the export.
+pub fn export_note(
+    data_dir: &Path,
+    extension: &str,
+    project: &str,
+    target: &Path,
+    text: &str,
+    folder: &str,
+    assets: &[String],
+) -> AppResult<NoteExportDto> {
+    if !is_plain_folder_name(folder) {
+        return Err(AppError::Malformed(format!(
+            "\"{folder}\" is not a folder name"
+        )));
+    }
+    let dir = target
+        .parent()
+        .ok_or_else(|| AppError::Io(format!("{} has no parent folder", target.display())))?;
+    write_atomic(target, text.as_bytes())?;
+    let mut copied = 0u32;
+    let mut missing = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for rel in assets {
+        if !seen.insert(rel.as_str()) {
+            continue;
+        }
+        let bytes = match file_path(data_dir, extension, project, rel) {
+            Ok(source) => read(&source)?,
+            Err(_) => None,
+        };
+        let Some(bytes) = bytes else {
+            missing.push(rel.clone());
+            continue;
+        };
+        let mut dest = dir.join(folder);
+        for part in export_asset_name(rel).split('/') {
+            dest.push(part);
+        }
+        write_atomic(&dest, &bytes)?;
+        copied += 1;
+    }
+    Ok(NoteExportDto {
+        path: target.display().to_string(),
+        assets: copied,
+        missing,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -784,5 +864,60 @@ mod tests {
         assert_eq!(target, root(data).join(EXT).join("p2").join("notepad.md"));
         assert!(bundle_target(data, "p2", "project-files/dev.speedyf.notepad/../x").is_none());
         assert!(bundle_target(data, "p2", "pdfs/a.pdf").is_none());
+    }
+
+    #[test]
+    fn exporting_a_note_copies_its_pictures_beside_it() {
+        let data = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let fig = file_path(data.path(), EXT, PROJECT, "assets/fig-1.png").unwrap();
+        write_atomic(&fig, b"png").unwrap();
+        let other = file_path(data.path(), EXT, PROJECT, "figs/b.png").unwrap();
+        write_atomic(&other, b"b").unwrap();
+        let target = out.path().join("My Thesis.md");
+        let report = export_note(
+            data.path(),
+            EXT,
+            PROJECT,
+            &target,
+            "# Notes\n![x](My%20Thesis-assets/fig-1.png)\n",
+            "My Thesis-assets",
+            &[
+                "assets/fig-1.png".into(),
+                "assets/fig-1.png".into(),
+                "figs/b.png".into(),
+                "assets/gone.png".into(),
+                "../escape.png".into(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(report.assets, 2);
+        assert_eq!(report.missing, vec!["assets/gone.png", "../escape.png"]);
+        assert_eq!(
+            fs::read_to_string(&target).unwrap(),
+            "# Notes\n![x](My%20Thesis-assets/fig-1.png)\n"
+        );
+        let assets = out.path().join("My Thesis-assets");
+        assert_eq!(fs::read(assets.join("fig-1.png")).unwrap(), b"png");
+        assert_eq!(fs::read(assets.join("figs").join("b.png")).unwrap(), b"b");
+    }
+
+    #[test]
+    fn an_export_folder_is_one_plain_name() {
+        let data = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+        for bad in ["", ".", "..", "a/b", "a\\b"] {
+            assert!(export_note(
+                data.path(),
+                EXT,
+                PROJECT,
+                &out.path().join("n.md"),
+                "x",
+                bad,
+                &[]
+            )
+            .is_err());
+        }
+        assert!(!out.path().join("n.md").exists());
     }
 }

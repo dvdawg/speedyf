@@ -382,6 +382,10 @@ export interface PaperRow {
   firstAuthor?: string | null;
   /** keys it answered to before: renamed, or of records merged into it */
   keyHistory?: string[];
+  /** the DOI as stored: lower-case, no prefix */
+  doi?: string | null;
+  /** the arXiv id without its version */
+  arxiv?: string | null;
 }
 
 /** What Export bundle wrote (`library_export_bundle`). */

@@ -24,13 +24,19 @@ The line you are on shows its Markdown (a quote, all of its lines); the
 rest is rendered: headings, _emphasis_, lists, quotes (consecutive `>` lines
 are one quote), `$x^2$` and `$$ ... $$` math, links and images.
 **Source** at the top (or Cmd+A twice) edits the whole note as plain text
-(Escape returns).
+(Escape returns). Once the note has two headings, **Outline** beside it
+lists them (three levels deep); the arrows and Enter, or a click, go to one
+with the caret at its start, and Escape closes the list.
 
 - **@** opens a picker of the project's items; Enter inserts `@citekey`,
   which reads "[AS22]", the same alpha.bst-style label the graph shows. Click it to open the paper. Items dragged in
   from the Projects list land as `@a; @b`.
 - `[@citekey, p. 12]{box=72,310,240,28}` reads "[AS22, p. 12]" and opens
   the paper at that place on page 12.
+- Paste a DOI or an arXiv id (bare, `doi:...`, `arXiv:2401.01234v2`, or a
+  doi.org or arxiv.org link) and it becomes `@citekey` when an item in your
+  library has it; otherwise it pastes as it is. In a longer paste only the
+  identifiers an item has are replaced. Cmd+Z takes the paste back.
 - A cite key that changes later keeps working: the item remembers the keys it
   had. A key no item has stays as you wrote it, muted.
 
@@ -85,6 +91,24 @@ written to the file, and go by themselves if something fails.
 
 They write to the notepad of the project you opened the paper from; for a
 paper in several projects opened from elsewhere, SpeedyF asks once.
+
+## Export
+
+**Export** at the top of the note, or the palette (on the Projects screen
+with a project open, or in the reader for a paper in a project):
+
+- **Export Notepad as Markdown...** saves the note where you choose (the
+  project's name by default). Its pictures are copied into a
+  `<name>-assets/` folder beside the file, and the links point there.
+  Citations stay Pandoc's `@key`; a page link `[@key, p. 12]{box=...}`
+  becomes `[@key, p. 12]`.
+- **Copy Notepad as LaTeX** puts the note on the clipboard as LaTeX:
+  headings as `\section`, `\subsection` and `\subsubsection`, emphasis as
+  `\emph` and `\textbf`, lists as `itemize` and `enumerate`, quotes as
+  `quote`, math as written (`$$ ... $$` as `\[ ... \]`), `@a; @b` as
+  `\cite{a,b}` and `[@key, p. 12]` as `\cite[p.~12]{key}` (with the key the
+  item has now), and each picture as a `% figure: <path>` comment. LaTeX's
+  special characters in the prose are escaped; nothing in math is.
 
 ## On the Projects screen
 

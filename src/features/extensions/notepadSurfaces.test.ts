@@ -408,6 +408,8 @@ describe('the gate', () => {
         alphaLabel: 'Att22',
         year: 2022,
         projectIds: ['p1', 'p2'],
+        doi: null,
+        arxiv: null,
       },
     ]);
     expect(await host.options.events.onCall(call('reader.context'))).toMatchObject({

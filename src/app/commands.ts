@@ -44,6 +44,7 @@ import {
 } from '../features/projects/citeSelection';
 import { flashStatus } from '../stores/statusMessage';
 import { PROJECT_COMMANDS } from '../features/projects/projectCommands';
+import { NOTE_EXPORT_COMMANDS } from '../features/extensions/noteExportCommands';
 import { setUi, ui, type SidebarMode } from '../stores/uiStore';
 import { tabsStore, type TabRecord } from '../stores/tabsStore';
 import type { Paper } from '../types/engine';
@@ -594,6 +595,8 @@ export const COMMANDS: readonly Command[] = [
   },
   // The Projects screen, projects and items: projectCommands.ts.
   ...PROJECT_COMMANDS,
+  // A project's notepad, exported: noteExportCommands.ts.
+  ...NOTE_EXPORT_COMMANDS,
 
   // ---- Settings ------------------------------------------------------
   {

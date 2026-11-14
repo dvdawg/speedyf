@@ -288,6 +288,13 @@ pub struct PaperRowDto {
     /// before a change still finds the item through them.
     #[serde(default)]
     pub key_history: Vec<String>,
+    /// The DOI as the library stores it (lower-case, no prefix): what a
+    /// pasted DOI is matched against.
+    #[serde(default)]
+    pub doi: Option<String>,
+    /// The arXiv id without its version (`2401.01234`, `math/0601001`).
+    #[serde(default)]
+    pub arxiv: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

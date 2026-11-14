@@ -1711,6 +1711,8 @@ impl PaperStore {
                 .filter(|key| **key != paper.cite_key)
                 .cloned()
                 .collect(),
+            doi: paper.ids.doi.clone(),
+            arxiv: paper.ids.arxiv.clone(),
         }
     }
 

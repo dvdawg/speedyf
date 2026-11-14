@@ -4,7 +4,8 @@
  * It reads as a page, not a form: the line being edited is a bare text
  * field in the rendered text's own font and measure, with no box, border or
  * ring, so only the caret shows where you are. The head is one quiet line,
- * the title and a dim Source toggle.
+ * the title and dim text buttons: Outline (once the note has two headings),
+ * Export and Source.
  *
  * The note is drawn block by block (`markdown.ts`). The block holding the
  * cursor is a native text field showing its Markdown source - so IME,
@@ -38,6 +39,7 @@ import { followExternalLink } from '../../../lib/links/followExternalLink';
 import { engine } from '../../../lib/transport/engine';
 import {
   citationIndex,
+  keyForIdentifier,
   noteSessions,
   registerEditor,
   type CitationEntry,
@@ -62,6 +64,10 @@ import type {
   PendingDecoration,
 } from './noteSession';
 import { registerNoteDrop } from './noteDrop';
+import { citeIdentifiers } from './identifiers';
+import { headingLine, outlineOf } from './outline';
+import HeadMenu from './HeadMenu';
+import { copyNoteLatex, exportNoteMarkdown } from './noteExportActions';
 import {
   citeQuery,
   continueList,
@@ -291,8 +297,14 @@ function EditorBody(props: BodyProps) {
   };
 
   /** Commit a local edit made in the active field, or by a key. */
-  const commit = (op: Op, before: number, after: number, restructure: boolean) => {
-    s.edit(op, before, after);
+  const commit = (
+    op: Op,
+    before: number,
+    after: number,
+    restructure: boolean,
+    opts?: { alone?: boolean }
+  ) => {
+    s.edit(op, before, after, opts);
     caret = after;
     if (restructure) {
       rebuild();
@@ -388,6 +400,52 @@ function EditorBody(props: BodyProps) {
     commit(op, caret, after, false);
     setPicker(null);
     placeCaret();
+  };
+
+  /* ---- pasting a DOI or an arXiv id ---- */
+
+  /** Pasted text with each identifier an item holds as `@key`, or null
+   * when it names none: then the paste is the platform's own. */
+  const pastedCitations = (e: ClipboardEvent): string | null => {
+    const text = e.clipboardData?.getData('text/plain') ?? '';
+    if (!text || text.length > 20_000) return null;
+    const index = props.index;
+    return citeIdentifiers(text, (id) => keyForIdentifier(index, id));
+  };
+
+  const onPaste = (e: ClipboardEvent & { currentTarget: HTMLTextAreaElement }) => {
+    if (composing) return;
+    const insert = pastedCitations(e);
+    if (insert === null) return;
+    e.preventDefault();
+    const ta = e.currentTarget;
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    const op: Op = { from: activeStart + start, to: activeStart + end, insert };
+    const after = activeStart + start + insert.length;
+    if (insert.includes('\n')) {
+      commit(op, activeStart + start, after, true, { alone: true });
+      return;
+    }
+    setActiveRaw(applyOp(activeRaw, { from: start, to: end, insert }));
+    ta.value = activeRaw;
+    autosize(ta);
+    ta.setSelectionRange(start + insert.length, start + insert.length);
+    commit(op, activeStart + start, after, false, { alone: true });
+  };
+
+  const onSourcePaste = (e: ClipboardEvent & { currentTarget: HTMLTextAreaElement }) => {
+    if (composing) return;
+    const insert = pastedCitations(e);
+    if (insert === null) return;
+    e.preventDefault();
+    const ta = e.currentTarget;
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    s.edit({ from: start, to: end, insert }, start, start + insert.length, { alone: true });
+    ta.value = s.text();
+    sourceValue = ta.value;
+    ta.setSelectionRange(start + insert.length, start + insert.length);
   };
 
   const undoRedo = (redo: boolean) => {
@@ -708,6 +766,52 @@ function EditorBody(props: BodyProps) {
     onCleanup(unregister);
   });
 
+  /* ---- the outline ---- */
+
+  /** Whether each block is a heading, worked out once per block: typing
+   * costs a walk over the list, not over the text. */
+  const headingCache = new WeakMap<Block, { level: number; body: string } | null>();
+  const outline = createMemo(() => {
+    const list = blocks();
+    const editing = active();
+    const live = editing ? liveRaw() : '';
+    const found: { level: number; body: string; offset: number }[] = [];
+    let at = 0;
+    for (const block of list) {
+      const raw = block === editing ? live : block.raw;
+      let heading = block === editing ? headingLine(block.kind, raw) : headingCache.get(block);
+      if (heading === undefined) {
+        heading = headingLine(block.kind, raw);
+        headingCache.set(block, heading);
+      }
+      if (heading) found.push({ ...heading, offset: at });
+      at += raw.length + 1;
+    }
+    const byKey = props.index.byKey;
+    return outlineOf(found, (cite, raw) => byKey.get(cite.key)?.label ?? raw);
+  });
+
+  /** Scroll to a heading and put the caret at its start. */
+  const jumpTo = (offset: number) => {
+    const at = Math.min(offset, s.text().length);
+    if (source()) {
+      if (!sourceField) return;
+      sourceField.focus();
+      sourceField.setSelectionRange(at, at);
+      // The field scrolls itself to a caret only when typing: put the line
+      // near the top.
+      const line = s.text().slice(0, at).split('\n').length - 1;
+      const height = Number.parseFloat(getComputedStyle(sourceField).lineHeight) || 20;
+      sourceField.scrollTop = Math.max(0, line * height - height);
+      return;
+    }
+    rebuild();
+    activateAt(at);
+    queueMicrotask(() =>
+      field?.closest('[data-block]')?.scrollIntoView?.({ block: 'start', behavior: 'auto' })
+    );
+  };
+
   /** The whole note is empty: its one line shows the placeholder, as a dim
    * line while nobody is in it and as the field's own hint once someone is. */
   const blank = () => blocks().length === 1 && blocks()[0]!.raw === '';
@@ -759,6 +863,31 @@ function EditorBody(props: BodyProps) {
             </span>
           )}
         </Show>
+        <Show when={outline().length >= 2}>
+          <HeadMenu
+            label="Outline"
+            title="Go to a heading"
+            listLabel="Outline"
+            class="note-outline"
+            rows={outline().map((h) => ({ text: h.text, depth: h.depth }))}
+            onChoose={(i) => {
+              const heading = outline()[i];
+              if (heading) jumpTo(heading.offset);
+            }}
+          />
+        </Show>
+        <HeadMenu
+          label="Export"
+          title="Save the note as Markdown, or copy it as LaTeX"
+          listLabel="Export"
+          class="note-export"
+          rows={EXPORT_ROWS}
+          onChoose={(i) => {
+            // Inside the click or key press: the clipboard is open now.
+            if (i === 0) void exportNoteMarkdown(props.noteKey);
+            else void copyNoteLatex(props.noteKey);
+          }}
+        />
         <button
           type="button"
           class="note-source-toggle"
@@ -781,6 +910,7 @@ function EditorBody(props: BodyProps) {
               aria-label="Note source"
               onInput={onSourceInput}
               onKeyDown={onSourceKey}
+              onPaste={onSourcePaste}
               onCompositionStart={() => (composing = true)}
               onCompositionEnd={() => (composing = false)}
             />
@@ -830,6 +960,7 @@ function EditorBody(props: BodyProps) {
                         aria-label="Note line"
                         onInput={onInput}
                         onKeyDown={onKeyDown}
+                        onPaste={onPaste}
                         onCompositionStart={() => (composing = true)}
                         onCompositionEnd={() => {
                           composing = false;
@@ -906,6 +1037,8 @@ function EditorBody(props: BodyProps) {
     </>
   );
 }
+
+const EXPORT_ROWS = [{ text: 'Markdown file...' }, { text: 'Copy as LaTeX' }];
 
 /** A space before text inserted at `at`, unless a space or an opening
  * bracket is there already, or nothing. */

@@ -496,6 +496,7 @@ pub fn run() {
             commands::projectfiles::project_file_write,
             commands::projectfiles::project_file_list,
             commands::projectfiles::project_file_remove,
+            commands::projectfiles::project_note_export,
             commands::projectfiles::library_import_bundle,
         ])
         .build(tauri::generate_context!())
