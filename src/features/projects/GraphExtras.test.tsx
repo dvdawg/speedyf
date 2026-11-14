@@ -8,7 +8,7 @@
  * graph to one item's neighbourhood, with a header, a depth switch and two
  * ways out, and keeps dragged positions under their own key.
  */
-import { cleanup, fireEvent, render, screen, waitFor } from '@solidjs/testing-library';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@solidjs/testing-library';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../lib/transport/engine', async () => {
@@ -90,9 +90,13 @@ function openView() {
   }
 }
 
+/** Off or On in the popover's Missing works row. */
+const missingRadio = (name: 'Off' | 'On') =>
+  within(screen.getByRole('radiogroup', { name: 'Missing works' })).getByRole('radio', { name });
+
 async function missingOn(container: HTMLElement, count = 2) {
   openView();
-  fireEvent.click(screen.getByRole('button', { name: 'Missing' }));
+  fireEvent.click(missingRadio('On'));
   await waitFor(() => expect(ghosts(container)).toHaveLength(count));
 }
 
@@ -102,15 +106,11 @@ describe('missing works', () => {
     expect(ghosts(container)).toHaveLength(0);
     expect(engine.libraryMissingWorks).not.toHaveBeenCalled();
     openView();
-    expect(screen.getByRole('button', { name: 'Missing' }).getAttribute('aria-pressed')).toBe(
-      'false'
-    );
+    expect(missingRadio('On').getAttribute('aria-checked')).toBe('false');
 
     await missingOn(container);
     expect(engine.libraryMissingWorks).toHaveBeenLastCalledWith('p1', 2, undefined);
-    expect(screen.getByRole('button', { name: 'Missing' }).getAttribute('aria-pressed')).toBe(
-      'true'
-    );
+    expect(missingRadio('On').getAttribute('aria-checked')).toBe('true');
     // Dashed ghosts, one edge per citer, in the rest style's class.
     expect(ghostFor(container, 'm1').classList.contains('is-ghost')).toBe(true);
     const edges = Array.from(container.querySelectorAll('.graph-edge.is-ghost'));
@@ -214,7 +214,11 @@ describe('missing works', () => {
     ));
     await waitFor(() => expect(container.querySelectorAll('.graph-node')).toHaveLength(3));
     await missingOn(container);
-    fireEvent.click(screen.getByRole('button', { name: 'List missing (2)' }));
+    const listButton = screen.getByRole('button', { name: 'List missing (2)' });
+    // On the notes line itself, beside the note, so the two share a baseline.
+    expect(listButton.parentElement!.classList.contains('graph-notes')).toBe(true);
+    expect(listButton.parentElement!.querySelector(':scope > .graph-note')).not.toBeNull();
+    fireEvent.click(listButton);
     const list = await screen.findByRole('listbox', { name: 'Missing works' });
     expect(container.querySelector('.graph-view')).toBeNull();
     const rows = Array.from(list.querySelectorAll<HTMLElement>('.missing-row'));
