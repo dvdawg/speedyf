@@ -77,3 +77,12 @@ describe('polish: graph', () => {
     expect(stepped).not.toMatch(/infinite/);
   });
 });
+
+describe('polish: scrollbars', () => {
+  it('thins the columns from shared tokens and leaves the page viewport alone', () => {
+    expect(rootTokens()).toMatch(/--scrollbar-thumb:/);
+    expect(rootTokens()).toMatch(/--scrollbar-thumb-hover:/);
+    expect(css).toMatch(/scrollbar-color:\s*var\(--scrollbar-thumb\) transparent/);
+    expect(css).not.toMatch(/\.viewer[^{,]*::-webkit-scrollbar/);
+  });
+});

@@ -48,6 +48,9 @@
   --ease-quick: 120ms ease-out;
   /* The sheen across a placeholder, as the notepad's skeleton draws it. */
   --skeleton-sheen: color-mix(in srgb, var(--text) 6%, transparent);
+  /* Scrollbar thumbs in the columns: between a rule and dim text. */
+  --scrollbar-thumb: color-mix(in srgb, var(--border) 60%, var(--text-dim));
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--border) 25%, var(--text-dim));
 }
 
 :root[data-theme='dark'] {
@@ -202,6 +205,72 @@ body {
     background-size: 300% 100%;
     animation: shimmer 1.8s infinite linear;
   }
+}
+
+/* ---------- polish: scrollbars ----------
+   Thin and theme-matched in the scrolling columns and panels: a rounded
+   thumb in a border/text-dim mix on a clear track, darker under the
+   pointer. The page viewport (.viewer) keeps the system's bars, which are
+   already theme-aware and wide enough to grab. */
+:where(
+  .projects-col-scroll,
+  .sidebar-scroll,
+  .search-results,
+  .form-list,
+  .note-editor-scroll,
+  .note-picker,
+  .home-panel,
+  .library-scroll,
+  .palette-list
+) {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+:where(
+  .projects-col-scroll,
+  .sidebar-scroll,
+  .search-results,
+  .form-list,
+  .note-editor-scroll,
+  .note-picker,
+  .home-panel,
+  .library-scroll,
+  .palette-list
+)::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+}
+
+:where(
+  .projects-col-scroll,
+  .sidebar-scroll,
+  .search-results,
+  .form-list,
+  .note-editor-scroll,
+  .note-picker,
+  .home-panel,
+  .library-scroll,
+  .palette-list
+)::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 4px;
+  background: var(--scrollbar-thumb) padding-box;
+}
+
+:where(
+    .projects-col-scroll,
+    .sidebar-scroll,
+    .search-results,
+    .form-list,
+    .note-editor-scroll,
+    .note-picker,
+    .home-panel,
+    .library-scroll,
+    .palette-list
+  )::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
 }
 
 /* ---------- shell ---------- */
