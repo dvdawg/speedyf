@@ -1326,3 +1326,71 @@ A 1 MB note stays responsive: blocks are created once and reused across
 edits, typing in a line changes only that block, off-screen blocks skip
 layout (`content-visibility`), and formulas are typeset only when scrolled
 into view.
+
+## 14. Undo
+
+What the user does to the library can be taken back, the last 20 steps of
+it, for as long as the app runs (the journal is in memory, never on disk;
+a restored backup or another data folder forgets it).
+
+### What is covered
+
+Adding an item to a project or removing it (from the detail column, the
+palette, a drag, a suggestion); creating, renaming, reordering and
+deleting a project; merging items and splitting them; Mark as Item and
+Mark as Not an Item; every field edit in the detail column, cite key
+edits and pins; Health's Ignore and its fixes (Use year, Use page title);
+New-items triage (filing by digit or drag, Done, All done), each filing
+one step with its triage; "Not duplicates"; and importing a bundle.
+
+Not covered, and never in the journal: scans, lookups (one item or a
+batch), the citation consensus, automatic merges, keys pinned by a copy
+or an export, and anything on disk. An undo does not take back what they
+did, and does not clobber it: it puts back only the records, projects and
+review marks its own step changed.
+
+### How it works
+
+Each covered command runs its change through `PaperStore::journaled`
+(`library/journal.rs`). The records, projects and review lists are cloned
+before it, compared after it, and only what changed is kept, as it was: a
+step, with a short description ("Removed from pac_learning"). A project
+only renumbered by the change keeps just its old position, so its members
+as they are later are never put back. An action that changes nothing is
+no step.
+
+Undo writes the step back as an ordinary save (atomic, backed up,
+`library:changed`), so every synced `.bib` is rewritten to match. Before it
+does, the same records are captured as they are now; that is the redo
+step, and redo works the same way back. A new action clears what could be
+redone.
+
+A deleted project that undo brings back gets its notepad and other
+project files back from `deleted/`; a project undo takes away (an undone
+create or import) has its files set aside as a delete does.
+
+**Bundle import.** Undo removes the project the import made and the items
+it made, but never the PDFs it copied into the inbox: they stay on disk,
+and the next scan of that folder finds them again as new items. Items that
+were in the library before keep their files; only the cite keys the
+import remembered on them go.
+
+### What the user sees
+
+- After each covered action the status bar's centre says what was done,
+  muted, with **Undo** as a text button: "Removed from pac_learning.
+  Undo". It goes after about six seconds, and stays while the pointer is
+  over it. Only the window with focus says it.
+- Cmd+Z and Cmd+Shift+Z (Ctrl elsewhere) undo and redo on the Home and
+  Projects screens. In the reader they stay the document's undo, and in a
+  text field or the notepad they are the field's own.
+- The palette offers "Undo Library Change: <what>" and "Redo Library
+  Change: <what>" while there is something to undo or redo.
+- After an undo the line says "Undid: <what>".
+
+The same quiet line confirms what nothing else on screen does: a cite key,
+BibTeX or `\cite` copied by shortcut or palette ("Copied cite key"), a
+`.bib` exported or synced ("Synced pac_learning.bib"), and a batch lookup
+run from the palette finishing ("Looked up 9 items"). Buttons that already
+change to "Copied" keep doing so and say nothing more. One message at a
+time; the newest wins.

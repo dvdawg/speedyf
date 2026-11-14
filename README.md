@@ -46,7 +46,10 @@ manual QA before a public release.
   OpenAlex, arXiv, Semantic Scholar, INSPIRE, DBLP and Open Library, queued
   per service so no rate limit is tripped. A Paper panel in the reader files
   the open document and shows which of your papers it cites and which cite it.
-  See `projects.md`
+  Library actions (filing, removing, merging, renaming, edits, triage) can
+  be undone: the status bar says each one with an Undo, and Cmd+Z /
+  Cmd+Shift+Z undo and redo them on the Home and Projects screens (in the
+  reader they stay the document's). See `projects.md`
 - Project notepad (the built-in Notepad extension, on by default, offline):
   one Markdown note per project, edited with live rendering (headings,
   emphasis, lists, quotes, KaTeX math, links, images) in a drawer beside the
@@ -177,6 +180,7 @@ there with Cmd+O (Ctrl+O), Home's **Open PDF...** button or the palette. Theme, 
 | Save / Save As             | `Cmd+S` / `Cmd+Shift+S` | `Ctrl+S` / `Ctrl+Shift+S` |
 | Search                     | `Cmd+F`                 | `Ctrl+F`                  |
 | Undo / redo                | `Cmd+Z` / `Cmd+Shift+Z` | `Ctrl+Z` / `Ctrl+Y`       |
+| Library undo / redo        | `Cmd+Z` / `Cmd+Shift+Z` | `Ctrl+Z` / `Ctrl+Shift+Z` |
 | Zoom in/out                | `Cmd++` / `Cmd+-`       | `Ctrl++` / `Ctrl+-`       |
 | Fit page / 100%            | `Cmd+0` / `Cmd+1`       | `Ctrl+0` / `Ctrl+1`       |
 | Previous/next page         | Page Up / Page Down     | Page Up / Page Down       |
