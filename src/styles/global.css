@@ -6181,21 +6181,35 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   color: var(--text);
 }
 
-/* "− cited by ≥ 2 +", one segment of the controls strip. */
+/* "- cited by >= 2 +", after a ghost kind's Off | On in the View popover.
+   Same outer height, border and track as .projects-launch-toggle (24px
+   segments + 2px padding + 1px border), so the row reads as one control. */
 .graph-stepper {
-  gap: 0;
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-inset);
+  color: var(--text);
   cursor: default;
 }
 
 .graph-stepper button {
-  width: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
   height: 24px;
   padding: 0;
   border: 0;
+  border-radius: 4px;
   background: transparent;
   color: var(--text-dim);
   font: inherit;
   font-size: 13px;
+  line-height: 1;
   cursor: pointer;
 }
 
@@ -6214,6 +6228,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 }
 
 .graph-stepper-value {
+  padding: 0 2px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -6352,8 +6367,11 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   right: 8px;
   z-index: 3;
   display: grid;
-  grid-template-columns: auto auto;
+  /* Labels in one column, controls left-aligned in the next, each sized to
+     its content rather than stretched to the widest row. */
+  grid-template-columns: max-content max-content;
   align-items: center;
+  justify-items: start;
   gap: 8px 12px;
   padding: 10px 12px;
   border: 1px solid var(--border);
@@ -6371,14 +6389,6 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   display: flex;
   align-items: center;
   gap: 6px;
-}
-
-.graph-view-menu .graph-stepper {
-  display: inline-flex;
-  align-items: center;
-  height: 24px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
 }
 .missing-list-head {
   display: flex;

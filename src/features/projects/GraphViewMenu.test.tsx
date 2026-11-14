@@ -6,7 +6,7 @@
  * kept across sessions; and it opens, closes and takes the keyboard like
  * a popover should.
  */
-import { cleanup, fireEvent, render, screen, waitFor } from '@solidjs/testing-library';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@solidjs/testing-library';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../lib/transport/engine', async () => {
@@ -88,6 +88,9 @@ const checked = (group: string) =>
     .filter((r) => r.getAttribute('aria-checked') === 'true')
     .map((r) => r.textContent);
 
+const radioIn = (group: string, name: string) =>
+  within(screen.getByRole('radiogroup', { name: group })).getByRole('radio', { name });
+
 describe('the View popover', () => {
   it('defaults to today: every edge, many labels, unlinked counted, no ghosts', async () => {
     expect(loadPrefs()).toEqual(DEFAULT_PREFS);
@@ -96,12 +99,12 @@ describe('the View popover', () => {
     expect(checked('Edges')).toEqual(['All']);
     expect(checked('Labels')).toEqual(['Many']);
     expect(checked('Unlinked items')).toEqual(['Hide']);
-    expect(screen.getByRole('button', { name: 'Missing' }).getAttribute('aria-pressed')).toBe(
-      'false'
-    );
-    expect(screen.getByRole('button', { name: 'Cited with' }).getAttribute('aria-pressed')).toBe(
-      'false'
-    );
+    expect(checked('Missing works')).toEqual(['Off']);
+    expect(checked('Cited with')).toEqual(['Off']);
+    // Every row is the same kind of control: a segmented choice, no toggles.
+    const dialog = screen.getByRole('dialog', { name: 'Graph view' });
+    expect(dialog.querySelectorAll('[role="radiogroup"]')).toHaveLength(5);
+    expect(dialog.querySelectorAll('[aria-pressed]')).toHaveLength(0);
     expect(restEdges(container)).toHaveLength(4);
     expect(labelled(container)).toHaveLength(3);
     expect(nodeFor(container, 'c')).toBeNull();
@@ -185,8 +188,8 @@ describe('the View popover', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Selected' }));
     fireEvent.click(screen.getByRole('radio', { name: 'Hover' }));
     fireEvent.click(screen.getByRole('radio', { name: 'Show' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Missing' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Cited with' }));
+    fireEvent.click(radioIn('Missing works', 'On'));
+    fireEvent.click(radioIn('Cited with', 'On'));
     fireEvent.click(screen.getByRole('button', { name: 'More members' }));
     expect(loadPrefs()).toEqual({
       edges: 'selected',

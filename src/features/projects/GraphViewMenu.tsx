@@ -3,7 +3,7 @@
  * Every choice goes through the store, which keeps them across sessions
  * (graphViewPrefs.ts). Escape or a press outside closes it; focus starts
  * on its first control and goes back to the View button on Escape. */
-import { For, onMount, Show } from 'solid-js';
+import { For, onMount, Show, type JSX } from 'solid-js';
 import MathText from '../../components/MathText';
 import {
   CITED_WITH_MAX,
@@ -24,25 +24,30 @@ function Segmented<T extends string>(props: {
   value: T;
   choices: Choice<T>[];
   onPick: (value: T) => void;
+  /** What follows the segments on the same row, such as a threshold. */
+  children?: JSX.Element;
 }) {
   return (
     <>
       <span class="graph-view-menu-label">{props.label}</span>
-      <div class="projects-launch-toggle" role="radiogroup" aria-label={props.label}>
-        <For each={props.choices}>
-          {(choice) => (
-            <button
-              type="button"
-              role="radio"
-              aria-checked={props.value === choice.value}
-              classList={{ 'is-active': props.value === choice.value }}
-              title={choice.title}
-              onClick={() => props.onPick(choice.value)}
-            >
-              {choice.label}
-            </button>
-          )}
-        </For>
+      <div class="graph-view-menu-row">
+        <div class="projects-launch-toggle" role="radiogroup" aria-label={props.label}>
+          <For each={props.choices}>
+            {(choice) => (
+              <button
+                type="button"
+                role="radio"
+                aria-checked={props.value === choice.value}
+                classList={{ 'is-active': props.value === choice.value }}
+                title={choice.title}
+                onClick={() => props.onPick(choice.value)}
+              >
+                {choice.label}
+              </button>
+            )}
+          </For>
+        </div>
+        {props.children}
       </div>
     </>
   );
@@ -59,7 +64,7 @@ function Stepper(props: {
   onStep: (value: number) => void;
 }) {
   return (
-    <span class="graph-control graph-stepper" role="group" aria-label={props.group}>
+    <span class="graph-stepper" role="group" aria-label={props.group}>
       <button
         type="button"
         aria-label={props.fewer}
@@ -137,18 +142,19 @@ export default function GraphViewMenu(props: {
         ]}
         onPick={(v) => store.setUnlinkedMode(v)}
       />
-      <span class="graph-view-menu-label">Missing works</span>
-      <div class="graph-view-menu-row">
-        <button
-          type="button"
-          class="graph-control is-text"
-          aria-pressed={store.state.missing.on}
-          classList={{ 'is-on': store.state.missing.on }}
-          title="Show works several items here cite that are not in the library"
-          onClick={() => store.setMissing(!store.state.missing.on)}
-        >
-          Missing
-        </button>
+      <Segmented
+        label="Missing works"
+        value={store.state.missing.on ? 'on' : 'off'}
+        choices={[
+          { value: 'off', label: 'Off' },
+          {
+            value: 'on',
+            label: 'On',
+            title: 'Show works several items here cite that are not in the library',
+          },
+        ]}
+        onPick={(v) => store.setMissing(v === 'on')}
+      >
         <Show when={store.state.missing.on}>
           <Stepper
             group="Cited by at least"
@@ -161,20 +167,21 @@ export default function GraphViewMenu(props: {
             onStep={(v) => store.setMissingMin(v)}
           />
         </Show>
-      </div>
+      </Segmented>
       <Show when={props.inProject}>
-        <span class="graph-view-menu-label">Cited with</span>
-        <div class="graph-view-menu-row">
-          <button
-            type="button"
-            class="graph-control is-text"
-            aria-pressed={store.state.citedWith.on}
-            classList={{ 'is-on': store.state.citedWith.on }}
-            title="Show works the library often cites alongside these items"
-            onClick={() => store.setCitedWith(!store.state.citedWith.on)}
-          >
-            Cited with
-          </button>
+        <Segmented
+          label="Cited with"
+          value={store.state.citedWith.on ? 'on' : 'off'}
+          choices={[
+            { value: 'off', label: 'Off' },
+            {
+              value: 'on',
+              label: 'On',
+              title: 'Show works the library often cites alongside these items',
+            },
+          ]}
+          onPick={(v) => store.setCitedWith(v === 'on')}
+        >
           <Show when={store.state.citedWith.on}>
             <Stepper
               group="Cited with at least"
@@ -187,7 +194,7 @@ export default function GraphViewMenu(props: {
               onStep={(v) => store.setCitedWithMin(v)}
             />
           </Show>
-        </div>
+        </Segmented>
       </Show>
     </div>
   );
