@@ -273,6 +273,26 @@ body {
   background-color: var(--scrollbar-thumb-hover);
 }
 
+/* ---------- polish: numerals ----------
+   Figures that change in place or stack in a column keep one width, so a
+   count ticking over or a page number stepping never shifts its line. The
+   counts and steppers that already ask for it keep their own rules. */
+.page-input,
+.zoom-input,
+.tb-total,
+.status-bar,
+.paper-row-meta,
+.paper-list-batch,
+.home-recent-date,
+.home-recent-size,
+.thumb-num,
+.note-meta,
+.figure-page,
+.library-status,
+.ext-count {
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---------- shell ---------- */
 .app-shell {
   display: flex;

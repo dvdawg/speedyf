@@ -78,6 +78,33 @@ describe('polish: graph', () => {
   });
 });
 
+describe('polish: numerals', () => {
+  /** Every selector that asks for tabular figures. */
+  const tabular = new Set(
+    [...css.matchAll(/([^{}]+)\{[^}]*font-variant-numeric:\s*tabular-nums/g)].flatMap((m) =>
+      m[1]!.split(',').map((sel) => sel.trim())
+    )
+  );
+
+  it('keeps changing and stacked figures one width', () => {
+    for (const sel of [
+      '.page-input',
+      '.zoom-input',
+      '.tb-total',
+      '.status-bar',
+      '.paper-find-count',
+      '.search-count',
+      '.graph-stepper-value',
+      '.projects-row-count',
+      '.paper-group-count',
+      '.paper-row-meta',
+      '.library-result-count',
+    ]) {
+      expect(tabular.has(sel), sel).toBe(true);
+    }
+  });
+});
+
 describe('polish: scrollbars', () => {
   it('thins the columns from shared tokens and leaves the page viewport alone', () => {
     expect(rootTokens()).toMatch(/--scrollbar-thumb:/);
