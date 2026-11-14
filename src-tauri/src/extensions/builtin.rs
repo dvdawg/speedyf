@@ -408,13 +408,10 @@ mod tests {
         )
         .unwrap();
         let math = super::super::parse_manifest(&math).unwrap();
-        assert_eq!(
-            math.contributes
-                .equation_converter
-                .map(|c| c.command)
-                .as_deref(),
-            Some("copyEquation")
-        );
+        let converter = math.contributes.equation_converter.unwrap();
+        assert_eq!(converter.command, "copyEquation");
+        // It reads quoted selections of prose and math too.
+        assert!(converter.selections);
     }
 
     #[test]

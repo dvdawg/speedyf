@@ -242,6 +242,18 @@ pub struct CommandSlot {
     pub command: String,
 }
 
+/// The `equationConverter` slot: the command, and whether it also reads a
+/// text selection of prose and math (`selection.convert`).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ConverterSlot {
+    /// One of this extension's declared command ids.
+    pub command: String,
+    /// Invoked for selections too, answering with Markdown.
+    #[serde(default)]
+    pub selections: bool,
+}
+
 /// An action offered on something the user picked - a text selection, a
 /// citation. It names one of the extension's own commands, which is invoked
 /// with the picked thing as its value.
@@ -415,7 +427,7 @@ pub struct Contributions {
     /// (`equations.convert`). Invoked like an equation action; its
     /// `ui.showMath` is the answer.
     #[serde(default)]
-    pub equation_converter: Option<CommandSlot>,
+    pub equation_converter: Option<ConverterSlot>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -669,15 +681,23 @@ pub fn parse_manifest(source: &str) -> Result<Manifest, ManifestError> {
             return Err(ManifestError::TermProviderNeedsPermission);
         }
     }
-    for slot in [
-        &manifest.contributes.item_detail_lines,
-        &manifest.contributes.equation_converter,
+    for command in [
+        manifest
+            .contributes
+            .item_detail_lines
+            .as_ref()
+            .map(|slot| &slot.command),
+        manifest
+            .contributes
+            .equation_converter
+            .as_ref()
+            .map(|slot| &slot.command),
     ]
     .into_iter()
     .flatten()
     {
-        if !seen.contains(slot.command.as_str()) {
-            return Err(ManifestError::UnknownBoundCommand(slot.command.clone()));
+        if !seen.contains(command.as_str()) {
+            return Err(ManifestError::UnknownBoundCommand(command.clone()));
         }
     }
     if manifest.contributes.item_detail_lines.is_some()
@@ -1950,9 +1970,16 @@ mod tests {
                  "editor":{"file":"notepad.md","command":"editor"}}],
                "projectViews":[{"id":"notepad","title":"Notepad","editor":{"file":"notepad.md","command":"editor"}}],
                "itemDetailLines":{"command":"lines"},
-               "equationConverter":{"command":"open"}}"#,
+               "equationConverter":{"command":"open","selections":true}}"#,
         ))
         .expect("valid");
+        assert!(
+            m.contributes
+                .equation_converter
+                .as_ref()
+                .unwrap()
+                .selections
+        );
         assert_eq!(
             m.contributes.reader_panes[0].when,
             Some(When::DocumentInProject)
