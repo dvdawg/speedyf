@@ -280,7 +280,11 @@ The editor draws headings, emphasis, lists, block quotes, `$...$` and
 images from your own project files (never from the web), and Pandoc
 citations: `@key` and `[@key, p. 12]{box=x,y,w,h}`, the box in top-left page
 points. The line with the cursor shows its Markdown. Typing `@` offers the
-entries you marked `pick`.
+entries you marked `pick`. Its head offers an Outline of the note's headings
+(from two on) and Export: the note as a Markdown file with its pictures in a
+`<name>-assets/` folder beside it, or as LaTeX on the clipboard (also the
+palette's "Export Notepad as Markdown..." and "Copy Notepad as LaTeX", for
+the note of the project in view).
 
 The rest is yours, through `editor.command`, invoked with `value: { event,
 projectId, file, cite? }`:

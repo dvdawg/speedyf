@@ -437,6 +437,16 @@ export class NoteSession {
     this.setNotice(null);
   }
 
+  /** Say something in the head of every view of the note (an export's
+   * result); gone by itself after `ms` when given. */
+  say(message: string, ms?: number): void {
+    this.setNotice(message);
+    if (ms === undefined) return;
+    setTimeout(() => {
+      if (this.notice() === message) this.setNotice(null);
+    }, ms);
+  }
+
   /* ---- decorations ---- */
 
   decoration(id: string): Decoration | undefined {

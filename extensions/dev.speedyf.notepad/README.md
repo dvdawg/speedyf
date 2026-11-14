@@ -80,6 +80,24 @@ written to the file, and go by themselves if something fails.
 They write to the notepad of the project you opened the paper from; for a
 paper in several projects opened from elsewhere, SpeedyF asks once.
 
+## Export
+
+**Export** at the top of the note, or the palette (on the Projects screen
+with a project open, or in the reader for a paper in a project):
+
+- **Export Notepad as Markdown...** saves the note where you choose (the
+  project's name by default). Its pictures are copied into a
+  `<name>-assets/` folder beside the file, and the links point there.
+  Citations stay Pandoc's `@key`; a page link `[@key, p. 12]{box=...}`
+  becomes `[@key, p. 12]`.
+- **Copy Notepad as LaTeX** puts the note on the clipboard as LaTeX:
+  headings as `\section`, `\subsection` and `\subsubsection`, emphasis as
+  `\emph` and `\textbf`, lists as `itemize` and `enumerate`, quotes as
+  `quote`, math as written (`$$ ... $$` as `\[ ... \]`), `@a; @b` as
+  `\cite{a,b}` and `[@key, p. 12]` as `\cite[p.~12]{key}` (with the key the
+  item has now), and each picture as a `% figure: <path>` comment. LaTeX's
+  special characters in the prose are escaped; nothing in math is.
+
 ## On the Projects screen
 
 An item a notepad cites shows "Mentioned in notepad (3)" in its details;

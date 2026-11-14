@@ -4,8 +4,8 @@
  * It reads as a page, not a form: the line being edited is a bare text
  * field in the rendered text's own font and measure, with no box, border or
  * ring, so only the caret shows where you are. The head is one quiet line,
- * the title and dim text buttons: Outline (once the note has two headings)
- * and Source.
+ * the title and dim text buttons: Outline (once the note has two headings),
+ * Export and Source.
  *
  * The note is drawn block by block (`markdown.ts`). The block holding the
  * cursor is a native text field showing its Markdown source - so IME,
@@ -67,6 +67,7 @@ import { registerNoteDrop } from './noteDrop';
 import { citeIdentifiers } from './identifiers';
 import { headingLine, outlineOf } from './outline';
 import HeadMenu from './HeadMenu';
+import { copyNoteLatex, exportNoteMarkdown } from './noteExportActions';
 import {
   citeQuery,
   continueList,
@@ -875,6 +876,18 @@ function EditorBody(props: BodyProps) {
             }}
           />
         </Show>
+        <HeadMenu
+          label="Export"
+          title="Save the note as Markdown, or copy it as LaTeX"
+          listLabel="Export"
+          class="note-export"
+          rows={EXPORT_ROWS}
+          onChoose={(i) => {
+            // Inside the click or key press: the clipboard is open now.
+            if (i === 0) void exportNoteMarkdown(props.noteKey);
+            else void copyNoteLatex(props.noteKey);
+          }}
+        />
         <button
           type="button"
           class="note-source-toggle"
@@ -1024,6 +1037,8 @@ function EditorBody(props: BodyProps) {
     </>
   );
 }
+
+const EXPORT_ROWS = [{ text: 'Markdown file...' }, { text: 'Copy as LaTeX' }];
 
 /** A space before text inserted at `at`, unless a space or an opening
  * bracket is there already, or nothing. */

@@ -278,3 +278,26 @@ describe('the outline', () => {
     ]);
   });
 });
+
+describe('the Export list', () => {
+  it('offers Markdown and LaTeX, and copies LaTeX inside the click', async () => {
+    const writeText = vi.fn(async (_text: string) => {});
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    const { view } = mount('# Notes\nSee @attias2022 and 50%.');
+    await settle();
+    const button = view.container.querySelector<HTMLButtonElement>('.note-export button')!;
+    expect(button.textContent).toBe('Export');
+    fireEvent.click(button);
+    await settle();
+    const rows = [...view.container.querySelectorAll<HTMLElement>('.note-head-menu-row')];
+    expect(rows.map((r) => r.textContent)).toEqual(['Markdown file...', 'Copy as LaTeX']);
+    fireEvent.click(rows[1]!);
+    expect(writeText).toHaveBeenCalledWith(
+      '\\section{Notes}\n\nSee \\cite{attias2022quantum} and 50\\%.\n'
+    );
+    await settle();
+    expect(view.container.querySelector('.note-editor-notice')?.textContent).toContain(
+      'Copied as LaTeX'
+    );
+  });
+});

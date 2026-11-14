@@ -391,6 +391,40 @@ pub async fn project_file_remove(
     projectfiles::remove(&k.path(&files.0.data_dir())?)
 }
 
+/// Export a note to a file the user chose in the save dialog: `text` (the
+/// note with its picture links already pointing into `folder`) written to
+/// `path`, and the pictures named in `assets` copied into `folder` beside
+/// it.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn project_note_export(
+    app: tauri::AppHandle,
+    engine: tauri::State<'_, EngineState>,
+    files: tauri::State<'_, ProjectFilesState>,
+    extension_id: String,
+    project_id: String,
+    path: String,
+    text: String,
+    folder: String,
+    assets: Vec<String>,
+) -> AppResult<projectfiles::NoteExportDto> {
+    check(&app, &engine, &extension_id, &project_id, "an export").await?;
+    let dir = files.0.data_dir();
+    tauri::async_runtime::spawn_blocking(move || {
+        projectfiles::export_note(
+            &dir,
+            &extension_id,
+            &project_id,
+            &PathBuf::from(path),
+            &text,
+            &folder,
+            &assets,
+        )
+    })
+    .await
+    .map_err(|error| AppError::Internal(format!("export task failed: {error}")))?
+}
+
 /// What an import made, for the inline result.
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
