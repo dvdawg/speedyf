@@ -42,6 +42,14 @@ this, the extension consumes exactly this.
   - Before trying a source online, `equations.checking { ticket, source:
 'arxiv' | 'journal' }`, not awaited: the asker's status line then reads
     "checking arXiv source" or "checking journal source".
+- As the selection converter (the manifest's `equationConverter` has
+  `"selections": true`; another extension called `selection.convert`): the
+  same command, `value: { selection, text, page, mode, ticket }`, where
+  `selection` is a token for the selection as it was when the conversion was
+  first asked for and `text` its smart-copied text. Read its glyphs with
+  `selection.glyphs { selection }` and answer with `selection.converted {
+ticket, markdown, source, confidence }`, or nothing. See "Selections as
+  Markdown" below.
 - Prefetch: `value: { mode: 'prefetch' }`, sent by the core once per open
   document per session when the pointer first reveals an equation button,
   and only while this extension is enabled. Read the settings and
@@ -56,12 +64,13 @@ when it lands.
 
 | API                    | Args                                                                                                                                            | Returns                                                                                                             | Needs                         |
 | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| `selection.glyphs`     | none                                                                                                                                            | `{ page, glyphs, groups, lines } \| null` (current text selection)                                                  | document:layout               |
+| `selection.glyphs`     | `{ selection? }`                                                                                                                                | `{ page, glyphs, groups, lines } \| null` (current text selection)                                                  | document:layout               |
 | `region.glyphs`        | `{ page, bbox }`                                                                                                                                | `{ page, glyphs, groups, lines }` (the equation at `bbox`, grown to all of it)                                      | document:layout               |
 | `document.mathTags`    | `{ page }`                                                                                                                                      | `[{ bbox, alt: string \| null, actualText: string \| null, mathml: string \| null }]` (tagged-PDF Formula elements) | document:layout               |
 | `document.identifiers` | none                                                                                                                                            | `{ doi: string \| null, arxiv: string \| null, arxivVersion: number \| null }`                                      | document:read                 |
 | `net.fetch`            | `{ url, as: 'text' \| 'bytes', maxBytes?: number }`                                                                                             | `{ status, contentType, body: string \| number[] }`                                                                 | network (host must be listed) |
 | `ui.showMath`          | `{ latex: string, display: boolean, source: 'tags' \| 'arxiv' \| 'jats' \| 'fonts', confidence: 'high' \| 'medium' \| 'low', ticket?: string }` | `{ shown: boolean }`                                                                                                | none                          |
+| `selection.converted`  | `{ ticket: string, markdown: string, source: 'fonts' \| 'arxiv', confidence }`                                                                  | `{ accepted: boolean }` (the answer to a selection conversion)                                                      | none                          |
 | `equations.checking`   | `{ ticket: string, source: 'arxiv' \| 'journal' }`                                                                                              | `{ shown: boolean }` (the asker's status line names the source)                                                     | none                          |
 
 `Glyph`:
@@ -114,3 +123,59 @@ flow. The source and confidence show as a small dim note.
 
 Network calls respect the per-host rate limiter. `maxBytes` defaults to
 5 MB, hard cap 20 MB. A host not in the manifest list is refused.
+
+## Selections as Markdown
+
+A quote sent from a paper (Notepad's Quote to Notepad) asks for the
+selection as Markdown: prose stays prose, each run of inline math becomes
+`$...$`, each displayed equation a `$$ ... $$` paragraph of its own.
+
+**`local`** reads the selection's glyphs (never the network):
+
+- Lines: glyphs in reading order; a smaller glyph off the baseline that
+  moves on rightwards is a script on the same line; rows stacked into one
+  display (a fraction's parts across a rule, an operator's limits, one strip
+  of `lines`) are one line.
+- Math, on its own: a math font (CMMI, CMSY, CMEX, MSAM, MSBM, the TeX
+  alphabets, an OpenType math font such as Cambria Math or STIX), a script
+  (smaller, its baseline 0.12 em or more off the line's), a character only
+  math uses (relations, operators, Greek and mathematical letters, set
+  symbols, the norm bar), a glyph inside a tagged Formula, a lone italic
+  letter in a text font when the words beside it are not italic ("a", "A"
+  and "I" are words). A script's base (a lone letter, a digit, a closing
+  bracket) is math too.
+- Math by contact: digits, ASCII operators, brackets and punctuation
+  touching math with no space join it; across a word space only operators
+  and relations join, or anything next to one. A text-font name of up to
+  four capitals or a function name (VC, log, sup) glued to math joins it;
+  a function name also before math across a space.
+- A run of math loses punctuation, operators it took by contact and
+  unmatched brackets at its ends; a run with nothing that is math on its own
+  stays text. Words in a text italic (CMTI, Times Italic) stay prose.
+- A display: a line set apart (indented over 2 em, or with more than 1.4
+  line spacings above and below) that is math throughout except a few words
+  such as "for all" and a trailing number "(3)", which becomes `\tag{3}`.
+- Each run (and each display, with the rules over it) is read by the font
+  reconstruction; a run in one Formula tag takes the tag's LaTeX.
+- Prose: glyphs joined with a space at word gaps, ligatures spelled out,
+  lines rejoined (a word hyphenated at a line end put back together),
+  paragraphs (a larger gap, an indent) a blank line apart, every Markdown
+  character escaped as Notepad escapes quotes.
+- Nothing is answered when the glyphs hold no math, or cover less than 85%
+  of the letters and digits of `text` (a selection over a page break, a
+  stale one). The confidence is the lowest of the runs'.
+
+**`exact`** looks the passage up in the paper's arXiv source (when the
+"Use the arXiv source" setting allows): the quote as `local` read it (else
+its text) is cut into words, math regions and printed references, and
+aligned in order against the source's, starting anywhere and tolerant of a
+word missing on either side. It is taken only when at least 80% of its
+words (and four) and 60% of its math regions are matched, over a stretch of
+source at most 1.5 times its length. That stretch is written as Markdown:
+`$..$` and `\(..\)` inline, `$$..$$`, `\[..\]` and the equation
+environments as `$$ ... $$` paragraphs (align-like ones as `aligned`, with
+the number the page printed as `\tag`), `\emph` as `_..._`, `\textbf` as
+`**...**`, `\cite` and `\ref` as the label the page printed where it lines
+up (else `[ref]`), comments, labels and footnotes dropped, the source's own
+macros expanded. The paper's whole TeX is kept in memory for the session
+only. The journal (JATS) version is not used for quotes.

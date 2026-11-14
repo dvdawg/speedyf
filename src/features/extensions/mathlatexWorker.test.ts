@@ -82,6 +82,7 @@ interface HostSetup {
 
 function startWorker(setup: HostSetup) {
   const shown: Record<string, unknown>[] = [];
+  const answered: Record<string, unknown>[] = [];
   const fetched: string[] = [];
   const logs: string[] = [];
   const storage = new Map<string, string>();
@@ -139,6 +140,13 @@ function startWorker(setup: HostSetup) {
           shown.push(args);
           value = { shown: true };
           break;
+        case 'selection.converted':
+          answered.push(args);
+          value = { accepted: true };
+          break;
+        case 'equations.checking':
+          value = { shown: true };
+          break;
         default:
           throw new Error(`unexpected ${api}`);
       }
@@ -154,6 +162,7 @@ function startWorker(setup: HostSetup) {
   let nextInvoke = 50_000;
   return {
     shown,
+    answered,
     fetched,
     logs,
     storage,
@@ -231,7 +240,7 @@ const JATS = `<?xml version="1.0"?><article xmlns:mml="http://www.w3.org/1998/Ma
 
 const IDS = { doi: '10.1371/journal.pone.0000001', arxiv: '2101.00001', arxivVersion: 2 };
 
-function network(opts: { arxiv?: 'tex' | 'pdf' | 'fail'; jats?: boolean } = {}) {
+function network(opts: { arxiv?: 'tex' | 'pdf' | 'fail'; jats?: boolean; paper?: string } = {}) {
   return async ({ url }: Fetch) => {
     if (url.startsWith('https://arxiv.org/e-print/')) {
       if (opts.arxiv === 'fail' || !opts.arxiv) throw new Error('network down');
@@ -241,7 +250,7 @@ function network(opts: { arxiv?: 'tex' | 'pdf' | 'fail'; jats?: boolean } = {}) 
       return {
         status: 200,
         contentType: 'application/x-eprint-tar',
-        body: await gzip(tarOf({ 'paper.tex': PAPER })),
+        body: await gzip(tarOf({ 'paper.tex': opts.paper ?? PAPER })),
       };
     }
     if (url.includes('/europepmc/webservices/rest/search')) {
@@ -586,5 +595,119 @@ describe('Math to LaTeX: as the equation converter', () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(w.fetched).toEqual([]);
     expect(w.calls).not.toContain('document.identifiers');
+  });
+});
+
+/** A line of a paper set glyph by glyph: words in `font`, a word space
+ * between them, a script raised and smaller. */
+function typeset(parts: [string, string, number?][], x0 = 72, baseline = 300): Glyph[] {
+  const out: Glyph[] = [];
+  let x = x0;
+  for (const [text, font, dy = 0] of parts) {
+    for (const ch of Array.from(text)) {
+      if (ch === ' ') {
+        x += 3.3;
+        continue;
+      }
+      const size = dy ? 7 : 10;
+      out.push({ ...g(font, ch.codePointAt(0)!, x, baseline + dy, size, ch), w: 0.5 * size });
+      x += 0.5 * size;
+    }
+  }
+  return out;
+}
+
+const SAMPLE = typeset([
+  ['Every sample ', 'CMR10'],
+  ['S', 'CMMI10'],
+  [' ', 'CMR10'],
+  ['\u2208', 'CMSY10'],
+  [' ', 'CMR10'],
+  ['X', 'CMMI10'],
+  ['m', 'CMMI7', -3.6],
+  [' of size ', 'CMR10'],
+  ['m', 'CMMI10'],
+  [' is drawn i.i.d. from the distribution ', 'CMR10'],
+  ['P', 'CMMI10'],
+  [' over the domain.', 'CMR10'],
+]);
+const SAMPLE_TEXT =
+  'Every sample S \u2208 Xm of size m is drawn i.i.d. from the distribution P over the domain.';
+
+const SAMPLE_PAPER = String.raw`\documentclass{article}
+\newcommand{\cX}{\mathcal{X}}
+\begin{document}
+Every sample $S \in \cX^m$ of size $m$ is drawn i.i.d.\ from the
+distribution~$P$ over the domain.\label{x}
+\end{document}
+`;
+
+describe('Math to LaTeX: a selection for another extension', () => {
+  it('answers a local conversion as Markdown from the glyphs, offline, with its ticket', async () => {
+    const w = startWorker({
+      selection: { page: 0, glyphs: SAMPLE },
+      identifiers: IDS,
+      fetch: network({ arxiv: 'tex', paper: SAMPLE_PAPER }),
+    });
+    await w.invoke('copyEquation', {
+      selection: 's1',
+      text: SAMPLE_TEXT,
+      page: 0,
+      mode: 'local',
+      ticket: 't3',
+    });
+    expect(w.answered).toEqual([
+      {
+        ticket: 't3',
+        markdown:
+          'Every sample $S \\in X^m$ of size $m$ is drawn i.i.d. from the distribution $P$ over the domain.',
+        source: 'fonts',
+        confidence: 'high',
+      },
+    ]);
+    expect(w.shown).toEqual([]);
+    expect(w.fetched).toEqual([]);
+    expect(w.calls).not.toContain('document.identifiers');
+  });
+
+  it('answers an exact conversion from the arXiv source, else nothing', async () => {
+    const w = startWorker({
+      selection: { page: 0, glyphs: SAMPLE },
+      identifiers: IDS,
+      fetch: network({ arxiv: 'tex', paper: SAMPLE_PAPER }),
+    });
+    const value = { selection: 's1', text: SAMPLE_TEXT, page: 0, mode: 'exact', ticket: 't4' };
+    await w.invoke('copyEquation', value);
+    expect(w.answered).toEqual([
+      {
+        ticket: 't4',
+        markdown:
+          'Every sample $S \\in \\mathcal{X}^m$ of size $m$ is drawn i.i.d. from the distribution $P$ over the domain.',
+        source: 'arxiv',
+        confidence: 'high',
+      },
+    ]);
+    // The status line was told which source is being checked.
+    expect(w.calls).toContain('equations.checking');
+
+    // A paper whose source does not have the passage: nothing.
+    const elsewhere = startWorker({
+      selection: { page: 0, glyphs: SAMPLE },
+      identifiers: IDS,
+      fetch: network({ arxiv: 'tex' }),
+    });
+    await elsewhere.invoke('copyEquation', { ...value, ticket: 't5' });
+    expect(elsewhere.answered).toEqual([]);
+
+    // The internet switched off in its settings: nothing, and no download.
+    const offline = startWorker({
+      selection: { page: 0, glyphs: SAMPLE },
+      identifiers: IDS,
+      settings: { prefer: 'fonts only (offline)' },
+      fetch: network({ arxiv: 'tex', paper: SAMPLE_PAPER }),
+    });
+    await offline.invoke('copyEquation', { ...value, ticket: 't6' });
+    expect(offline.answered).toEqual([]);
+    expect(offline.fetched).toEqual([]);
   });
 });

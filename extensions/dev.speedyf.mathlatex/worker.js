@@ -47,6 +47,11 @@ let nextRequestId = 1;
 const pending = new Map();
 /** arXiv id+version, or DOI -> Promise of parsed snippets (or null). */
 const sources = new Map();
+/** arXiv keys -> Promise of the paper's TeX ({ body, macros }) or null:
+ * for quotes, this session only. */
+const documents = new Map();
+/** arXiv keys -> the e-print download in flight. */
+const downloads = new Map();
 /** The same keys -> when the download last failed. A deadline running out
  * is not a failure: that download goes on and fills `sources`. */
 const failedAt = new Map();
@@ -2781,50 +2786,23 @@ function extractMath(source, macros) {
   };
   const snippets = [];
   const add = (raw, env, display, star) => {
-    let inner = raw;
     const numbered = NUMBERED.has(env) && !star;
     const numbers = [];
     const rows = /^(align|eqnarray|flalign|alignat|gather|multline)$/.test(env)
-      ? splitRows(inner)
-      : [inner];
+      ? splitRows(raw)
+      : [raw];
     if (numbered) {
-      const rowsToNumber = env === 'multline' ? [inner] : rows;
+      const rowsToNumber = env === 'multline' ? [raw] : rows;
       for (const row of rowsToNumber) {
         const tag = /\\tag\*?\s*\{([^}]*)\}/.exec(row);
         if (tag) numbers.push(tag[1].trim());
         else if (!/\\(nonumber|notag)\b/.test(row)) numbers.push(next());
       }
     } else {
-      const tag = /\\tag\*?\s*\{([^}]*)\}/.exec(inner);
+      const tag = /\\tag\*?\s*\{([^}]*)\}/.exec(raw);
       if (tag) numbers.push(tag[1].trim());
     }
-    inner = inner
-      .replace(/\\label\s*\{[^}]*\}/g, '')
-      .replace(/\\(nonumber|notag)\b/g, '')
-      .replace(/\\tag\*?\s*\{[^}]*\}/g, '');
-    inner = expandMacros(inner, macros);
-    let tex;
-    if (env === 'eqnarray') {
-      tex = `\\begin{aligned} ${splitRows(inner)
-        .map((r) => r.replace(/&([^&]*)&/, '&$1'))
-        .join(' \\\\ ')} \\end{aligned}`;
-    } else if (env === 'align' || env === 'flalign') {
-      tex =
-        rows.length > 1 || /&/.test(inner)
-          ? `\\begin{aligned} ${inner.trim()} \\end{aligned}`
-          : inner;
-    } else if (env === 'alignat') {
-      const n = /^\s*\{(\d+)\}/.exec(inner);
-      const body = n ? inner.slice(n[0].length) : inner;
-      tex = `\\begin{alignedat}{${n ? n[1] : 1}} ${body.trim()} \\end{alignedat}`;
-    } else if (env === 'gather' || env === 'multline') {
-      tex = rows.length > 1 ? `\\begin{gathered} ${inner.trim()} \\end{gathered}` : inner;
-    } else {
-      tex = inner
-        .replace(/\\begin\{split\}/g, '\\begin{aligned}')
-        .replace(/\\end\{split\}/g, '\\end{aligned}');
-    }
-    tex = tex.replace(/\s+/g, ' ').trim();
+    const tex = envTex(raw, env, macros);
     if (tex.length === 0 || tex.length > 6000) return;
     snippets.push({ tex, env, display, numbers });
   };
@@ -2905,6 +2883,42 @@ function extractMath(source, macros) {
     }
   }
   return snippets;
+}
+
+/** A math environment's body as one formula KaTeX reads: its labels,
+ * tags and \nonumber gone, the source's macros expanded, align-like rows
+ * as `aligned`. */
+function envTex(raw, env, macros) {
+  const rows = /^(align|eqnarray|flalign|alignat|gather|multline)$/.test(env)
+    ? splitRows(raw)
+    : [raw];
+  let inner = raw
+    .replace(/\\label\s*\{[^}]*\}/g, '')
+    .replace(/\\(nonumber|notag)\b/g, '')
+    .replace(/\\tag\*?\s*\{[^}]*\}/g, '');
+  inner = expandMacros(inner, macros);
+  let tex;
+  if (env === 'eqnarray') {
+    tex = `\\begin{aligned} ${splitRows(inner)
+      .map((r) => r.replace(/&([^&]*)&/, '&$1'))
+      .join(' \\\\ ')} \\end{aligned}`;
+  } else if (env === 'align' || env === 'flalign') {
+    tex =
+      rows.length > 1 || /&/.test(inner)
+        ? `\\begin{aligned} ${inner.trim()} \\end{aligned}`
+        : inner;
+  } else if (env === 'alignat') {
+    const n = /^\s*\{(\d+)\}/.exec(inner);
+    const body = n ? inner.slice(n[0].length) : inner;
+    tex = `\\begin{alignedat}{${n ? n[1] : 1}} ${body.trim()} \\end{alignedat}`;
+  } else if (env === 'gather' || env === 'multline') {
+    tex = rows.length > 1 ? `\\begin{gathered} ${inner.trim()} \\end{gathered}` : inner;
+  } else {
+    tex = inner
+      .replace(/\\begin\{split\}/g, '\\begin{aligned}')
+      .replace(/\\end\{split\}/g, '\\end{aligned}');
+  }
+  return tex.replace(/\s+/g, ' ').trim();
 }
 
 /** Rows of an align-like body, split on top-level `\\`. */
@@ -4068,6 +4082,1206 @@ function asciiLatex(latex) {
   return out;
 }
 
+// ---------- a selection of prose and math, as Markdown ----------
+//
+// A quoted paragraph with math in it: the prose stays prose, its lines
+// rejoined the way smart copy does (a word hyphenated at a line end put back
+// together, a paragraph break kept as a blank line), each run of inline
+// math becomes `$...$` and each displayed equation its own `$$ ... $$`.
+//
+// What is math is read from the glyphs: a math font (CMMI, CMSY, an
+// OpenType math font such as Cambria Math or STIX), a smaller glyph off the
+// baseline (a script), a symbol only math uses, a tagged Formula, a lone
+// italic letter in a text font among upright words. Digits, operators,
+// brackets and short upright names (VC, log) touching those join them.
+// Anything unsure stays text: a sentence is never swallowed into math.
+// Each run of math is then read by the same reconstruction as a formula.
+
+/** Text ligatures, spelled out. */
+const LIGATURE_TEXT = {
+  '\uFB00': 'ff',
+  '\uFB01': 'fi',
+  '\uFB02': 'fl',
+  '\uFB03': 'ffi',
+  '\uFB04': 'ffl',
+  '\uFB05': 'st',
+  '\uFB06': 'st',
+};
+/** A line ending in one of these continues its word on the next line. */
+const WRAP_HYPHEN = /[-\u2010\u2011\u00AD]$/;
+/** The encodings of math fonts. */
+const MATH_ENCODINGS = new Set(['OML', 'OMS', 'OMX', 'MSAM', 'MSBM', 'ALPHA']);
+/** Text characters that join a run of math they touch. */
+const JOINERS = /^[0-9+\-=<>()[\]/|,.;:!'*\u2032\u2212]$/;
+/** Of those, the ones that join it across a word space. */
+const OPERATORS = /^[+\-=<>/*\u2212]$/;
+/** Punctuation kept outside `$...$` at either end of a run. */
+const PUNCTUATION = /^[.,;:!?]$/;
+/** Prose characters a math symbol test must not take: spaces, dashes,
+ * quotes, ellipses, bullets, Latin-1 signs. The norm bar (U+2016), plus
+ * or minus and not are math. */
+const PROSE_SIGNS = /[\u00A0-\u00BF\u2000-\u206F]/;
+const MATH_SIGNS = /[\u00B1\u00AC\u2016]/;
+/** A lone letter that is a word, not a variable. */
+const LETTER_WORDS = new Set(['a', 'A', 'I']);
+
+/** Characters Markdown or a citation would read as markup, escaped. */
+function escapeProse(text) {
+  return String(text).replace(/[\\`*_[\]{}<>$@|~]/g, (c) => `\\${c}`);
+}
+
+/** A paragraph that would open as a heading, a list or a nested quote
+ * starts escaped. */
+function escapeLeading(paragraph) {
+  return paragraph.replace(/^([#>+-]|\d+[.)])/, '\\$1');
+}
+
+/** What a glyph reads as in prose: its Unicode text with ligatures spelled
+ * out, or for an unmapped code in a TeX text font the letter it decodes to. */
+function glyphChar(g, atom) {
+  const raw = typeof g.text === 'string' ? g.text : '';
+  const chars = Array.from(raw).filter((c) => c.charCodeAt(0) >= 0x20 && c !== '\uFFFE');
+  if (chars.length > 0) return chars.map((c) => LIGATURE_TEXT[c] ?? c).join('');
+  if (atom && typeof atom.tex === 'string' && /^[A-Za-z0-9.,;:!?()[\]+=<>/'-]+$/.test(atom.tex)) {
+    return atom.tex;
+  }
+  return '';
+}
+
+/** Whether a character outside ASCII is one only math uses: a relation, an
+ * operator, a Greek or mathematical letter, a set symbol. */
+function mathSymbol(ch) {
+  if (!ch || ch.codePointAt(0) < 0x80) return false;
+  if (Array.from(ch).length !== 1) return false;
+  if (PROSE_SIGNS.test(ch) && !MATH_SIGNS.test(ch)) return false;
+  if (mathAlpha(ch.codePointAt(0))) return true;
+  const id = fromUnicode(ch);
+  if (!id || id.ok === false || typeof id.tex !== 'string') return false;
+  if (['prime', 'space', 'accent', 'piece', 'letter'].includes(id.kind)) return false;
+  return id.tex.startsWith('\\');
+}
+
+/** The selected glyphs as Markdown, or null when they hold no math (or do
+ * not cover `text`, the selection's own text: a stale or partial picture
+ * is not quoted). Returns `{ markdown, confidence, math }`. */
+function selectionMarkdown(glyphs, { text = '', tags = [], layout = null } = {}) {
+  const all = (Array.isArray(glyphs) ? glyphs : []).filter((g) => g && typeof g === 'object');
+  const rules = all.filter((g) => g.font === '__rule');
+  const real = fixSymbolFonts(all.filter((g) => g.font !== '__rule'));
+  if (real.length === 0) return null;
+  const tagBoxes = (Array.isArray(tags) ? tags : [])
+    .map((tag) => ({ tag, box: toBox(tag?.bbox) }))
+    .filter((t) => t.box);
+  const items = real.map((g) => {
+    const atom = decodeGlyph(g);
+    const font = fontKind(g.font);
+    const x = num(g.x);
+    const w = num(g.w);
+    const midX = x + w / 2;
+    const midY = num(g.y) + num(g.h) / 2;
+    const ch = glyphChar(g, atom);
+    return {
+      g,
+      atom,
+      font,
+      ch,
+      x,
+      right: x + w,
+      baseline: atom.baseline,
+      size: atom.size,
+      space: ch !== '' && ch.trim() === '',
+      tag: tagBoxes.findIndex(
+        (t) =>
+          midX >= t.box.x &&
+          midX <= t.box.x + t.box.w &&
+          midY >= t.box.y &&
+          midY <= t.box.y + t.box.h
+      ),
+      math: false,
+      core: false,
+    };
+  });
+
+  // Coverage: the glyphs must hold (nearly) every letter and digit of the
+  // selection's text, else this is not the whole selection.
+  const alnum = (s) => (String(s).match(/[A-Za-z0-9]/g) ?? []).length;
+  const wanted = alnum(text);
+  const have = items.reduce((n, it) => n + alnum(it.ch), 0);
+  if (wanted > 0 && have < 0.85 * wanted) return null;
+
+  const B = median(items.filter((it) => !it.space).map((it) => it.size)) || 10;
+  const lines = textLines(items, rules, B, layout);
+  for (const line of lines) markMath(line, B);
+
+  // Paragraph geometry: the text's left margin and line spacing.
+  const margin = Math.min(...lines.map((l) => l.left));
+  const steps = [];
+  for (let i = 1; i < lines.length; i++) steps.push(lines[i].baseline - lines[i - 1].baseline);
+  const spacing = median(steps.filter((s) => s > 0.5 * B)) || 1.2 * B;
+  lines.forEach((line, i) => {
+    const before = i > 0 ? line.baseline - lines[i - 1].baseline : Infinity;
+    const after = i + 1 < lines.length ? lines[i + 1].baseline - line.baseline : Infinity;
+    const apart = Math.min(before, after) > 1.4 * spacing && lines.length > 1;
+    line.display = isDisplay(line, B, line.left - margin > 2 * B || apart);
+  });
+
+  const confidences = [];
+  let math = 0;
+  const blocks = [];
+  let paragraph = null;
+  let previous = null;
+  for (const line of lines) {
+    if (line.display) {
+      const tex = displayTex(line, rules, B, confidences);
+      if (tex) {
+        if (paragraph) blocks.push(paragraph);
+        paragraph = null;
+        const tag = line.tag ? ` \\tag{${line.tag}}` : '';
+        blocks.push({ display: `$$ ${tex}${tag} $$` });
+        math++;
+        previous = line;
+        continue;
+      }
+    }
+    const segments = lineSegments(line, rules, B, confidences, tagBoxes);
+    math += segments.filter((s) => s.kind === 'math').length;
+    if (segments.length === 0) continue;
+    const fresh =
+      !paragraph ||
+      !previous ||
+      previous.display ||
+      line.baseline - previous.baseline > 1.6 * spacing ||
+      (line.left - margin > 0.6 * B &&
+        line.left - margin < 3 * B &&
+        previous.left - margin < 0.3 * B);
+    if (fresh) {
+      if (paragraph) blocks.push(paragraph);
+      paragraph = { segments: [...segments] };
+    } else {
+      joinLine(paragraph.segments, segments);
+    }
+    previous = line;
+  }
+  if (paragraph) blocks.push(paragraph);
+  if (math === 0) return null;
+
+  const markdown = blocks
+    .map((b) => (b.display ? b.display : escapeLeading(renderSegments(b.segments))))
+    .filter((p) => p.trim() !== '')
+    .join('\n\n');
+  if (!markdown.trim()) return null;
+  const rank = { high: 2, medium: 1, low: 0 };
+  const confidence = confidences.reduce((worst, c) => (rank[c] < rank[worst] ? c : worst), 'high');
+  return { markdown, confidence, math };
+}
+
+/** Glyphs in reading order -> lines: a glyph off the baseline but moving
+ * on rightwards (a script) stays on its line; rows stacked into one display
+ * (a fraction's parts, an operator's limits) are one line. */
+function textLines(items, rules, B, layout) {
+  const rows = [];
+  let row = null;
+  for (const it of items) {
+    if (row) {
+      const drop = Math.abs(it.baseline - row.ref);
+      const back = it.x < row.right - 0.3 * B;
+      if (drop < 0.12 * B || (drop < 0.9 * B && !back)) {
+        row.items.push(it);
+        row.right = Math.max(row.right, it.right);
+        if (!row.full && it.size >= 0.9 * B && !it.space) {
+          row.ref = it.baseline;
+          row.full = true;
+        }
+        continue;
+      }
+    }
+    row = { items: [it], ref: it.baseline, right: it.right, full: it.size >= 0.9 * B };
+    rows.push(row);
+  }
+  for (const r of rows) r.baseline = mainBaseline(r.items, B);
+  const strips = (Array.isArray(layout?.lines) ? layout.lines : []).map(toBox).filter(Boolean);
+  const lines = [];
+  for (const r of rows) {
+    const prev = lines[lines.length - 1];
+    if (prev && stacked(prev, r, rules, strips, B)) {
+      prev.items.push(...r.items);
+      prev.baseline = mainBaseline(prev.items, B);
+      continue;
+    }
+    lines.push({ items: [...r.items], baseline: r.baseline });
+  }
+  for (const line of lines) {
+    const ink = line.items.filter((it) => !it.space);
+    line.left = Math.min(...ink.map((it) => it.x));
+    line.right = Math.max(...ink.map((it) => it.right));
+  }
+  return lines.filter((l) => l.items.some((it) => !it.space));
+}
+
+/** The baseline most of a line's full-size glyphs sit on. */
+function mainBaseline(items, B) {
+  const full = items.filter((it) => !it.space && it.size >= 0.9 * B);
+  return median((full.length > 0 ? full : items).map((it) => it.baseline));
+}
+
+/** Whether row `b` belongs to line `a`: on nearly the same baseline, on the
+ * other side of a fraction bar both reach, in one strip of ink, or a row of
+ * small glyphs (limits) just under or over it. */
+function stacked(a, b, rules, strips, B) {
+  const gap = Math.abs(b.baseline - a.baseline);
+  if (gap < 0.9 * B) return true;
+  const span = (items) => {
+    const ink = items.filter((it) => !it.space);
+    return [Math.min(...ink.map((it) => it.x)), Math.max(...ink.map((it) => it.right))];
+  };
+  const [al, ar] = span(a.items);
+  const [bl, br] = span(b.items);
+  const overlaps = Math.min(ar, br) > Math.max(al, bl);
+  if (!overlaps || gap > 2 * B) return false;
+  const top = Math.min(a.baseline, b.baseline);
+  const foot = Math.max(a.baseline, b.baseline);
+  const bar = rules.some(
+    (r) =>
+      num(r.y) > top - 0.8 * B &&
+      num(r.y) < foot &&
+      num(r.x) < Math.min(ar, br) &&
+      num(r.x) + num(r.w) > Math.max(al, bl)
+  );
+  if (bar) return true;
+  if (
+    strips.some(
+      (s) =>
+        a.baseline >= s.y && a.baseline <= s.y + s.h && b.baseline >= s.y && b.baseline <= s.y + s.h
+    )
+  ) {
+    return true;
+  }
+  const small = (items) => items.every((it) => it.space || it.size < 0.85 * B);
+  return gap < 1.6 * B && (small(b.items) || small(a.items));
+}
+
+/** A line's glyphs left to right, each with whether a word space comes
+ * before it, and its words. */
+function lineSequence(line) {
+  if (line.seq) return line.seq;
+  const sorted = line.items.slice().sort((p, q) => p.x - q.x);
+  const seq = [];
+  let spaced = false;
+  for (const it of sorted) {
+    if (it.space) {
+      spaced = seq.length > 0;
+      continue;
+    }
+    const prev = seq[seq.length - 1];
+    const gap = prev ? it.x - prev.right : 0;
+    it.gap = Boolean(prev) && (spaced || gap > 0.15 * Math.min(it.size, prev.size));
+    spaced = false;
+    seq.push(it);
+  }
+  // Words: runs with no space inside.
+  let word = null;
+  for (const it of seq) {
+    if (!word || it.gap) {
+      word = { items: [] };
+    }
+    word.items.push(it);
+    it.word = word;
+  }
+  line.seq = seq;
+  return seq;
+}
+
+/** Mark a line's math glyphs: those that are math on their own, then what
+ * touches them. */
+function markMath(line, B) {
+  const seq = lineSequence(line);
+  for (const it of seq) {
+    const script = it.size < 0.85 * B && Math.abs(it.baseline - line.baseline) > 0.12 * B;
+    if (
+      MATH_ENCODINGS.has(it.font.enc) ||
+      (it.font.enc === 'UNI' && it.font.math) ||
+      it.tag >= 0 ||
+      mathSymbol(it.ch) ||
+      script
+    ) {
+      it.math = true;
+      it.core = !PUNCTUATION.test(it.ch);
+    }
+    it.script = script;
+  }
+  const words = [...new Set(seq.map((it) => it.word))];
+  const letters = (w) => w.items.map((it) => it.ch).join('');
+  const italicWord = (w) =>
+    w && w.items.length > 1 && w.items.every((it) => it.g.italic) && /[A-Za-z]{2}/.test(letters(w));
+  // A lone italic letter in a text font, among upright words: a variable
+  // set by a word processor.
+  words.forEach((w, k) => {
+    const [it] = w.items;
+    if (
+      w.items.length === 1 &&
+      !it.math &&
+      it.font.enc === 'UNI' &&
+      it.g.italic &&
+      /^[A-Za-z]$/.test(it.ch) &&
+      !LETTER_WORDS.has(it.ch) &&
+      !italicWord(words[k - 1]) &&
+      !italicWord(words[k + 1])
+    ) {
+      it.math = true;
+      it.core = true;
+    }
+  });
+  // A script's base is math too: a letter alone, a digit, a bracket.
+  seq.forEach((it, k) => {
+    const base = seq[k - 1];
+    if (!it.script || !base || base.math || it.gap || base.script) return;
+    const lone = base.word.items.filter((b) => !b.script).length === 1;
+    if ((lone && /^[A-Za-z0-9]$/.test(base.ch)) || /^[)\]|]$/.test(base.ch)) {
+      base.math = true;
+      base.core = true;
+    }
+  });
+  // Upright names glued to math (VC(C), log(x)), or a function name before
+  // it: candidates to join, as a whole.
+  const named = new Set();
+  let name = null;
+  for (const it of seq) {
+    const letter = !it.math && /^[A-Za-z]$/.test(it.ch);
+    if (letter && name && !it.gap) name.items.push(it);
+    else name = letter ? { items: [it] } : null;
+    if (name) it.name = name;
+  }
+  for (const it of seq) {
+    if (!it.name || named.has(it.name)) continue;
+    const s = it.name.items.map((x) => x.ch).join('');
+    if (/^[A-Z]{1,4}$/.test(s) || functionWords(s)) {
+      it.name.fn = Boolean(functionWords(s));
+      named.add(it.name);
+    }
+  }
+  const operatorLike = (it) =>
+    it && (OPERATORS.test(it.ch) || it.atom.kind === 'rel' || it.atom.kind === 'bin');
+  for (let changed = true, rounds = 0; changed && rounds < 64; rounds++) {
+    changed = false;
+    for (let k = 0; k < seq.length; k++) {
+      const it = seq[k];
+      if (it.math) continue;
+      const left = seq[k - 1];
+      const right = seq[k + 1];
+      if (named.has(it.name)) {
+        const w = it.name.items;
+        const before = seq[seq.indexOf(w[0]) - 1];
+        const after = seq[seq.indexOf(w[w.length - 1]) + 1];
+        const glued =
+          (before && before.math && !w[0].gap) ||
+          (after && after.math && (!after.gap || it.name.fn));
+        if (glued) {
+          for (const x of w) x.math = true;
+          changed = true;
+        }
+        continue;
+      }
+      if (!JOINERS.test(it.ch)) continue;
+      const touches = (nb, spaced) =>
+        nb && nb.math && (!spaced || OPERATORS.test(it.ch) || operatorLike(nb));
+      if (touches(left, it.gap) || touches(right, right?.gap)) {
+        it.math = true;
+        changed = true;
+      }
+    }
+  }
+}
+
+/** A trailing equation number, "(3)" or "(2.4a)", set well apart at the
+ * right of a line: its glyphs and its label. */
+function trailingTag(seq, B) {
+  for (let k = seq.length - 1; k > 0; k--) {
+    if (seq[k].ch !== '(') continue;
+    const label = seq
+      .slice(k)
+      .map((it) => it.ch)
+      .join('');
+    const m = /^\(([0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)\)$/.exec(label);
+    if (!m || seq[k].x - seq[k - 1].right < 1.5 * B) return null;
+    return { at: k, label: m[1] };
+  }
+  return null;
+}
+
+/** Whether a line is a displayed equation: math throughout (bar its number
+ * and a few words such as "for all"), and set apart from the prose. */
+function isDisplay(line, B, apart) {
+  const seq = lineSequence(line);
+  const tag = trailingTag(seq, B);
+  const body = tag ? seq.slice(0, tag.at) : seq;
+  const maths = body.filter((it) => it.math);
+  if (!apart || maths.length < 2 || !maths.some((it) => it.core)) return false;
+  if (maths.length < 0.6 * body.length) return false;
+  const words = [...new Set(body.filter((it) => !it.math).map((it) => it.word))];
+  const prose = words.every((w) => {
+    const s = w.items
+      .filter((it) => !it.math)
+      .map((it) => it.ch)
+      .join('');
+    return !/[A-Za-z]/.test(s) || TEXT_WORDS.has(s.toLowerCase().replace(/[.,;:]$/, ''));
+  });
+  if (!prose) return false;
+  line.tag = tag ? tag.label : null;
+  line.body = body;
+  return true;
+}
+
+/** The rules (fraction bars, radicals) over a set of glyphs. */
+function rulesOver(items, rules, B) {
+  if (rules.length === 0 || items.length === 0) return [];
+  const left = Math.min(...items.map((it) => it.x));
+  const right = Math.max(...items.map((it) => it.right));
+  const top = Math.min(...items.map((it) => it.baseline)) - 1.2 * B;
+  const foot = Math.max(...items.map((it) => it.baseline)) + 0.6 * B;
+  return rules.filter(
+    (r) =>
+      num(r.x) >= left - 0.2 * B &&
+      num(r.x) + num(r.w) <= right + 0.2 * B &&
+      num(r.y) >= top &&
+      num(r.y) <= foot
+  );
+}
+
+/** A display line's LaTeX, or null when it cannot be read. */
+function displayTex(line, rules, B, confidences) {
+  const items = line.body ?? lineSequence(line);
+  const glyphs = [...items.map((it) => it.g), ...rulesOver(items, rules, B)];
+  const read = reconstruct(glyphs);
+  if (!read.latex || read.decoded === 0) return null;
+  confidences.push(read.confidence);
+  return asciiLatex(read.latex);
+}
+
+/** A line as segments: `{ kind: 'text', s }` and `{ kind: 'math', tex }`,
+ * each with whether a space comes before it. */
+function lineSegments(line, rules, B, confidences, tagBoxes) {
+  const seq = lineSequence(line);
+  const out = [];
+  const pushText = (it) => {
+    const last = out[out.length - 1];
+    if (last && last.kind === 'text') {
+      last.s += (it.gap ? ' ' : '') + it.ch;
+    } else {
+      out.push({ kind: 'text', s: it.ch, space: it.gap });
+    }
+  };
+  for (let k = 0; k < seq.length;) {
+    if (!seq[k].math) {
+      pushText(seq[k]);
+      k++;
+      continue;
+    }
+    let end = k;
+    while (end + 1 < seq.length && seq[end + 1].math) end++;
+    const run = trimRun(seq.slice(k, end + 1));
+    const lead = seq.slice(k, k + run.from);
+    const tail = seq.slice(k + run.to, end + 1);
+    for (const it of lead) pushText(it);
+    const inner = seq.slice(k + run.from, k + run.to);
+    const tex = inner.some((it) => it.core)
+      ? runTex(inner, line.baseline, rules, B, confidences, tagBoxes)
+      : null;
+    if (tex) out.push({ kind: 'math', tex, space: inner[0].gap });
+    else for (const it of inner) pushText(it);
+    for (const it of tail) pushText(it);
+    k = end + 1;
+  }
+  return out;
+}
+
+/** The part of a run of math that is math: without punctuation and joined
+ * operators at its ends, a dangling hyphen, or a bracket it does not close. */
+function trimRun(run) {
+  let from = 0;
+  let to = run.length;
+  const joined = (it) => !it.core;
+  for (let changed = true; changed && from < to;) {
+    changed = false;
+    const first = run[from];
+    const last = run[to - 1];
+    if (PUNCTUATION.test(first.ch) || (joined(first) && OPERATORS.test(first.ch))) {
+      from++;
+      changed = true;
+    } else if (PUNCTUATION.test(last.ch) || (joined(last) && OPERATORS.test(last.ch))) {
+      to--;
+      changed = true;
+    } else {
+      const chars = run.slice(from, to).map((it) => it.ch);
+      const depth = (o, c) =>
+        chars.filter((x) => x === o).length - chars.filter((x) => x === c).length;
+      if ((first.ch === '(' && depth('(', ')') > 0) || (first.ch === '[' && depth('[', ']') > 0)) {
+        from++;
+        changed = true;
+      } else if (
+        (last.ch === ')' && depth('(', ')') < 0) ||
+        (last.ch === ']' && depth('[', ']') < 0)
+      ) {
+        to--;
+        changed = true;
+      }
+    }
+  }
+  return { from, to };
+}
+
+/** A run of inline math as LaTeX: from its Formula tag when it is one,
+ * else read from its glyphs. A run that is only raised (or lowered) small
+ * glyphs after a word, a footnote mark or a script on prose, is written as
+ * the script it is. */
+function runTex(items, baseline, rules, B, confidences, tagBoxes) {
+  const tagged = items[0].tag;
+  if (tagged >= 0 && items.every((it) => it.tag === tagged)) {
+    const box = union(
+      items.map((it) => ({ x: it.x, y: num(it.g.y), w: it.right - it.x, h: num(it.g.h) }))
+    );
+    const tex = fromTags([tagBoxes[tagged].tag], box);
+    if (tex) {
+      confidences.push('high');
+      return asciiLatex(tex).replace(/\s+/g, ' ').trim();
+    }
+  }
+  const read = reconstruct([...items.map((it) => it.g), ...rulesOver(items, rules, B)]);
+  if (!read.latex || read.decoded === 0 || read.rows > 1) return null;
+  confidences.push(read.confidence);
+  const tex = asciiLatex(read.latex).replace(/\s+/g, ' ').trim();
+  if (items.every((it) => it.script)) {
+    return `${items[0].baseline < baseline ? '^' : '_'}{${tex}}`;
+  }
+  return tex;
+}
+
+/** The next line's segments onto a paragraph: a word broken at a line end
+ * put back together, anything else with a space. */
+function joinLine(segments, next) {
+  const last = segments[segments.length - 1];
+  const first = next[0];
+  if (
+    last &&
+    first &&
+    last.kind === 'text' &&
+    first.kind === 'text' &&
+    WRAP_HYPHEN.test(last.s) &&
+    /^[a-z]/.test(first.s)
+  ) {
+    last.s = last.s.slice(0, -1) + first.s;
+    segments.push(...next.slice(1));
+    return;
+  }
+  segments.push({ ...first, space: true }, ...next.slice(1));
+}
+
+/** Segments as Markdown: prose escaped, math between dollars. */
+function renderSegments(segments) {
+  let out = '';
+  let afterMath = false;
+  for (const seg of segments) {
+    if (seg.kind === 'text') {
+      const s = seg.s.replace(/\u00AD/g, '').replace(/\s+/g, ' ');
+      const closing = /^[.,;:!?)\]]/.test(s);
+      if (out && (seg.space || (afterMath && /^[0-9]/.test(s))) && !closing && !/ $/.test(out)) {
+        out += ' ';
+      }
+      out += escapeProse(s);
+      afterMath = false;
+    } else {
+      if (out && seg.space && !/ $/.test(out)) out += ' ';
+      out += `$${seg.tex}$`;
+      afterMath = true;
+    }
+  }
+  return out.replace(/ {2,}/g, ' ').trim();
+}
+
+// ---------- a quote matched against the TeX source ----------
+//
+// The quote's words (and where its math and references are) are aligned
+// with the source's, in order, tolerant of a word missing on either side;
+// a passage is taken only when most of the quote's words are found, in
+// order, close together. That passage of the source is then written as
+// Markdown: its math as the author wrote it, citations as the quote printed
+// them.
+
+/** Citations and cross-references: one token each. */
+const REF_COMMAND =
+  /^\\(?:[A-Za-z]*cite[A-Za-z]*|[cC]ref|[vV]?ref|eqref|autoref|pageref|nameref)\*?\s*(?:\[[^\]]*\]\s*)*\{[^}]*\}/;
+/** Commands dropped with their arguments. */
+const DROPPED =
+  /^\\(?:label|index|footnote|footnotetext|footnotemark|thanks|vspace|hspace|marginpar|includegraphics|phantom|hphantom|vphantom|bibitem|newblock)\*?(?![A-Za-z])/;
+/** Commands that set what they enclose as emphasis or strong. */
+const EMPHASIS = { emph: '_', textit: '_', textsl: '_', textbf: '**' };
+/** Section headings. */
+const HEADING = /^\\(?:sub)*(?:section|paragraph|subparagraph)\*?(?![A-Za-z])/;
+/** TeX accents -> combining marks. */
+const ACCENTS = {
+  "'": '\u0301',
+  '`': '\u0300',
+  '^': '\u0302',
+  '"': '\u0308',
+  '~': '\u0303',
+  '=': '\u0304',
+  '.': '\u0307',
+  c: '\u0327',
+  v: '\u030C',
+  u: '\u0306',
+  H: '\u030B',
+};
+
+/** An arXiv paper's TeX, ready to search: the document body (environment
+ * shorthands written out) and its macros. */
+function texDocument(files) {
+  const { body, macroText } = assemble(files);
+  const macros = collectMacros(macroText);
+  const begin = body.search(/\\begin\s*\{document\}/);
+  const end = body.search(/\\end\s*\{document\}/);
+  const text = body.slice(begin >= 0 ? begin : 0, end > begin ? end : body.length);
+  return { body: expandEnvironmentMacros(text, macros), macros };
+}
+
+/** Where a math region starting at `i` ends, and whether it is displayed:
+ * `$..$`, `$$..$$`, `\(..\)`, `\[..\]` or a math environment. Null when
+ * there is none there. */
+function mathAt(text, i) {
+  if (text[i] === '$') {
+    const display = text[i + 1] === '$';
+    let j = i + (display ? 2 : 1);
+    while (j < text.length) {
+      if (text[j] === '\\') {
+        j += 2;
+        continue;
+      }
+      if (text[j] === '$') break;
+      j++;
+    }
+    if (j >= text.length) return null;
+    const end = j + (display ? 2 : 1);
+    return { end, display, env: display ? 'display' : 'inline', inner: [i + (display ? 2 : 1), j] };
+  }
+  if (text[i] !== '\\') return null;
+  const two = text.slice(i, i + 2);
+  if (two === '\\(' || two === '\\[') {
+    const close = two === '\\(' ? '\\)' : '\\]';
+    const j = text.indexOf(close, i + 2);
+    if (j < 0) return null;
+    const display = two === '\\[';
+    return { end: j + 2, display, env: display ? 'display' : 'inline', inner: [i + 2, j] };
+  }
+  const m = new RegExp(`^\\\\begin\\s*\\{(${MATH_ENVS})(\\*?)\\}`).exec(text.slice(i, i + 40));
+  if (!m || m[1] === 'subequations') return null;
+  const closeRe = new RegExp(`\\\\end\\s*\\{${m[1]}${m[2] ? '\\*' : ''}\\}`, 'g');
+  closeRe.lastIndex = i + m[0].length;
+  const close = closeRe.exec(text);
+  if (!close) return null;
+  const env = m[1] === 'displaymath' ? 'display' : m[1] === 'math' ? 'inline' : m[1];
+  return {
+    end: closeRe.lastIndex,
+    display: m[1] !== 'math',
+    env,
+    inner: [i + m[0].length, close.index],
+  };
+}
+
+/** A command's optional and braced arguments from `j`: where they end. */
+function skipArguments(text, j, braced = 1) {
+  let k = j;
+  while (text[k] === '*') k++;
+  for (;;) {
+    let p = k;
+    while (text[p] === ' ') p++;
+    if (text[p] !== '[') break;
+    const close = text.indexOf(']', p);
+    if (close < 0) break;
+    k = close + 1;
+  }
+  for (let n = 0; n < braced; n++) {
+    let p = k;
+    while (/\s/.test(text[p] ?? '')) p++;
+    const group = bracedAt(text, p);
+    if (!group) break;
+    k = group.end;
+  }
+  return k;
+}
+
+/** The source's words, math regions and references, in order, with where
+ * each is: `{ k: 'w' | 'num' | 'm' | 'ref', t?, start, end }`. */
+function sourceTokens(text) {
+  const out = [];
+  for (let i = 0; i < text.length;) {
+    const c = text[i];
+    const math = c === '$' || c === '\\' ? mathAt(text, i) : null;
+    if (math) {
+      out.push({ k: 'm', start: i, end: math.end, display: math.display });
+      i = math.end;
+      continue;
+    }
+    if (c === '\\') {
+      const rest = text.slice(i, i + 300);
+      let m = REF_COMMAND.exec(rest);
+      if (m) {
+        out.push({ k: 'ref', start: i, end: i + m[0].length, cite: /cite/.test(m[0]) });
+        i += m[0].length;
+        continue;
+      }
+      m = DROPPED.exec(rest);
+      if (m) {
+        i = skipArguments(text, i + m[0].length);
+        continue;
+      }
+      m = /^\\(?:begin|end)\s*\{[^}]*\}/.exec(rest);
+      if (m) {
+        i += m[0].length;
+        continue;
+      }
+      m = /^\\([A-Za-z]+|.)/.exec(rest);
+      i += m ? m[0].length : 1;
+      continue;
+    }
+    if (/[A-Za-z]/.test(c)) {
+      // A word, through any discretionary hyphen (inde\-pendent).
+      let j = i;
+      let word = '';
+      for (;;) {
+        if (/[A-Za-z]/.test(text[j] ?? '')) word += text[j++];
+        else if (text[j] === '\\' && text[j + 1] === '-' && /[A-Za-z]/.test(text[j + 2] ?? ''))
+          j += 2;
+        else break;
+      }
+      if (word.length >= 2) out.push({ k: 'w', t: word.toLowerCase(), start: i, end: j });
+      i = j;
+      continue;
+    }
+    if (/[0-9]/.test(c)) {
+      const m = /^\d+(?:\.\d+)*/.exec(text.slice(i, i + 20));
+      out.push({ k: 'num', t: m[0], start: i, end: i + m[0].length });
+      i += m[0].length;
+      continue;
+    }
+    i++;
+  }
+  return out;
+}
+
+/** Quoted Markdown's words, math and printed references, in order. */
+function quoteTokens(markdown) {
+  const out = [];
+  const text = String(markdown).replace(/\\\$/g, '\u0001');
+  const prose = (s) => {
+    const plain = s.replace(/\\([!-/:-@[-`{-~])/g, '$1');
+    const re = /\[[^\]\n]{1,60}\]|\(\d+(?:\.\d+)*[a-z]?\)|\d+(?:\.\d+)*|[A-Za-z]+/g;
+    let m;
+    while ((m = re.exec(plain))) {
+      const t = m[0];
+      if (t[0] === '[') out.push({ k: 'ref', t });
+      else if (/^[(0-9]/.test(t)) out.push({ k: 'num', t });
+      else if (t.length >= 2) out.push({ k: 'w', t: t.toLowerCase() });
+    }
+  };
+  const re = /\$\$([\s\S]*?)\$\$|\$([^$]+)\$/g;
+  let last = 0;
+  let m;
+  while ((m = re.exec(text))) {
+    prose(text.slice(last, m.index));
+    const tex = m[1] ?? m[2];
+    const tag = /\\tag\{([^}]*)\}/.exec(tex);
+    out.push({ k: 'm', display: m[1] !== undefined, tag: tag ? tag[1] : null });
+    last = re.lastIndex;
+  }
+  prose(text.slice(last));
+  return out;
+}
+
+/** How well a quote token and a source token match: 0 for not at all. */
+function tokenScore(q, s) {
+  if (q.k === 'w') return s.k === 'w' && s.t === q.t ? 2 : 0;
+  if (q.k === 'm') return s.k === 'm' ? 1.5 : 0;
+  if (q.k === 'ref') return s.k === 'ref' ? 1 : 0;
+  if (s.k === 'num') return s.t === q.t.replace(/[()]/g, '') ? 2 : 0;
+  return s.k === 'ref' && !s.cite ? 1 : 0;
+}
+
+/** Skipping a quote token (a word the source does not have) costs more
+ * than skipping a source token (a word the page does not show). */
+const SKIP_QUOTE = 1;
+const SKIP_SOURCE = 0.5;
+
+/** The stretch of `S` that `Q` aligns with best, in order, starting
+ * anywhere: `{ start, end, words, maths }` (source token indexes, and how
+ * many of the quote's words and math regions matched), or null. Two rows of
+ * memory, so a whole paper costs nothing to search. */
+function alignTokens(Q, S) {
+  const n = Q.length;
+  const m = S.length;
+  if (n === 0 || m === 0) return null;
+  const row = () => ({
+    score: new Float64Array(m + 1),
+    start: new Int32Array(m + 1),
+    words: new Int32Array(m + 1),
+    maths: new Int32Array(m + 1),
+  });
+  let prev = row();
+  let cur = row();
+  for (let j = 0; j <= m; j++) prev.start[j] = j;
+  for (let i = 1; i <= n; i++) {
+    const q = Q[i - 1];
+    cur.score[0] = prev.score[0] - SKIP_QUOTE;
+    cur.start[0] = 0;
+    cur.words[0] = prev.words[0];
+    cur.maths[0] = prev.maths[0];
+    for (let j = 1; j <= m; j++) {
+      // From above: this quote token skipped.
+      let best = prev.score[j] - SKIP_QUOTE;
+      let start = prev.start[j];
+      let words = prev.words[j];
+      let maths = prev.maths[j];
+      // From the left: a source token skipped.
+      if (cur.score[j - 1] - SKIP_SOURCE > best) {
+        best = cur.score[j - 1] - SKIP_SOURCE;
+        start = cur.start[j - 1];
+        words = cur.words[j - 1];
+        maths = cur.maths[j - 1];
+      }
+      const hit = tokenScore(q, S[j - 1]);
+      if (hit > 0 && prev.score[j - 1] + hit > best) {
+        best = prev.score[j - 1] + hit;
+        start = prev.start[j - 1];
+        words = prev.words[j - 1] + (q.k === 'w' ? 1 : 0);
+        maths = prev.maths[j - 1] + (q.k === 'm' ? 1 : 0);
+      }
+      cur.score[j] = best;
+      cur.start[j] = start;
+      cur.words[j] = words;
+      cur.maths[j] = maths;
+    }
+    [prev, cur] = [cur, prev];
+  }
+  let end = -1;
+  for (let j = 1; j <= m; j++) if (end < 0 || prev.score[j] > prev.score[end]) end = j;
+  if (end < 0 || prev.score[end] <= 0) return null;
+  return { start: prev.start[end], end: end - 1, words: prev.words[end], maths: prev.maths[end] };
+}
+
+/** Which source token each quote token matched, within `S[start..end]`:
+ * source index -> quote index. */
+function pairTokens(Q, S, start, end) {
+  const W = S.slice(start, end + 1);
+  const n = Q.length;
+  const w = W.length;
+  const score = Array.from({ length: n + 1 }, () => new Float64Array(w + 1));
+  const move = Array.from({ length: n + 1 }, () => new Uint8Array(w + 1));
+  for (let j = 1; j <= w; j++) {
+    score[0][j] = score[0][j - 1] - SKIP_SOURCE;
+    move[0][j] = 2;
+  }
+  for (let i = 1; i <= n; i++) {
+    score[i][0] = score[i - 1][0] - SKIP_QUOTE;
+    move[i][0] = 1;
+    for (let j = 1; j <= w; j++) {
+      let best = score[i - 1][j] - SKIP_QUOTE;
+      let how = 1;
+      if (score[i][j - 1] - SKIP_SOURCE > best) {
+        best = score[i][j - 1] - SKIP_SOURCE;
+        how = 2;
+      }
+      const hit = tokenScore(Q[i - 1], W[j - 1]);
+      if (hit > 0 && score[i - 1][j - 1] + hit > best) {
+        best = score[i - 1][j - 1] + hit;
+        how = 3;
+      }
+      score[i][j] = best;
+      move[i][j] = how;
+    }
+  }
+  const pairs = new Map();
+  for (let i = n, j = w; i > 0 || j > 0;) {
+    const how = move[i][j];
+    if (how === 3) {
+      pairs.set(start + j - 1, i - 1);
+      i--;
+      j--;
+    } else if (how === 1) i--;
+    else j--;
+  }
+  return pairs;
+}
+
+/** A quote (Markdown, as read from the page) found in a paper's TeX:
+ * `{ markdown, exact }`, the passage written as Markdown from its source,
+ * or null when it is not there for certain. */
+function exactQuote(doc, quote) {
+  const Q = quoteTokens(quote);
+  const words = Q.filter((t) => t.k === 'w').length;
+  const maths = Q.filter((t) => t.k === 'm').length;
+  if (words < 4) return null;
+  doc.tokens ??= sourceTokens(doc.body);
+  const S = doc.tokens;
+  const found = alignTokens(Q, S);
+  if (!found) return null;
+  if (found.words < Math.max(4, 0.8 * words)) return null;
+  if (maths > 0 && found.maths < 0.6 * maths) return null;
+  if (found.end - found.start + 1 > 1.5 * Q.length + 8) return null;
+  const pairs = pairTokens(Q, S, found.start, found.end);
+  const refLabel = new Map();
+  const tagAt = new Map();
+  for (const [si, qi] of pairs) {
+    const s = S[si];
+    const q = Q[qi];
+    if (s.k === 'ref' && (q.k === 'ref' || q.k === 'num')) refLabel.set(s.start, q.t);
+    if (s.k === 'm' && q.k === 'm' && q.tag) tagAt.set(s.start, q.tag);
+  }
+  let to = S[found.end].end;
+  const tail = /[.,;:]$/.exec(String(quote).trim());
+  if (tail) {
+    const m = /^\s*([.,;:])/.exec(doc.body.slice(to, to + 8));
+    if (m && m[1] === tail[0]) to += m[0].length;
+  }
+  const markdown = texToMarkdown(doc.body, S[found.start].start, to, {
+    macros: doc.macros,
+    refLabel,
+    tagAt,
+  });
+  if (!markdown) return null;
+  return { markdown, exact: found.words >= 0.95 * words };
+}
+
+/** One use of a macro with arguments, its arguments read from `j` (just
+ * past its name): the body they make, and where the use ends. */
+function macroUse(text, j, macro) {
+  const args = [];
+  let k = j;
+  if (macro.optional !== null) {
+    let p = k;
+    while (text[p] === ' ') p++;
+    if (text[p] === '[') {
+      const close = text.indexOf(']', p);
+      if (close < 0) return null;
+      args.push(text.slice(p + 1, close));
+      k = close + 1;
+    } else {
+      args.push(macro.optional);
+    }
+  }
+  while (args.length < macro.n) {
+    while (/\s/.test(text[k] ?? '')) k++;
+    const group = bracedAt(text, k);
+    if (group) {
+      args.push(group.inner);
+      k = group.end;
+      continue;
+    }
+    const token = /^\\[A-Za-z]+|^\\.|^[^\s{}]/.exec(text.slice(k, k + 40));
+    if (!token) return null;
+    args.push(token[0]);
+    k += token[0].length;
+  }
+  return { body: macro.body.replace(/#(\d)/g, (w, d) => args[Number(d) - 1] ?? ''), end: k };
+}
+
+/** A math region of the source as Markdown: `$...$` inline, a `$$ ... $$`
+ * paragraph displayed (with its number as the page printed it). */
+function mathMarkdown(text, at, math, ctx) {
+  const raw = text.slice(math.inner[0], math.inner[1]);
+  if (!math.display) {
+    const tex = expandMacros(raw.replace(/\\label\s*\{[^}]*\}/g, ''), ctx.macros)
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!tex) return '';
+    const digit = /^[0-9]/.test(text[math.end] ?? '');
+    return `$${tex}$${digit ? ' ' : ''}`;
+  }
+  const tex = envTex(raw, math.env, ctx.macros);
+  if (!tex) return '';
+  const explicit = /\\tag\*?\s*\{([^}]*)\}/.exec(raw);
+  const tag = ctx.tagAt?.get(at) ?? (explicit ? explicit[1].trim() : null);
+  return `\n\n$$ ${tex}${tag ? ` \\tag{${tag}}` : ''} $$\n\n`;
+}
+
+/** `text[from, to)`, TeX, as Markdown: paragraphs apart by a blank line,
+ * math kept, citations as the page printed them (else "[ref]"), comments,
+ * labels and footnotes gone, the source's own simple macros expanded. */
+function texToMarkdown(text, from, to, ctx, depth = 0) {
+  let out = '';
+  const prose = (s) => {
+    out += escapeProse(s);
+  };
+  const inner = (start, end) => texToMarkdown(text, start, end, ctx, depth + 1).trim();
+  const elsewhere = (tex) =>
+    depth > 4
+      ? ''
+      : texToMarkdown(tex, 0, tex.length, { ...ctx, refLabel: null, tagAt: null }, depth + 1);
+  let i = from;
+  while (i < to) {
+    const c = text[i];
+    if (/\s/.test(c)) {
+      let j = i;
+      let breaks = 0;
+      while (j < to && /\s/.test(text[j])) {
+        if (text[j] === '\n') breaks++;
+        j++;
+      }
+      out += breaks >= 2 ? '\n\n' : ' ';
+      i = j;
+      continue;
+    }
+    const math = c === '$' || c === '\\' ? mathAt(text, i) : null;
+    if (math) {
+      out += mathMarkdown(text, i, math, ctx);
+      i = math.end;
+      continue;
+    }
+    if (c === '\\') {
+      const rest = text.slice(i, Math.min(text.length, i + 300));
+      let m = REF_COMMAND.exec(rest);
+      if (m) {
+        const label = ctx.refLabel?.get(i);
+        prose(label ?? '[ref]');
+        i += m[0].length;
+        continue;
+      }
+      m = DROPPED.exec(rest);
+      if (m) {
+        i = skipArguments(text, i + m[0].length);
+        continue;
+      }
+      m = /^\\(begin|end)\s*\{[^}]*\}/.exec(rest);
+      if (m) {
+        out += '\n\n';
+        i = m[1] === 'begin' ? skipArguments(text, i + m[0].length, 0) : i + m[0].length;
+        continue;
+      }
+      m = HEADING.exec(rest);
+      if (m) {
+        const k = skipArguments(text, i + m[0].length, 0);
+        const group = bracedAt(text, k);
+        if (group) {
+          const title = inner(k + 1, group.end - 1);
+          out += title ? `\n\n**${title}**\n\n` : '\n\n';
+          i = group.end;
+        } else {
+          i = k;
+        }
+        continue;
+      }
+      m = /^\\([A-Za-z]+)(?![A-Za-z])\s*/.exec(rest);
+      if (m) {
+        const name = m[1];
+        const after = i + m[0].length;
+        const group = bracedAt(text, after);
+        if (EMPHASIS[name] && group) {
+          const body = inner(after + 1, group.end - 1);
+          if (body) out += `${EMPHASIS[name]}${body}${EMPHASIS[name]}`;
+          i = group.end;
+          continue;
+        }
+        if (name === 'item') {
+          out += '\n\n';
+          i = skipArguments(text, i + 5, 0);
+          continue;
+        }
+        if (name === 'href' && group) {
+          const label = bracedAt(text, group.end);
+          if (label) {
+            out += inner(group.end + 1, label.end - 1);
+            i = label.end;
+            continue;
+          }
+        }
+        if (name === 'url' && group) {
+          prose(text.slice(after + 1, group.end - 1));
+          i = group.end;
+          continue;
+        }
+        if (ACCENTS[name] && name.length === 1) {
+          const letter = group ? text.slice(after + 1, group.end - 1) : text[after];
+          if (letter && /^[A-Za-z]$/.test(letter)) {
+            prose(`${letter}${ACCENTS[name]}`.normalize('NFC'));
+            i = group ? group.end : after + 1;
+            continue;
+          }
+        }
+        if (name === 'ldots' || name === 'dots') {
+          prose('...');
+          i = i + 1 + name.length;
+          continue;
+        }
+        if (ctx.macros?.has(name)) {
+          out += elsewhere(ctx.macros.get(name));
+          i = i + 1 + name.length;
+          continue;
+        }
+        const withArgs = ctx.macros?.withArgs?.get(name);
+        const use = withArgs ? macroUse(text, i + 1 + name.length, withArgs) : null;
+        if (use) {
+          out += elsewhere(use.body);
+          i = use.end;
+          continue;
+        }
+        // Any other command: what it encloses, else nothing.
+        if (group) {
+          out += inner(after + 1, group.end - 1);
+          i = group.end;
+        } else {
+          i = i + 1 + name.length;
+        }
+        continue;
+      }
+      // A control symbol.
+      const sym = text[i + 1] ?? '';
+      if (ACCENTS[sym]) {
+        const group = bracedAt(text, i + 2);
+        const letter = group ? text.slice(i + 3, group.end - 1) : text[i + 2];
+        if (letter && /^[A-Za-z]$/.test(letter)) {
+          prose(`${letter}${ACCENTS[sym]}`.normalize('NFC'));
+          i = group ? group.end : i + 3;
+          continue;
+        }
+      }
+      if ('%&#_${}'.includes(sym) && sym) prose(sym);
+      else if (sym === '\\' || sym === ',' || sym === ';' || sym === ':' || sym === ' ') out += ' ';
+      i += 2;
+      continue;
+    }
+    if (c === '{' || c === '}') {
+      i++;
+      continue;
+    }
+    if (c === '~') {
+      out += ' ';
+      i++;
+      continue;
+    }
+    if (c === '-' && text[i + 1] === '-') {
+      const em = text[i + 2] === '-';
+      prose(em ? '\u2014' : '\u2013');
+      i += em ? 3 : 2;
+      continue;
+    }
+    if (c === '`' && text[i + 1] === '`') {
+      prose('\u201C');
+      i += 2;
+      continue;
+    }
+    if (c === "'" && text[i + 1] === "'") {
+      prose('\u201D');
+      i += 2;
+      continue;
+    }
+    prose(c);
+    i++;
+  }
+  if (depth > 0) return out;
+  return out
+    .split(/\n{2,}/)
+    .map((p) => p.replace(/\s+/g, ' ').trim())
+    .filter((p) => p !== '')
+    .map((p) => (p.startsWith('$$') ? p : escapeLeading(p)))
+    .join('\n\n');
+}
+
 // ---------- commands ----------
 
 async function handle(command, value) {
@@ -4077,6 +5291,7 @@ async function handle(command, value) {
   if (command === 'copyEquation') {
     const v = value && typeof value === 'object' ? value : {};
     if (v.mode === 'prefetch') return prefetch();
+    if (typeof v.selection === 'string') return convertSelection(v);
     return copyMath({
       kind: 'equation',
       page: v.page,
@@ -4276,6 +5491,61 @@ async function copyMath(request) {
   );
 }
 
+/** A selection of prose and math, as Markdown, for whoever asked the core
+ * (`selection.convert`). `local` reads the page alone: the glyphs of the
+ * selection as it was when the conversion was asked for (its `selection`
+ * token), and the document's Formula tags. `exact` finds the passage in
+ * the paper's arXiv source and writes that instead; nothing when it is not
+ * there for certain. The answer goes back with `selection.converted`. */
+async function convertSelection(v) {
+  const mode = v.mode === 'exact' ? 'exact' : 'local';
+  const ticket = typeof v.ticket === 'string' ? v.ticket : null;
+  const text = typeof v.text === 'string' ? v.text : '';
+  const clock = stopwatch(`selection (${mode})`);
+  const answer = (markdown, source, confidence) => {
+    clock.log(`${source} ${confidence}`);
+    return call('selection.converted', { ticket, markdown, source, confidence });
+  };
+  const layout = await tryCall('selection.glyphs', { selection: v.selection });
+  const glyphs = Array.isArray(layout?.glyphs) ? layout.glyphs : [];
+  clock.lap('glyphs');
+  if (glyphs.length > 0 && looksLikeScan(glyphs)) {
+    clock.log('a scan');
+    return;
+  }
+  const page = Number.isInteger(layout?.page) ? layout.page : null;
+  const tags =
+    page !== null && glyphs.length > 0 ? await tryCall('document.mathTags', { page }) : [];
+  const local =
+    glyphs.length > 0 ? selectionMarkdown(glyphs, { text, tags: tags ?? [], layout }) : null;
+  clock.lap('local');
+  if (mode === 'local') {
+    if (local) return answer(local.markdown, 'fonts', local.confidence);
+    clock.log('no math');
+    return;
+  }
+  // The quote as read from the page is what is looked for in the source;
+  // without one, its plain text.
+  const quote = local ? local.markdown : escapeProse(text);
+  const settings = await readSettings();
+  const ids = settings.arxiv ? ((await tryCall('document.identifiers')) ?? {}) : {};
+  const arxiv = normalizeArxiv(ids.arxiv, ids.arxivVersion);
+  if (!arxiv) {
+    clock.log('no arXiv source to check');
+    return;
+  }
+  if (ticket) void tryCall('equations.checking', { ticket, source: 'arxiv' });
+  const doc = await withDeadline(
+    arxivDocument(arxiv.id, arxiv.version),
+    clock.started,
+    EXACT_BUDGET_MS
+  );
+  clock.lap('arxiv');
+  const found = doc ? exactQuote(doc, quote) : null;
+  if (found) return answer(found.markdown, 'arxiv', found.exact ? 'high' : 'medium');
+  clock.log('not in the source');
+}
+
 /** Glyphs without the equation's own number: "(12)", or the start of it
  * where the region clipped it, set last on its baseline. */
 function dropNumber(glyphs, number) {
@@ -4391,26 +5661,46 @@ function normalizeArxiv(id, version) {
   return { id: s, version: v };
 }
 
-/** The math of an arXiv paper's source: from memory, from storage, or
- * fetched and unpacked. An empty list means "this paper has no TeX source"
- * and is remembered too, so a PDF-only submission is fetched once. */
-function arxivSnippets(id, version) {
-  const key = `arxiv:${id}${version ? `v${version}` : ''}`;
-  if (sources.has(key)) return sources.get(key);
-  if (recentlyFailed(key)) return Promise.resolve(null);
+function arxivKey(id, version) {
+  return `arxiv:${id}${version ? `v${version}` : ''}`;
+}
+
+/** An arXiv e-print's TeX files (null for a PDF-only submission), one
+ * download at a time per paper. Whatever lands also fills the session's
+ * copy of the paper's text, which quotes are looked up in. */
+function downloadArxiv(id, version) {
+  const key = arxivKey(id, version);
+  if (downloads.has(key)) return downloads.get(key);
   const work = (async () => {
-    const stored = await readStored(key);
-    if (stored) return stored;
     const url = `https://arxiv.org/e-print/${id}${version ? `v${version}` : ''}`;
     const res = await call('net.fetch', { url, as: 'bytes', maxBytes: ARXIV_MAX_BYTES });
     if (!res || res.status < 200 || res.status >= 300)
       throw new Error(`arXiv answered ${res?.status}`);
     const bytes = toBytes(res.body);
-    if (/pdf/i.test(res.contentType ?? '') || isPdf(bytes)) {
-      await store(key, []);
-      return [];
-    }
-    const files = await readEprint(bytes);
+    if (/pdf/i.test(res.contentType ?? '') || isPdf(bytes)) return null;
+    return readEprint(bytes);
+  })()
+    .then((files) => {
+      if (!documents.has(key))
+        documents.set(key, Promise.resolve(files ? texDocument(files) : null));
+      return files;
+    })
+    .finally(() => downloads.delete(key));
+  downloads.set(key, work);
+  return work;
+}
+
+/** The math of an arXiv paper's source: from memory, from storage, or
+ * fetched and unpacked. An empty list means "this paper has no TeX source"
+ * and is remembered too, so a PDF-only submission is fetched once. */
+function arxivSnippets(id, version) {
+  const key = arxivKey(id, version);
+  if (sources.has(key)) return sources.get(key);
+  if (recentlyFailed(key)) return Promise.resolve(null);
+  const work = (async () => {
+    const stored = await readStored(key);
+    if (stored) return stored;
+    const files = await downloadArxiv(id, version);
     const snippets = files ? parseSource(files) : [];
     await store(key, snippets);
     return snippets;
@@ -4421,6 +5711,25 @@ function arxivSnippets(id, version) {
     return null;
   });
   sources.set(key, work);
+  return work;
+}
+
+/** An arXiv paper's whole TeX, for finding a quoted passage in: kept for
+ * the session (only the math is stored), so downloaded again after a
+ * restart when a quote needs it. */
+function arxivDocument(id, version) {
+  const key = arxivKey(id, version);
+  if (documents.has(key)) return documents.get(key);
+  if (recentlyFailed(key)) return Promise.resolve(null);
+  const work = downloadArxiv(id, version)
+    .then((files) => (files ? texDocument(files) : null))
+    .catch((err) => {
+      log('warn', `arXiv source for ${id}: ${String(err?.message ?? err)}`);
+      documents.delete(key);
+      failedAt.set(key, Date.now());
+      return null;
+    });
+  documents.set(key, work);
   return work;
 }
 

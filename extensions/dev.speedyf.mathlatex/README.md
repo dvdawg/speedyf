@@ -6,6 +6,12 @@ copy it raw, as Markdown (`$...$` / `$$...$$`), or as an `align` block when it
 has several lines. A dim note says where the LaTeX came from and how sure it
 is.
 
+While it is on, Notepad asks it for the math in a quote: **Quote to Notepad**
+on a passage with formulas in it writes them as `$...$` and its displayed
+equations as `$$ ... $$`, read from the page's fonts, then (when the arXiv
+setting allows) replaced by the passage as the paper's own source writes it,
+once it is found there for certain. See [CONTRACT.md](CONTRACT.md).
+
 It ships **disabled**. Turning it on in **Home -> Extensions** is the consent
 to the network use described below; with **Prefer -> fonts only (offline)**
 nothing ever leaves the machine.

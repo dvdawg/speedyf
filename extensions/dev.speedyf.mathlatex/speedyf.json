@@ -59,7 +59,8 @@
       }
     ],
     "equationConverter": {
-      "command": "copyEquation"
+      "command": "copyEquation",
+      "selections": true
     }
   }
 }
