@@ -19,6 +19,7 @@ import PaperList from './PaperList';
 import ProjectsColumn from './ProjectsColumn';
 import { healthCount, projectsStore } from './projectsStore';
 import { IconClose } from '../../components/icons';
+import { activeProjectView } from '../extensions/surfaces';
 
 /** Below this the detail column folds behind a Details button; the sidebar
  * on Home is 240px and the same breakpoint is used there. */
@@ -101,7 +102,13 @@ export default function ProjectsScreen() {
   return (
     <div
       class="projects-screen"
-      classList={{ 'is-narrow': narrow(), 'is-details-open': detailsOpen() }}
+      classList={{
+        'is-narrow': narrow(),
+        'is-details-open': detailsOpen(),
+        // An extension's view of the project (a notepad) takes the middle
+        // and right columns together.
+        'is-wide-view': activeProjectView() !== null,
+      }}
     >
       <header class="projects-head">
         <h2>{scopeName()}</h2>

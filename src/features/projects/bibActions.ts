@@ -5,7 +5,9 @@
  * synced path is a file SpeedyF will keep overwriting, but to the user each
  * is "choose a file to write", and a save dialog is the one that warns before
  * overwriting something that exists. */
-import { save } from '@tauri-apps/plugin-dialog';
+import { open as openDialog, save } from '@tauri-apps/plugin-dialog';
+import { invoke } from '@tauri-apps/api/core';
+import { chooseInbox } from './fileDrop';
 import type { Project } from '../../types/engine';
 import { projectsStore } from './projectsStore';
 
@@ -43,6 +45,56 @@ export async function exportBundle(project: Project): Promise<void> {
     projectsStore.reportError(error);
   }
   if (path) await projectsStore.exportBundle(project.id, path);
+}
+
+/** What an import made (`library_import_bundle`). */
+export interface BundleImport {
+  projectId: string;
+  projectName: string;
+  items: number;
+  files: number;
+  failed: string[];
+}
+
+/** "Imported Thesis: 23 items and 2 project files; 1 PDF could not be filed". */
+export function importSummary(report: BundleImport): string {
+  const items = report.items === 1 ? '1 item' : `${report.items} items`;
+  let text = `Imported ${report.projectName}: ${items}`;
+  if (report.files > 0) {
+    text += ` and ${report.files === 1 ? '1 project file' : `${report.files} project files`}`;
+  }
+  if (report.failed.length > 0) {
+    text += `; ${report.failed.length === 1 ? '1 PDF' : `${report.failed.length} PDFs`} could not be filed`;
+  }
+  return text;
+}
+
+/** Import Project Bundle...: a bundle someone exported (projects.md sec. 13)
+ * becomes a project here. Its PDFs are filed through the inbox, as a drop
+ * would be, and its notepad comes with it. */
+export async function importBundle(): Promise<void> {
+  let path: string | null = null;
+  try {
+    const picked = await openDialog({
+      title: 'Import a project bundle',
+      multiple: false,
+      directory: false,
+      filters: [{ name: 'Zip archive', extensions: ['zip'] }],
+    });
+    path = typeof picked === 'string' ? picked : null;
+  } catch (error) {
+    projectsStore.reportError(error);
+  }
+  if (!path) return;
+  const inbox = await chooseInbox();
+  if (!inbox) return;
+  try {
+    const report = await invoke<BundleImport>('library_import_bundle', { path, inboxDir: inbox });
+    projectsStore.showNotice(importSummary(report));
+    projectsStore.setScope({ kind: 'project', id: report.projectId });
+  } catch (error) {
+    projectsStore.reportError(error);
+  }
 }
 
 export async function syncBib(project: Project): Promise<void> {

@@ -5,6 +5,7 @@ import { engine } from '../../lib/transport/engine';
 import type { Paper } from '../../types/engine';
 import { openInNewTabOrFocus } from '../document/tabsController';
 import { projectsStore } from './projectsStore';
+import { noteOrigin } from '../extensions/readerContext';
 
 /** The first file still on disk, else the first file: opening a missing one
  * fails with a real error, which beats silently doing nothing. */
@@ -26,8 +27,13 @@ export async function pathForPaper(id: string): Promise<string | null> {
   }
 }
 
+/** Open from the Projects screen. Under a project, the paper is
+ * remembered as opened from it: reader actions on it (a quote to its
+ * notepad) go to that project's. */
 export async function openPaper(id: string): Promise<boolean> {
   const path = await pathForPaper(id);
   if (!path) return false;
+  const scope = projectsStore.state.scope;
+  if (scope.kind === 'project') noteOrigin(path, scope.id);
   return openInNewTabOrFocus(path);
 }

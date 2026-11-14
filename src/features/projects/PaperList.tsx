@@ -51,6 +51,9 @@ import { PersonBar } from './PersonScope';
 import { registerMergeRequest } from './screenIntents';
 import type { ProjectsView } from './projectsStore';
 import MathText from '../../components/MathText';
+import NoteEditor from '../extensions/editor/NoteEditor';
+import { projectViews } from '../extensions/extensionStore';
+import { VIEW_PREFIX, activeProjectView } from '../extensions/surfaces';
 
 /** The group every paper with no project falls into under All papers. Not a
  * project id, so `collapsed` can hold it beside the real ones. */
@@ -135,7 +138,23 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
     // A focus is one item's neighbourhood, which any item has.
     return kind === 'project' || kind === 'all' || store.state.focus !== null;
   };
-  const view = (): ProjectsView => (graphable() ? store.state.view : 'list');
+  /** An extension's view of the project (a notepad), when one is chosen. */
+  const extView = () => activeProjectView();
+  const view = (): ProjectsView => {
+    if (extView()) return store.state.view;
+    const chosen = store.state.view.startsWith(VIEW_PREFIX) ? 'list' : store.state.view;
+    return graphable() ? chosen : 'list';
+  };
+  const viewOptions = (): { id: ProjectsView; label: string }[] =>
+    store.state.scope.kind === 'project' && !store.state.person && !store.state.focus
+      ? [
+          ...VIEWS,
+          ...projectViews().map((v) => ({
+            id: `${VIEW_PREFIX}${v.id}` as ProjectsView,
+            label: v.title,
+          })),
+        ]
+      : VIEWS;
   /** The other projects a row is in; nothing under Not filed or Other PDFs. */
   const alsoText = (item: { row: PaperRow; groupId?: string }) => {
     const scope = store.state.scope;
@@ -535,7 +554,7 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
               role="radiogroup"
               aria-label="View"
             >
-              <For each={VIEWS}>
+              <For each={viewOptions()}>
                 {(option) => (
                   <button
                     type="button"
@@ -640,6 +659,17 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
         </Show>
       </div>
 
+      <Show when={extView()} keyed>
+        {(current) => (
+          <NoteEditor
+            extensionId={current.view.extensionId}
+            projectId={current.projectId}
+            editor={current.view.editor}
+            class="is-project-view"
+            placeholder="Empty. Write here; @ cites an item of this project."
+          />
+        )}
+      </Show>
       <Show when={view() === 'graph' && !store.state.missingList}>
         <GraphView onMoveFocus={props.onMoveFocus} />
       </Show>

@@ -56,6 +56,8 @@ import { projectsStore } from './projectsStore';
 import { AuthorLines, hasPersonLinks } from './PersonScope';
 import ProjectSuggestionLine from './ProjectSuggestion';
 import RelatedItems from './RelatedItems';
+import ItemLines from '../extensions/ItemLines';
+import { noteOrigin } from '../extensions/readerContext';
 import { takeTitleLookupRequest, titleLookupRequested } from './screenIntents';
 
 /** Text fields that save as they are typed, trimmed. Year, authors, kind and
@@ -660,6 +662,8 @@ function FilesSection(props: { paper: Paper }) {
       return;
     }
     try {
+      const scope = store.state.scope;
+      if (scope.kind === 'project') noteOrigin(path, scope.id);
       await openInNewTabOrFocus(path);
     } catch (error) {
       store.reportError(error);
@@ -918,6 +922,13 @@ export default function PaperDetail(props: { onMoveFocus: (dir: -1 | 1) => void 
                 </div>
               </Show>
               <ProjectSuggestionLine paperId={p().id} class="paper-detail-suggestion" />
+              <ItemLines
+                itemId={p().id}
+                citeKey={p().citeKey}
+                keyHistory={store.state.rows.find((r) => r.id === p().id)?.keyHistory ?? []}
+                projectIds={p().projectIds}
+                projectId={store.state.scope.kind === 'project' ? store.state.scope.id : null}
+              />
             </div>
 
             <RelatedItems

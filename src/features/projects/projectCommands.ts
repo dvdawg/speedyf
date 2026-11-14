@@ -20,7 +20,7 @@ import { goHome, openInNewTabOrFocus } from '../document/tabsController';
 import { openInNewWindow } from '../windows/windowController';
 import type { Candidate } from '../palette/paletteItems';
 import { activePaper, activePaperKnown, refreshActivePaper, rememberPaper } from './activePaper';
-import { exportBib, exportBundle, stopSyncingBib, syncBib } from './bibActions';
+import { exportBib, exportBundle, importBundle, stopSyncingBib, syncBib } from './bibActions';
 import { citeSelection } from './citeSelection';
 import { searchFullText } from './fullTextHandoff';
 import { clearPositions, loadPositions, positionsKey } from './graphPositions';
@@ -339,6 +339,14 @@ export const PROJECT_COMMANDS: readonly Command[] = [
       const project = currentProject(ctx);
       if (project) void exportBundle(project);
     },
+  },
+  {
+    id: 'library.importProjectBundle',
+    title: 'Import Project Bundle...',
+    group: 'Library',
+    keywords: ['zip', 'archive', 'pdfs', 'bibtex', 'open', 'co-author', 'receive', 'notepad'],
+    enabled: () => true,
+    run: () => void importBundle(),
   },
   {
     id: 'library.syncProjectBib',

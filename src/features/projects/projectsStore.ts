@@ -70,7 +70,7 @@ export function filterFor(scope: Scope, query: string): PaperFilter {
 
 /** How the middle column shows a project or All items: rows, or the
  * citation graph between them. */
-export type ProjectsView = 'list' | 'graph';
+export type ProjectsView = 'list' | 'graph' | `ext:${string}`;
 
 export function sameScope(a: Scope, b: Scope): boolean {
   return a.kind === b.kind && (a.kind !== 'project' || b.kind !== 'project' || a.id === b.id);
@@ -761,6 +761,11 @@ export const projectsStore = {
 
   async discardCandidates(paperId: string): Promise<void> {
     await guarded(() => engine.libraryDiscardCandidates(paperId));
+  },
+
+  /** Say the outcome of a one-off action in the screen's bar. */
+  showNotice(text: string): void {
+    setState('notice', text);
   },
 
   clearError(): void {

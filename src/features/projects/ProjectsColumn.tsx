@@ -18,7 +18,7 @@
 import { createEffect, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { IconMore, IconPlus } from '../../components/icons';
 import type { Project } from '../../types/engine';
-import { exportBib, exportBundle, stopSyncingBib, syncBib } from './bibActions';
+import { exportBib, exportBundle, importBundle, stopSyncingBib, syncBib } from './bibActions';
 import { dropHover, reorderSlotAt, setDropHover } from './dnd';
 import { beginPointerDrag } from './pointerDrag';
 import { healthCount, projectsStore, sameScope } from './projectsStore';
@@ -445,9 +445,19 @@ export default function ProjectsColumn(props: { onMoveFocus: (dir: -1 | 1) => vo
         <Show
           when={creating()}
           fallback={
-            <button type="button" class="projects-new" onClick={() => setCreating(true)}>
-              <IconPlus /> New project
-            </button>
+            <>
+              <button type="button" class="projects-new" onClick={() => setCreating(true)}>
+                <IconPlus /> New project
+              </button>
+              <button
+                type="button"
+                class="projects-new projects-import"
+                title="Make a project from a bundle someone exported: its PDFs, .bib and notepad"
+                onClick={() => void importBundle()}
+              >
+                Import bundle...
+              </button>
+            </>
           }
         >
           <InlineInput
