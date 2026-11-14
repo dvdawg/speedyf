@@ -42,6 +42,7 @@ import { setUi, ui, type SidebarMode } from '../stores/uiStore';
 import { tabsStore, type TabRecord } from '../stores/tabsStore';
 import type { Paper } from '../types/engine';
 import { canGoBack, canGoForward, goBack, goForward } from '../features/viewer/navHistory';
+import { toggleShortcutSheet } from '../features/shortcuts/shortcutSheetStore';
 
 /** Listed rather than only typed so a test can check every group is used —
  * an empty heading is a palette section nobody can reach. */
@@ -476,6 +477,15 @@ export const COMMANDS: readonly Command[] = [
     keywords: ['hide', 'show', 'panel'],
     enabled: (ctx) => ctx.tab !== null,
     run: () => setUi('sidebarOpen', !ui.sidebarOpen),
+  },
+  {
+    id: 'view.keyboardShortcuts',
+    title: 'Keyboard Shortcuts',
+    group: 'View',
+    shortcut: 'mod+/',
+    keywords: ['keys', 'keybindings', 'hotkeys', 'help', 'cheat sheet'],
+    enabled: () => true,
+    run: () => toggleShortcutSheet(),
   },
 
   // ---- Panels --------------------------------------------------------

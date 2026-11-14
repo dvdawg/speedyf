@@ -7476,3 +7476,21 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
     opacity: 1;
   }
 }
+
+/* ---------- keyboard shortcut sheet ---------- */
+
+/* The palette's surface, a little taller: it is read, not searched to one
+   row. Rows are text, not buttons, so nothing lights under the pointer. */
+.shortcut-sheet {
+  max-height: min(72vh, 640px);
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 8px 5px 10px;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--text);
+}

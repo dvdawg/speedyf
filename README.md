@@ -182,6 +182,12 @@ there with Cmd+O (Ctrl+O), Home's **Open PDF...** button or the palette. Theme, 
 | Fit page / 100%            | `Cmd+0` / `Cmd+1`       | `Ctrl+0` / `Ctrl+1`       |
 | Previous/next page         | Page Up / Page Down     | Page Up / Page Down       |
 | Close panel/tool/selection | Escape                  | Escape                    |
+| Keyboard shortcuts         | `Cmd+/`                 | `Ctrl+/`                  |
+
+**Keyboard Shortcuts** (`Cmd+/`, `Ctrl+/` elsewhere, or the palette) lists
+every key SpeedyF answers, grouped by area, including the ones your
+extensions bind, each named with its extension. Type to filter; Escape or
+`Cmd+/` again closes it.
 
 **Selecting text.** Drag across a page to select, double-click for a word,
 triple-click for the paragraph under the pointer: the lines of that block,
