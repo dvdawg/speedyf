@@ -16,6 +16,7 @@ import { createSignal, onCleanup, onMount, Show } from 'solid-js';
 import LaunchToggle from './LaunchToggle';
 import PaperDetail from './PaperDetail';
 import PaperList from './PaperList';
+import ViewToggle from './ViewToggle';
 import ProjectsColumn from './ProjectsColumn';
 import { healthCount, projectsStore } from './projectsStore';
 import { IconClose } from '../../components/icons';
@@ -126,6 +127,11 @@ export default function ProjectsScreen() {
           )}
         </Show>
         <span class="projects-head-spacer" />
+        {/* In an extension's view (the notepad) the column's own head, with
+            the switch, is hidden; the switch lives here instead. */}
+        <Show when={activeProjectView() !== null}>
+          <ViewToggle />
+        </Show>
         <Show when={narrow()}>
           <button
             type="button"
