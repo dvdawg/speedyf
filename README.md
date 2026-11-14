@@ -182,6 +182,11 @@ there with Cmd+O (Ctrl+O), Home's **Open PDF...** button or the palette. Theme, 
 | Previous/next page         | Page Up / Page Down     | Page Up / Page Down       |
 | Close panel/tool/selection | Escape                  | Escape                    |
 
+**Selecting text.** Drag across a page to select, double-click for a word,
+triple-click for the paragraph under the pointer: the lines of that block,
+stopping at a paragraph gap, an indent, a heading or the edge of a column.
+A paragraph selection copies and quotes like a dragged one.
+
 **Quoting into the Notepad.** In a paper that belongs to a project, select
 text and let go: a small **Quote** button appears just past the end of the
 selection. Click it (or press Cmd+Shift+E, Ctrl+Shift+E elsewhere) to add the
