@@ -22,6 +22,7 @@ vi.mock('../../../lib/links/followExternalLink', () => ({ followExternalLink: vi
 
 const host = await import('../editorHost');
 const { default: NoteEditor } = await import('./NoteEditor');
+const { noteDropAt } = await import('./noteDrop');
 
 const KEY: NoteKey = { extensionId: 'dev.speedyf.notepad', projectId: 'p1', file: 'notepad.md' };
 
@@ -44,7 +45,7 @@ function core(initial: string) {
   return { state, sessions };
 }
 
-function mount(text: string) {
+function mount(text: string, placeholder?: string) {
   const fake = core(text);
   host.setCitations('dev.speedyf.notepad', 'p1', [
     {
@@ -69,6 +70,8 @@ function mount(text: string) {
       extensionId="dev.speedyf.notepad"
       projectId="p1"
       editor={{ file: 'notepad.md', command: 'editor' }}
+      placeholder={placeholder}
+      header={<span class="note-editor-title">Notepad</span>}
     />
   ));
   return { ...fake, view };
@@ -79,6 +82,7 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 80));
 afterEach(() => {
   cleanup();
   events.length = 0;
+  vi.restoreAllMocks();
 });
 
 describe('the note editor', () => {
@@ -170,5 +174,75 @@ describe('the note editor', () => {
     fireEvent.keyDown(field, { key: 'Enter' });
     await settle();
     expect(host.noteSessions().get(KEY)!.text()).toBe('See @attias2022quantum');
+  });
+
+  it('shows an empty note as a dim line, and a click anywhere writes at the end', async () => {
+    const { view } = mount('', 'Notes for Thesis. Type @ to cite an item; drag items here.');
+    await settle();
+    const root = view.container;
+    const line = root.querySelector('.note-placeholder')!;
+    expect(line.textContent).toBe('Notes for Thesis. Type @ to cite an item; drag items here.');
+    // In the flow of the text, not a field.
+    expect(root.querySelector('textarea')).toBeNull();
+    // A click on the page below it.
+    fireEvent.click(root.querySelector('.note-editor-scroll')!);
+    await settle();
+    const field = root.querySelector<HTMLTextAreaElement>('.note-field')!;
+    expect(document.activeElement).toBe(field);
+    // The hint stays as the field's own until something is typed.
+    expect(field.getAttribute('placeholder')).toBe(
+      'Notes for Thesis. Type @ to cite an item; drag items here.'
+    );
+  });
+
+  it('heads the page with its title and a quiet Source toggle', async () => {
+    const { view } = mount('# Notes');
+    await settle();
+    const head = view.container.querySelector('.note-editor-head')!;
+    expect(head.querySelector('.note-editor-title')?.textContent).toBe('Notepad');
+    const toggle = head.querySelector<HTMLButtonElement>('.note-source-toggle')!;
+    expect(toggle.textContent).toBe('Source');
+    fireEvent.click(toggle);
+    await settle();
+    expect(view.container.querySelector('.note-source')).not.toBeNull();
+    expect(toggle.textContent).toBe('Done');
+  });
+
+  it('takes dropped citations where they land, or at the end, and undoes them', async () => {
+    const { view, state } = mount('first line\nsecond');
+    await settle();
+    const root = view.container;
+    const blocks = root.querySelectorAll<HTMLElement>('.note-block');
+    const under = vi.spyOn(document, 'elementFromPoint');
+
+    // On the first line: no caret position from the point here, so its end.
+    under.mockReturnValue(blocks[0]!);
+    const target = noteDropAt(10, 10)!;
+    expect(target).not.toBeNull();
+    target.insertAt(10, 10, '@a; @b');
+    await settle();
+    expect(state.text).toBe('first line @a; @b\nsecond');
+
+    // Below every line: the end of the note.
+    under.mockReturnValue(root.querySelector('.note-editor-scroll')!);
+    noteDropAt(10, 400)!.insertAt(10, 400, '@c');
+    await settle();
+    expect(state.text).toBe('first line @a; @b\nsecond @c');
+
+    // One edit each, through the note's own history.
+    const field = root.querySelector<HTMLTextAreaElement>('.note-field')!;
+    fireEvent.keyDown(field, { key: 'z', metaKey: true, ctrlKey: true });
+    await settle();
+    expect(host.noteSessions().get(KEY)!.text()).toBe('first line @a; @b\nsecond');
+  });
+
+  it('is nothing to drop on once it is gone', async () => {
+    const { view } = mount('x');
+    await settle();
+    const el = view.container.querySelector('.note-editor') as HTMLElement;
+    vi.spyOn(document, 'elementFromPoint').mockReturnValue(el);
+    expect(noteDropAt(1, 1)).not.toBeNull();
+    cleanup();
+    expect(noteDropAt(1, 1)).toBeNull();
   });
 });

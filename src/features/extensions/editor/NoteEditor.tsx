@@ -1,6 +1,11 @@
 /** The Markdown editor SpeedyF draws for an extension (`readerPanes`,
  * `projectViews`): Obsidian-style live rendering, keyboard first.
  *
+ * It reads as a page, not a form: the line being edited is a bare text
+ * field in the rendered text's own font and measure, with no box, border or
+ * ring, so only the caret shows where you are. The head is one quiet line,
+ * the title and a dim Source toggle.
+ *
  * The note is drawn block by block (`markdown.ts`). The block holding the
  * cursor is a native text field showing its Markdown source - so IME,
  * spell check, plain-text paste and caret movement are the platform's own -
@@ -50,6 +55,7 @@ import {
   type Span,
 } from './markdown';
 import type { NoteKey, NoteSession } from './noteSession';
+import { registerNoteDrop } from './noteDrop';
 import {
   citeQuery,
   continueList,
@@ -63,10 +69,12 @@ export interface NoteEditorProps {
   extensionId: string;
   projectId: string;
   editor: ExtensionEditor;
-  /** Words for an empty note. */
-  placeholder?: string;
-  /** Extra controls for the header row (the drawer puts its title there). */
+  /** Words for an empty note, shown as a dim line in its place. */
+  placeholder?: string | undefined;
+  /** The head line's start: the title (and the drawer's project switch). */
   header?: JSX.Element;
+  /** The head line's end, after Source (the drawer's close button). */
+  end?: JSX.Element;
   class?: string;
 }
 
@@ -150,6 +158,7 @@ export default function NoteEditor(props: NoteEditorProps) {
                 extensionId={props.extensionId}
                 placeholder={props.placeholder}
                 header={props.header}
+                end={props.end}
               />
             </Match>
           </Switch>
@@ -168,6 +177,7 @@ interface BodyProps {
   extensionId: string;
   placeholder: string | undefined;
   header: JSX.Element | undefined;
+  end: JSX.Element | undefined;
 }
 
 /** Images from the note's own folder, as blob URLs, per note. */
@@ -536,26 +546,68 @@ function EditorBody(props: BodyProps) {
     });
   };
 
-  const onBlockClick = (e: MouseEvent, block: Block) => {
-    const target = e.target as HTMLElement;
-    if (target.closest('a, .np-cite, button')) return;
-    const selection = window.getSelection();
-    if (selection && !selection.isCollapsed) return;
-    const element = e.currentTarget as HTMLElement;
+  /** The note offset a point in a rendered block stands for: the drawn
+   * character under it, mapped back to the block's source. */
+  const offsetInBlock = (element: HTMLElement, block: Block, x: number, y: number) => {
     const list = blocks();
     const start = startsOf(list)[list.indexOf(block)] ?? 0;
     let drawnOffset = element.textContent?.length ?? 0;
     const doc = document as Document & {
       caretRangeFromPoint?: (x: number, y: number) => Range | null;
     };
-    const range = doc.caretRangeFromPoint?.(e.clientX, e.clientY);
+    const range = doc.caretRangeFromPoint?.(x, y);
     if (range && element.contains(range.startContainer)) {
       const pre = document.createRange();
       pre.selectNodeContents(element);
       pre.setEnd(range.startContainer, range.startOffset);
       drawnOffset = pre.toString().length;
     }
-    activateAt(start + sourceOffset(block.raw, element.textContent ?? '', drawnOffset));
+    return start + sourceOffset(block.raw, element.textContent ?? '', drawnOffset);
+  };
+
+  const onBlockClick = (e: MouseEvent, block: Block) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('a, .np-cite, button')) return;
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed) return;
+    activateAt(offsetInBlock(e.currentTarget as HTMLElement, block, e.clientX, e.clientY));
+  };
+
+  /** A click on the page below or beside the lines writes at the end, the
+   * way a click under the last line of a page would. */
+  const onPageClick = (e: MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('[data-block], a, button, textarea')) return;
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed) return;
+    activateAt(s.text().length);
+  };
+
+  /* ---- items dropped from the Projects list ---- */
+
+  /** Insert `text` (citations) where the point is in the note, or at its
+   * end when the point is in no line, spaced from its neighbours. One edit
+   * through the session, so it undoes like typing. */
+  const insertAtPoint = (x: number, y: number, text: string) => {
+    const now = s.text();
+    if (source()) {
+      const at = now.length;
+      const insert = `${spaceBefore(now, at)}${text}`;
+      s.edit({ from: at, to: at, insert }, at, at + insert.length);
+      if (sourceField) sourceField.value = s.text();
+      return;
+    }
+    let offset = now.length;
+    const hit =
+      typeof document.elementFromPoint === 'function' ? document.elementFromPoint(x, y) : null;
+    const element = hit?.closest<HTMLElement>('[data-block]');
+    if (element && scroller.contains(element) && !empty()) {
+      const block = blocks().find((b) => String(b.id) === element.dataset.block);
+      if (block && active() === block) offset = caret;
+      else if (block) offset = offsetInBlock(element, block, x, y);
+    }
+    const insert = `${spaceBefore(now, offset)}${text}${spaceAfter(now, offset)}`;
+    commit({ from: offset, to: offset, insert }, caret, offset + insert.length, true);
   };
 
   /** A selection across rendered blocks copies their Markdown. */
@@ -586,6 +638,11 @@ function EditorBody(props: BodyProps) {
   };
 
   /* ---- reveal and insert, for the extension ---- */
+
+  onMount(() => {
+    const root = scroller.closest('.note-editor') ?? scroller;
+    onCleanup(registerNoteDrop(root, { insertAt: insertAtPoint }));
+  });
 
   onMount(() => {
     const unregister = registerEditor(props.noteKey, {
@@ -621,7 +678,10 @@ function EditorBody(props: BodyProps) {
     onCleanup(unregister);
   });
 
-  const empty = () => blocks().length === 1 && blocks()[0]!.raw === '' && !active();
+  /** The whole note is empty: its one line shows the placeholder, as a dim
+   * line while nobody is in it and as the field's own hint once someone is. */
+  const blank = () => blocks().length === 1 && blocks()[0]!.raw === '';
+  const empty = () => blank() && !active();
 
   return (
     <>
@@ -640,15 +700,16 @@ function EditorBody(props: BodyProps) {
         </Show>
         <button
           type="button"
-          class="paper-mini-btn"
+          class="note-source-toggle"
           aria-pressed={source()}
-          title="Edit the whole note as plain Markdown (Escape returns)"
+          title="Edit the whole note as plain Markdown (Escape returns; or Cmd+A twice)"
           onClick={() => (source() ? leaveSource() : enterSource())}
         >
           {source() ? 'Done' : 'Source'}
         </button>
+        {props.end}
       </div>
-      <div class="note-editor-scroll" ref={scroller} onCopy={onCopy}>
+      <div class="note-editor-scroll" ref={scroller} onCopy={onCopy} onClick={onPageClick}>
         <Show
           when={!source()}
           fallback={
@@ -666,9 +727,7 @@ function EditorBody(props: BodyProps) {
         >
           <div class="note-blocks" role="document">
             <Show when={empty()}>
-              <div class="note-placeholder" onClick={() => activateAt(0)}>
-                {props.placeholder ?? 'Empty. Click to write.'}
-              </div>
+              <div class="note-placeholder">{props.placeholder ?? 'Empty. Click to write.'}</div>
             </Show>
             <For each={blocks()}>
               {(block) => (
@@ -697,9 +756,13 @@ function EditorBody(props: BodyProps) {
                       ref={(el) => {
                         field = el;
                         el.value = activeRaw;
+                        // No inline writing suggestions or their affordance
+                        // beside the line: the page shows only the caret.
+                        el.setAttribute('writingsuggestions', 'false');
                       }}
                       class="note-field"
                       classList={{ 'is-mono': block.kind !== 'line' }}
+                      placeholder={blank() ? props.placeholder : undefined}
                       rows={1}
                       spellcheck={true}
                       aria-label="Note line"
@@ -752,6 +815,19 @@ function EditorBody(props: BodyProps) {
       </div>
     </>
   );
+}
+
+/** A space before text inserted at `at`, unless a space or an opening
+ * bracket is there already, or nothing. */
+function spaceBefore(text: string, at: number): string {
+  const before = text[at - 1];
+  return before === undefined || /[\s([{]/.test(before) ? '' : ' ';
+}
+
+/** A space after it, unless what follows is a space, punctuation or nothing. */
+function spaceAfter(text: string, at: number): string {
+  const after = text[at];
+  return after === undefined || /[\s.,;:!?)\]}]/.test(after) ? '' : ' ';
 }
 
 function autosize(el: HTMLTextAreaElement): void {

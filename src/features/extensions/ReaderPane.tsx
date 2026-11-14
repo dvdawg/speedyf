@@ -124,7 +124,7 @@ export function ReaderPaneDrawer() {
                 projectId={id()}
                 editor={p().editor}
                 class="is-drawer"
-                placeholder={`Empty. Write here; @ cites an item of ${projectName() ?? 'this project'}.`}
+                placeholder={`Notes for ${projectName() ?? 'this project'}. Type @ to cite an item.`}
                 header={
                   <>
                     <span class="reader-pane-title" title={projectName() ?? ''}>
@@ -142,15 +142,17 @@ export function ReaderPaneDrawer() {
                         </For>
                       </select>
                     </Show>
-                    <button
-                      type="button"
-                      class="reader-pane-close"
-                      aria-label={`Close ${p().title}`}
-                      onClick={() => closeReaderPane()}
-                    >
-                      <IconClose />
-                    </button>
                   </>
+                }
+                end={
+                  <button
+                    type="button"
+                    class="reader-pane-close"
+                    aria-label={`Close ${p().title}`}
+                    onClick={() => closeReaderPane()}
+                  >
+                    <IconClose />
+                  </button>
                 }
               />
             )}
