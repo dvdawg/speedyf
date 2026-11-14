@@ -633,10 +633,110 @@ export const API_PERMISSIONS: Readonly<Record<string, string>> = {
   'document.identifiers': 'document:read',
   // Outbound HTTPS, made by the core to the hosts the manifest lists.
   'net.fetch': 'network',
+  // Projects, what each holds, and the reader's item: no paths, ever.
+  'projects.list': 'projects:read',
+  'projects.items': 'projects:read',
+  'reader.context': 'projects:read',
+  'reader.chooseProject': 'projects:read',
+  // Opening an item (at a page and place) is reading where it is.
+  'navigate.openItem': 'projects:read',
+  // The extension's own files, per project, kept by the core.
+  'projectFiles.read': 'projects:files',
+  'projectFiles.write': 'projects:files',
+  'projectFiles.list': 'projects:files',
+  'projectFiles.remove': 'projects:files',
+  // Its editors are bound to its project files.
+  'editor.citations': 'projects:files',
+  'editor.insert': 'projects:files',
+  'editor.reveal': 'projects:files',
+  // A PNG of what the user pointed at, and nothing else.
+  'region.capture': 'render:region',
+  'equations.snapshot': 'render:region',
+  // equations.convert, ui.itemLine, pane.open and projectView.open need no
+  // permission: the first is handed a token for the equation the user
+  // clicked, the others draw into surfaces the extension declared.
   // ui.render and ui.showMath need no permission: an extension may only draw
   // into a panel it declared, or show a formula in the popover SpeedyF owns,
   // and drawing is not access to anything.
 };
+
+/** APIs any extension may call: drawing into what it declared, and the
+ * equation the user clicked. Listed so the gate can tell them from a typo. */
+export const OPEN_APIS: ReadonlySet<string> = new Set([
+  'equations.convert',
+  'ui.itemLine',
+  'pane.open',
+  'projectView.open',
+]);
+
+/** One item of a project, as `projects.items` returns it. */
+export interface ApiProjectItem {
+  id: string;
+  citeKey: string;
+  /** Keys it answered to before (renamed, merged in): a note citing one
+   * of them means this item. */
+  keyHistory: string[];
+  title: string;
+  /** Joined for display: "Evans, Cohen & Morriss", "Marchetti et al.". */
+  authors: string;
+  /** The first author's family name, for a short label. */
+  firstAuthor: string | null;
+  year: number | null;
+  projectIds: string[];
+}
+
+export function toProjectItems(list: PaperList): ApiProjectItem[] {
+  return list.rows.map((row) => ({
+    id: row.id,
+    citeKey: row.citeKey,
+    keyHistory: [...(row.keyHistory ?? [])],
+    title: row.title,
+    authors: row.authors,
+    firstAuthor: row.firstAuthor ?? null,
+    year: row.year,
+    projectIds: [...row.projectIds],
+  }));
+}
+
+/** Read a project id argument. */
+export function readProjectIdArg(args: unknown, name = 'projectId'): string {
+  const id = (args as Record<string, unknown> | undefined)?.[name];
+  if (typeof id !== 'string' || !/^[a-z0-9-]{1,64}$/.test(id)) {
+    throw new Error(`expected a project id "${name}"`);
+  }
+  return id;
+}
+
+/** Read a project file path: plain names, at most four parts, the rule the
+ * core enforces again. */
+export function readProjectPathArg(args: unknown): string {
+  const path = (args as { path?: unknown } | undefined)?.path;
+  if (
+    typeof path !== 'string' ||
+    path.length === 0 ||
+    path.length > 200 ||
+    path.split('/').length > 4 ||
+    !path.split('/').every((part) => /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}$/.test(part))
+  ) {
+    throw new Error(
+      'expected "path" to be plain names (letters, digits, . _ -), at most four parts'
+    );
+  }
+  return path;
+}
+
+/** Read a top-left `[x, y, w, h]` box in page points, or null when absent. */
+export function readBoxArg(value: unknown): [number, number, number, number] | null {
+  if (value === undefined || value === null) return null;
+  if (
+    !Array.isArray(value) ||
+    value.length !== 4 ||
+    !value.every((n) => typeof n === 'number' && Number.isFinite(n))
+  ) {
+    throw new Error('expected "box" to be [x, y, w, h] in page points');
+  }
+  return [value[0], value[1], value[2], value[3]] as [number, number, number, number];
+}
 
 /** Whether `permissions` allow `api`. Unknown APIs are refused, so a typo in an
  * extension is an error rather than an accidental grant. */

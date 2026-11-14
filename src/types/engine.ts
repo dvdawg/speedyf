@@ -403,6 +403,10 @@ export interface PaperRow {
   /** with no year: the year its references say it is at least as new as,
    * shown as "2019+" */
   yearFloor?: number | null;
+  /** the first author's family name */
+  firstAuthor?: string | null;
+  /** keys it answered to before: renamed, or of records merged into it */
+  keyHistory?: string[];
 }
 
 /** What Export bundle wrote (`library_export_bundle`). */

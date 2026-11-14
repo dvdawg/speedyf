@@ -23,6 +23,9 @@ import { clearImagePreviews } from '../features/editor/editorActions';
 import { clearFormFields } from '../features/forms/formStore';
 import PreviewPopover from '../features/citations/PreviewPopover';
 import MathPopover from '../features/extensions/MathPopover';
+import RegionCaptureLayer from '../features/extensions/RegionCaptureLayer';
+import { ProjectQuestion, ReaderPaneDrawer } from '../features/extensions/ReaderPane';
+import { trackReader } from '../features/extensions/readerContext';
 import HomeScreen from '../features/home/HomeScreen';
 import ProjectsScreen from '../features/projects/ProjectsScreen';
 import { libraryStore } from '../features/citations/libraryStore';
@@ -45,7 +48,10 @@ export default function App() {
    * none is. The text depends on what is under the pointer. */
   const [dropOverlay, setDropOverlay] = createSignal<string | null>(null);
 
-  onMount(() => void loadExtensions());
+  onMount(() => {
+    void loadExtensions();
+    trackReader();
+  });
 
   // theme: follow system, or forced light/dark. `effectiveTheme` tracks the
   // system preference itself, so this one effect covers both.
@@ -239,6 +245,9 @@ export default function App() {
                           <Show when={tab.viewport.state.formPanelOpen && visible()}>
                             <FormPanel />
                           </Show>
+                          <Show when={visible()}>
+                            <ReaderPaneDrawer />
+                          </Show>
                         </div>
                       </div>
                     </TabContext.Provider>
@@ -266,6 +275,8 @@ export default function App() {
         <QuickOpen />
         <PreviewPopover />
         <MathPopover />
+        <RegionCaptureLayer />
+        <ProjectQuestion />
       </div>
       <Show when={windowTransferPending()}>
         <div class="window-transfer-overlay" role="status">

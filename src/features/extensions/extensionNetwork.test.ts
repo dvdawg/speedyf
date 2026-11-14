@@ -226,7 +226,11 @@ describe('ui.showMath and equation actions', () => {
     await store.runEquationAction(action!, target, anchor);
     expect(seen).toEqual({
       command: 'copyEquation',
-      extra: { value: target, timeoutMs: 60_000 },
+      // With a token for the equation, for equations.convert and .snapshot.
+      extra: {
+        value: { ...target, equation: expect.stringMatching(/^eq-\d+$/) },
+        timeoutMs: 60_000,
+      },
     });
     // Finished without showing anything: the loading popover goes away.
     expect(popover.mathPopover()).toBeNull();

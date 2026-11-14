@@ -64,7 +64,9 @@ export interface ExtensionHostOptions {
 interface Pending {
   resolve(): void;
   reject(reason: Error): void;
-  timer: ReturnType<typeof setTimeout>;
+  timer: ReturnType<typeof setTimeout> | null;
+  command: string;
+  timeoutMs: number;
 }
 
 export class ExtensionHost {
@@ -159,13 +161,9 @@ export class ExtensionHost {
     const requestId = this.nextRequestId++;
     const timeout = extra?.timeoutMs ?? this.timeout();
     return new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(requestId);
-        // Deliberately not a crash: a slow command is not a broken extension,
-        // and killing the worker would lose any state it had built up.
-        reject(new Error(`"${command}" did not finish within ${timeout}ms`));
-      }, timeout);
-      this.pending.set(requestId, { resolve, reject, timer });
+      const entry: Pending = { resolve, reject, timer: null, command, timeoutMs: timeout };
+      this.pending.set(requestId, entry);
+      if (this.paused === 0) this.arm(requestId, entry);
       try {
         worker.postMessage({
           type: 'invoke',
@@ -178,6 +176,38 @@ export class ExtensionHost {
         this.settle(requestId, new Error(describe(err)));
       }
     });
+  }
+
+  /** Deliberately not a crash when it fires: a slow command is not a
+   * broken extension, and killing the worker would lose any state it had
+   * built up. */
+  private arm(requestId: number, entry: Pending): void {
+    entry.timer = setTimeout(() => {
+      this.pending.delete(requestId);
+      entry.reject(new Error(`"${entry.command}" did not finish within ${entry.timeoutMs}ms`));
+    }, entry.timeoutMs);
+  }
+
+  private paused = 0;
+
+  /** Stop the clocks of every outstanding invoke while the host waits on
+   * the user for the extension (a rectangle to be drawn, a project to be
+   * picked): the time is the user's, not the extension's. Each clock starts
+   * over when the wait ends. Returns the resume. */
+  pauseDeadlines(): () => void {
+    this.paused++;
+    for (const entry of this.pending.values()) {
+      if (entry.timer !== null) clearTimeout(entry.timer);
+      entry.timer = null;
+    }
+    let resumed = false;
+    return () => {
+      if (resumed) return;
+      resumed = true;
+      this.paused = Math.max(0, this.paused - 1);
+      if (this.paused > 0) return;
+      for (const [id, entry] of this.pending) if (entry.timer === null) this.arm(id, entry);
+    };
   }
 
   /** Stop the worker, failing anything still outstanding. */
@@ -253,7 +283,7 @@ export class ExtensionHost {
     const pending = this.pending.get(requestId);
     if (!pending) return;
     this.pending.delete(requestId);
-    clearTimeout(pending.timer);
+    if (pending.timer !== null) clearTimeout(pending.timer);
     if (error) pending.reject(error);
     else pending.resolve();
   }

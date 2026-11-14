@@ -6,6 +6,7 @@
  * A tab registry is per-window (one module instance per webview), so anything
  * that crosses windows goes through the registry in Rust: see
  * lib/transport/windows.ts and src-tauri/src/windows.rs. */
+import { flushNotes } from '../extensions/editorHost';
 import { invoke } from '@tauri-apps/api/core';
 import { getAllWindows } from '@tauri-apps/api/window';
 import { type DocumentSnapshot } from './documentStore';
@@ -577,5 +578,7 @@ export async function initializeWindow(): Promise<void> {
  * session; closing one of several must not resurrect its tabs next launch. */
 export async function prepareWindowClose(): Promise<void> {
   saveCurrentSession();
+  // Notes typed in the last half second are saved before the window goes.
+  await flushNotes();
   if ((await getAllWindows()).length > 1) removeWindowSession(windowLabel());
 }

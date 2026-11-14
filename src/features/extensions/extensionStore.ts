@@ -16,8 +16,10 @@ import {
   INVOKE_TIMEOUT_MS,
   NETWORK_INVOKE_TIMEOUT_MS,
   type CallMessage,
+  type EditorEvent,
   type EquationTarget,
   type InvokeValue,
+  type ItemLineRequest,
 } from './protocol';
 import { COMMANDS, runCommand } from '../../app/commands';
 import { activeTab } from '../../stores/tabsStore';
@@ -26,6 +28,8 @@ import { reservedChords } from '../../app/shortcuts';
 import { selectedGeometry, selectedText } from '../../stores/selectionStore';
 import { canRunGroup, refusalReason, resolveBindings, type ExtensionBinding } from './capabilities';
 import {
+  API_PERMISSIONS,
+  OPEN_APIS,
   apiRefusalReason,
   canCallApi,
   readCitationArg,
@@ -54,6 +58,10 @@ import {
 } from './api';
 import { engine } from '../../lib/transport/engine';
 import { pdfRectToCssRect } from '../../lib/coordinates/coords';
+import { whenHolds } from './readerContext';
+import { equationFor, equationToken, type EquationRef, type ItemLine } from './editorHost';
+import { openApi, projectsApi } from './projectsApi';
+import { captureRegion, snapshotRegion } from './regionCapture';
 import { revealPlace } from '../../stores/revealStore';
 import { parseUi, type UiDescription } from './ui';
 import { ReferenceQueue, chooseProvider, idleWait, readerBusy } from './referenceProvider';
@@ -87,6 +95,39 @@ export interface ExtensionAction {
   localId: string;
   title: string;
   extensionId: string;
+  /** Offered only while this holds (`documentInProject`). */
+  when?: string | null;
+}
+
+/** A Markdown editor SpeedyF draws for an extension, bound to one of its
+ * project files. */
+export interface ExtensionEditor {
+  file: string;
+  /** The bare command invoked with editor events. */
+  command: string;
+}
+
+/** A drawer on the right of the reader (`readerPanes`). */
+export interface ExtensionPane {
+  /** `<extension id>/<pane id>` */
+  id: string;
+  localId: string;
+  title: string;
+  extensionId: string;
+  when: string | null;
+  /** The chord that toggles it, as the manifest spells it. */
+  key: string | null;
+  editor: ExtensionEditor;
+}
+
+/** A view of one project in the Projects middle column (`projectViews`). */
+export interface ExtensionView {
+  /** `<extension id>/<view id>` */
+  id: string;
+  localId: string;
+  title: string;
+  extensionId: string;
+  editor: ExtensionEditor;
 }
 
 export interface ExtensionPanel {
@@ -108,6 +149,8 @@ export interface ExtensionCommand {
   localId: string;
   title: string;
   keywords: string[];
+  /** Listed only while this holds. */
+  when?: string | null;
 }
 
 export interface ExtensionManifest {
@@ -148,6 +191,13 @@ export interface ExtensionRecord {
   /** The bare command id SpeedyF invokes for the terms the open document
    * defines, when this extension is a term provider. */
   termProvider: string | null;
+  readerPanes: ExtensionPane[];
+  projectViews: ExtensionView[];
+  /** The bare command invoked for a line in the Projects item detail. */
+  itemDetailLines: string | null;
+  /** The bare command invoked to read an equation as LaTeX for whoever
+   * asks the core (`equations.convert`). */
+  equationConverter: string | null;
   iconUrl: string | null;
   /** Why it cannot run: a bad manifest, or a worker that died. */
   error: string | null;
@@ -198,7 +248,23 @@ interface ExtensionDto {
   permissions: string[];
   enabled: boolean;
   builtin?: boolean;
-  manifest: (ExtensionManifest & { contributes?: { keybindings?: ExtensionKeybinding[] } }) | null;
+  manifest:
+    | (ExtensionManifest & {
+        contributes?: {
+          keybindings?: ExtensionKeybinding[];
+          readerPanes?: {
+            id: string;
+            title: string;
+            when?: string | null;
+            key?: string | null;
+            editor: ExtensionEditor;
+          }[];
+          projectViews?: { id: string; title: string; editor: ExtensionEditor }[];
+          itemDetailLines?: { command: string } | null;
+          equationConverter?: { command: string } | null;
+        };
+      })
+    | null;
   commands: ExtensionCommand[];
   panels: ExtensionPanel[];
   selectionActions: ExtensionAction[];
@@ -235,6 +301,7 @@ export async function loadExtensions(): Promise<void> {
           keybindings: dto.manifest?.contributes?.keybindings ?? [],
           referenceProvider: dto.referenceProvider ?? null,
           termProvider: dto.termProvider ?? null,
+          ...surfacesOf(dto),
           error: dto.error ?? null,
           log: previous.get(dto.id) ?? [],
         }));
@@ -247,6 +314,34 @@ export async function loadExtensions(): Promise<void> {
     setState('loaded', true);
     console.error('could not list extensions', err);
   }
+}
+
+/** The panes, views and slots a manifest declares, namespaced the way
+ * commands are. */
+function surfacesOf(
+  dto: ExtensionDto
+): Pick<ExtensionRecord, 'readerPanes' | 'projectViews' | 'itemDetailLines' | 'equationConverter'> {
+  const contributes = dto.manifest?.contributes;
+  return {
+    readerPanes: (contributes?.readerPanes ?? []).map((pane) => ({
+      id: `${dto.id}/${pane.id}`,
+      localId: pane.id,
+      title: pane.title,
+      extensionId: dto.id,
+      when: pane.when ?? null,
+      key: pane.key ?? null,
+      editor: { file: pane.editor.file, command: pane.editor.command },
+    })),
+    projectViews: (contributes?.projectViews ?? []).map((view) => ({
+      id: `${dto.id}/${view.id}`,
+      localId: view.id,
+      title: view.title,
+      extensionId: dto.id,
+      editor: { file: view.editor.file, command: view.editor.command },
+    })),
+    itemDetailLines: contributes?.itemDetailLines?.command ?? null,
+    equationConverter: contributes?.equationConverter?.command ?? null,
+  };
 }
 
 /** Reads library documents' reference lists through the active provider. */
@@ -307,15 +402,127 @@ export function documentTasks(): ExtensionAction[] {
   return state.extensions.filter((e) => e.enabled && !e.error).flatMap((e) => e.documentTasks);
 }
 
-/** Actions offered on a text selection, from every usable extension. */
+/** Actions offered on a text selection, from every usable extension, whose
+ * `when` holds. */
 export function selectionActions(): ExtensionAction[] {
-  return state.extensions.filter((e) => e.enabled && !e.error).flatMap((e) => e.selectionActions);
+  return state.extensions
+    .filter((e) => e.enabled && !e.error)
+    .flatMap((e) => e.selectionActions)
+    .filter((a) => whenHolds(a.when));
 }
 
 /** Actions offered on a detected display equation. Empty — and so no
  * equation buttons at all — unless an enabled extension contributes one. */
 export function equationActions(): ExtensionAction[] {
-  return state.extensions.filter((e) => e.enabled && !e.error).flatMap((e) => e.equationActions);
+  return state.extensions
+    .filter((e) => e.enabled && !e.error)
+    .flatMap((e) => e.equationActions)
+    .filter((a) => whenHolds(a.when));
+}
+
+/** Reader drawers from usable extensions whose `when` holds now. */
+export function readerPanes(): ExtensionPane[] {
+  return state.extensions
+    .filter((e) => e.enabled && !e.error)
+    .flatMap((e) => e.readerPanes)
+    .filter((p) => whenHolds(p.when));
+}
+
+/** Every reader drawer a usable extension declares, `when` or not: the
+ * chords are reserved whether or not the drawer is offered right now. */
+export function allReaderPanes(): ExtensionPane[] {
+  return state.extensions.filter((e) => e.enabled && !e.error).flatMap((e) => e.readerPanes);
+}
+
+/** Views of a project from usable extensions. */
+export function projectViews(): ExtensionView[] {
+  return state.extensions.filter((e) => e.enabled && !e.error).flatMap((e) => e.projectViews);
+}
+
+/** Whether an extension is installed, switched on and running clean. */
+export function extensionUsable(id: string): boolean {
+  const extension = record(id);
+  return !!extension && extension.enabled && !extension.error;
+}
+
+/** Tell an editor's extension what happened in it. Failures are logged
+ * against the extension, never thrown at the editor. */
+export async function runEditorEvent(
+  extensionId: string,
+  editor: ExtensionEditor,
+  value: EditorEvent
+): Promise<void> {
+  const extension = record(extensionId);
+  if (!extension || !extension.enabled || extension.error) return;
+  try {
+    await hostFor(extension).invoke(editor.command, { value });
+  } catch (err) {
+    appendLog(extensionId, 'error', `editor: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/** Ask every extension with an item line about the item the Projects
+ * detail column shows. They answer with `ui.itemLine`. */
+export async function requestItemLines(request: ItemLineRequest): Promise<void> {
+  const askers = state.extensions.filter(
+    (e) => e.enabled && !e.error && e.itemDetailLines !== null
+  );
+  await Promise.all(
+    askers.map(async (extension) => {
+      try {
+        await hostFor(extension).invoke(extension.itemDetailLines!, { value: request });
+      } catch (err) {
+        appendLog(
+          extension.id,
+          'error',
+          `item line: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    })
+  );
+}
+
+/** Run the action of a line an extension put in the item detail. */
+export async function runItemLineAction(line: ItemLine): Promise<void> {
+  if (!line.command) return;
+  await runPanelAction(line.extensionId, line.command, line.value as InvokeValue | undefined);
+}
+
+/** Extensions waiting on a converter's `ui.showMath`, by converter id. */
+const converting = new Map<string, (answer: { latex: string; display: boolean }) => void>();
+
+/** An equation's LaTeX from the first enabled extension declaring an
+ * `equationConverter`: invoked as an equation action would be, its
+ * `ui.showMath` taken as the answer instead of shown. Null when there is no
+ * converter, it fails, or it answers nothing. */
+export async function convertEquation(
+  token: string,
+  ref: EquationRef
+): Promise<{ latex: string; display: boolean; converter: string } | null> {
+  const extension = state.extensions.find(
+    (e) => e.enabled && !e.error && e.equationConverter !== null
+  );
+  if (!extension) return null;
+  let answer: { latex: string; display: boolean } | null = null;
+  converting.set(extension.id, (value) => {
+    answer = value;
+  });
+  try {
+    await hostFor(extension).invoke(extension.equationConverter!, {
+      value: { page: ref.page, bbox: ref.bbox, number: ref.number, equation: token },
+      timeoutMs: invokeTimeout(extension),
+    });
+  } catch (err) {
+    appendLog(
+      extension.id,
+      'info',
+      `converter: ${err instanceof Error ? err.message : String(err)}`
+    );
+  } finally {
+    converting.delete(extension.id);
+  }
+  const got = answer as { latex: string; display: boolean } | null;
+  return got ? { ...got, converter: extension.name } : null;
 }
 
 /** Actions offered on a citation. */
@@ -352,7 +559,23 @@ export async function runEquationAction(
 ): Promise<void> {
   const extension = state.extensions.find((e) => e.id === action.extensionId);
   if (!extension || !extension.enabled) return;
-  await invokeAction(extension, action.localId, action.title, target, anchor, true);
+  const docId = activeTab()?.documentStore.state.docId ?? null;
+  const equation =
+    docId !== null
+      ? equationToken({ docId, page: target.page, bbox: target.bbox, number: target.number })
+      : undefined;
+  const value = equation ? { ...target, equation } : target;
+  // An extension that answers with a formula gets the popover; one that
+  // does something else with the equation (Notepad) does not.
+  const popover = extension.permissions.includes('document:layout');
+  await invokeAction(
+    extension,
+    action.localId,
+    action.title,
+    value,
+    popover ? anchor : null,
+    popover
+  );
 }
 
 /** Invoke an action, with the math popover around it for an extension that
@@ -489,9 +712,13 @@ export async function refreshPanel(panelId: string): Promise<void> {
   }
 }
 
-/** Every command contributed by an enabled, error-free extension. */
+/** Every command contributed by an enabled, error-free extension, whose
+ * `when` holds. */
 export function extensionCommands(): ExtensionCommand[] {
-  return state.extensions.filter((e) => e.enabled && !e.error).flatMap((e) => e.commands);
+  return state.extensions
+    .filter((e) => e.enabled && !e.error)
+    .flatMap((e) => e.commands)
+    .filter((c) => whenHolds(c.when));
 }
 
 /** Contributed keybindings that survived conflict resolution.
@@ -643,8 +870,51 @@ async function handleCall(extension: ExtensionRecord, call: CallMessage): Promis
 
   if (call.api === 'ui.showMath') {
     // No permission: the popover is SpeedyF's, and only a formula goes in it.
-    showMath(extension.id, readShowMathArgs(call.args), selectionAnchor());
+    const args = readShowMathArgs(call.args);
+    const capture = converting.get(extension.id);
+    if (capture) {
+      // Invoked as an equation converter: the formula is the answer.
+      capture({ latex: args.latex, display: args.display });
+      return { shown: true };
+    }
+    showMath(extension.id, args, selectionAnchor());
     return { shown: true };
+  }
+
+  if (call.api in API_PERMISSIONS && API_PERMISSIONS[call.api]?.startsWith('projects:')) {
+    if (!canCallApi(extension.permissions, call.api)) {
+      throw new Error(apiRefusalReason(extension.permissions, call.api));
+    }
+    return projectsApi(extension, call.api, call.args, () => hostFor(extension));
+  }
+
+  if (call.api === 'region.capture' || call.api === 'equations.snapshot') {
+    if (!canCallApi(extension.permissions, call.api)) {
+      throw new Error(apiRefusalReason(extension.permissions, call.api));
+    }
+    if (call.api === 'equations.snapshot') {
+      return snapshotRegion(equationFor((call.args as { equation?: unknown })?.equation));
+    }
+    const resume = hostFor(extension).pauseDeadlines();
+    try {
+      return await captureRegion(
+        (call.args as { prompt?: unknown } | undefined)?.prompt,
+        extension.name
+      );
+    } finally {
+      resume();
+    }
+  }
+
+  if (OPEN_APIS.has(call.api)) {
+    // A conversion waits on another extension, which may be fetching the
+    // paper's source: not this extension's time.
+    const resume = call.api === 'equations.convert' ? hostFor(extension).pauseDeadlines() : null;
+    try {
+      return await openApi(extension, call.api, call.args, convertEquation);
+    } finally {
+      resume?.();
+    }
   }
 
   if (call.api === 'net.fetch') {
@@ -1057,7 +1327,7 @@ export async function runExtensionCommand(qualifiedId: string, value?: string): 
 export async function runPanelAction(
   extensionId: string,
   command: string,
-  value?: string
+  value?: InvokeValue
 ): Promise<void> {
   const extension = state.extensions.find((e) => e.id === extensionId);
   if (!extension || !extension.enabled) return;

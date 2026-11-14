@@ -50,6 +50,7 @@ import {
 import { addImageFromDialog } from '../features/editor/editorActions';
 import { beginPrint } from '../features/print/printStore';
 import TextTools from '../features/annotations/TextTools';
+import { ReaderPaneToggles } from '../features/extensions/ReaderPane';
 
 export default function Toolbar() {
   const maxSavePages = 65_535;
@@ -431,6 +432,7 @@ export default function Toolbar() {
           >
             <IconSearch />
           </IconButton>
+          <ReaderPaneToggles />
         </div>
         <TextTools />
       </Show>

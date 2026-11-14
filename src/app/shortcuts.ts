@@ -17,7 +17,13 @@ import { openPalette, paletteOpen } from '../features/palette/paletteStore';
 import { quickOpenOpen } from '../features/palette/quickOpenStore';
 import { runCommand, type CommandCtx } from './commands';
 import { canonicalChord, chordMatches } from '../features/extensions/capabilities';
-import { extensionBindings, runBoundCommand } from '../features/extensions/extensionStore';
+import {
+  allReaderPanes,
+  extensionBindings,
+  runBoundCommand,
+} from '../features/extensions/extensionStore';
+import { toggleReaderPane } from '../features/extensions/surfaces';
+import { parseChord } from '../features/extensions/capabilities';
 import { columnModeFor } from '../features/viewer/columns/columnMode';
 
 const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.userAgent);
@@ -260,6 +266,20 @@ export function installShortcuts(): () => void {
       const ran = runCommand(binding.id, ctx);
       if (ran || binding.preventAlways) e.preventDefault();
       return;
+    }
+
+    // A reader pane's toggle (an extension's drawer, `readerPanes[].key`).
+    // Refused like any extension chord when SpeedyF uses it; fires from the
+    // page and from inside the drawer itself, never from another field.
+    const inPane = e.target instanceof HTMLElement && e.target.closest('.reader-pane') !== null;
+    if (!typing || inPane) {
+      const reserved = reservedChords();
+      for (const pane of allReaderPanes()) {
+        const chord = pane.key ? parseChord(pane.key) : null;
+        if (!chord || reserved.has(canonicalChord(chord)) || !chordMatches(chord, e, mod)) continue;
+        if (toggleReaderPane(pane.id)) e.preventDefault();
+        return;
+      }
     }
 
     // Extension bindings come last, and only for keys SpeedyF did not claim —

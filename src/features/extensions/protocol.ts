@@ -40,6 +40,9 @@ export interface EquationTarget {
   page: number;
   bbox: [number, number, number, number];
   number: string | null;
+  /** An opaque token for this equation, for `equations.convert` and
+   * `equations.snapshot`. */
+  equation?: string;
 }
 
 /** What a term provider's command is invoked with: the document on screen,
@@ -48,8 +51,39 @@ export interface TermRequest {
   document: string;
 }
 
-/** Any value an invoke can carry. */
-export type InvokeValue = string | ReferenceRequest | EquationTarget | TermRequest;
+/** What an editor's command is invoked with (`readerPanes`,
+ * `projectViews`): which note, and what happened in it. */
+export interface EditorEvent {
+  event: 'citations' | 'activate';
+  projectId: string;
+  file: string;
+  /** For `activate`: the citation clicked. */
+  cite?: {
+    key: string;
+    locator: string | null;
+    page: number | null;
+    box: [number, number, number, number] | null;
+  };
+}
+
+/** What an `itemDetailLines` command is invoked with: the item the Projects
+ * detail column shows, and the project selected there (null under All items
+ * and the other scopes). */
+export interface ItemLineRequest {
+  item: { id: string; citeKey: string; keyHistory: string[]; projectIds: string[] };
+  projectId: string | null;
+}
+
+/** Any value an invoke can carry. A row or item-line action carries back
+ * whatever the extension put in it. */
+export type InvokeValue =
+  | string
+  | ReferenceRequest
+  | EquationTarget
+  | TermRequest
+  | EditorEvent
+  | ItemLineRequest
+  | { [key: string]: unknown };
 
 /** Run one of the extension's contributed commands. */
 export interface InvokeMessage {
