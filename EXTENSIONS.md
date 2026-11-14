@@ -98,7 +98,7 @@ rather than a silently ignored setting.
     "referenceProvider": { "command": "run" },
     "termProvider": { "command": "run" },
     "equationActions": [{ "command": "run", "title": "Copy LaTeX" }],
-    "equationConverter": { "command": "run" },
+    "equationConverter": { "command": "run", "selections": true },
     "readerPanes": [
       {
         "id": "pad",
@@ -180,7 +180,9 @@ Declared in the manifest, refused if not declared. Absent = refused.
 and `settings.get` need no permission: drawing into a surface you declared,
 showing a formula in SpeedyF's popover, and reading settings the user set for
 you, are not access to anything. Nor does `equations.convert`: you hand back
-the token of the equation the user clicked.
+the token of the equation the user clicked. Nor does `selection.convert`:
+you hand back the text a selection action gave you (or the token you got
+for it), and get that same passage back as Markdown.
 
 ### Network
 
@@ -238,7 +240,7 @@ whenever they suffice.
 | `readerPanes`       | A drawer on the right of the reader holding a Markdown editor (below).                   |
 | `projectViews`      | A project's pane in the Projects detail column, holding the same editor (below).         |
 | `itemDetailLines`   | `{ "command": "<id>" }`: one quiet line in the Projects item detail column (below).      |
-| `equationConverter` | `{ "command": "<id>" }`: an equation as LaTeX, for whoever asks the core (below).        |
+| `equationConverter` | `{ "command": "<id>", "selections"? }`: equations as LaTeX, for whoever asks (below).    |
 
 ### `equationActions`
 
@@ -360,6 +362,20 @@ result instead of being shown. Math to LaTeX is the converter that ships.
 
 A consumer passes `mode` to `equations.convert` and gets back the `source`
 and `confidence` you showed with it.
+
+**Selections.** A converter that declares `"selections": true` is also
+asked for a text selection of prose and math, as Markdown
+(`selection.convert`). Your command is invoked with `{ selection, text,
+page, mode, ticket }`: `selection` a token for the selection as it was when
+the conversion was first asked for (read its glyphs with `selection.glyphs
+{ selection }`, `document:layout`), `text` its smart-copied text. Answer
+with `selection.converted { ticket, markdown, source, confidence }`, or
+nothing. The Markdown keeps prose as prose (Markdown characters escaped,
+lines rejoined, a paragraph break a blank line), each run of inline math as
+`$...$` and each displayed equation as a `$$ ... $$` paragraph of its own.
+`mode: 'local'` answers from the page alone (and nothing when the passage
+has no math); `mode: 'exact'` answers only from an exact source, with
+`equations.checking` before it looks.
 
 ### `referenceProvider`
 
@@ -550,7 +566,7 @@ cannot reach a tab the user is not looking at. Pages are zero-based.
 | `storage.remove`           | `{ key }`                                                   | `{ removed }`                                                                                                                                                                    | `storage`                      |
 | `settings.get`             | `{ key }`                                                   | `string`                                                                                                                                                                         | -                              |
 | `ui.render`                | `{ panel, ui }`                                             | `{ rendered }`                                                                                                                                                                   | -                              |
-| `selection.glyphs`         | -                                                           | `{ page, glyphs: Glyph[] } \| null` - the current text selection                                                                                                                 | `document:layout`              |
+| `selection.glyphs`         | `{ selection? }`                                            | `{ page, glyphs: Glyph[] } \| null` - the current text selection, or the one a conversion token names                                                                            | `document:layout`              |
 | `region.glyphs`            | `{ page, bbox }`                                            | `{ page, glyphs: Glyph[] }`                                                                                                                                                      | `document:layout`              |
 | `document.mathTags`        | `{ page }`                                                  | `[{ bbox, alt, actualText, mathml }]` - tagged-PDF Formula elements                                                                                                              | `document:layout`              |
 | `document.identifiers`     | -                                                           | `{ doi, arxiv, arxivVersion }`, each `null` when unknown                                                                                                                         | `document:read`                |
@@ -578,6 +594,8 @@ cannot reach a tab the user is not looking at. Pages are zero-based.
 | `equations.snapshot`       | `{ equation }`                                              | `{ page, box, png }` of the equation you were invoked with                                                                                                                       | `render:region`                |
 | `equations.convert`        | `{ equation, mode?, status? }`                              | `{ latex, display, source, confidence }` from the enabled `equationConverter`, or `null`; `status` a mark handle the converter names its source in                               | -                              |
 | `equations.checking`       | `{ ticket, source }`                                        | `{ shown }` - for a converter: the source (`'arxiv'`, `'journal'`) it is trying for that conversion                                                                              | -                              |
+| `selection.convert`        | `{ text \| selection, mode, status? }`                      | `{ selection, markdown, source, confidence }` or `null`: the text you were handed (or its token) as Markdown, from the selection converter                                       | -                              |
+| `selection.converted`      | `{ ticket, markdown, source, confidence }`                  | `{ accepted }` - for a converter: the answer to the selection conversion it was invoked for                                                                                      | -                              |
 | `ui.itemLine`              | `{ itemId, text, action? }`                                 | `{ shown }`                                                                                                                                                                      | -                              |
 | `pane.open`                | `{ pane, projectId? }`                                      | `{ opened }` - your reader pane, when its `when` holds                                                                                                                           | -                              |
 | `projectView.open`         | `{ view, projectId?, offset? }`                             | `{ opened }` - your pane of a project (the selected one by default), in the detail column, its item let go                                                                       | -                              |

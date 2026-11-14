@@ -1220,6 +1220,30 @@ offered.
   backslash-escaped. A selection over a page break links to where it
   begins; a long one is quoted whole. The editor draws consecutive `>`
   lines as one quote.
+
+  **Math in quotes** (implemented 2026-11-14). A quote asks the core for the
+  selection as Markdown first (`selection.convert { text, mode: 'local' }`,
+  no network); the core hands the selection the action was given (checked
+  against the current one, snapshotted under a token) to the enabled
+  `equationConverter` that declares `selections: true` - Math to LaTeX. It
+  reads the glyphs: math fonts, scripts by baseline and size, math-only
+  symbols, Formula tags and lone italic letters are math; digits, operators,
+  brackets and short names touching them join; anything unsure stays prose.
+  The quote then holds `$...$` runs and, for each displayed equation, a
+  `> $$ ... \tag{3} $$` line, which the editor typesets as a display inside
+  the bordered quote; the page link goes on its own last line after a
+  display. No converter, no math found, or glyphs that do not cover the
+  text: the plain quote above. When it had math, the same flow as equations
+  follows: a "checking source" mark, `selection.convert { selection, mode:
+'exact', status }`, and Math to LaTeX aligns the quote's words, math and
+  references against the arXiv source (at least 80% of the words in
+  order); found, `editor.replaceMarked` swaps in the passage written from
+  the source (its `$..$` and equation environments kept, `\cite` as the
+  printed label or `[ref]`, comments and labels gone, simple macros
+  expanded). An edited quote is never overwritten. With Math to LaTeX off,
+  the core does not rebuild scripts from baselines itself: the text keeps
+  smart copy's flattening.
+
 - **Send to Notepad** (an equation action) asks the core for the equation's
   LaTeX. The core asks whichever enabled extension provides an
   `equationConverter`; Math to LaTeX does when it is enabled. With LaTeX, the
