@@ -37,9 +37,13 @@ _emphasis_, lists, quotes, `$x^2$` and `$$ ... $$` math, links and images.
 
 - **Quote to Notepad** (palette, with text selected) adds
   `> "the text" [@key, p. 12]{box=...}`.
-- **Send to Notepad** on an equation's hover button adds its LaTeX when
-  Math to LaTeX is on and can read it, and a picture of it otherwise, with a
-  link to it.
+- **Send to Notepad** on an equation's hover button adds it at once, with a
+  link to it: as LaTeX when Math to LaTeX is on and can read it from the
+  page (its tags or its fonts), else as a picture. Then, quietly, Math to
+  LaTeX looks for the author's own LaTeX online (the arXiv source or an
+  open-access journal version); if that differs, the equation is replaced
+  in place, a picture by its LaTeX (the picture's file is removed). Cmd+Z
+  undoes it. An equation you have already edited is left alone.
 - **Send Region to Notepad** (palette): drag a rectangle around a figure;
   its picture goes into the note with a link to it.
 

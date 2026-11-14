@@ -10,8 +10,9 @@
 //   * What a click on a citation does: open the paper, at the page and the
 //     place a pinpoint `[@key, p. 12]{box=x,y,w,h}` names.
 //   * What the reader's actions write: a quote, an equation (as LaTeX when an
-//     equation converter can read it, else as a picture of it), a region of
-//     a page; each with a link back to its page.
+//     equation converter can read it, else as a picture of it; upgraded in
+//     place once an exact source has it), a region of a page; each with a
+//     link back to its page.
 //   * "Mentioned in notepad (3)" beside an item on the Projects screen.
 //
 // It never touches the network, and needs no document permission at all:
@@ -267,30 +268,96 @@ async function quote(text) {
   await append(projectId, quoteLine(text, context.item.citeKey, page, box));
 }
 
+/** `equations.convert` in one mode; null when there is no answer. */
+async function convert(equation, mode) {
+  try {
+    const answer = await call('equations.convert', { equation, mode });
+    return answer && typeof answer.latex === 'string' && answer.latex.trim() ? answer : null;
+  } catch (err) {
+    log('info', `no ${mode} LaTeX for this equation: ${String((err && err.message) || err)}`);
+    return null;
+  }
+}
+
+/** Stage times of one send, logged at info as one line. */
+function stopwatch(label) {
+  const started = Date.now();
+  let last = started;
+  const parts = [];
+  return {
+    lap(name) {
+      const now = Date.now();
+      parts.push(`${name} ${now - last}ms`);
+      last = now;
+    },
+    log(outcome) {
+      log('info', `${label}: ${parts.join(', ')}; ${outcome} in ${Date.now() - started}ms`);
+    },
+  };
+}
+
+/** Send an equation: in at once, from what the page itself says (its tags
+ * or its fonts, else a picture of it), then upgraded quietly to the
+ * author's own LaTeX when an exact source online has it. */
 async function sendEquation(value) {
   if (!value || typeof value !== 'object' || typeof value.equation !== 'string') {
     log('info', 'Send to Notepad works from the button on an equation.');
     return;
   }
+  const clock = stopwatch('send equation');
   const target = await readerTarget();
+  clock.lap('project');
   if (!target) return;
   const { context, projectId } = target;
   const name = value.number ? `Equation (${value.number})` : 'Equation';
-  const link = pageLink(context.item.citeKey, value.page, value.bbox);
-  let converted = null;
+  const caption = `${name}, ${pageLink(context.item.citeKey, value.page, value.bbox)}`;
+  const local = await convert(value.equation, 'local');
+  clock.lap('convert');
+  let block;
+  let asset = null;
+  if (local) {
+    block = `${displayMath(local.latex)}\n\n${caption}`;
+  } else {
+    const shot = await call('equations.snapshot', { equation: value.equation });
+    asset = assetName('equation');
+    await call('projectFiles.write', { projectId, path: asset, bytes: shot.png });
+    clock.lap('picture');
+    block = `![${name}](${asset})\n\n${caption}`;
+  }
+  await append(projectId, block);
+  clock.lap('insert');
+  clock.log(local ? `LaTeX from ${local.source || 'the converter'}` : 'picture');
+  // The document's own tags are the author's LaTeX already.
+  if (local && local.source === 'tags' && local.confidence === 'high') return;
+  // Not awaited: the send is done; this only ever improves it.
+  void upgrade({ equation: value.equation, projectId, block, caption, asset });
+}
+
+/** Swap an equation just sent for an exact source's LaTeX, when there is
+ * one and it differs, and only while the inserted text is still there as
+ * it was: an equation the user has edited is theirs. */
+async function upgrade({ equation, projectId, block, caption, asset }) {
+  const started = Date.now();
+  const done = (outcome) => log('info', `upgrade: ${outcome} in ${Date.now() - started}ms`);
+  const exact = await convert(equation, 'exact');
+  if (!exact) return done('no exact source');
+  const better = `${displayMath(exact.latex)}\n\n${caption}`;
+  if (better === block) return done('already exact');
+  let replaced = false;
   try {
-    converted = await call('equations.convert', { equation: value.equation });
+    ({ replaced } = await call('editor.replace', { projectId, find: block, replace: better }));
   } catch (err) {
-    log('info', `no LaTeX for this equation: ${String((err && err.message) || err)}`);
+    return done(`not replaced: ${String((err && err.message) || err)}`);
   }
-  if (converted && typeof converted.latex === 'string' && converted.latex.trim()) {
-    await append(projectId, `${displayMath(converted.latex)}\n\n${name}, ${link}`);
-    return;
+  if (!replaced) return done('edited meanwhile; left alone');
+  if (asset) {
+    try {
+      await call('projectFiles.remove', { projectId, path: asset });
+    } catch (err) {
+      log('info', `picture kept: ${String((err && err.message) || err)}`);
+    }
   }
-  const shot = await call('equations.snapshot', { equation: value.equation });
-  const path = assetName('equation');
-  await call('projectFiles.write', { projectId, path, bytes: shot.png });
-  await append(projectId, `![${name}](${path})\n\n${name}, ${link}`);
+  done(`replaced with LaTeX from ${exact.source || 'an exact source'}`);
 }
 
 async function sendRegion() {
