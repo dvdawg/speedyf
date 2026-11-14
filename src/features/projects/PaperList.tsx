@@ -48,7 +48,8 @@ import { metaLine } from './paperFields';
 import { beginPointerDrag } from './pointerDrag';
 import { projectsStore } from './projectsStore';
 import { PersonBar } from './PersonScope';
-import { registerMergeRequest } from './screenIntents';
+import { graphFind, registerFindField, registerMergeRequest } from './screenIntents';
+import { filterRows } from './itemMatch';
 import MathText from '../../components/MathText';
 import { citeText, noteDropAt, type NoteDropTarget } from '../extensions/editor/noteDrop';
 import { backToProjectPane, shownProjectPane } from './ProjectPane';
@@ -100,8 +101,13 @@ type Item =
 export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void }) {
   const store = projectsStore;
   const hasQuery = () => store.state.query.trim().length > 0;
-  /** A person's items while one is shown, else the scope's. */
-  const sourceRows = () => store.state.person?.rows ?? store.state.rows;
+  /** A person's items while one is shown, else the scope's. The engine
+   * filters the scope's by the query; a person's arrive whole and are
+   * filtered here, by the same rule (itemMatch.ts). */
+  const sourceRows = createMemo(() => {
+    const person = store.state.person;
+    return person ? filterRows(person.rows, store.state.query) : store.state.rows;
+  });
   const grouped = () => store.state.scope.kind === 'all' && !store.state.person;
   /** New items are triaged newest first; Health is not a list of rows. */
   const triage = () => store.state.scope.kind === 'new';
@@ -186,6 +192,21 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
   const [merging, setMerging] = createSignal<string[] | null>(null);
   /** The list element; absent while the graph is showing. */
   let list: HTMLDivElement | undefined;
+  let searchInput: HTMLInputElement | undefined;
+  onCleanup(
+    registerFindField(() => {
+      searchInput?.focus();
+      searchInput?.select();
+    })
+  );
+  /** "2 of 3" beside the field while it finds in the graph. */
+  const findCount = () => {
+    const status = view() === 'graph' ? graphFind()?.status() : null;
+    if (!status) return null;
+    if (status.total === 0) return 'No match';
+    if (status.current > 0) return `${status.current} of ${status.total}`;
+    return `${status.total} ${status.total === 1 ? 'match' : 'matches'}`;
+  };
 
   const current = () => Math.min(focusIndex(), Math.max(0, items().length - 1));
   const focusItem = (index: number) =>
@@ -558,15 +579,20 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
         </Show>
         <div class="paper-list-view">
           <ViewToggle />
-          {/* The search filters rows; the graph is the whole scope, so under
-              it the field would promise something it does not do. */}
-          <Show when={view() === 'list' && !health()}>
+          {/* One query for both views. The list filters by it; the graph
+              never hides a node for it, it spotlights the matches and
+              Enter steps through them (GraphView.tsx). Not over the
+              missing works' list, which it would not search. */}
+          <Show when={!health() && !(view() === 'graph' && store.state.missingList)}>
             <div class="library-search-field paper-search">
               <IconSearch />
               <input
+                ref={searchInput}
                 type="text"
-                placeholder="Search title, authors, year, key..."
-                aria-label="Search items"
+                placeholder={
+                  view() === 'graph' ? 'Find in graph...' : 'Search title, authors, year, key...'
+                }
+                aria-label={view() === 'graph' ? 'Find in graph' : 'Search items'}
                 value={store.state.query}
                 onInput={(e) => store.setQuery(e.currentTarget.value)}
                 onKeyDown={(e) => {
@@ -574,12 +600,27 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
                     e.preventDefault();
                     e.stopPropagation();
                     store.setQuery('');
+                  } else if (view() === 'graph') {
+                    if (e.key === 'Escape') {
+                      e.preventDefault();
+                      graphFind()?.focusCanvas();
+                    } else if (e.key === 'Enter') {
+                      e.preventDefault();
+                      graphFind()?.step(e.shiftKey ? -1 : 1);
+                    }
                   } else if (e.key === 'ArrowDown' || e.key === 'Enter') {
                     e.preventDefault();
                     focusItem(current());
                   }
                 }}
               />
+              <Show when={findCount()}>
+                {(text) => (
+                  <span class="paper-find-count" aria-live="polite">
+                    {text()}
+                  </span>
+                )}
+              </Show>
               <Show when={hasQuery()}>
                 <button
                   type="button"
@@ -591,6 +632,8 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
                 </button>
               </Show>
             </div>
+          </Show>
+          <Show when={view() === 'list' && !health()}>
             <Show when={sortable()}>
               <button
                 type="button"

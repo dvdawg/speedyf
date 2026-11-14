@@ -581,7 +581,10 @@ describe('List | Graph toggle', () => {
     expect(projectsStore.state.view).toBe('graph');
     expect(graphButton.getAttribute('aria-checked')).toBe('true');
     expect(container.querySelector('.paper-list')).toBeNull();
-    expect(container.querySelector('.paper-search')).toBeNull();
+    // The search stays, as the graph's find.
+    expect(container.querySelector('.paper-search input')?.getAttribute('placeholder')).toBe(
+      'Find in graph...'
+    );
     await waitFor(() => expect(nodes(container)).toHaveLength(3));
 
     // All items has a graph too, and the side chosen stays chosen.

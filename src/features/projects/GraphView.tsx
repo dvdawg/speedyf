@@ -55,6 +55,12 @@
  * layout, which is not rerun) or counted in the chip. The choices are kept
  * across sessions (graphViewPrefs.ts); the defaults draw today's graph.
  *
+ * Find (the middle column's search field, which shows over the graph too)
+ * spotlights rather than filters: the matches keep their strength and
+ * their labels, the rest and their edges fade as for a selection, and
+ * nothing moves. Enter and Shift+Enter step through the matches in
+ * reading order, panning to each and selecting it.
+ *
  * Hover, labels and emphasis touch only the nodes they change: each is a
  * selector or a keyed store read per node, and the layout never reruns for
  * any of them. */
@@ -92,7 +98,8 @@ import {
 } from './graphLayout';
 import type { LabelBox, NodeBox, Point } from './graphLayout';
 import { clearPositions, loadPositions, positionsKey, savePositions } from './graphPositions';
-import { registerGraphControls } from './screenIntents';
+import { registerGraphControls, registerGraphFind } from './screenIntents';
+import { fold, matchesTerms, queryTerms, rowSearchText } from './itemMatch';
 import { ghostId, ghostLabel, referenceText } from './MissingWorks';
 import { openPaper } from './openPaper';
 import { IconClose } from '../../components/icons';
@@ -152,6 +159,11 @@ const WITH_REACH = 34;
 /** Items with no edge, when drawn: rows of this pitch under the layout. */
 const LOOSE_PITCH = { x: 96, y: 28 };
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+/** Find's reading order takes nodes this close in x (px) as one column. */
+const FIND_COLUMN = 24;
+/** Stepping to a match off the canvas zooms in to this, if further out:
+ * below it a match is hard to pick out among its neighbours. */
+const READABLE_ZOOM = 0.6;
 
 interface Transform {
   k: number;
@@ -666,6 +678,61 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
     return `M${start.x} ${start.y}Q${cx} ${cy} ${end.x} ${end.y}`;
   };
 
+  /* ---- find ---- */
+  /** The query's words, the store's immediate value (its debounce is for
+   * the list's rows). Equal while the words are, so a typed space
+   * recomputes nothing. */
+  const terms = createMemo(() => queryTerms(store.state.query), [], {
+    equals: (a, b) => a.length === b.length && a.every((t, i) => t === b[i]),
+  });
+  const finding = () => terms().length > 0;
+  /** Each drawn node's searchable text, folded once per graph: an item's
+   * fields and label as drawn ("ZD24a"), a ghost's reference and ids. */
+  const findText = createMemo(() => {
+    const texts = labelText();
+    const map = new Map<string, string>();
+    for (const n of drawnNodes()) map.set(n.id, rowSearchText(n, texts.get(n.id)));
+    const ids = (w: { doi: string | null; arxiv: string | null }) =>
+      `${w.doi ?? ''} ${w.arxiv ?? ''}`;
+    for (const w of ghosts()) map.set(ghostId(w.key), fold(`${referenceText(w)} ${ids(w)}`));
+    for (const w of withGhosts()) {
+      map.set(withGhostId(w.key), fold(`${citedWithText(w)} ${ids(w)}`));
+    }
+    return map;
+  });
+  /** What the query matches among the drawn; null without a query. Never
+   * a relayout: the spotlight is classes and labels. */
+  const matched = createMemo<ReadonlySet<string> | null>(() => {
+    const t = terms();
+    if (t.length === 0) return null;
+    const set = new Set<string>();
+    for (const [id, text] of findText()) if (matchesTerms(text, t)) set.add(id);
+    return set;
+  });
+  const [findFlag, setFindFlag] = createStore<Record<string, 'match' | 'faded'>>({});
+  createEffect(() => {
+    const m = matched();
+    const flags: Record<string, 'match' | 'faded'> = {};
+    if (m) for (const id of findText().keys()) flags[id] = m.has(id) ? 'match' : 'faded';
+    setFindFlag(reconcile(flags));
+  });
+  /** An edge stays only between two matches. */
+  const edgeFaded = (e: GraphEdge) => findFlag[e.from] === 'faded' || findFlag[e.to] === 'faded';
+  /** The matches in reading order, as stepping visits them: left to
+   * right, then top to bottom within a column. */
+  const findOrder = createMemo<string[]>(() => {
+    const m = matched();
+    if (!m) return [];
+    const resting = rest();
+    const place = (id: string) => resting.get(id) ?? { x: 0, y: 0 };
+    return [...m].sort((a, b) => {
+      const p = place(a);
+      const q = place(b);
+      const column = Math.round(p.x / FIND_COLUMN) - Math.round(q.x / FIND_COLUMN);
+      return column || p.y - q.y || p.x - q.x;
+    });
+  });
+
   /* ---- emphasis, hover, labels ---- */
   const isSelected = createSelector(() => store.state.selectedId);
   /** The picked missing work, as its node id, when it is drawn. */
@@ -753,6 +820,14 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
     const ghost = ghostPicked();
     if (ghost) add(ghost, true);
     const f = focusId();
+    const m = matched();
+    if (m) {
+      // Finding: the matches speak, whatever Labels says, and the rest
+      // stay quiet. Forced while few enough to read side by side.
+      const force = m.size <= LABEL_ALL;
+      for (const id of findOrder()) add(id, force);
+      return placeLabels(boxes);
+    }
     // Ghost neighbours stay unlabelled: only the hovered or picked one speaks.
     if (f) for (const id of neighbours().get(f) ?? []) if (!isGhost(id)) add(id, true);
     const mode = prefs().labels;
@@ -1095,6 +1170,52 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
     else if (withOf().has(id)) store.selectGhost(id);
     else store.select(id);
   };
+  /** The match the selection is on, as an index into findOrder; -1 for
+   * none. */
+  const currentMatch = createMemo(() => {
+    const id = ghostPicked() ?? store.state.selectedId;
+    return id ? findOrder().indexOf(id) : -1;
+  });
+  /** Pans the node to the middle of the canvas, zoom kept unless it was
+   * off the canvas at a zoom too far out to read it there. */
+  const reveal = (id: string) => {
+    const p = rest().get(id);
+    if (!p) return;
+    const t = viewTarget ?? view();
+    const { width: W, height: H } = size();
+    const x = t.x + p.x * t.k;
+    const y = t.y + p.y * t.k;
+    const off = x < PAD.left || x > W - PAD.right || y < PAD.top || y > H - PAD.bottom;
+    const k = off && t.k < READABLE_ZOOM ? READABLE_ZOOM : t.k;
+    const cx = PAD.left + (W - PAD.left - PAD.right) / 2;
+    const cy = PAD.top + (H - PAD.top - PAD.bottom) / 2;
+    animateView({ k, x: cx - p.x * k, y: cy - p.y * k });
+  };
+  const stepFind = (dir: 1 | -1) => {
+    const order = findOrder();
+    if (order.length === 0) return;
+    const at = currentMatch();
+    const next =
+      at < 0 ? (dir > 0 ? 0 : order.length - 1) : (at + dir + order.length) % order.length;
+    const id = order[next]!;
+    choose(id);
+    reveal(id);
+  };
+  /** The keyboard back to the drawing: the selected node, else the first. */
+  const focusCanvas = () => {
+    const id = ghostPicked() ?? store.state.selectedId;
+    const all = Array.from(svg?.querySelectorAll<SVGGElement>('.graph-node') ?? []);
+    (all.find((g) => g.getAttribute('data-id') === id) ?? all[0])?.focus();
+  };
+  // The search field above reads the count and steps through here.
+  onCleanup(
+    registerGraphFind({
+      status: () => (matched() ? { total: findOrder().length, current: currentMatch() + 1 } : null),
+      step: stepFind,
+      focusCanvas,
+    })
+  );
+
   const onNodeClick = (node: { id: string }) => {
     if (justDragged) return;
     choose(node.id);
@@ -1252,7 +1373,9 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
         classList={{
           'is-loading': loading(),
           'is-empty': !loading() && drawnNodes().length === 0,
-          'has-focus': focusId() !== null,
+          // A find spotlights its matches in place of the selection's dimming.
+          'has-focus': focusId() !== null && !finding(),
+          'is-finding': finding(),
           'has-ghosts': ghosts().length > 0 || withGhosts().length > 0,
           'is-dense': edges().length > DENSE_EDGES,
           'is-panning': panning(),
@@ -1318,6 +1441,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
                   {(edge) => (
                     <path
                       class="graph-edge"
+                      classList={{ 'is-faded': edgeFaded(edge) }}
                       d={edgePath(edge, false)}
                       data-from={edge.from}
                       data-to={edge.to}
@@ -1328,6 +1452,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
                   {(edge) => (
                     <path
                       class="graph-edge is-ghost"
+                      classList={{ 'is-faded': edgeFaded(edge) }}
                       d={edgePath(edge, false)}
                       data-from={edge.from}
                       data-to={edge.to}
@@ -1338,6 +1463,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
                   {(edge) => (
                     <path
                       class="graph-edge is-ghost is-with"
+                      classList={{ 'is-faded': edgeFaded(edge) }}
                       d={edgePath(edge, false)}
                       data-from={edge.from}
                       data-to={edge.to}
@@ -1376,6 +1502,8 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
                           'is-neighbour': neighbourFlag[node.id] === true,
                           'is-label-on': labelOn[node.id] === true,
                           'is-dragged': isDragged(node.id),
+                          'is-match': findFlag[node.id] === 'match',
+                          'is-faded': findFlag[node.id] === 'faded',
                         }}
                         role="button"
                         tabindex={0}
@@ -1419,6 +1547,8 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
                           'is-neighbour': neighbourFlag[id] === true,
                           'is-label-on': labelOn[id] === true,
                           'is-dragged': isDragged(id),
+                          'is-match': findFlag[id] === 'match',
+                          'is-faded': findFlag[id] === 'faded',
                         }}
                         role="button"
                         tabindex={0}
@@ -1459,6 +1589,8 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
                           'is-neighbour': neighbourFlag[id] === true,
                           'is-label-on': labelOn[id] === true,
                           'is-dragged': isDragged(id),
+                          'is-match': findFlag[id] === 'match',
+                          'is-faded': findFlag[id] === 'faded',
                         }}
                         role="button"
                         tabindex={0}

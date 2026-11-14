@@ -6614,6 +6614,29 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   stroke-dasharray: 3 3;
 }
 
+/* Find in graph: what does not match steps back as it does around a
+   selection; the matches, and edges between two of them, stay. */
+.graph-node.is-faded:not(.is-selected, .is-hover) {
+  opacity: 0.32;
+}
+
+.graph-edge.is-faded {
+  stroke-opacity: 0.07;
+}
+
+.graph-node.is-match .graph-node-label {
+  fill: var(--text);
+}
+
+/* "2 of 3", or "No match": inside the field, quiet. */
+.paper-find-count {
+  flex: none;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 /* ---------- sort, health, new ---------- */
 /* Quiet text buttons: the sort in the list's header line, and the fixes
    on a health finding or a new item. No border, no fill. */
