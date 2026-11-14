@@ -697,6 +697,12 @@ export interface ApiProjectItem {
   alphaLabel: string;
   year: number | null;
   projectIds: string[];
+  /** The DOI as the library stores it (lower-case, no `doi:` or URL
+   * prefix), or null. */
+  doi: string | null;
+  /** The arXiv id without its version (`2401.01234`, `math/0601001`), or
+   * null. */
+  arxiv: string | null;
 }
 
 export function toProjectItems(list: PaperList): ApiProjectItem[] {
@@ -710,6 +716,8 @@ export function toProjectItems(list: PaperList): ApiProjectItem[] {
     alphaLabel: row.alphaLabel ?? '',
     year: row.year,
     projectIds: [...row.projectIds],
+    doi: row.doi ?? null,
+    arxiv: row.arxiv ?? null,
   }));
 }
 

@@ -20,6 +20,7 @@ import {
   type PendingShape,
 } from './editor/noteSession';
 import type { Op } from './editor/ops';
+import { identifierKey, normalizeArxiv, normalizeDoi, type Identifier } from './editor/identifiers';
 
 /** The event a window's placeholders and marks travel by to the others. */
 const DECOR_EVENT = 'project-file:decorations';
@@ -125,14 +126,20 @@ export interface CitationEntry {
   pick: boolean;
   /** Other keys that mean this item (its key history). */
   aliases: string[];
+  /** The item's DOI and arXiv id, when it has them: a pasted identifier
+   * becomes a citation of the entry holding it. */
+  doi?: string | null;
+  arxiv?: string | null;
 }
 
 export interface CitationIndex {
   entries: CitationEntry[];
   byKey: Map<string, CitationEntry>;
+  /** By `identifierKey`: `doi:10.1/x`, `arxiv:2401.01234`. */
+  byId: Map<string, CitationEntry>;
 }
 
-const EMPTY: CitationIndex = { entries: [], byKey: new Map() };
+const EMPTY: CitationIndex = { entries: [], byKey: new Map(), byId: new Map() };
 const [citationStore, setCitationStore] = createStore<Record<string, CitationEntry[]>>({});
 
 const scope = (extensionId: string, projectId: string) => `${extensionId}\u0000${projectId}`;
@@ -156,9 +163,26 @@ export function citationIndex(extensionId: string, projectId: string): CitationI
   for (const entry of entries) {
     for (const alias of entry.aliases) if (!byKey.has(alias)) byKey.set(alias, entry);
   }
-  const index = { entries: [...entries], byKey };
+  // The project's own items first: a paste names the one it offers.
+  const byId = new Map<string, CitationEntry>();
+  for (const entry of [...entries.filter((e) => e.pick), ...entries.filter((e) => !e.pick)]) {
+    const doi = entry.doi ? normalizeDoi(entry.doi) : null;
+    const arxiv = entry.arxiv ? normalizeArxiv(entry.arxiv) : null;
+    for (const id of [
+      doi ? identifierKey({ kind: 'doi', id: doi }) : null,
+      arxiv ? identifierKey({ kind: 'arxiv', id: arxiv }) : null,
+    ]) {
+      if (id && !byId.has(id)) byId.set(id, entry);
+    }
+  }
+  const index = { entries: [...entries], byKey, byId };
   indexCache.set(id, { entries, index });
   return index;
+}
+
+/** The cite key of the entry holding identifier `id`, or null. */
+export function keyForIdentifier(index: CitationIndex, id: Identifier): string | null {
+  return index.byId.get(identifierKey(id))?.key ?? null;
 }
 
 /** Read `editor.citations` entries; a malformed one is dropped. */
@@ -180,6 +204,8 @@ export function readCitationEntries(raw: unknown): CitationEntry[] {
       aliases: Array.isArray(r.aliases)
         ? r.aliases.filter((a): a is string => typeof a === 'string' && a.length <= 200)
         : [],
+      doi: typeof r.doi === 'string' ? normalizeDoi(r.doi.slice(0, 500)) : null,
+      arxiv: typeof r.arxiv === 'string' ? normalizeArxiv(r.arxiv.slice(0, 200)) : null,
     });
   }
   return out;

@@ -53,6 +53,8 @@ interface HistoryEntry {
   caretBefore: number;
   caretAfter: number;
   at: number;
+  /** A step of its own (a paste): nothing joins it. */
+  alone?: boolean;
 }
 
 /** Typing within this long of the last edit, in one place, is one undo
@@ -217,13 +219,13 @@ export class NoteSession {
 
   /** Apply a local edit. `caret` is where the cursor was before and is after,
    * for undo to put it back. Typing next to the previous edit within a
-   * moment joins its undo step. `outside`: made by no view (an extension's
+   * moment joins its undo step, unless either is `alone` (a paste). `outside`: made by no view (an extension's
    * insert), so every view hears of it as of another's. */
   edit(
     op: Op,
     caretBefore: number,
     caretAfter: number,
-    opts?: { history?: boolean; outside?: boolean }
+    opts?: { history?: boolean; outside?: boolean; alone?: boolean }
   ): void {
     if (this.status() !== 'ready') return;
     const before = this.text();
@@ -235,6 +237,8 @@ export class NoteSession {
       const now = this.now();
       const adjacent =
         last !== undefined &&
+        !opts?.alone &&
+        !last.alone &&
         now - last.at < COALESCE_MS &&
         !/\n/.test(op.insert) &&
         // Typing on: this edit starts where the last one ended.
@@ -262,7 +266,14 @@ export class NoteSession {
         last.caretAfter = caretAfter;
         last.at = now;
       } else {
-        this.undoStack.push({ op, inverse, caretBefore, caretAfter, at: now });
+        this.undoStack.push({
+          op,
+          inverse,
+          caretBefore,
+          caretAfter,
+          at: now,
+          ...(opts?.alone ? { alone: true } : {}),
+        });
         if (this.undoStack.length > HISTORY_LIMIT) this.undoStack.shift();
       }
       this.redoStack = [];

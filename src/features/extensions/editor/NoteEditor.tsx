@@ -38,6 +38,7 @@ import { followExternalLink } from '../../../lib/links/followExternalLink';
 import { engine } from '../../../lib/transport/engine';
 import {
   citationIndex,
+  keyForIdentifier,
   noteSessions,
   registerEditor,
   type CitationEntry,
@@ -62,6 +63,7 @@ import type {
   PendingDecoration,
 } from './noteSession';
 import { registerNoteDrop } from './noteDrop';
+import { citeIdentifiers } from './identifiers';
 import {
   citeQuery,
   continueList,
@@ -291,8 +293,14 @@ function EditorBody(props: BodyProps) {
   };
 
   /** Commit a local edit made in the active field, or by a key. */
-  const commit = (op: Op, before: number, after: number, restructure: boolean) => {
-    s.edit(op, before, after);
+  const commit = (
+    op: Op,
+    before: number,
+    after: number,
+    restructure: boolean,
+    opts?: { alone?: boolean }
+  ) => {
+    s.edit(op, before, after, opts);
     caret = after;
     if (restructure) {
       rebuild();
@@ -388,6 +396,52 @@ function EditorBody(props: BodyProps) {
     commit(op, caret, after, false);
     setPicker(null);
     placeCaret();
+  };
+
+  /* ---- pasting a DOI or an arXiv id ---- */
+
+  /** Pasted text with each identifier an item holds as `@key`, or null
+   * when it names none: then the paste is the platform's own. */
+  const pastedCitations = (e: ClipboardEvent): string | null => {
+    const text = e.clipboardData?.getData('text/plain') ?? '';
+    if (!text || text.length > 20_000) return null;
+    const index = props.index;
+    return citeIdentifiers(text, (id) => keyForIdentifier(index, id));
+  };
+
+  const onPaste = (e: ClipboardEvent & { currentTarget: HTMLTextAreaElement }) => {
+    if (composing) return;
+    const insert = pastedCitations(e);
+    if (insert === null) return;
+    e.preventDefault();
+    const ta = e.currentTarget;
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    const op: Op = { from: activeStart + start, to: activeStart + end, insert };
+    const after = activeStart + start + insert.length;
+    if (insert.includes('\n')) {
+      commit(op, activeStart + start, after, true, { alone: true });
+      return;
+    }
+    setActiveRaw(applyOp(activeRaw, { from: start, to: end, insert }));
+    ta.value = activeRaw;
+    autosize(ta);
+    ta.setSelectionRange(start + insert.length, start + insert.length);
+    commit(op, activeStart + start, after, false, { alone: true });
+  };
+
+  const onSourcePaste = (e: ClipboardEvent & { currentTarget: HTMLTextAreaElement }) => {
+    if (composing) return;
+    const insert = pastedCitations(e);
+    if (insert === null) return;
+    e.preventDefault();
+    const ta = e.currentTarget;
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    s.edit({ from: start, to: end, insert }, start, start + insert.length, { alone: true });
+    ta.value = s.text();
+    sourceValue = ta.value;
+    ta.setSelectionRange(start + insert.length, start + insert.length);
   };
 
   const undoRedo = (redo: boolean) => {
@@ -781,6 +835,7 @@ function EditorBody(props: BodyProps) {
               aria-label="Note source"
               onInput={onSourceInput}
               onKeyDown={onSourceKey}
+              onPaste={onSourcePaste}
               onCompositionStart={() => (composing = true)}
               onCompositionEnd={() => (composing = false)}
             />
@@ -830,6 +885,7 @@ function EditorBody(props: BodyProps) {
                         aria-label="Note line"
                         onInput={onInput}
                         onKeyDown={onKeyDown}
+                        onPaste={onPaste}
                         onCompositionStart={() => (composing = true)}
                         onCompositionEnd={() => {
                           composing = false;

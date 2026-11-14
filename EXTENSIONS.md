@@ -287,9 +287,13 @@ projectId, file, cite? }`:
 
 - `event: 'citations'` when an editor opens and when the library changes:
   answer with `editor.citations { projectId, entries }`, each entry `{ key,
-label, title, detail, pick, aliases }`. A citation of `key` or of any of its
+label, title, detail, pick, aliases, doi?, arxiv? }`. A citation of `key` or of any of its
   `aliases` is drawn as `label` (with its locator); one no entry has is
-  drawn as written, muted, and never rewritten.
+  drawn as written, muted, and never rewritten. With `doi` or `arxiv`
+  (any common form; read as `projects.items` gives them), a DOI or arXiv
+  id pasted into the note, bare, labelled or as a link, is written as
+  `@key` of the entry holding it (a `pick` entry first), as one undoable
+  edit; one no entry holds is pasted as it is.
 - `event: 'activate'` when a citation is clicked, with `cite: { key,
 locator, page, box }` (`page` zero-based from a "p." locator). Typically
   `navigate.openItem`.
@@ -557,7 +561,7 @@ cannot reach a tab the user is not looking at. Pages are zero-based.
 | `net.fetch`                | `{ url, as?, maxBytes? }`                                   | `{ status, contentType, body }` - `body` a string for `as: 'text'` (the default), `number[]` for `as: 'bytes'`                                                                   | `network` (host listed)        |
 | `ui.showMath`              | `{ latex, display, source, confidence, ticket? }`           | `{ shown }`                                                                                                                                                                      | -                              |
 | `projects.list`            | -                                                           | `[{ id, name, itemCount }]`                                                                                                                                                      | `projects:read`                |
-| `projects.items`           | `{ projectId? }`                                            | `[{ id, citeKey, keyHistory, title, authors, firstAuthor, alphaLabel, year, projectIds }]` - a project's items, or every item                                                    | `projects:read`                |
+| `projects.items`           | `{ projectId? }`                                            | `[{ id, citeKey, keyHistory, title, authors, firstAuthor, alphaLabel, year, projectIds, doi, arxiv }]` - a project's items, or every item                                        | `projects:read`                |
 | `reader.context`           | -                                                           | `{ item: { id, citeKey, title } \| null, projectIds, projectId, page, selection: { page, box, text } \| null }`                                                                  | `projects:read`                |
 | `reader.chooseProject`     | -                                                           | a project id or `null`: asks once which of the paper's projects, kept for the session                                                                                            | `projects:read`                |
 | `navigate.openItem`        | `{ itemId, projectId?, page?, box? }`                       | `{ opened }` - opens it (at a page and box), with Back                                                                                                                           | `projects:read`                |

@@ -603,3 +603,25 @@ describe('notepad: editor and backlinks', () => {
     });
   });
 });
+
+describe('notepad: identifiers for pasting', () => {
+  it('tells the editor the DOI and arXiv id of each item', async () => {
+    const items = [
+      { ...ATTIAS, doi: '10.1103/physrevlett.78.2690', arxiv: '2401.01234' },
+      { ...ATTIAS, id: 'i3', citeKey: 'other2020', keyHistory: [], projectIds: ['p9'] },
+    ];
+    const { calls, invoke } = boot({
+      'projects.items': () => items,
+      'editor.citations': () => ({ stored: 2 }),
+    });
+    await invoke('editor', { event: 'citations', projectId: 'p1', file: 'notepad.md' });
+    const entries = calls.find((c) => c.api === 'editor.citations')!.args.entries as {
+      doi: string | null;
+      arxiv: string | null;
+    }[];
+    expect(entries.map((e) => [e.doi, e.arxiv])).toEqual([
+      ['10.1103/physrevlett.78.2690', '2401.01234'],
+      [null, null],
+    ]);
+  });
+});

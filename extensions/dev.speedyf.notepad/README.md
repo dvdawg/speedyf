@@ -31,6 +31,10 @@ are one quote), `$x^2$` and `$$ ... $$` math, links and images.
   from the Projects list land as `@a; @b`.
 - `[@citekey, p. 12]{box=72,310,240,28}` reads "[AS22, p. 12]" and opens
   the paper at that place on page 12.
+- Paste a DOI or an arXiv id (bare, `doi:...`, `arXiv:2401.01234v2`, or a
+  doi.org or arxiv.org link) and it becomes `@citekey` when an item in your
+  library has it; otherwise it pastes as it is. In a longer paste only the
+  identifiers an item has are replaced. Cmd+Z takes the paste back.
 - A cite key that changes later keeps working: the item remembers the keys it
   had. A key no item has stays as you wrote it, muted.
 
