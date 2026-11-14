@@ -54,6 +54,18 @@ are one quote), `$x^2$` and `$$ ... $$` math, links and images.
   selection running onto the next page links to where it begins. Long
   passages are quoted whole.
 
+  When Math to LaTeX is on, a passage with math in it keeps its math: read
+  from the page's fonts, each formula in the line becomes `$...$`
+  (superscripts, subscripts, norms, set symbols and Greek as LaTeX) and a
+  displayed equation in the selection its own `$$ ... $$` line in the
+  quote, its number as `\tag{3}`. The quote draws them typeset. Then,
+  quietly, Math to LaTeX looks for the passage in the paper's arXiv source,
+  with a dim "checking arXiv source" line under the quote meanwhile; when it
+  finds it for certain, the quote is replaced in place by the author's own
+  text and LaTeX (citations as the page printed them). Cmd+Z undoes it; a
+  quote you edit meanwhile is left alone. With Math to LaTeX off, or a
+  passage with no math, the quote is the plain text, as above.
+
 - **Send to Notepad** on an equation's hover button shows where it will go
   at once - a soft placeholder with its caption ("Equation (3), [ZD24a,
   p. 4]") - then fills it in: as LaTeX when Math to LaTeX is on and can read

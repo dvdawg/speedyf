@@ -9,10 +9,12 @@
 //     key changed after a note cited it keeps working.
 //   * What a click on a citation does: open the paper, at the page and the
 //     place a pinpoint `[@key, p. 12]{box=x,y,w,h}` names.
-//   * What the reader's actions write: a quote, an equation (as LaTeX when an
-//     equation converter can read it, else as a picture of it; upgraded in
-//     place once an exact source has it), a region of a page; each with a
-//     link back to its page.
+//   * What the reader's actions write: a quote (its math as LaTeX when a
+//     converter can read it; upgraded in place to the paper's own source
+//     once one has the passage), an equation (as LaTeX when an equation
+//     converter can read it, else as a picture of it; upgraded in place once
+//     an exact source has it), a region of a page; each with a link back to
+//     its page.
 //   * "Mentioned in notepad (3)" beside an item on the Projects screen.
 //
 // It never touches the network, and needs no document permission at all:
@@ -217,6 +219,24 @@ function quoteBlock(text, key, page, box) {
   return paragraphs.map((paragraph) => `> ${paragraph}`).join('\n>\n');
 }
 
+/** A block quote of Markdown a converter wrote from the selection (its
+ * prose already escaped, its math as `$...$`, each displayed equation a
+ * `$$ ... $$` paragraph): one `> ` line per paragraph, a bare `>` between
+ * them, and the link to the page last - on a line of its own after a
+ * display. Null when there is nothing in it. */
+function markdownQuote(markdown, link) {
+  const paragraphs = String(markdown)
+    .replace(/\r\n?/g, '\n')
+    .split(/\n[ \t]*\n\s*/)
+    .map((paragraph) => paragraph.replace(/\s*\n\s*/g, ' ').trim())
+    .filter((paragraph) => paragraph !== '');
+  if (paragraphs.length === 0) return null;
+  const last = paragraphs.length - 1;
+  if (/^\$\$[\s\S]*\$\$$/.test(paragraphs[last])) paragraphs.push(link);
+  else paragraphs[last] += ` ${link}`;
+  return paragraphs.map((paragraph) => `> ${paragraph}`).join('\n>\n');
+}
+
 /** LaTeX for a `$$ ... $$` block: on one line, which is how a block that
  * stays one block in any Markdown reader is written. */
 function displayMath(latex) {
@@ -310,6 +330,23 @@ async function drop(handle) {
   }
 }
 
+/** `selection.convert` in one mode: `{ markdown, selection, source }`, or
+ * null when there is no converter or no answer. */
+async function convertQuote(args) {
+  try {
+    const answer = await call('selection.convert', args);
+    return answer && typeof answer.markdown === 'string' && answer.markdown.trim() ? answer : null;
+  } catch (err) {
+    log('info', `no ${args.mode} Markdown for this quote: ${String((err && err.message) || err)}`);
+    return null;
+  }
+}
+
+/** Quote the selection: at once from what the page itself says - its math
+ * as LaTeX when a converter (Math to LaTeX) can read it from the glyphs,
+ * else the text as it is - then, when that had math, upgraded quietly to
+ * the passage as the paper's own TeX source writes it, if the converter
+ * finds it there. */
 async function quote(text) {
   if (typeof text !== 'string' || !text.trim()) return;
   const target = await readerTarget();
@@ -318,9 +355,29 @@ async function quote(text) {
   const selection = context.selection;
   const page = selection ? selection.page : context.page;
   const box = selection ? selection.box : null;
+  const link = pageLink(context.item.citeKey, page, box);
   // Filled at once: the placeholder is drawn only if this ever takes long.
-  const handle = await hold(projectId, { kind: 'text' });
-  await fill(projectId, handle, quoteBlock(text, context.item.citeKey, page, box));
+  const placeholder = await hold(projectId, { kind: 'text' });
+  const local = await convertQuote({ text, mode: 'local' });
+  const converted = local ? markdownQuote(local.markdown, link) : null;
+  const block = converted || quoteBlock(text, context.item.citeKey, page, box);
+  const handle = await fill(projectId, placeholder, block);
+  if (!converted) return;
+  // Not awaited: the quote is in; this only ever improves it.
+  void upgradeMarked({
+    handle,
+    block,
+    what: 'Markdown',
+    exact: async () => {
+      const exact = await convertQuote({
+        selection: local.selection,
+        mode: 'exact',
+        status: handle,
+      });
+      const better = exact ? markdownQuote(exact.markdown, link) : null;
+      return better ? { text: better, source: exact.source } : null;
+    },
+  });
 }
 
 /** `equations.convert` in one mode; null when there is no answer. In exact
@@ -403,14 +460,35 @@ async function sendEquation(value) {
     return;
   }
   // Not awaited: the send is done; this only ever improves it.
-  void upgrade({ equation: value.equation, handle, block, caption, asset, projectId });
+  void upgradeMarked({
+    handle,
+    block,
+    what: 'LaTeX',
+    exact: async () => {
+      const exact = await convert(value.equation, 'exact', handle);
+      return exact
+        ? { text: `${displayMath(exact.latex)}\n\n${caption}`, source: exact.source }
+        : null;
+    },
+    // The picture it replaced is not needed any more.
+    replaced: asset
+      ? async () => {
+          try {
+            await call('projectFiles.remove', { projectId, path: asset });
+          } catch (err) {
+            log('info', `picture kept: ${String((err && err.message) || err)}`);
+          }
+        }
+      : null,
+  });
 }
 
-/** Swap an equation just sent for an exact source's LaTeX, when there is
- * one and it differs, and only while the inserted text is still there as
- * it was: an equation the user has edited is theirs. A dim "checking ...
- * source" line sits under it meanwhile. */
-async function upgrade({ equation, handle, block, caption, asset, projectId }) {
+/** Swap text just sent (`block`, tracked by `handle`) for what an exact
+ * source makes of it, when there is one and it differs, and only while the
+ * inserted text is still there as it was: text the user has edited is
+ * theirs. A dim "checking ... source" line sits under it meanwhile.
+ * `exact()` answers `{ text, source }` or null. */
+async function upgradeMarked({ handle, block, what, exact, replaced = null }) {
   const started = Date.now();
   const done = (outcome) => log('info', `upgrade: ${outcome} in ${Date.now() - started}ms`);
   const clear = () => call('editor.unmark', { handle }).catch(() => {});
@@ -421,32 +499,25 @@ async function upgrade({ equation, handle, block, caption, asset, projectId }) {
     log('info', `no status line: ${String((err && err.message) || err)}`);
   }
   if (!marked) return done('edited meanwhile; left alone');
-  const exact = await convert(equation, 'exact', handle);
-  if (!exact) {
+  const better = await exact();
+  if (!better) {
     await clear();
     return done('no exact source');
   }
-  const better = `${displayMath(exact.latex)}\n\n${caption}`;
-  if (better === block) {
+  if (better.text === block) {
     await clear();
     return done('already exact');
   }
-  let replaced = false;
+  let swapped = false;
   try {
-    ({ replaced } = await call('editor.replaceMarked', { handle, text: better }));
+    ({ replaced: swapped } = await call('editor.replaceMarked', { handle, text: better.text }));
   } catch (err) {
     await clear();
     return done(`not replaced: ${String((err && err.message) || err)}`);
   }
-  if (!replaced) return done('edited meanwhile; left alone');
-  if (asset) {
-    try {
-      await call('projectFiles.remove', { projectId, path: asset });
-    } catch (err) {
-      log('info', `picture kept: ${String((err && err.message) || err)}`);
-    }
-  }
-  done(`replaced with LaTeX from ${exact.source || 'an exact source'}`);
+  if (!swapped) return done('edited meanwhile; left alone');
+  if (replaced) await replaced();
+  done(`replaced with ${what} from ${better.source || 'an exact source'}`);
 }
 
 async function sendRegion() {

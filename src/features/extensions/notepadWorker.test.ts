@@ -267,19 +267,124 @@ describe('notepad: reader actions', () => {
     const { calls, invoke } = boot({ ...EDITOR, 'reader.context': readerIn('p2') });
     expect(await invoke('quote', 'Some text')).toEqual({ type: 'done', requestId: 1, ok: true });
     // The fast path: the placeholder is filled straight away, nothing in
-    // between (the editor draws a text placeholder only if it lingers).
+    // between but asking for the page's math (the editor draws a text
+    // placeholder only if it lingers). With no converter it is today's quote.
     expect(calls.map((c) => c.api)).toEqual([
       'reader.context',
       'editor.insert',
       'editor.reveal',
+      'selection.convert',
       'editor.resolve',
     ]);
     expect(calls[1]!.args).toEqual({ projectId: 'p2', at: 'end', pending: { kind: 'text' } });
     expect(calls[2]!.args).toEqual({ projectId: 'p2', handle: 'h1' });
-    expect(calls[3]!.args).toEqual({
+    expect(calls[3]!.args).toEqual({ text: 'Some text', mode: 'local' });
+    expect(calls[4]!.args).toEqual({
       handle: 'h1',
       text: '> Some text [@attias2022quantum, p. 5]{box=10,20,30,40}',
     });
+  });
+
+  it('quotes math as LaTeX read from the page, then upgrades it to the source', async () => {
+    let releaseExact: () => void = () => {};
+    const exactGate = new Promise<void>((resolve) => (releaseExact = resolve));
+    const { calls, invoke, logs } = boot({
+      ...EDITOR,
+      'reader.context': readerIn('p1'),
+      'selection.convert': async (args) => {
+        if (args.mode === 'local') {
+          return {
+            selection: 's1',
+            markdown: 'For \\*all\\* $X^m$ we have\n\n$$ a \\le b \\tag{3} $$',
+            source: 'fonts',
+            confidence: 'high',
+          };
+        }
+        await exactGate;
+        return {
+          selection: 's1',
+          markdown: 'For _all_ $X^{m}$ we have\n\n$$ a \\leq b \\tag{3} $$\n\nas claimed.',
+          source: 'arxiv',
+          confidence: 'high',
+        };
+      },
+    });
+    await invoke('quote', 'For *all* X m we have a <= b (3)');
+    const link = '[@attias2022quantum, p. 5]{box=10,20,30,40}';
+    const local = [
+      '> For \\*all\\* $X^m$ we have',
+      '>',
+      '> $$ a \\le b \\tag{3} $$',
+      '>',
+      `> ${link}`,
+    ].join('\n');
+    expect(calls.find((c) => c.api === 'editor.resolve')!.args).toEqual({
+      handle: 'h1',
+      text: local,
+    });
+    // One quote in the editor, its display a line of its own in it.
+    expect(splitBlocks(local)).toHaveLength(1);
+    expect(splitBlocks(local)[0]!.kind).toBe('quote');
+    releaseExact();
+    await until(() => logs.some((l) => l.startsWith('upgrade: replaced with Markdown from arxiv')));
+    const converts = calls.filter((c) => c.api === 'selection.convert').map((c) => c.args);
+    // The exact check reads the same selection, and names its source in the
+    // status line under the quote.
+    expect(converts).toEqual([
+      { text: 'For *all* X m we have a <= b (3)', mode: 'local' },
+      { selection: 's1', mode: 'exact', status: 'h1' },
+    ]);
+    expect(editorCalls(calls).map((c) => c.api)).toEqual([
+      'editor.insert',
+      'editor.resolve',
+      'editor.mark',
+      'editor.replaceMarked',
+    ]);
+    expect(calls.find((c) => c.api === 'editor.replaceMarked')!.args).toEqual({
+      handle: 'h1',
+      text: [
+        '> For _all_ $X^{m}$ we have',
+        '>',
+        '> $$ a \\leq b \\tag{3} $$',
+        '>',
+        `> as claimed. ${link}`,
+      ].join('\n'),
+    });
+  });
+
+  it('leaves a quote the user edited meanwhile alone', async () => {
+    const { calls, invoke, logs } = boot({
+      ...EDITOR,
+      'reader.context': readerIn('p1'),
+      'selection.convert': (args) => ({
+        selection: 's1',
+        markdown: args.mode === 'local' ? 'Take $x^2$.' : 'Take $x^{2}$.',
+        source: args.mode === 'local' ? 'fonts' : 'arxiv',
+        confidence: 'high',
+      }),
+      'editor.replaceMarked': () => ({ replaced: false }),
+    });
+    await invoke('quote', 'Take x2.');
+    await until(() => logs.some((l) => l.startsWith('upgrade: edited meanwhile')));
+    expect(calls.filter((c) => c.api === 'editor.replaceMarked')).toHaveLength(1);
+    expect(calls.find((c) => c.api === 'editor.resolve')!.args.text).toBe(
+      '> Take $x^2$. [@attias2022quantum, p. 5]{box=10,20,30,40}'
+    );
+  });
+
+  it('quotes the plain text and checks nothing when the page has no math to read', async () => {
+    const { calls, invoke } = boot({
+      ...EDITOR,
+      'reader.context': readerIn('p1'),
+      'selection.convert': () => null,
+    });
+    await invoke('quote', 'Plain $5 prose');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(calls.find((c) => c.api === 'editor.resolve')!.args.text).toBe(
+      '> Plain \\$5 prose [@attias2022quantum, p. 5]{box=10,20,30,40}'
+    );
+    expect(calls.filter((c) => c.api === 'selection.convert')).toHaveLength(1);
+    expect(calls.map((c) => c.api)).not.toContain('editor.mark');
   });
 
   it('asks which project for a paper in two opened from neither, and stops when dismissed', async () => {
