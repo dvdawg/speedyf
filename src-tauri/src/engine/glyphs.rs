@@ -478,6 +478,11 @@ pub fn page_math_tags(
         }
     }
     b.FPDF_StructTree_Close(tree);
+    // A tagged page with no formula is the common case: its text is not
+    // worth loading and boxing char by char.
+    if !has_formula(&roots) {
+        return Vec::new();
+    }
 
     let tp = b.FPDFText_LoadPage(page);
     if tp.is_null() {
@@ -548,6 +553,13 @@ fn read_tag(
 /// root that sits under no `Formula` (LaTeX's tagging can emit one bare) is
 /// reported the same way. `chars` is the page's characters by index, each
 /// with its top-left box when it has one.
+/// Whether any element under `nodes` is a formula `collect_formulas` reads.
+pub fn has_formula(nodes: &[TagNode]) -> bool {
+    nodes
+        .iter()
+        .any(|n| n.tag == "Formula" || n.tag == "math" || has_formula(&n.children))
+}
+
 pub fn collect_formulas(
     roots: &[TagNode],
     by_mcid: &HashMap<i32, Vec<u32>>,
@@ -2479,6 +2491,14 @@ mod tests {
                  <mo>&lt;</mo><mn>2</mn></mrow></math>"
             )
         );
+    }
+
+    #[test]
+    fn a_page_without_a_formula_is_known_before_its_text_is_read() {
+        let prose = element("Document", vec![element("P", vec![leaf("Span", 0)])]);
+        assert!(!has_formula(std::slice::from_ref(&prose)));
+        let nested = element("Document", vec![element("Div", vec![leaf("math", 1)])]);
+        assert!(has_formula(&[prose, nested]));
     }
 
     #[test]
