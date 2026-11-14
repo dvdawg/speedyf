@@ -146,6 +146,24 @@ describe('polish: rows', () => {
   });
 });
 
+describe('polish: dim pages', () => {
+  it('filters the rasters only under the dark theme, never by an overlay', () => {
+    const dimRules = [...css.matchAll(/([^{}]*data-dim-pages[^{}]*)\{([^}]*)\}/g)];
+    expect(dimRules.length).toBeGreaterThan(0);
+    for (const [, selector] of dimRules) {
+      for (const part of selector!.split(/,(?![^(]*\))/)) {
+        expect(part).toContain(":root[data-theme='dark'][data-dim-pages='on']");
+      }
+    }
+    const filters = dimRules.map(([, , body]) => body!).join('\n');
+    const brightness = Number(/brightness\(([\d.]+)\)/.exec(filters)![1]);
+    const sepia = Number(/sepia\(([\d.]+)\)/.exec(filters)![1]);
+    expect(brightness).toBeGreaterThanOrEqual(0.8);
+    expect(brightness).toBeLessThan(1);
+    expect(sepia).toBeLessThan(0.1);
+  });
+});
+
 describe('polish: scrollbars', () => {
   it('thins the columns from shared tokens and leaves the page viewport alone', () => {
     expect(rootTokens()).toMatch(/--scrollbar-thumb:/);

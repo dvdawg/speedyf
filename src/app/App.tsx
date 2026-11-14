@@ -16,7 +16,7 @@ import SearchPanel from '../features/search/SearchPanel';
 import FormPanel from '../features/editor/FormPanel';
 import { engine } from '../lib/transport/engine';
 import { ui } from '../stores/uiStore';
-import { effectiveTheme, pagesInverted, settings } from '../stores/settings';
+import { applyPageAppearance, settings } from '../stores/settings';
 import { installShortcuts } from './shortcuts';
 import { loadExtensions } from '../features/extensions/extensionStore';
 import { clearImagePreviews } from '../features/editor/editorActions';
@@ -56,12 +56,7 @@ export default function App() {
 
   // theme: follow system, or forced light/dark. `effectiveTheme` tracks the
   // system preference itself, so this one effect covers both.
-  createEffect(() => {
-    document.documentElement.dataset.theme = effectiveTheme();
-    // Pages come back inverted from the engine; the shell has to repaint the
-    // paper it draws behind and around them to match.
-    document.documentElement.dataset.invertPages = pagesInverted() ? 'on' : 'off';
-  });
+  createEffect(() => applyPageAppearance(document.documentElement));
 
   // window title reflects the active tab's document + dirty state
   createEffect(() => {

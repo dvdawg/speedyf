@@ -181,10 +181,13 @@ describe('SettingsPanel display settings', () => {
     fireEvent.input(screen.getByLabelText(/Invert page colors/), { target: { checked: true } });
     expect(settings.invertPages).toBe(true);
 
+    fireEvent.input(screen.getByLabelText(/Dim pages/), { target: { checked: true } });
+    expect(settings.dimPages).toBe(true);
+
     fireEvent.input(screen.getByLabelText(/Low memory/), { target: { checked: true } });
     expect(settings.lowMemory).toBe(true);
     expect(setLowMemory).toHaveBeenCalledWith(true);
 
-    updateSettings({ theme: 'system', invertPages: false, lowMemory: false });
+    updateSettings({ theme: 'system', invertPages: false, dimPages: false, lowMemory: false });
   });
 });

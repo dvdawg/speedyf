@@ -221,6 +221,22 @@ export default function SettingsPanel() {
         </div>
 
         <div class="home-setting">
+          <label class="home-setting-text" for="setting-dim-pages">
+            <span class="home-setting-title">Dim pages in dark theme</span>
+            <span class="home-setting-desc">
+              Lower page brightness a little, with a touch of warmth, for reading at night. Figures
+              keep their colors. Ignored while pages are inverted.
+            </span>
+          </label>
+          <input
+            id="setting-dim-pages"
+            type="checkbox"
+            checked={settings.dimPages}
+            onInput={(e) => updateSettings({ dimPages: e.currentTarget.checked })}
+          />
+        </div>
+
+        <div class="home-setting">
           <label class="home-setting-text" for="setting-low-memory">
             <span class="home-setting-title">Low memory</span>
             <span class="home-setting-desc">

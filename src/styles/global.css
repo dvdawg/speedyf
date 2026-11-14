@@ -317,6 +317,23 @@ body {
   box-shadow: var(--focus-ring);
 }
 
+/* ---------- polish: dim pages ----------
+   Night reading: the rasters a little darker and warmer, under the dark
+   theme only (App sets the flag only then, and inversion clears it). A
+   per-pixel filter on the images, not an overlay: text stays as crisp as
+   the raster, figures keep their hues, and the text, search and annotation
+   layers above keep their own colours. Blank and loading sheets dim with
+   them; the preview inside a loading sheet is dimmed once, by its sheet. */
+:root[data-theme='dark'][data-dim-pages='on']
+  :is(.page-img, .page-tile, .page-blank, .page-loading),
+:root[data-theme='dark'][data-dim-pages='on'] :is(.thumb-btn img, .thumb-blank) {
+  filter: brightness(0.85) sepia(0.08);
+}
+
+:root[data-theme='dark'][data-dim-pages='on'] .page-loading .page-img {
+  filter: none;
+}
+
 /* ---------- shell ---------- */
 .app-shell {
   display: flex;
