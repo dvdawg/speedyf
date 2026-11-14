@@ -54,15 +54,22 @@ are one quote), `$x^2$` and `$$ ... $$` math, links and images.
   selection running onto the next page links to where it begins. Long
   passages are quoted whole.
 
-- **Send to Notepad** on an equation's hover button adds it at once, with a
-  link to it: as LaTeX when Math to LaTeX is on and can read it from the
-  page (its tags or its fonts), else as a picture. Then, quietly, Math to
-  LaTeX looks for the author's own LaTeX online (the arXiv source or an
-  open-access journal version); if that differs, the equation is replaced
-  in place, a picture by its LaTeX (the picture's file is removed). Cmd+Z
-  undoes it. An equation you have already edited is left alone.
-- **Send Region to Notepad** (palette): drag a rectangle around a figure;
-  its picture goes into the note with a link to it.
+- **Send to Notepad** on an equation's hover button shows where it will go
+  at once - a soft placeholder with its caption ("Equation (3), [ZD24a,
+  p. 4]") - then fills it in: as LaTeX when Math to LaTeX is on and can read
+  it from the page (its tags or its fonts), else as a picture. Then, quietly,
+  Math to LaTeX looks for the author's own LaTeX online (the arXiv source or
+  an open-access journal version), with a dim "checking arXiv source" line
+  under the equation meanwhile; if that differs, the equation is replaced in
+  place, a picture by its LaTeX (the picture's file is removed). Cmd+Z
+  undoes it. An equation you edit meanwhile is left alone, and the line
+  goes.
+- **Send Region to Notepad** (palette): drag a rectangle around a figure; a
+  placeholder of its shape appears, then its picture with a link to it.
+
+If the note is not showing, the drawer opens on it as you send; on the
+Projects screen the note just scrolls to it. The placeholders are never
+written to the file, and go by themselves if something fails.
 
 They write to the notepad of the project you opened the paper from; for a
 paper in several projects opened from elsewhere, SpeedyF asks once.
