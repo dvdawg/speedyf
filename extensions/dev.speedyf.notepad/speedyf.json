@@ -27,6 +27,7 @@
       { "id": "mentions", "title": "Notepad: Mentions", "hidden": true },
       { "id": "jump", "title": "Notepad: Go To Mention", "hidden": true }
     ],
+    "keybindings": [{ "command": "quote", "key": "mod+shift+e" }],
     "selectionActions": [
       { "command": "quote", "title": "Quote to Notepad", "when": "documentInProject" }
     ],

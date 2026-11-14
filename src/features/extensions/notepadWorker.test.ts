@@ -28,7 +28,8 @@ interface Item {
 
 interface Notepad {
   escapeQuote(text: string): string;
-  quoteLine(text: string, key: string, page: number, box: number[] | null): string;
+  quoteBlock(text: string, key: string, page: number, box: number[] | null): string;
+  quoteParagraphs(text: string): string[];
   pageLink(key: string, page: number | null, box: number[] | null): string;
   baseLabel(item: Item): string;
   alphaLabels(items: Item[]): Map<string, string>;
@@ -40,7 +41,7 @@ interface Notepad {
 
 const notepad = new Function(
   'self',
-  `${SOURCE}\nreturn { escapeQuote, quoteLine, pageLink, baseLabel, alphaLabels, resolveKey, citationsIn, mentions, displayMath };`
+  `${SOURCE}\nreturn { escapeQuote, quoteBlock, quoteParagraphs, pageLink, baseLabel, alphaLabels, resolveKey, citationsIn, mentions, displayMath };`
 )({}) as Notepad;
 
 const ATTIAS: Item = {
@@ -58,17 +59,15 @@ const ATTIAS: Item = {
 describe('notepad: quotes', () => {
   it('escapes Markdown and citations in quoted text and keeps it one quote block', () => {
     const selected =
-      '# A *bold* claim_\nwith [refs] and $x$\n\n> nested, `code`, <tag> @someone {x} 50|50 ~';
-    const line = notepad.quoteLine(selected, 'attias2022quantum', 11, [72.4, 310.6, 240, 28]);
-    expect(line).toBe(
-      '> "\\# A \\*bold\\* claim\\_ with \\[refs\\] and \\$x\\$ \\> nested, \\`code\\`, \\<tag\\> \\@someone \\{x\\} 50\\|50 \\~" [@attias2022quantum, p. 12]{box=72,311,240,28}'
+      '# A *bold* claim_ with [refs] and $x$ > nested, `code`, <tag> @someone {x} 50|50 ~';
+    const quote = notepad.quoteBlock(selected, 'attias2022quantum', 11, [72.4, 310.6, 240, 28]);
+    expect(quote).toBe(
+      '> \\# A \\*bold\\* claim\\_ with \\[refs\\] and \\$x\\$ \\> nested, \\`code\\`, \\<tag\\> \\@someone \\{x\\} 50\\|50 \\~ [@attias2022quantum, p. 12]{box=72,311,240,28}'
     );
-    // One line, so one quote block, whatever the selection held.
-    expect(line.includes('\n')).toBe(false);
-    expect(splitBlocks(line)).toHaveLength(1);
-    // Read back, the quote is the text as selected (whitespace collapsed),
-    // and the only citation is the pinpoint.
-    const spans = inlineSpans(line.slice(2));
+    expect(splitBlocks(quote)).toHaveLength(1);
+    // Read back, the quote is the text as selected, and the only citation
+    // is the pinpoint.
+    const spans = inlineSpans(quote.slice(2));
     const cites = spans.filter((s) => s.kind === 'cite');
     expect(cites).toHaveLength(1);
     const text = spans
@@ -76,8 +75,50 @@ describe('notepad: quotes', () => {
       .map((s) => (s.kind === 'text' ? s.text : ''))
       .join('');
     expect(text).toContain(
-      '"# A *bold* claim_ with [refs] and $x$ > nested, `code`, <tag> @someone {x} 50|50 ~"'
+      '# A *bold* claim_ with [refs] and $x$ > nested, `code`, <tag> @someone {x} 50|50 ~'
     );
+  });
+
+  it('keeps paragraphs, rejoins wrapped lines and words, and cites on the last line', () => {
+    const selected = [
+      'The first paragraph is wrapped',
+      'over lines, and a long hyphen-',
+      'ated word breaks at a line end.',
+      '',
+      'A second para\u00ad',
+      'graph: *starred*,',
+      'Schr\u00f6dinger \u2014 \u03b1 \u2192 \u03b2.',
+    ].join('\n');
+    const quote = notepad.quoteBlock(selected, 'k', 11, [1, 2, 3, 4]);
+    expect(quote).toBe(
+      [
+        '> The first paragraph is wrapped over lines, and a long hyphenated word breaks at a line end.',
+        '>',
+        '> A second paragraph: \\*starred\\*, Schr\u00f6dinger \u2014 \u03b1 \u2192 \u03b2. [@k, p. 12]{box=1,2,3,4}',
+      ].join('\n')
+    );
+    // One quote block in the editor, with the link on its last line.
+    const blocks = splitBlocks(quote);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]!.kind).toBe('quote');
+    // SpeedyF's smart-copied text (paragraphs already joined) reads the same.
+    expect(
+      notepad.quoteBlock(
+        'The first paragraph is wrapped over lines, and a long hyphenated word breaks at a line end.\n\nA second paragraph: *starred*, Schr\u00f6dinger \u2014 \u03b1 \u2192 \u03b2.',
+        'k',
+        11,
+        [1, 2, 3, 4]
+      )
+    ).toBe(quote);
+    // A capital after the hyphen is a new token, not a broken word.
+    expect(notepad.quoteParagraphs('state-\nOf the art')).toEqual(['state- Of the art']);
+  });
+
+  it('quotes a long selection whole', () => {
+    const long = Array.from({ length: 600 }, (_, i) => `word${i}`).join(' ');
+    expect(long.length).toBeGreaterThan(4000);
+    const quote = notepad.quoteBlock(long, 'k', 0, null);
+    expect(quote).toBe(`> ${long} [@k, p. 1]`);
   });
 
   it('keeps non-ASCII user text as it is', () => {
@@ -216,7 +257,7 @@ describe('notepad: reader actions', () => {
     const insert = calls.find((c) => c.api === 'editor.insert')!;
     expect(insert.args).toEqual({
       projectId: 'p2',
-      text: '> "Some text" [@attias2022quantum, p. 5]{box=10,20,30,40}',
+      text: '> Some text [@attias2022quantum, p. 5]{box=10,20,30,40}',
       at: 'end',
     });
     expect(calls.map((c) => c.api)).not.toContain('reader.chooseProject');

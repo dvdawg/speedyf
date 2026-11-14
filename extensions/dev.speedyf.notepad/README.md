@@ -20,8 +20,9 @@ Both are the same note, live, in every window.
 
 ## Writing
 
-The line you are on shows its Markdown; the rest is rendered: headings,
-_emphasis_, lists, quotes, `$x^2$` and `$$ ... $$` math, links and images.
+The line you are on shows its Markdown (a quote, all of its lines); the
+rest is rendered: headings, _emphasis_, lists, quotes (consecutive `>` lines
+are one quote), `$x^2$` and `$$ ... $$` math, links and images.
 **Source** at the top (or Cmd+A twice) edits the whole note as plain text
 (Escape returns).
 
@@ -35,8 +36,24 @@ _emphasis_, lists, quotes, `$x^2$` and `$$ ... $$` math, links and images.
 
 ## From the reader
 
-- **Quote to Notepad** (palette, with text selected) adds
-  `> "the text" [@key, p. 12]{box=...}`.
+- **Quote to Notepad**: select text on the page and click the small
+  **Quote** button that appears past the end of the selection, or press
+  **Cmd+Shift+E** (Ctrl+Shift+E), or use the palette. It adds the passage as
+  one block quote that keeps its paragraphs: lines wrapped on the page are
+  rejoined (a word hyphenated across a line end is put back together), a
+  bare `>` line separates paragraphs, and the link to the page is on the
+  last line:
+
+  ```
+  > First paragraph ...
+  >
+  > Second paragraph ... [@key, p. 12]{box=...}
+  ```
+
+  Markdown characters in the text are escaped, so it reads as written. A
+  selection running onto the next page links to where it begins. Long
+  passages are quoted whole.
+
 - **Send to Notepad** on an equation's hover button adds it at once, with a
   link to it: as LaTeX when Math to LaTeX is on and can read it from the
   page (its tags or its fonts), else as a picture. Then, quietly, Math to

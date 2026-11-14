@@ -168,9 +168,9 @@ function pageLink(key, page, box) {
   return `[@${key}${at}]${where}`;
 }
 
-/** Text quoted into Markdown so it stays one quote block and reads as
- * itself: whitespace (newlines included) collapses to single spaces, and
- * every character Markdown or a citation would take for markup is escaped. */
+/** One paragraph of quoted text, made to read as itself in Markdown:
+ * whitespace (newlines included) collapses to single spaces, and every
+ * character Markdown or a citation would take for markup is escaped. */
 function escapeQuote(text) {
   let out = String(text).replace(/\s+/g, ' ').trim();
   out = out.replace(/[\\`*_[\]{}<>$@|~]/g, (c) => `\\${c}`);
@@ -179,9 +179,42 @@ function escapeQuote(text) {
   return out;
 }
 
-/** `> "selected text" [@key, p. 12]{box=...}` */
-function quoteLine(text, key, page, box) {
-  return `> "${escapeQuote(text)}" ${pageLink(key, page, box)}`;
+/** Characters that end a line as "this word continues below", as SpeedyF's
+ * smart copy reads them: the hyphen, U+2010, U+2011 and the soft hyphen. */
+const LINE_END_HYPHEN = /[-\u2010\u2011\u00ad]$/;
+
+/** The selection's paragraphs. SpeedyF hands over its smart-copied text
+ * (paragraphs apart by a blank line, wrapped lines joined); a selection
+ * that still has its line breaks is rejoined here the same way: a line
+ * ending in a hyphen before a lower-case letter is one word broken across
+ * lines, any other break within a paragraph is a space. */
+function quoteParagraphs(text) {
+  return String(text)
+    .replace(/\r\n?/g, '\n')
+    .split(/\n[ \t]*\n\s*/)
+    .map((paragraph) => {
+      let out = '';
+      for (const raw of paragraph.split('\n')) {
+        const line = raw.trim();
+        if (!line) continue;
+        if (LINE_END_HYPHEN.test(out) && /^[a-z]/.test(line)) out = out.slice(0, -1) + line;
+        else out = out ? `${out} ${line}` : line;
+      }
+      return out.replace(/\u00ad/g, '');
+    })
+    .filter((paragraph) => paragraph.trim() !== '');
+}
+
+/** A block quote of the selection, one `> ` line per paragraph and a bare
+ * `>` between them, with the link to its page on the last line:
+ * `> one ...\n>\n> two ... [@key, p. 12]{box=...}`. Quoted whole, however
+ * long. */
+function quoteBlock(text, key, page, box) {
+  const paragraphs = quoteParagraphs(text).map(escapeQuote);
+  const link = pageLink(key, page, box);
+  if (paragraphs.length === 0) return `> ${link}`;
+  paragraphs[paragraphs.length - 1] += ` ${link}`;
+  return paragraphs.map((paragraph) => `> ${paragraph}`).join('\n>\n');
 }
 
 /** LaTeX for a `$$ ... $$` block: on one line, which is how a block that
@@ -265,7 +298,7 @@ async function quote(text) {
   const selection = context.selection;
   const page = selection ? selection.page : context.page;
   const box = selection ? selection.box : null;
-  await append(projectId, quoteLine(text, context.item.citeKey, page, box));
+  await append(projectId, quoteBlock(text, context.item.citeKey, page, box));
 }
 
 /** `equations.convert` in one mode; null when there is no answer. */

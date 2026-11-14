@@ -4,6 +4,8 @@
  * one it was opened from, its only one, or the one picked once), what a
  * disabled extension leaves behind (nothing on screen, every file kept),
  * the new APIs' permissions, and the equation converter slot. */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createRoot } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CallMessage } from './protocol';
@@ -218,6 +220,7 @@ const store = await import('./extensionStore');
 const reader = await import('./readerContext');
 const surfaces = await import('./surfaces');
 const hostApi = await import('./editorHost');
+const selection = await import('../../stores/selectionStore');
 
 const call = (api: string, args?: unknown): CallMessage => ({
   type: 'call',
@@ -553,5 +556,81 @@ describe('the equation converter slot', () => {
     await expect(
       notepad.options.events.onCall(call('equations.convert', { equation: 'eq-forged' }))
     ).rejects.toThrow(/token/);
+  });
+});
+
+describe('the Quote to Notepad key', () => {
+  /** A page's text, selected as a drag would leave it, and its capture. */
+  function selectOnPage(text: string) {
+    const span = document.createElement('span');
+    span.textContent = text;
+    document.body.append(span);
+    document.getSelection()!.setBaseAndExtent(span.firstChild!, 0, span.firstChild!, text.length);
+    // The viewer hands the store its capture; the key takes it before the
+    // settle time is up.
+    selection.noteSelectionChanged(() => text);
+    return span;
+  }
+
+  it('runs the quote with the current selection, and does nothing without one', async () => {
+    const manifest = JSON.parse(
+      readFileSync(join(__dirname, '../../../extensions/dev.speedyf.notepad/speedyf.json'), 'utf8')
+    ) as { contributes: { keybindings: { command: string; key: string }[] } };
+    expect(manifest.contributes.keybindings).toEqual([{ command: 'quote', key: 'mod+shift+e' }]);
+    dtos = [
+      {
+        ...notepadDto(),
+        manifest: {
+          ...notepadDto().manifest,
+          contributes: { ...notepadDto().manifest.contributes, ...manifest.contributes },
+        },
+      },
+    ];
+    await store.loadExtensions();
+    await createRoot(async (dispose) => {
+      reader.setReaderItemForTest('/papers/a.pdf', {
+        id: 'i1',
+        citeKey: 'k',
+        title: '',
+        projectIds: ['p1'],
+      });
+      // Bound (that no built-in takes it is checked with the real keymap
+      // in navCommands.test.ts).
+      expect(store.extensionBindings()).toEqual([
+        {
+          extensionId: NOTEPAD,
+          command: 'quote',
+          chord: { key: 'e', mod: true, shift: true, alt: false },
+        },
+      ]);
+      const notepad = await hostOf(NOTEPAD);
+      notepad.invoke.mockClear();
+
+      // Nothing selected: nothing happens.
+      selection.clearSelection();
+      document.getSelection()!.removeAllRanges();
+      await store.runBoundCommand(NOTEPAD, 'quote');
+      expect(notepad.invoke).not.toHaveBeenCalled();
+
+      const span = selectOnPage('a quoted passage');
+      await store.runBoundCommand(NOTEPAD, 'quote');
+      expect(notepad.invoke).toHaveBeenCalledTimes(1);
+      expect(notepad.invoke.mock.calls[0]![0]).toBe('quote');
+      expect(notepad.invoke.mock.calls[0]![1]).toMatchObject({ value: 'a quoted passage' });
+
+      // Clicked away: the old capture is not quoted again.
+      notepad.invoke.mockClear();
+      document.getSelection()!.removeAllRanges();
+      await store.runBoundCommand(NOTEPAD, 'quote');
+      expect(notepad.invoke).not.toHaveBeenCalled();
+
+      // A paper in no project: the key does nothing.
+      selectOnPage('another passage');
+      reader.setReaderItemForTest('/papers/a.pdf', null);
+      await store.runBoundCommand(NOTEPAD, 'quote');
+      expect(notepad.invoke).not.toHaveBeenCalled();
+      span.remove();
+      dispose();
+    });
   });
 });
