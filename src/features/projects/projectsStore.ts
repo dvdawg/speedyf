@@ -83,6 +83,19 @@ export function sameScope(a: Scope, b: Scope): boolean {
   return a.kind === b.kind && (a.kind !== 'project' || b.kind !== 'project' || a.id === b.id);
 }
 
+/** Whether the list is waiting with nothing current to show: a read is out
+ * and the rows on screen are none, or another scope's. A refresh of the
+ * same scope keeps its rows and is not waiting. */
+export function rowsPending(s: {
+  loadingRows: boolean;
+  rows: readonly unknown[];
+  rowsScope: Scope | null;
+  scope: Scope;
+}): boolean {
+  if (!s.loadingRows) return false;
+  return s.rows.length === 0 || s.rowsScope === null || !sameScope(s.rowsScope, s.scope);
+}
+
 /** The records the engine suspects are one work with a given record: the
  * others in its group, and why. */
 export interface DuplicateMatch {
@@ -130,6 +143,9 @@ interface State {
   rows: PaperRow[];
   total: number;
   loadingRows: boolean;
+  /** The scope `rows` were read for; null before the first read. While a
+   * read for another scope is out, the rows on screen are stale. */
+  rowsScope: Scope | null;
   selectedId: string | null;
   selected: Paper | null;
   /** Project groups the user folded in the All papers view. Session-only. */
@@ -189,6 +205,7 @@ const [state, setState] = createStore<State>({
   rows: [],
   total: 0,
   loadingRows: false,
+  rowsScope: null,
   selectedId: null,
   selected: null,
   collapsed: {},
@@ -357,9 +374,10 @@ export const projectsStore = {
     // Snapshot before the await: the filter must describe the scope the
     // request was made for, not whatever the user has clicked since.
     const filter = filterFor(state.scope, state.query);
-    const kind = state.scope.kind;
+    const scope = { ...state.scope } as Scope;
+    const kind = scope.kind;
     if (kind === 'health') {
-      setState({ loadingRows: false, rows: [], total: 0 });
+      setState({ loadingRows: false, rows: [], total: 0, rowsScope: scope });
       return;
     }
     const list =
@@ -372,7 +390,7 @@ export const projectsStore = {
     if (seq !== rowsSeq) return;
     setState('loadingRows', false);
     if (!list) return;
-    setState({ rows: list.rows, total: list.total });
+    setState({ rows: list.rows, total: list.total, rowsScope: scope });
     // The selection may have left the list (filtered out, moved project).
     // Keep the detail: the user is still looking at it.
   },

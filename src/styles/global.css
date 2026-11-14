@@ -46,6 +46,8 @@
    * use sits under prefers-reduced-motion: no-preference (see the polish
    * block below). */
   --ease-quick: 120ms ease-out;
+  /* The sheen across a placeholder, as the notepad's skeleton draws it. */
+  --skeleton-sheen: color-mix(in srgb, var(--text) 6%, transparent);
 }
 
 :root[data-theme='dark'] {
@@ -174,6 +176,31 @@ body {
   from {
     opacity: 0;
     translate: 6px 0;
+  }
+}
+
+/* ---------- polish: placeholder rows ----------
+   A list that is slow to arrive shows rows of its own shape: bars on the
+   inset colour where the title and meta go, at the real rows' height. The
+   sheen is the notepad skeleton's, and stills under reduced motion. */
+.paper-row.is-skeleton {
+  pointer-events: none;
+}
+
+.skeleton-bar {
+  display: inline-block;
+  height: 0.6em;
+  border-radius: 0.3em;
+  background: var(--bg-inset);
+  vertical-align: middle;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .skeleton-bar {
+    background: linear-gradient(100deg, transparent 30%, var(--skeleton-sheen) 50%, transparent 70%)
+      var(--bg-inset);
+    background-size: 300% 100%;
+    animation: shimmer 1.8s infinite linear;
   }
 }
 
