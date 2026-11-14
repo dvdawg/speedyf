@@ -700,29 +700,44 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
                 return (
                   <Switch>
                     <Match when={header()}>
-                      {(head) => (
-                        <div
-                          class="paper-group-head"
-                          role="treeitem"
-                          aria-level={1}
-                          aria-expanded={!head().collapsed}
-                          tabindex={current() === index ? 0 : -1}
-                          data-index={index}
-                          onClick={() => {
-                            setFocusIndex(index);
-                            store.toggleGroup(head().groupId);
-                          }}
-                        >
-                          <Show when={head().collapsed} fallback={<IconChevronDown />}>
-                            <IconChevronRight />
-                          </Show>
-                          <span class="paper-group-name">{head().name}</span>
-                          <span class="paper-group-count">{head().count}</span>
-                        </div>
-                      )}
+                      {(match) => {
+                        // Read the last header this row held, not the
+                        // Match's accessor: when the row turns into an item
+                        // its old contents can update once more before they
+                        // go, and the accessor throws then.
+                        const head = createMemo<Extract<Item, { kind: 'header' }>>(
+                          (last) => header() ?? last,
+                          match()
+                        );
+                        return (
+                          <div
+                            class="paper-group-head"
+                            role="treeitem"
+                            aria-level={1}
+                            aria-expanded={!head().collapsed}
+                            tabindex={current() === index ? 0 : -1}
+                            data-index={index}
+                            onClick={() => {
+                              setFocusIndex(index);
+                              store.toggleGroup(head().groupId);
+                            }}
+                          >
+                            <Show when={head().collapsed} fallback={<IconChevronDown />}>
+                              <IconChevronRight />
+                            </Show>
+                            <span class="paper-group-name">{head().name}</span>
+                            <span class="paper-group-count">{head().count}</span>
+                          </div>
+                        );
+                      }}
                     </Match>
                     <Match when={entry()}>
-                      {(found) => {
+                      {(match) => {
+                        // As for the header: the last item this row held.
+                        const found = createMemo<Extract<Item, { kind: 'row' }>>(
+                          (last) => entry() ?? last,
+                          match()
+                        );
                         const row = () => found().row;
                         const selected = () => store.state.selectedId === row().id;
                         return (
