@@ -41,7 +41,9 @@ pub async fn library_health_ignore(
     kind: String,
 ) -> AppResult<()> {
     write_store(state.0.clone(), move |store| {
-        store.ignore_finding(&paper_id, &kind)
+        store.journaled("Ignored a finding", |store| {
+            store.ignore_finding(&paper_id, &kind)
+        })
     })
     .await
 }
@@ -64,8 +66,14 @@ pub async fn library_mark_reviewed(
     state: tauri::State<'_, EngineState>,
     paper_ids: Vec<String>,
 ) -> AppResult<()> {
+    let description = match paper_ids.len() {
+        1 => "Marked done".to_owned(),
+        n => format!("Marked {n} items done"),
+    };
     write_store(state.0.clone(), move |store| {
-        store.mark_reviewed(&paper_ids, now_secs())
+        store.journaled(description, |store| {
+            store.mark_reviewed(&paper_ids, now_secs())
+        })
     })
     .await
 }

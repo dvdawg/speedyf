@@ -112,6 +112,13 @@ impl ProjectFiles {
         }
     }
 
+    /// Undo brought a deleted project back: its set-aside files return.
+    pub fn project_restored(&self, project: &str) {
+        if let Err(error) = projectfiles::bring_back(&self.data_dir(), project) {
+            log::warn!("cannot bring back the files of project {project}: {error}");
+        }
+    }
+
     /// A library backup written at `at` was restored: put back the project
     /// files nearest that moment (the present snapshotted first) and reload
     /// the open documents.
@@ -425,6 +432,9 @@ pub async fn library_import_bundle(
             .map_err(|error| AppError::Internal(format!("import task failed: {error}")))??;
 
     let roots = engine.0.library.lock().roots();
+    // The records there before: any other member was made by this import,
+    // and undoing it removes that record (never the copied PDF).
+    let existing = read_store(engine.clone(), |store| Ok(store.record_ids())).await?;
     let mut members: Vec<(String, String)> = Vec::new();
     let mut failed = Vec::new();
     for item in &contents.manifest.items {
@@ -469,8 +479,16 @@ pub async fn library_import_bundle(
     }
 
     let name = contents.manifest.project.clone();
+    let created: Vec<String> = members
+        .iter()
+        .map(|(id, _)| id.clone())
+        .filter(|id| !existing.contains(id))
+        .collect();
     let project = write_store(engine.clone(), move |store| {
-        store.import_project(&name, &members)
+        let description = format!("Imported {}", name.trim());
+        store.journaled_creating(description, &created, |store| {
+            store.import_project(&name, &members)
+        })
     })
     .await?;
 
