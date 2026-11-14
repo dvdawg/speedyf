@@ -195,6 +195,28 @@ fn stamp_missing_since(file: &mut PaperFile, now: &str) -> bool {
     }
 }
 
+/// One work a paper cites outside a set (the graph's nodes, or the library),
+/// so the same work read twice - from two files of one item, or as both an
+/// identifier and a reference entry - counts once.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum OutsideWork<'a> {
+    /// A library item that is not in the set.
+    Item(usize),
+    /// An identifier no library item holds.
+    Id(&'a CitationIdDto),
+    /// An unresolved entry with no identifier, by its compact text.
+    Text(&'a str),
+}
+
+impl<'a> OutsideWork<'a> {
+    fn of(reference: &'a StoredRef) -> Self {
+        match reference.ids.first() {
+            Some(id) => OutsideWork::Id(id),
+            None => OutsideWork::Text(reference.compact.as_str()),
+        }
+    }
+}
+
 /// Whether `path` is on a volume under `/Volumes` that is not mounted now.
 pub(crate) fn on_unmounted_volume(path: &str) -> bool {
     let Some(rest) = path.strip_prefix("/Volumes/") else {
@@ -1810,8 +1832,13 @@ impl PaperStore {
         // afterwards. A paper with two files cites the union of both.
         let mut cites: Vec<usize> = Vec::new();
         let mut cited_by: Vec<usize> = Vec::new();
-        let mut unresolved_ids: HashSet<&CitationIdDto> = HashSet::new();
-        let mut unresolved_entries = 0usize;
+        // Works the paper cites that no library item is, once each: a paper
+        // with two files (a preprint and its journal version) reads two
+        // reference lists that name mostly the same works.
+        let mut unresolved: HashSet<OutsideWork> = HashSet::new();
+        // Identifiers it cites that match no item, used only when no reference
+        // list of its was read (the list names the same works, better).
+        let mut outside_ids: Vec<&CitationIdDto> = Vec::new();
         let mut own_refs_read = false;
         for entry in entries {
             let Some(cited) = entry.cites.as_ref() else {
@@ -1828,17 +1855,16 @@ impl PaperStore {
                     match tables.by_id.get(id) {
                         Some(&target) if target == own => {}
                         Some(&target) => push_once(&mut cites, target),
-                        None if list.is_none() => {
-                            unresolved_ids.insert(id);
-                        }
-                        None => {}
+                        None => outside_ids.push(id),
                     }
                 }
                 for reference in list.map(|list| list.as_slice()).unwrap_or(&[]) {
                     match tables.resolve_reference(reference, own) {
                         Some(target) if target == own => {}
                         Some(target) => push_once(&mut cites, target),
-                        None => unresolved_entries += 1,
+                        None => {
+                            unresolved.insert(OutsideWork::of(reference));
+                        }
                     }
                 }
             } else if !cited_by.contains(&holder)
@@ -1861,10 +1887,7 @@ impl PaperStore {
                         match tables.by_id.get(cited) {
                             Some(&target) if target == own => {}
                             Some(&target) => push_once(&mut cites, target),
-                            None if !own_refs_read => {
-                                unresolved_ids.insert(cited);
-                            }
-                            None => {}
+                            None => outside_ids.push(cited),
                         }
                     }
                     for citing in network.cites.get(id).map(Vec::as_slice).unwrap_or(&[]) {
@@ -1881,8 +1904,10 @@ impl PaperStore {
                 }
             }
         }
-        let unresolved = unresolved_entries + unresolved_ids.len();
-        (cites, cited_by, unresolved)
+        if !own_refs_read {
+            unresolved.extend(outside_ids.into_iter().map(OutsideWork::Id));
+        }
+        (cites, cited_by, unresolved.len())
     }
 
     /// The citation graph over a set of papers (projects.md sec. 8): every
@@ -2019,7 +2044,11 @@ impl PaperStore {
         let mut edges: HashSet<(usize, usize)> = HashSet::new();
         let mut indexed = vec![false; nodes.len()];
         let mut refs_read = vec![false; nodes.len()];
-        let mut external_entries = 0usize;
+        // Per node, the works outside the graph it cites, once each: an item
+        // with two files (a preprint and its journal version) reads two
+        // reference lists naming mostly the same works, which used to count
+        // twice.
+        let mut outside: Vec<HashSet<OutsideWork>> = vec![HashSet::new(); nodes.len()];
         for entry in entries {
             let Some(cited) = entry.cites.as_ref() else {
                 continue;
@@ -2045,9 +2074,13 @@ impl PaperStore {
                         Some(to) => {
                             edges.insert((from, to));
                         }
-                        None => external_entries += 1,
+                        None => {
+                            outside[from].insert(OutsideWork::Item(target));
+                        }
                     },
-                    None => external_entries += 1,
+                    None => {
+                        outside[from].insert(OutsideWork::of(reference));
+                    }
                 }
             }
         }
@@ -2064,7 +2097,6 @@ impl PaperStore {
                 }
             }
         }
-        let mut external_ids: HashSet<&CitationIdDto> = HashSet::new();
         for (from, id) in citations {
             match node_for(id) {
                 Some(to) if to == from => {}
@@ -2074,11 +2106,16 @@ impl PaperStore {
                 // A node whose reference list was read counts its entries
                 // above; counting its identifiers too would count twice.
                 None if !refs_read[from] => {
-                    external_ids.insert(id);
+                    let work = match tables.by_id.get(id) {
+                        Some(&index) => OutsideWork::Item(index),
+                        None => OutsideWork::Id(id),
+                    };
+                    outside[from].insert(work);
                 }
                 None => {}
             }
         }
+        let external: usize = outside.iter().map(HashSet::len).sum();
         let mut edges: Vec<(usize, usize)> = edges.into_iter().collect();
         edges.sort_unstable();
         let edge_dtos = edges
@@ -2091,7 +2128,7 @@ impl PaperStore {
         let cap = |value: usize| value.min(u32::MAX as usize) as u32;
         let graph = GraphDto {
             edges: edge_dtos,
-            external: cap(external_entries + external_ids.len()),
+            external: cap(external),
             unindexed: cap(indexed.iter().filter(|known| !**known).count()),
             nodes: self.rows_in_list_order(nodes),
         };
@@ -3925,6 +3962,35 @@ mod tests {
         assert_eq!(edges, want);
         assert_eq!(graph.external, 3);
         assert_eq!(graph.unindexed, 0);
+
+        // A second file of the citing item (its preprint, say) with the same
+        // reference list: the same works, counted once - not once a file.
+        {
+            let index = store
+                .papers
+                .iter()
+                .position(|p| p.id == citing_id)
+                .expect("citing");
+            let mut preprint = store.papers[index].files[0].clone();
+            preprint.path = "/l/2512.24540v1.pdf".into();
+            store.papers[index].files.push(preprint);
+            let mut second = entries[0].clone();
+            second.path = PathBuf::from("/l/2512.24540v1.pdf");
+            let mut both = entries.clone();
+            both.push(second);
+            let mut both_refs = refs.clone();
+            let list = both_refs[&PathBuf::from("/l/2512.24540v3.pdf")].clone();
+            both_refs.insert(PathBuf::from("/l/2512.24540v1.pdf"), list);
+            let graph = store
+                .citation_graph(None, &both, &both_refs, &network)
+                .unwrap();
+            assert_eq!(graph.external, 3, "once per item, not per file");
+            let links = store
+                .citation_links(&citing_id, &both, &both_refs, &network)
+                .unwrap();
+            assert_eq!(links.unresolved, 3, "once per item, not per file");
+            store.papers[index].files.pop();
+        }
 
         // Without the refs sidecar, the old behaviour: identifiers only.
         let links = store
