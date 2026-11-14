@@ -50,7 +50,7 @@ function mount(text: string, placeholder?: string) {
   host.setCitations('dev.speedyf.notepad', 'p1', [
     {
       key: 'attias2022quantum',
-      label: 'Attias 2022',
+      label: '[AS22]',
       title: 'Quantum things',
       detail: 'Attias - 2022',
       pick: true,
@@ -94,11 +94,7 @@ describe('the note editor', () => {
     const root = view.container;
     expect(root.querySelector('.np-h1')?.textContent).toBe('Notes');
     const cites = [...root.querySelectorAll('.np-cite')];
-    expect(cites.map((c) => c.textContent)).toEqual([
-      'Attias 2022',
-      'Attias 2022, p. 12',
-      '@gone1999',
-    ]);
+    expect(cites.map((c) => c.textContent)).toEqual(['[AS22]', '[AS22, p. 12]', '@gone1999']);
     // A key no item has stays as written, quietly, and is not rewritten.
     expect(cites[2]!.classList.contains('is-unresolved')).toBe(true);
     // The text itself is untouched.

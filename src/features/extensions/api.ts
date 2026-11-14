@@ -681,6 +681,9 @@ export interface ApiProjectItem {
   authors: string;
   /** The first author's family name, for a short label. */
   firstAuthor: string | null;
+  /** The alpha.bst-style label the graph shows ("Jar97", "ZD24",
+   * "ABC+19"); not unique, so a reader of several suffixes repeats. */
+  alphaLabel: string;
   year: number | null;
   projectIds: string[];
 }
@@ -693,6 +696,7 @@ export function toProjectItems(list: PaperList): ApiProjectItem[] {
     title: row.title,
     authors: row.authors,
     firstAuthor: row.firstAuthor ?? null,
+    alphaLabel: row.alphaLabel ?? '',
     year: row.year,
     projectIds: [...row.projectIds],
   }));

@@ -396,6 +396,7 @@ describe('the gate', () => {
         title: 'Quantum things',
         authors: 'Attias',
         firstAuthor: 'Attias',
+        alphaLabel: 'Att22',
         year: 2022,
         projectIds: ['p1', 'p2'],
       },

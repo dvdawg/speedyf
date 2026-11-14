@@ -96,7 +96,8 @@ export async function flushNotes(): Promise<void> {
 /** One cite key an extension told its editor about. */
 export interface CitationEntry {
   key: string;
-  /** How a citation of it reads: "Attias 2022". */
+  /** How a citation of it reads: "[AS22]". A bracketed label takes a
+   * locator inside its brackets: "[AS22, p. 12]". */
   label: string;
   title: string;
   /** "Attias, Smith - 2022": the picker's second line. */

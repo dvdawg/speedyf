@@ -23,13 +23,15 @@ interface Item {
   firstAuthor: string | null;
   year: number | null;
   projectIds: string[];
+  alphaLabel: string;
 }
 
 interface Notepad {
   escapeQuote(text: string): string;
   quoteLine(text: string, key: string, page: number, box: number[] | null): string;
   pageLink(key: string, page: number | null, box: number[] | null): string;
-  label(item: Item): string;
+  baseLabel(item: Item): string;
+  alphaLabels(items: Item[]): Map<string, string>;
   resolveKey(items: Item[], key: string): Item | null;
   citationsIn(text: string): { key: string; offset: number }[];
   mentions(text: string, item: Item): { count: number; first: number | null };
@@ -38,7 +40,7 @@ interface Notepad {
 
 const notepad = new Function(
   'self',
-  `${SOURCE}\nreturn { escapeQuote, quoteLine, pageLink, label, resolveKey, citationsIn, mentions, displayMath };`
+  `${SOURCE}\nreturn { escapeQuote, quoteLine, pageLink, baseLabel, alphaLabels, resolveKey, citationsIn, mentions, displayMath };`
 )({}) as Notepad;
 
 const ATTIAS: Item = {
@@ -48,6 +50,7 @@ const ATTIAS: Item = {
   title: 'Quantum things',
   authors: 'Attias, Smith',
   firstAuthor: 'Attias',
+  alphaLabel: 'AS22',
   year: 2022,
   projectIds: ['p1', 'p2'],
 };
@@ -92,14 +95,26 @@ describe('notepad: quotes', () => {
 });
 
 describe('notepad: cite keys', () => {
-  it('labels an item by its first author and year', () => {
-    expect(notepad.label(ATTIAS)).toBe('Attias 2022');
-    expect(notepad.label({ ...ATTIAS, firstAuthor: null, authors: 'Evans, Cohen & Morriss' })).toBe(
-      'Evans 2022'
-    );
-    expect(notepad.label({ ...ATTIAS, firstAuthor: null, authors: '', year: null })).toBe(
-      'Quantum things'
-    );
+  it('labels an item as the graph does, alpha.bst style', () => {
+    expect(notepad.baseLabel(ATTIAS)).toBe('AS22');
+    // No alpha label: first author and two-digit year, then the key.
+    expect(notepad.baseLabel({ ...ATTIAS, alphaLabel: '' })).toBe('Attias22');
+    expect(
+      notepad.baseLabel({ ...ATTIAS, alphaLabel: '', firstAuthor: null, authors: '', year: null })
+    ).toBe('attias2022quantum');
+  });
+
+  it('suffixes repeated labels by year, then title, as alpha.bst does', () => {
+    const labels = notepad.alphaLabels([
+      { ...ATTIAS, id: 'b', title: 'Second' },
+      { ...ATTIAS, id: 'a', title: 'First' },
+      { ...ATTIAS, id: 'old', year: 2021, alphaLabel: 'AS22' },
+      { ...ATTIAS, id: 'solo', alphaLabel: 'Jar97', year: 1997 },
+    ]);
+    expect(labels.get('old')).toBe('[AS22a]');
+    expect(labels.get('a')).toBe('[AS22b]');
+    expect(labels.get('b')).toBe('[AS22c]');
+    expect(labels.get('solo')).toBe('[Jar97]');
   });
 
   it('resolves a key the item no longer has through its history', () => {
@@ -278,8 +293,8 @@ describe('notepad: editor and backlinks', () => {
       label: string;
     }[];
     expect(entries.map((e) => [e.key, e.pick, e.label])).toEqual([
-      ['attias2022quantum', true, 'Attias 2022'],
-      ['other2020', false, 'Attias 2022'],
+      ['attias2022quantum', true, '[AS22]'],
+      ['other2020', false, '[AS22]'],
     ]);
     expect(entries[0]!.aliases).toEqual(['attias2022']);
   });

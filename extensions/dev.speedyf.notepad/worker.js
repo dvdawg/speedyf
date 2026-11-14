@@ -3,7 +3,7 @@
 // SpeedyF keeps the file and draws the editor; this worker is what the
 // notepad knows about papers:
 //
-//   * What `@key` reads as ("Attias 2022"), and what the `@` picker offers
+//   * What `@key` reads as ("[AS22]", alpha.bst style), and what the `@` picker offers
 //     (the project's items), told to the editor with `editor.citations`. A
 //     key no item has now is looked up in the items' key history, so a cite
 //     key changed after a note cited it keeps working.
@@ -65,11 +65,57 @@ self.onmessage = (event) => {
 
 // ---------- what a citation reads as ----------
 
-/** "Attias 2022": the first author's family name and the year. */
-function label(item) {
+/** The base of an item's label: SpeedyF's alpha.bst-style label ("Jar97",
+ * "ZD24", "ABC+19"), else the first author and year, else the key. */
+function baseLabel(item) {
+  const alpha = (item.alphaLabel || '').trim();
+  if (alpha) return alpha;
   const who = item.firstAuthor || (item.authors || '').split(/[,&]| et al\./)[0].trim();
-  const name = who || (item.title || '').split(/\s+/).slice(0, 3).join(' ') || item.citeKey;
-  return item.year ? `${name} ${item.year}` : name;
+  if (who) return item.year ? `${who}${String(item.year).slice(-2)}` : who;
+  return item.citeKey;
+}
+
+/** 0 -> "a", 25 -> "z", 26 -> "aa". */
+function suffix(n) {
+  let out = '';
+  let k = n;
+  for (;;) {
+    out = String.fromCharCode(97 + (k % 26)) + out;
+    if (k < 26) return out;
+    k = Math.floor(k / 26) - 1;
+  }
+}
+
+/** Labels unique among `items` the way alpha.bst (and SpeedyF's graph)
+ * makes them: a label that repeats gets a, b, c in order of year (no year
+ * last), then title, then id. Returns id -> "[ZD24a]". */
+function alphaLabels(items) {
+  const groups = new Map();
+  for (const item of items) {
+    const base = baseLabel(item);
+    if (!groups.has(base)) groups.set(base, []);
+    groups.get(base).push(item);
+  }
+  const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+  const out = new Map();
+  for (const [base, group] of groups) {
+    if (group.length === 1) {
+      out.set(group[0].id, `[${base}]`);
+      continue;
+    }
+    group
+      .slice()
+      .sort((a, b) => {
+        if (a.year !== b.year) {
+          if (a.year === null || a.year === undefined) return 1;
+          if (b.year === null || b.year === undefined) return -1;
+          return a.year - b.year;
+        }
+        return cmp(a.title || '', b.title || '') || cmp(a.id, b.id);
+      })
+      .forEach((item, i) => out.set(item.id, `[${base}${suffix(i)}]`));
+  }
+  return out;
 }
 
 /** "Attias, Smith - 2022": the picker's second line. */
@@ -80,9 +126,17 @@ function detail(item) {
 /** The editor's citation entries: every item (so any key resolves), the
  * project's offered in the picker. */
 function citationEntries(items, projectId) {
+  // The project's items are suffixed among themselves, as the project's
+  // graph does, so a paper reads the same in both; any other item a note
+  // cites is suffixed among the rest.
+  const inProject = items.filter((item) => item.projectIds.includes(projectId));
+  const labels = new Map([
+    ...alphaLabels(items.filter((item) => !item.projectIds.includes(projectId))),
+    ...alphaLabels(inProject),
+  ]);
   return items.map((item) => ({
     key: item.citeKey,
-    label: label(item),
+    label: labels.get(item.id) || `[${item.citeKey}]`,
     title: item.title || '',
     detail: detail(item),
     pick: item.projectIds.includes(projectId),

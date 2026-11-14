@@ -26,9 +26,9 @@ _emphasis_, lists, quotes, `$x^2$` and `$$ ... $$` math, links and images.
 (Escape returns).
 
 - **@** opens a picker of the project's items; Enter inserts `@citekey`,
-  which reads "Attias 2022". Click it to open the paper. Items dragged in
+  which reads "[AS22]", the same alpha.bst-style label the graph shows. Click it to open the paper. Items dragged in
   from the Projects list land as `@a; @b`.
-- `[@citekey, p. 12]{box=72,310,240,28}` reads "Attias 2022, p. 12" and opens
+- `[@citekey, p. 12]{box=72,310,240,28}` reads "[AS22, p. 12]" and opens
   the paper at that place on page 12.
 - A cite key that changes later keeps working: the item remembers the keys it
   had. A key no item has stays as you wrote it, muted.

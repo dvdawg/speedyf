@@ -939,7 +939,12 @@ function CiteToken(props: {
   const text = () => {
     const e = entry();
     if (!e) return props.raw;
-    return props.cite.locator ? `${e.label}, ${props.cite.locator}` : e.label;
+    const locator = props.cite.locator;
+    if (!locator) return e.label;
+    // A bracketed label takes the locator inside: "[ZD24a, p. 12]".
+    return /^\[.*\]$/.test(e.label)
+      ? `${e.label.slice(0, -1)}, ${locator}]`
+      : `${e.label}, ${locator}`;
   };
   return (
     <button
