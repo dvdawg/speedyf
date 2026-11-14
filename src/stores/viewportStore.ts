@@ -42,9 +42,6 @@ export type ScrollRequest =
       settle?: boolean;
       /** horizontal scroll to restore alongside (Back/Forward) */
       left?: number;
-      /** x of what the jump aims at, in display page points, when known (a
-       * search hit, a link destination): column zoom lands in its column */
-      focusX?: number;
       seq: number;
     }
   | { kind: 'position'; top: number; left: number; seq: number };
@@ -61,13 +58,13 @@ export function clampZoom(z: number): number {
 export interface ViewportStore {
   state: ViewportState;
   setState: SetStoreFunction<ViewportState>;
-  requestScrollToPage(page: number, offsetCss?: number, focusX?: number): void;
+  requestScrollToPage(page: number, offsetCss?: number): void;
   /** Restores a remembered reading position once the initial fit has settled. */
   requestRestorePosition(page: number, fraction: number): void;
   requestScrollToPosition(top: number, left: number): void;
   /** Returns to an exact view: `fraction` down `page`, and `left` across.
    * Resolved against the layout when applied, so it holds after a zoom. */
-  requestRestoreView(page: number, fraction: number, left: number, focusX?: number): void;
+  requestRestoreView(page: number, fraction: number, left: number): void;
   /** Returns and clears the pending request. Scroll requests are one-shot commands. */
   takeScrollRequest(): ScrollRequest | null;
   rotateView(): void;
@@ -104,13 +101,12 @@ export function createViewportStore(): ViewportStore {
     },
     setState,
 
-    requestScrollToPage(page: number, offsetCss?: number, focusX?: number) {
+    requestScrollToPage(page: number, offsetCss?: number) {
       setState('scrollRequest', {
         kind: 'page',
         page,
         seq: ++scrollSeq,
         ...(offsetCss !== undefined ? { offsetCss } : {}),
-        ...(focusX !== undefined ? { focusX } : {}),
       });
     },
 
@@ -124,14 +120,13 @@ export function createViewportStore(): ViewportStore {
       });
     },
 
-    requestRestoreView(page: number, fraction: number, left: number, focusX?: number) {
+    requestRestoreView(page: number, fraction: number, left: number) {
       setState('scrollRequest', {
         kind: 'page',
         page,
         fraction,
         left: Math.max(0, left),
         seq: ++scrollSeq,
-        ...(focusX !== undefined ? { focusX } : {}),
       });
     },
 
@@ -160,7 +155,6 @@ export function createViewportStore(): ViewportStore {
               ...(request.fraction !== undefined ? { fraction: request.fraction } : {}),
               ...(request.settle !== undefined ? { settle: request.settle } : {}),
               ...(request.left !== undefined ? { left: request.left } : {}),
-              ...(request.focusX !== undefined ? { focusX: request.focusX } : {}),
             }
           : { kind: 'position', top: request.top, left: request.left, seq: request.seq };
       setState('scrollRequest', null);
