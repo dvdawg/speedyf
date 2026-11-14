@@ -83,3 +83,20 @@ export function titleLookupRequested(): string | null {
 export function takeTitleLookupRequest(): void {
   setTitleLookup(null);
 }
+
+const [details, setDetails] = createSignal(false);
+
+/** Asks a narrow screen to unfold its detail column (where a project's
+ * notepad shows), now or when the screen next mounts. A wide one shows it
+ * anyway and just consumes the request. */
+export function requestDetails(): void {
+  setDetails(true);
+}
+
+export function detailsRequested(): boolean {
+  return details();
+}
+
+export function takeDetailsRequest(): void {
+  setDetails(false);
+}

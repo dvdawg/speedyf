@@ -1,12 +1,9 @@
-/** List | Graph | (an extension's project views, e.g. Notepad): which view
- * of the scope the middle column shows. In the list and graph it sits in the
- * column's own head; an extension's view hides that head (its BibTeX and
- * lookup actions are about the list, not the writing), so the switch moves
- * up into the screen header beside the project's name. */
+/** List | Graph: which view of the scope the middle column shows, in the
+ * column's own head. Only these two: a project's notepad is not a view of
+ * its items but a page of its own, and lives in the detail column
+ * (ProjectPane.tsx). */
 import { For, Show } from 'solid-js';
-import { projectViews } from '../extensions/extensionStore';
-import { VIEW_PREFIX, activeProjectView } from '../extensions/surfaces';
-import { projectsStore as store, type ProjectsView } from './projectsStore';
+import { projectsStore as store, readView, type ProjectsView } from './projectsStore';
 
 const VIEWS: { id: ProjectsView; label: string }[] = [
   { id: 'list', label: 'List' },
@@ -24,28 +21,14 @@ export function graphable(): boolean {
 
 /** The view showing now. */
 export function currentView(): ProjectsView {
-  if (activeProjectView()) return store.state.view;
-  const chosen = store.state.view.startsWith(VIEW_PREFIX) ? 'list' : store.state.view;
-  return graphable() ? chosen : 'list';
-}
-
-function viewOptions(): { id: ProjectsView; label: string }[] {
-  return store.state.scope.kind === 'project' && !store.state.person && !store.state.focus
-    ? [
-        ...VIEWS,
-        ...projectViews().map((v) => ({
-          id: `${VIEW_PREFIX}${v.id}` as ProjectsView,
-          label: v.title,
-        })),
-      ]
-    : VIEWS;
+  return graphable() ? readView(store.state.view) : 'list';
 }
 
 export default function ViewToggle() {
   return (
     <Show when={graphable()}>
       <div class="projects-launch-toggle paper-view-toggle" role="radiogroup" aria-label="View">
-        <For each={viewOptions()}>
+        <For each={VIEWS}>
           {(option) => (
             <button
               type="button"

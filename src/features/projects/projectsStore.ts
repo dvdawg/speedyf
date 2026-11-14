@@ -70,7 +70,14 @@ export function filterFor(scope: Scope, query: string): PaperFilter {
 
 /** How the middle column shows a project or All items: rows, or the
  * citation graph between them. */
-export type ProjectsView = 'list' | 'graph' | `ext:${string}`;
+export type ProjectsView = 'list' | 'graph';
+
+/** A view name as stored or asked for, read back: anything but the graph is
+ * the list. An extension's notepad was once a view (`ext:...`); it lives in
+ * the detail column now, so such a value lands on the list. */
+export function readView(view: string | null | undefined): ProjectsView {
+  return view === 'graph' ? 'graph' : 'list';
+}
 
 export function sameScope(a: Scope, b: Scope): boolean {
   return a.kind === b.kind && (a.kind !== 'project' || b.kind !== 'project' || a.id === b.id);
@@ -654,8 +661,8 @@ export const projectsStore = {
     setState('collapsed', projectId, (folded) => !folded);
   },
 
-  setView(view: ProjectsView): void {
-    setState({ view, missingList: false });
+  setView(view: ProjectsView | string): void {
+    setState({ view: readView(view), missingList: false });
   },
 
   /* ---- writes. Each is answered by library:changed, which refreshes. ---- */

@@ -1,6 +1,6 @@
 /** Where extension editors appear: the reader's right-hand drawer
- * (`readerPanes`) and a view of a project on the Projects screen
- * (`projectViews`).
+ * (`readerPanes`) and a project's pane on the Projects screen
+ * (`projectViews`), shown in the detail column while no item is selected.
  *
  * The drawer is window-level: whether it is open is this window's, kept
  * while moving between papers (it shows whenever the paper on screen meets
@@ -12,6 +12,7 @@ import { settings, updateSettings } from '../../stores/settings';
 import { activeTab } from '../../stores/tabsStore';
 import { goHome } from '../document/tabsController';
 import { projectsStore } from '../projects/projectsStore';
+import { requestDetails } from '../projects/screenIntents';
 import { projectViews, readerPanes } from './extensionStore';
 import { chooseProjectFor, noteOrigin, readerItem } from './readerContext';
 import { revealInEditor } from './editorHost';
@@ -107,11 +108,16 @@ export function switchReaderProject(projectId: string): void {
 
 /* ---- the Projects screen ---- */
 
-export const VIEW_PREFIX = 'ext:';
+/** The pane `openProjectView` last asked for, when several extensions
+ * contribute one; otherwise the first offered. Window-level, like the
+ * drawer. */
+const [chosenProjectPane, setChosenProjectPane] = createSignal<string | null>(null);
 
-/** Show a view of a project on the Projects screen: `projectId`'s, or the
- * selected project's when none is named. At `offset` in its note when
- * given. Returns false when there is no project to show it for. */
+/** Show an extension's pane of a project (a notepad) on the Projects
+ * screen: `projectId`'s, or the selected project's when none is named. It
+ * lives in the detail column while no item is selected, so the selection
+ * is let go. At `offset` in its note when given. Returns false when there
+ * is no project to show it for. */
 export function openProjectView(
   viewId: string,
   projectId: string | null,
@@ -120,33 +126,39 @@ export function openProjectView(
   const scope = projectsStore.state.scope;
   const target = projectId ?? (scope.kind === 'project' ? scope.id : null);
   if (!target) return false;
+  const view = projectViews().find((v) => v.id === viewId);
+  if (!view) return false;
   if (scope.kind !== 'project' || scope.id !== target) {
     projectsStore.setScope({ kind: 'project', id: target });
   }
-  projectsStore.setView(`${VIEW_PREFIX}${viewId}`);
+  projectsStore.leavePerson();
+  projectsStore.leaveFocus();
+  projectsStore.select(null);
+  projectsStore.selectGhost(null);
+  setChosenProjectPane(viewId);
+  requestDetails();
   if (settings.launchScreen !== 'projects') updateSettings({ launchScreen: 'projects' });
   goHome();
   if (offset !== undefined) {
-    const [extensionId] = viewId.split('/');
-    const view = projectViews().find((v) => v.id === viewId)?.editor.file;
-    if (extensionId && view) {
-      revealInEditor({ extensionId, projectId: target, file: view }, offset);
-    }
+    revealInEditor(
+      { extensionId: view.extensionId, projectId: target, file: view.editor.file },
+      offset
+    );
   }
   return true;
 }
 
-/** The extension view the Projects middle column shows, when it shows one:
- * only for a project (not All items, Not filed, Other PDFs, Health or New),
- * and only while its extension is usable. */
-export function activeProjectView() {
-  const view = projectsStore.state.view;
-  if (!view.startsWith(VIEW_PREFIX)) return null;
+/** The extension pane the Projects detail column offers for the scope:
+ * only for a project (not All items, Not filed, Other PDFs, Health or New,
+ * nor a person's items or a graph focus), and only while its extension is
+ * usable. Whether it shows depends on the selection too (ProjectPane.tsx). */
+export function projectPane() {
   const scope = projectsStore.state.scope;
   if (scope.kind !== 'project' || projectsStore.state.person || projectsStore.state.focus) {
     return null;
   }
-  const id = view.slice(VIEW_PREFIX.length);
-  const found = projectViews().find((v) => v.id === id);
+  const views = projectViews();
+  const chosen = chosenProjectPane();
+  const found = (chosen ? views.find((v) => v.id === chosen) : undefined) ?? views[0];
   return found ? { view: found, projectId: scope.id } : null;
 }

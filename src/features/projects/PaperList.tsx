@@ -17,7 +17,8 @@
  *
  * A row pressed and pulled becomes a pointer drag (pointerDrag.ts) carrying
  * the multi-selection it is part of, or itself; it lands on a project row in
- * the left column. Not HTML5 drag and drop: see pointerDrag.ts for why. */
+ * the left column, or on the project's notepad in the right one, where it
+ * becomes citations. Not HTML5 drag and drop: see pointerDrag.ts for why. */
 import {
   createEffect,
   createMemo,
@@ -49,8 +50,9 @@ import { projectsStore } from './projectsStore';
 import { PersonBar } from './PersonScope';
 import { registerMergeRequest } from './screenIntents';
 import MathText from '../../components/MathText';
-import NoteEditor from '../extensions/editor/NoteEditor';
-import { activeProjectView } from '../extensions/surfaces';
+import { citeText, noteDropAt, type NoteDropTarget } from '../extensions/editor/noteDrop';
+import { backToProjectPane, shownProjectPane } from './ProjectPane';
+import { projectPane } from '../extensions/surfaces';
 import ViewToggle, { currentView } from './ViewToggle';
 
 /** The group every paper with no project falls into under All papers. Not a
@@ -124,8 +126,6 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
   };
   /** A project and All items have a graph; Not filed and Other PDFs are
    * selections with no citations to show between them, so they list. */
-  /** An extension's view of the project (a notepad), when one is chosen. */
-  const extView = () => activeProjectView();
   const view = currentView;
   /** The other projects a row is in; nothing under Not filed or Other PDFs. */
   const alsoText = (item: { row: PaperRow; groupId?: string }) => {
@@ -319,14 +319,51 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
     return false;
   };
 
+  /** The cite keys of dragged rows, in list order; a record that is not a
+   * paper is not cited. */
+  const citeKeysOf = (ids: string[]) => {
+    const wanted = new Set(ids);
+    const seen = new Set<string>();
+    const keys: string[] = [];
+    for (const row of sortedRows()) {
+      if (!wanted.has(row.id) || seen.has(row.id) || !row.isPaper || !row.citeKey) continue;
+      seen.add(row.id);
+      keys.push(row.citeKey);
+    }
+    return keys;
+  };
+
+  type RowDrop =
+    { kind: 'project'; id: string } | { kind: 'note'; note: NoteDropTarget; x: number; y: number };
+
   const onRowPointerDown = (row: PaperRow, e: PointerEvent) => {
     const ids = draggedIds(row);
-    beginPointerDrag(e, {
+    beginPointerDrag<RowDrop>(e, {
       label: ids.length === 1 ? row.title : `${ids.length} items`,
-      targetAt: (x, y) => projectRowAt(x, y)?.id ?? null,
-      onHover: (id) => setDropHover(id === null ? null : { kind: 'into', id }),
-      onDrop: (id) => dropInto(ids, id),
+      targetAt: (x, y) => {
+        const project = projectRowAt(x, y);
+        if (project) return { kind: 'project', id: project.id };
+        // Only the project's own notepad, showing beside the list.
+        const note = shownProjectPane() ? noteDropAt(x, y) : null;
+        return note && citeKeysOf(ids).length > 0 ? { kind: 'note', note, x, y } : null;
+      },
+      onHover: (target) =>
+        setDropHover(target?.kind === 'project' ? { kind: 'into', id: target.id } : null),
+      onDrop: (target) => {
+        if (target.kind === 'project') dropInto(ids, target.id);
+        else target.note.insertAt(target.x, target.y, citeText(citeKeysOf(ids)));
+      },
     });
+  };
+
+  /** A click on empty space in the list lets the selection go, back to the
+   * project's notepad; only while there is one to go back to. */
+  const onListClick = (e: MouseEvent) => {
+    if ((e.target as HTMLElement).closest('.paper-row, .paper-group-head, button, a')) return;
+    if (!projectPane()) return;
+    setMulti([]);
+    anchor = null;
+    backToProjectPane();
   };
 
   const moveTo = (next: number, extend: boolean) => {
@@ -458,172 +495,158 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
 
   return (
     <>
-      <Show when={!extView()}>
-        <div class="paper-list-head">
-          <Show when={project() || (lookupScope() && settings.onlineLookup)}>
-            <div class="paper-list-project">
-              <Show when={project()}>
-                {(p) => (
-                  <>
-                    <Show
-                      when={p().bibPath}
-                      fallback={<span class="paper-list-bib is-none">no .bib</span>}
-                    >
-                      {(path) => (
-                        <span class="paper-list-bib" title={path()}>
-                          {baseName(path())}
-                        </span>
-                      )}
-                    </Show>
-                    <Show when={p().incompleteCount > 0}>
-                      <span class="paper-list-incomplete sb-warn">
-                        {p().incompleteCount} incomplete
+      <div class="paper-list-head">
+        <Show when={project() || (lookupScope() && settings.onlineLookup)}>
+          <div class="paper-list-project">
+            <Show when={project()}>
+              {(p) => (
+                <>
+                  <Show
+                    when={p().bibPath}
+                    fallback={<span class="paper-list-bib is-none">no .bib</span>}
+                  >
+                    {(path) => (
+                      <span class="paper-list-bib" title={path()}>
+                        {baseName(path())}
                       </span>
-                    </Show>
-                  </>
-                )}
-              </Show>
-              <span class="paper-list-spacer" />
-              <Show when={settings.onlineLookup && lookupScope()}>
-                {(target) => (
-                  <>
-                    <Show when={batch()}>
-                      {(b) => <span class="paper-list-batch">{batchSummary(b())}</span>}
-                    </Show>
-                    <button
-                      type="button"
-                      class="secondary-btn"
-                      disabled={lookingUp()}
-                      title={
-                        target().kind === 'project'
-                          ? 'Fetch metadata for every item here that has a DOI or arXiv id'
-                          : 'Fetch metadata for every item: by DOI or arXiv id, else by title'
-                      }
-                      onClick={() => void lookUpAll()}
-                    >
-                      {lookingUp() ? 'Looking up...' : 'Look up all'}
-                    </button>
-                  </>
-                )}
-              </Show>
-              <Show when={project()}>
-                {(p) => (
-                  <>
-                    <button type="button" class="secondary-btn" onClick={() => void exportBib(p())}>
-                      Export .bib...
-                    </button>
-                    <button type="button" class="secondary-btn" onClick={() => void syncBib(p())}>
-                      Sync .bib...
-                    </button>
-                  </>
-                )}
-              </Show>
-            </div>
-          </Show>
-          <div class="paper-list-view">
-            <ViewToggle />
-            {/* The search filters rows; the graph is the whole scope, so under
-              it the field would promise something it does not do. */}
-            <Show when={view() === 'list' && !health()}>
-              <div class="library-search-field paper-search">
-                <IconSearch />
-                <input
-                  type="text"
-                  placeholder="Search title, authors, year, key..."
-                  aria-label="Search items"
-                  value={store.state.query}
-                  onInput={(e) => store.setQuery(e.currentTarget.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Escape' && hasQuery()) {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      store.setQuery('');
-                    } else if (e.key === 'ArrowDown' || e.key === 'Enter') {
-                      e.preventDefault();
-                      focusItem(current());
-                    }
-                  }}
-                />
-                <Show when={hasQuery()}>
+                    )}
+                  </Show>
+                  <Show when={p().incompleteCount > 0}>
+                    <span class="paper-list-incomplete sb-warn">
+                      {p().incompleteCount} incomplete
+                    </span>
+                  </Show>
+                </>
+              )}
+            </Show>
+            <span class="paper-list-spacer" />
+            <Show when={settings.onlineLookup && lookupScope()}>
+              {(target) => (
+                <>
+                  <Show when={batch()}>
+                    {(b) => <span class="paper-list-batch">{batchSummary(b())}</span>}
+                  </Show>
                   <button
                     type="button"
-                    class="library-search-clear"
-                    aria-label="Clear the search"
-                    onClick={() => store.setQuery('')}
+                    class="secondary-btn"
+                    disabled={lookingUp()}
+                    title={
+                      target().kind === 'project'
+                        ? 'Fetch metadata for every item here that has a DOI or arXiv id'
+                        : 'Fetch metadata for every item: by DOI or arXiv id, else by title'
+                    }
+                    onClick={() => void lookUpAll()}
                   >
-                    <IconClose />
+                    {lookingUp() ? 'Looking up...' : 'Look up all'}
                   </button>
-                </Show>
-              </div>
-              <Show when={sortable()}>
-                <button
-                  type="button"
-                  class="paper-sort-btn"
-                  title="Sort by: Default, Year, Title, or how many items here cite each"
-                  onClick={() => store.setSort(nextSort(store.state.sort))}
-                >
-                  Sort: {SORT_LABEL[store.state.sort]}
-                </button>
-              </Show>
-              <Show when={triage() && store.state.rows.length > 1 && !hasQuery()}>
-                <button
-                  type="button"
-                  class="paper-sort-btn"
-                  title="Mark every new item done without filing it"
-                  onClick={() => void store.markReviewed(store.state.rows.map((r) => r.id))}
-                >
-                  All done
-                </button>
-              </Show>
-              <Show when={multi().length >= 1 && !merging()}>
-                <button
-                  type="button"
-                  class="secondary-btn paper-cite-btn"
-                  title={"Copy \\cite{...} with the selected items' keys, in list order"}
-                  onClick={() => void copySelectionCite()}
-                >
-                  {citeCopied() ? 'Copied' : 'Copy \\cite{}'}
-                </button>
-              </Show>
-              <Show when={multi().length >= 2 && !merging()}>
-                <button
-                  type="button"
-                  class="secondary-btn paper-merge-btn"
-                  title="Fold these records into one: the first selected is kept"
-                  onClick={() => setMerging(multi().slice())}
-                >
-                  Merge {multi().length} items
-                </button>
-              </Show>
+                </>
+              )}
+            </Show>
+            <Show when={project()}>
+              {(p) => (
+                <>
+                  <button type="button" class="secondary-btn" onClick={() => void exportBib(p())}>
+                    Export .bib...
+                  </button>
+                  <button type="button" class="secondary-btn" onClick={() => void syncBib(p())}>
+                    Sync .bib...
+                  </button>
+                </>
+              )}
             </Show>
           </div>
-          <Show when={view() === 'list' && merging()}>
-            {(ids) => (
-              <MergeConfirm
-                ids={ids()}
-                onCancel={() => setMerging(null)}
-                onDone={() => {
-                  setMerging(null);
-                  setMulti([]);
-                  anchor = null;
+        </Show>
+        <div class="paper-list-view">
+          <ViewToggle />
+          {/* The search filters rows; the graph is the whole scope, so under
+              it the field would promise something it does not do. */}
+          <Show when={view() === 'list' && !health()}>
+            <div class="library-search-field paper-search">
+              <IconSearch />
+              <input
+                type="text"
+                placeholder="Search title, authors, year, key..."
+                aria-label="Search items"
+                value={store.state.query}
+                onInput={(e) => store.setQuery(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape' && hasQuery()) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    store.setQuery('');
+                  } else if (e.key === 'ArrowDown' || e.key === 'Enter') {
+                    e.preventDefault();
+                    focusItem(current());
+                  }
                 }}
               />
-            )}
+              <Show when={hasQuery()}>
+                <button
+                  type="button"
+                  class="library-search-clear"
+                  aria-label="Clear the search"
+                  onClick={() => store.setQuery('')}
+                >
+                  <IconClose />
+                </button>
+              </Show>
+            </div>
+            <Show when={sortable()}>
+              <button
+                type="button"
+                class="paper-sort-btn"
+                title="Sort by: Default, Year, Title, or how many items here cite each"
+                onClick={() => store.setSort(nextSort(store.state.sort))}
+              >
+                Sort: {SORT_LABEL[store.state.sort]}
+              </button>
+            </Show>
+            <Show when={triage() && store.state.rows.length > 1 && !hasQuery()}>
+              <button
+                type="button"
+                class="paper-sort-btn"
+                title="Mark every new item done without filing it"
+                onClick={() => void store.markReviewed(store.state.rows.map((r) => r.id))}
+              >
+                All done
+              </button>
+            </Show>
+            <Show when={multi().length >= 1 && !merging()}>
+              <button
+                type="button"
+                class="secondary-btn paper-cite-btn"
+                title={"Copy \\cite{...} with the selected items' keys, in list order"}
+                onClick={() => void copySelectionCite()}
+              >
+                {citeCopied() ? 'Copied' : 'Copy \\cite{}'}
+              </button>
+            </Show>
+            <Show when={multi().length >= 2 && !merging()}>
+              <button
+                type="button"
+                class="secondary-btn paper-merge-btn"
+                title="Fold these records into one: the first selected is kept"
+                onClick={() => setMerging(multi().slice())}
+              >
+                Merge {multi().length} items
+              </button>
+            </Show>
           </Show>
         </div>
-      </Show>
-
-      <Show when={extView()} keyed>
-        {(current) => (
-          <NoteEditor
-            extensionId={current.view.extensionId}
-            projectId={current.projectId}
-            editor={current.view.editor}
-            class="is-project-view"
-            placeholder="Empty. Write here; @ cites an item of this project."
-          />
-        )}
-      </Show>
+        <Show when={view() === 'list' && merging()}>
+          {(ids) => (
+            <MergeConfirm
+              ids={ids()}
+              onCancel={() => setMerging(null)}
+              onDone={() => {
+                setMerging(null);
+                setMulti([]);
+                anchor = null;
+              }}
+            />
+          )}
+        </Show>
+      </div>
       <Show when={view() === 'graph' && !store.state.missingList}>
         <GraphView onMoveFocus={props.onMoveFocus} />
       </Show>
@@ -641,6 +664,7 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
           role={grouped() ? 'tree' : 'listbox'}
           aria-label="Items"
           onKeyDown={onKeyDown}
+          onClick={onListClick}
         >
           <Show
             when={sourceRows().length > 0 && rowItems().length > 0}

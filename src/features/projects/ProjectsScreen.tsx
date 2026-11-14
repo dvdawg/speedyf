@@ -10,17 +10,23 @@
  * tabindex 0, which is what each column's roving tabindex maintains. Nothing
  * listens on the window.
  *
+ * The detail column's left edge drags to resize it (pointer events, as
+ * everywhere on this screen; see pointerDrag.ts), the middle column taking
+ * up the difference; the width is remembered (detailWidth.ts). Under a
+ * project with nothing selected the column holds the project's notepad
+ * (ProjectPane.tsx).
+ *
  * The store is initialized here and never disposed: it subscribes to
  * library:changed once, and the reader's Paper panel shares it. */
-import { createSignal, onCleanup, onMount, Show } from 'solid-js';
+import { createEffect, createSignal, onCleanup, onMount, Show } from 'solid-js';
 import LaunchToggle from './LaunchToggle';
-import PaperDetail from './PaperDetail';
+import DetailColumn from './ProjectPane';
 import PaperList from './PaperList';
-import ViewToggle from './ViewToggle';
 import ProjectsColumn from './ProjectsColumn';
+import { detailWidth, setDetailWidth } from './detailWidth';
 import { healthCount, projectsStore } from './projectsStore';
+import { detailsRequested, takeDetailsRequest } from './screenIntents';
 import { IconClose } from '../../components/icons';
-import { activeProjectView } from '../extensions/surfaces';
 
 /** Below this the detail column folds behind a Details button; the sidebar
  * on Home is 240px and the same breakpoint is used there. */
@@ -41,6 +47,39 @@ export default function ProjectsScreen() {
     query.addEventListener('change', update);
     onCleanup(() => query.removeEventListener('change', update));
   });
+
+  // Open Notepad and its kin ask for the detail column; a narrow window
+  // unfolds it.
+  createEffect(() => {
+    if (!detailsRequested()) return;
+    takeDetailsRequest();
+    if (narrow()) setDetailsOpen(true);
+  });
+
+  let detailColumn: HTMLElement | undefined;
+  const startResize = (e: PointerEvent) => {
+    if (e.button !== 0 || !detailColumn) return;
+    e.preventDefault();
+    const right = detailColumn.getBoundingClientRect().right;
+    const move = (ev: PointerEvent) => setDetailWidth(right - ev.clientX);
+    const finish = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
+      document.body.classList.remove('is-resizing-sidebar');
+    };
+    document.body.classList.add('is-resizing-sidebar');
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
+  };
+  const onResizeKey = (e: KeyboardEvent) => {
+    const step = e.shiftKey ? 40 : 10;
+    if (e.key === 'ArrowLeft') setDetailWidth(detailWidth() + step);
+    else if (e.key === 'ArrowRight') setDetailWidth(detailWidth() - step);
+    else return;
+    e.preventDefault();
+  };
 
   const focusColumn = (index: number) => {
     const column = columns[index];
@@ -106,9 +145,6 @@ export default function ProjectsScreen() {
       classList={{
         'is-narrow': narrow(),
         'is-details-open': detailsOpen(),
-        // An extension's view of the project (a notepad) takes the middle
-        // and right columns together.
-        'is-wide-view': activeProjectView() !== null,
       }}
     >
       <header class="projects-head">
@@ -127,11 +163,6 @@ export default function ProjectsScreen() {
           )}
         </Show>
         <span class="projects-head-spacer" />
-        {/* In an extension's view (the notepad) the column's own head, with
-            the switch, is hidden; the switch lives here instead. */}
-        <Show when={activeProjectView() !== null}>
-          <ViewToggle />
-        </Show>
         <Show when={narrow()}>
           <button
             type="button"
@@ -176,7 +207,7 @@ export default function ProjectsScreen() {
           </div>
         )}
       </Show>
-      <div class="projects-columns">
+      <div class="projects-columns" style={{ '--detail-width': `${detailWidth()}px` }}>
         <section
           class="projects-col projects-col-projects"
           aria-label="Projects"
@@ -200,9 +231,22 @@ export default function ProjectsScreen() {
           aria-label="Item"
           ref={(el) => {
             columns[2] = el;
+            detailColumn = el;
           }}
         >
-          <PaperDetail onMoveFocus={(dir) => moveFocus(2, dir)} />
+          <Show when={!narrow()}>
+            <div
+              class="projects-detail-resize"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize the detail column"
+              aria-valuenow={detailWidth()}
+              tabindex="-1"
+              onPointerDown={startResize}
+              onKeyDown={onResizeKey}
+            />
+          </Show>
+          <DetailColumn onMoveFocus={(dir) => moveFocus(2, dir)} />
         </section>
       </div>
     </div>
