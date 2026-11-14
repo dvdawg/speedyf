@@ -302,7 +302,15 @@ things no extension could have before. Each was built generic:
   equation action gets, and takes its `ui.showMath` answer as the result
   instead of showing it. Math to LaTeX is the provider and changed nothing
   but its manifest. No converter enabled, or it fails, and the answer is
-  `null` - the consumer falls back.
+  `null` - the consumer falls back. Later (implemented): the consumer may ask
+  for `mode: 'local'` (no network, fast) or `mode: 'exact'` (only an exact
+  source online, slow, nothing when none), so Notepad inserts at once and
+  upgrades in place; each conversion carries a `ticket` the converter echoes
+  in `ui.showMath`, so two in flight never swap answers; and the core sends
+  the enabled converter one `{ mode: 'prefetch' }` per document when the
+  pointer first reveals an equation button, so the source download starts
+  before the click. Enabling the converter is the consent to its hosts; a
+  disabled one is never told.
 - **`render:region`** - the narrow form of `render:read`: a PNG only of what
   the user pointed at (`region.capture`, a rectangle they drag; or
   `equations.snapshot`, the equation they clicked).
@@ -318,7 +326,9 @@ extension. Instead the vocabulary gains exactly one primitive, an **editor**:
 a pane or project view declares `editor: { file, command }`, and SpeedyF
 draws a Markdown editor bound to that project file. The extension stays the
 brains - it is invoked with editor events (`citations`, `activate`) and
-answers through `editor.citations`, `editor.insert` and `editor.reveal` - while
+answers through `editor.citations`, `editor.insert`, `editor.replace` (the
+first exact occurrence, one undoable edit through the note's single-owner
+session, `false` when the user has changed it) and `editor.reveal` - while
 it still cannot touch the DOM (principle 1), the editor matches the app
 (principle 2), and the binding is to a file and a dialect, not to the
 editor's internals (principle 3). The iframe pane stays v3 and unbuilt
