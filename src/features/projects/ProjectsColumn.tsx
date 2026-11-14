@@ -16,7 +16,7 @@
  * tabindex: the active scope is the one row in the tab order, and arrows
  * move the scope itself, the way a sidebar does. */
 import { createEffect, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
-import { IconMore, IconPlus } from '../../components/icons';
+import { IconImport, IconMore, IconPlus } from '../../components/icons';
 import type { Project } from '../../types/engine';
 import { exportBib, exportBundle, importBundle, stopSyncingBib, syncBib } from './bibActions';
 import { dropHover, reorderSlotAt, setDropHover } from './dnd';
@@ -24,6 +24,7 @@ import { beginPointerDrag } from './pointerDrag';
 import { healthCount, projectsStore, sameScope } from './projectsStore';
 import type { Scope } from './projectsStore';
 import { newProjectRequested, takeNewProjectRequest } from './screenIntents';
+import { projectViews } from '../extensions/extensionStore';
 
 /** A text field that commits on Enter or blur and cancels on Escape. Used for
  * renaming and for naming a new project, so the two cannot behave
@@ -193,10 +194,22 @@ export default function ProjectsColumn(props: { onMoveFocus: (dir: -1 | 1) => vo
   const focusRow = (index: number) =>
     list.querySelector<HTMLElement>(`[data-index="${index}"]`)?.focus();
 
+  /** Go to a scope. Going to another project shows its notepad, when an
+   * extension offers one: the item picked elsewhere is let go. */
+  const enter = (scope: Scope) => {
+    if (scope.kind === 'project' && !sameScope(scope, store.state.scope)) {
+      if (projectViews().length > 0) {
+        store.select(null);
+        store.selectGhost(null);
+      }
+    }
+    store.setScope(scope);
+  };
+
   const move = (delta: number) => {
     const all = scopes();
     const next = Math.max(0, Math.min(all.length - 1, activeIndex() + delta));
-    store.setScope(all[next]!);
+    enter(all[next]!);
     focusRow(next);
   };
 
@@ -283,7 +296,7 @@ export default function ProjectsColumn(props: { onMoveFocus: (dir: -1 | 1) => vo
       tabindex={isActive(scope) ? 0 : -1}
       data-index={index}
       title={title}
-      onClick={() => store.setScope(scope)}
+      onClick={() => enter(scope)}
     >
       <span class="projects-row-name">{label}</span>
       <span class="projects-row-count">{count}</span>
@@ -356,7 +369,7 @@ export default function ProjectsColumn(props: { onMoveFocus: (dir: -1 | 1) => vo
                 tabindex={active() ? 0 : -1}
                 data-index={index() + fixedCount()}
                 data-drop-project={project.id}
-                onClick={() => store.setScope(scope())}
+                onClick={() => enter(scope())}
                 onDblClick={() => setRenaming(project.id)}
                 onPointerDown={(e) => onRowPointerDown(project, e)}
               >
@@ -449,13 +462,16 @@ export default function ProjectsColumn(props: { onMoveFocus: (dir: -1 | 1) => vo
               <button type="button" class="projects-new" onClick={() => setCreating(true)}>
                 <IconPlus /> New project
               </button>
+              {/* Rare, so an icon on the same line; also Import Project
+                  Bundle... in the palette. */}
               <button
                 type="button"
-                class="projects-new projects-import"
-                title="Make a project from a bundle someone exported: its PDFs, .bib and notepad"
+                class="projects-import"
+                aria-label="Import project bundle..."
+                title="Import project bundle...: a project someone exported, with its PDFs, .bib and notepad"
                 onClick={() => void importBundle()}
               >
-                Import bundle...
+                <IconImport />
               </button>
             </>
           }

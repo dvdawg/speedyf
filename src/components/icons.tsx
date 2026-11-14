@@ -289,3 +289,10 @@ export const IconDetachTab = () =>
       <path d="M6.5 2.5h-4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-4M9 1.5h5.5V7M7 9l7.5-7.5" />
     </>
   );
+/** An arrow into a tray: bring something in (a project bundle). */
+export const IconImport = () =>
+  base(
+    <>
+      <path d="M8 2v8M5 7l3 3 3-3M2.5 10.5v2a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-2" />
+    </>
+  );

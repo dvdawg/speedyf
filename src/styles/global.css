@@ -4453,8 +4453,71 @@ body.is-resizing-sidebar * {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr) 340px;
+  grid-template-columns: 220px minmax(0, 1fr) var(--detail-width, 400px);
   border-top: 1px solid var(--border);
+}
+
+.projects-col-detail {
+  position: relative;
+}
+
+/* The detail column's left edge: drag to resize. Nothing shows until the
+   pointer is on it. */
+.projects-detail-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 2;
+}
+
+.projects-detail-resize:hover,
+.projects-detail-resize:focus-visible {
+  background: var(--accent-soft);
+  outline: none;
+}
+
+/* An item's details under a project: one quiet line back to the note. */
+.project-pane-detail {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.project-pane-back {
+  flex: none;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  margin: 10px 12px 0;
+  padding: 2px 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.project-pane-back span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-pane-back:hover {
+  color: var(--text);
+}
+
+.project-pane-back:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .projects-col {
@@ -4686,6 +4749,8 @@ body.is-resizing-sidebar * {
 .projects-new-row {
   flex: none;
   display: flex;
+  align-items: center;
+  gap: 2px;
   padding: 4px 8px 10px;
 }
 
@@ -4693,7 +4758,8 @@ body.is-resizing-sidebar * {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   min-height: 28px;
   padding: 0 8px;
   border: none;
@@ -4702,6 +4768,7 @@ body.is-resizing-sidebar * {
   color: var(--text-dim);
   font: inherit;
   text-align: left;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -5278,7 +5345,7 @@ textarea.paper-field-input {
     bottom: 0;
     z-index: 3;
     display: flex;
-    width: 340px;
+    width: var(--detail-width, 400px);
     max-width: 85%;
     background: var(--bg);
     box-shadow: var(--shadow);
@@ -6648,18 +6715,30 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 
 /* ---------- extension editors: the reader's drawer and project views ---------- */
 
-/* An extension's view of a project (a notepad) takes the middle and right
-   columns together. */
-.projects-screen.is-wide-view .projects-columns {
-  grid-template-columns: 220px minmax(0, 1fr);
-}
-
-.projects-screen.is-wide-view .projects-col-detail {
-  display: none;
-}
-
+/* Import project bundle: an icon on the New project line. */
 .projects-import {
-  font-size: 12px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.projects-import:hover {
+  background: var(--bg-inset);
+  color: var(--text);
+}
+
+.projects-import:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .reader-pane {
@@ -6738,14 +6817,49 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   min-width: 0;
 }
 
+/* One quiet line, no rule under it: the title, then a dim Source toggle.
+   On the measure of the text below, so the title sits over the first line. */
 .note-editor-head {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 40em;
   min-height: 34px;
-  padding: 0 10px 0 14px;
-  border-bottom: 1px solid var(--border);
-  font-size: 13px;
+  margin: 0 auto;
+  padding: 8px 20px 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.note-editor-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-source-toggle {
+  padding: 2px 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.note-source-toggle:hover,
+.note-source-toggle[aria-pressed='true'] {
+  color: var(--text);
+}
+
+.note-source-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .note-editor-spacer {
@@ -6776,20 +6890,27 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   color: var(--text-dim);
 }
 
+.note-editor-scroll {
+  cursor: text;
+}
+
+/* A page: a reading measure, top-aligned, room to write below. */
 .note-blocks {
-  max-width: 46em;
+  box-sizing: border-box;
+  max-width: 40em;
   margin: 0 auto;
-  padding: 14px 18px 40vh;
+  padding: 10px 20px 40vh;
   color: var(--text);
   font-size: 14px;
   line-height: 1.55;
 }
 
 .note-editor.is-drawer .note-blocks {
-  padding: 12px 14px 30vh;
+  padding-bottom: 30vh;
 }
 
 .note-placeholder {
+  min-height: 1.55em;
   color: var(--text-dim);
   cursor: text;
 }
@@ -6838,6 +6959,27 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   overflow: hidden;
 }
 
+/* The line being edited is no box at all: no border, ring or fill, the
+   text's own font and line height, as tall as its lines. Only the caret
+   shows. The rule is stronger than the app's focus ring for fields. */
+.note-field,
+.note-field:focus,
+.note-field:focus-visible,
+.note-source:focus,
+.note-source:focus-visible {
+  border: none;
+  outline: none;
+  box-shadow: none;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.note-field::placeholder {
+  color: var(--text-dim);
+  opacity: 1;
+}
+
 .note-field.is-mono,
 .note-source {
   font-family: ui-monospace, Menlo, monospace;
@@ -6845,9 +6987,12 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 }
 
 .note-source {
+  box-sizing: border-box;
+  max-width: 40em;
   height: 100%;
   min-height: 100%;
-  padding: 14px 18px;
+  margin: 0 auto;
+  padding: 10px 20px;
   overflow: auto;
 }
 
