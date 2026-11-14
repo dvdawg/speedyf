@@ -22,7 +22,14 @@ import { wantsNewWindow } from '../windows/windowController';
 import { jumpToAnchor } from '../outline/jumpToAnchor';
 import { jumpToPage } from '../viewer/navHistory';
 import { flattenOutline } from '../outline/structureStore';
-import { closePalette, mostUsed, paletteOpen, recordUse, usesOf } from './paletteStore';
+import {
+  closePalette,
+  paletteOpen,
+  recentCommands,
+  recordRecent,
+  recordUse,
+  usesOf,
+} from './paletteStore';
 import { canonicalChord } from '../extensions/capabilities';
 import {
   documentTasks,
@@ -187,9 +194,9 @@ export default function CommandPalette() {
   const sections = createMemo<Section[]>(() => {
     const text = query();
     const base = candidates();
-    if (text.trim().length === 0) return defaultSections(base, mostUsed(8));
+    if (text.trim().length === 0) return defaultSections(base, recentCommands());
 
-    const ranked = rankCandidates(base, text, usesOf);
+    const ranked = rankCandidates(base, text, usesOf, undefined, recentCommands());
     const tab = activeTab();
     const pages = tab?.documentStore.state.pages.length ?? 0;
     const page = pageJumpTarget(text, pages);
@@ -272,6 +279,7 @@ export default function CommandPalette() {
     const row = rows()[index];
     if (!row || !row.enabled) return;
     recordUse(row.key);
+    recordRecent(row.key);
     closePalette();
     if (alt && row.runAlt) row.runAlt();
     else row.run();

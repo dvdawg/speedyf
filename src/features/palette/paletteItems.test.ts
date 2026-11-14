@@ -5,6 +5,8 @@ import {
   flatten,
   pageJumpTarget,
   rankCandidates,
+  RECENT_BOOST,
+  recencyBoost,
   type Candidate,
 } from './paletteItems';
 
@@ -330,5 +332,65 @@ describe('long prose does not match everything', () => {
     expect(titles(rows)).toContain('Next Tab');
     expect(titles(rows)).toContain('Close Tab');
     expect(titles(rows)[0]).toBe('Table of Contents');
+  });
+});
+
+describe('recent commands', () => {
+  const base = [
+    candidate({ title: 'Save' }),
+    candidate({ title: 'Print' }),
+    candidate({ title: 'Zoom In', group: 'View' }),
+    candidate({ title: 'Zoom Out', group: 'View' }),
+    candidate({ title: 'Fit Page', group: 'View' }),
+    candidate({ title: 'Fit Width', group: 'View' }),
+    candidate({ title: 'Delete Page', group: 'Page', enabled: false }),
+  ];
+
+  it('lists the last five run first, most recent first, then the usual list', () => {
+    const recent = ['Fit Width', 'Print', 'Zoom Out', 'Save', 'Fit Page', 'Zoom In'];
+    const sections = defaultSections(base, recent);
+    expect(sections[0]!.group).toBe('Recent');
+    expect(titles(sections[0]!.items)).toEqual([
+      'Fit Width',
+      'Print',
+      'Zoom Out',
+      'Save',
+      'Fit Page',
+    ]);
+    expect(titles(flatten(sections.slice(1)))).toEqual(['Zoom In']);
+  });
+
+  it('skips commands that are disabled or no longer exist', () => {
+    const sections = defaultSections(base, ['Delete Page', 'gone.command', 'Print']);
+    expect(titles(sections[0]!.items)).toEqual(['Print']);
+  });
+
+  it('breaks a near tie toward the more recent command', () => {
+    const pair = [candidate({ title: 'Zoom In' }), candidate({ title: 'Zoom Out' })];
+    expect(titles(flatten(rankCandidates(pair, 'zoom', none, 5, ['Zoom Out'])))[0]).toBe(
+      'Zoom Out'
+    );
+    expect(titles(flatten(rankCandidates(pair, 'zoom', none, 5, ['Zoom In'])))[0]).toBe('Zoom In');
+  });
+
+  it('never overrides a much better match', () => {
+    // 'pan' starts a word in "Show Paper Panel" and is scattered through
+    // "Expand All": the better match stays first even when the weaker one was
+    // run last, and both stay listed.
+    const pair = [candidate({ title: 'Show Paper Panel' }), candidate({ title: 'Expand All' })];
+    const better = matchScore('Show Paper Panel', undefined, 'pan')!;
+    const weaker = matchScore('Expand All', undefined, 'pan')!;
+    expect(better - weaker).toBeGreaterThan(RECENT_BOOST);
+    const rows = flatten(rankCandidates(pair, 'pan', none, 5, ['Expand All']));
+    expect(titles(rows)).toEqual(['Show Paper Panel', 'Expand All']);
+  });
+
+  it('bounds the boost and fades it with age', () => {
+    expect(recencyBoost(-1)).toBe(0);
+    expect(recencyBoost(0)).toBe(RECENT_BOOST);
+    expect(recencyBoost(1)).toBeLessThan(recencyBoost(0));
+    expect(recencyBoost(4)).toBeGreaterThan(0);
+    expect(recencyBoost(5)).toBe(0);
+    for (let i = 0; i < 10; i += 1) expect(recencyBoost(i)).toBeLessThanOrEqual(RECENT_BOOST);
   });
 });
