@@ -206,6 +206,9 @@ export interface ExtensionRecord {
   /** The bare command invoked to read an equation as LaTeX for whoever
    * asks the core (`equations.convert`). */
   equationConverter: string | null;
+  /** Whether that converter also reads a selection of prose and math as
+   * Markdown (`selection.convert`). */
+  selectionConverter: boolean;
   iconUrl: string | null;
   /** Why it cannot run: a bad manifest, or a worker that died. */
   error: string | null;
@@ -269,7 +272,7 @@ interface ExtensionDto {
           }[];
           projectViews?: { id: string; title: string; editor: ExtensionEditor }[];
           itemDetailLines?: { command: string } | null;
-          equationConverter?: { command: string } | null;
+          equationConverter?: { command: string; selections?: boolean } | null;
         };
       })
     | null;
@@ -328,7 +331,10 @@ export async function loadExtensions(): Promise<void> {
  * commands are. */
 function surfacesOf(
   dto: ExtensionDto
-): Pick<ExtensionRecord, 'readerPanes' | 'projectViews' | 'itemDetailLines' | 'equationConverter'> {
+): Pick<
+  ExtensionRecord,
+  'readerPanes' | 'projectViews' | 'itemDetailLines' | 'equationConverter' | 'selectionConverter'
+> {
   const contributes = dto.manifest?.contributes;
   return {
     readerPanes: (contributes?.readerPanes ?? []).map((pane) => ({
@@ -349,6 +355,7 @@ function surfacesOf(
     })),
     itemDetailLines: contributes?.itemDetailLines?.command ?? null,
     equationConverter: contributes?.equationConverter?.command ?? null,
+    selectionConverter: contributes?.equationConverter?.selections === true,
   };
 }
 
@@ -585,6 +592,161 @@ export async function convertEquation(
   }
   const got = answer as ConvertedEquation | null;
   return got ? { ...got, converter: extension.name } : null;
+}
+
+/** A selection read as Markdown: prose with its math as `$...$` and its
+ * displays as `$$ ... $$` lines. */
+export interface ConvertedSelection {
+  markdown: string;
+  source: ShowMathArgs['source'];
+  confidence: ShowMathArgs['confidence'];
+}
+
+/** Selection conversions waiting on a converter's `selection.converted`:
+ * by converter id, then by ticket. */
+const convertingSelections = new Map<string, Map<string, (answer: ConvertedSelection) => void>>();
+
+/** A selection as it was when a conversion was first asked for: what the
+ * converter reads (`selection.glyphs { selection }`), later too, when the
+ * page shows another selection or none. */
+interface SelectionSnapshot {
+  docId: number;
+  page: number;
+  rects: [number, number, number, number][];
+  text: string;
+}
+const snapshots = new Map<string, SelectionSnapshot>();
+/** How many snapshots are kept: a few sends' worth. */
+const SNAPSHOT_LIMIT = 16;
+let nextSnapshot = 1;
+
+/** Whitespace-insensitive: the text an action was handed, against the
+ * selection's. */
+const sameText = (a: string, b: string) =>
+  a.replace(/\s+/g, ' ').trim() === b.replace(/\s+/g, ' ').trim();
+
+/** Take the selection on screen as a snapshot, when `text` is what it says
+ * (the caller was handed it by a selection action): its token, or null. */
+export function snapshotSelection(text: string): string | null {
+  const geometry = selectedGeometry();
+  const doc = activeTab()?.documentStore.state;
+  if (!geometry || !doc?.loaded || geometry.docId !== doc.docId || geometry.rects.length === 0) {
+    return null;
+  }
+  const current = selectedText();
+  if (!text.trim() || !sameText(text, current)) return null;
+  const token = `s${nextSnapshot++}-${Math.random().toString(36).slice(2, 8)}`;
+  snapshots.set(token, {
+    docId: geometry.docId,
+    page: geometry.page,
+    rects: geometry.rects.map((r) => [r[0], r[1], r[2], r[3]]),
+    text: current,
+  });
+  while (snapshots.size > SNAPSHOT_LIMIT) snapshots.delete(snapshots.keys().next().value!);
+  return token;
+}
+
+/** The snapshot a token names, or null. */
+export function selectionSnapshot(token: unknown): SelectionSnapshot | null {
+  return typeof token === 'string' ? (snapshots.get(token) ?? null) : null;
+}
+
+/** A selection snapshot as Markdown from the first enabled converter that
+ * reads selections: invoked with `{ selection, text, page, mode, ticket }`,
+ * its `selection.converted` taken as the answer. Null when there is no such
+ * converter, it fails, or it answers nothing. */
+export async function convertSelection(
+  token: string,
+  mode: ConvertMode,
+  status?: { owner: string; handle: string }
+): Promise<(ConvertedSelection & { converter: string }) | null> {
+  const snapshot = snapshots.get(token);
+  const extension = state.extensions.find(
+    (e) => e.enabled && !e.error && e.equationConverter !== null && e.selectionConverter
+  );
+  if (!snapshot || !extension) return null;
+  const ticket = `t${nextTicket++}`;
+  let answer: ConvertedSelection | null = null;
+  let waiting = convertingSelections.get(extension.id);
+  if (!waiting) convertingSelections.set(extension.id, (waiting = new Map()));
+  waiting.set(ticket, (value) => {
+    answer = value;
+  });
+  if (status) statusLines.set(ticket, status);
+  try {
+    await hostFor(extension).invoke(extension.equationConverter!, {
+      value: { selection: token, text: snapshot.text, page: snapshot.page, mode, ticket },
+      timeoutMs: invokeTimeout(extension),
+    });
+  } catch (err) {
+    appendLog(
+      extension.id,
+      'info',
+      `selection converter: ${err instanceof Error ? err.message : String(err)}`
+    );
+  } finally {
+    waiting.delete(ticket);
+    statusLines.delete(ticket);
+    if (waiting.size === 0) convertingSelections.delete(extension.id);
+  }
+  const got = answer as ConvertedSelection | null;
+  return got ? { ...got, converter: extension.name } : null;
+}
+
+/** `selection.convert { text | selection, mode, status? }`: the selection
+ * the caller was handed (by its text, while it is still on screen) or a
+ * snapshot it was given before (by its token), as Markdown. */
+async function selectionConvertCall(
+  extension: ExtensionRecord,
+  args: unknown
+): Promise<{ selection: string; markdown: string; source: string; confidence: string } | null> {
+  const record = (args ?? {}) as Record<string, unknown>;
+  const mode = record.mode;
+  if (mode !== 'local' && mode !== 'exact') {
+    throw new Error('selection.convert: "mode" must be "local" or "exact"');
+  }
+  let token: string | null = null;
+  if (record.selection !== undefined) {
+    if (!selectionSnapshot(record.selection)) return null;
+    token = record.selection as string;
+  } else {
+    if (typeof record.text !== 'string') {
+      throw new Error('selection.convert needs the selected "text" or a "selection" token');
+    }
+    token = snapshotSelection(record.text);
+    if (!token) return null;
+  }
+  const status =
+    typeof record.status === 'string' ? { owner: extension.id, handle: record.status } : undefined;
+  const answer = await convertSelection(token, mode, status);
+  return answer
+    ? {
+        selection: token,
+        markdown: answer.markdown,
+        source: answer.source,
+        confidence: answer.confidence,
+      }
+    : null;
+}
+
+/** A converter's answer to a selection conversion: Markdown, checked. */
+function readConvertedSelection(args: unknown): ConvertedSelection & { ticket: string } {
+  const record = (args ?? {}) as Record<string, unknown>;
+  const { markdown, source, confidence, ticket } = record;
+  if (typeof ticket !== 'string') throw new Error('selection.converted needs the "ticket"');
+  if (typeof markdown !== 'string' || !markdown.trim()) {
+    throw new Error('selection.converted needs a non-empty "markdown" string');
+  }
+  if (markdown.length > 100_000) {
+    throw new Error('selection.converted takes at most 100 000 characters');
+  }
+  if (source !== 'tags' && source !== 'arxiv' && source !== 'jats' && source !== 'fonts') {
+    throw new Error('selection.converted: "source" must be "tags", "arxiv", "jats" or "fonts"');
+  }
+  if (confidence !== 'high' && confidence !== 'medium' && confidence !== 'low') {
+    throw new Error('selection.converted: "confidence" must be "high", "medium" or "low"');
+  }
+  return { markdown, source, confidence, ticket };
 }
 
 /** Documents whose equation source the converter was already asked to
@@ -985,12 +1147,39 @@ async function handleCall(extension: ExtensionRecord, call: CallMessage): Promis
     // No permission: a converter saying which source it is trying, for the
     // status line of the conversion it was asked for, if the asker gave one.
     const args = (call.args ?? {}) as { ticket?: unknown; source?: unknown };
-    const live = typeof args.ticket === 'string' && converting.get(extension.id)?.has(args.ticket);
+    const live =
+      typeof args.ticket === 'string' &&
+      Boolean(
+        converting.get(extension.id)?.has(args.ticket) ||
+        convertingSelections.get(extension.id)?.has(args.ticket)
+      );
     const line = live ? statusLines.get(args.ticket as string) : undefined;
     const label = typeof args.source === 'string' ? CHECKING[args.source] : undefined;
     if (!line || !label) return { shown: false };
     relabelHandle(line.owner, line.handle, label);
     return { shown: true };
+  }
+
+  if (call.api === 'selection.converted') {
+    // No permission: a converter answering the selection conversion it was
+    // asked for. A ticket nobody waits on any more is not taken.
+    const answer = readConvertedSelection(call.args);
+    const capture = convertingSelections.get(extension.id)?.get(answer.ticket);
+    if (!capture) return { accepted: false };
+    capture({ markdown: answer.markdown, source: answer.source, confidence: answer.confidence });
+    return { accepted: true };
+  }
+
+  if (call.api === 'selection.convert') {
+    // No permission: the caller hands back the text it was given by a
+    // selection action (or the token it got for it), and gets that same
+    // text back as Markdown. Waiting on another extension is not its time.
+    const resume = hostFor(extension).pauseDeadlines();
+    try {
+      return await selectionConvertCall(extension, call.args);
+    } finally {
+      resume();
+    }
   }
 
   if (call.api in API_PERMISSIONS && API_PERMISSIONS[call.api]?.startsWith('projects:')) {
@@ -1338,7 +1527,10 @@ async function readApi(api: string, args: unknown): Promise<unknown> {
       return invoke('extension_contributed_text', { document: doc.path });
 
     case 'selection.glyphs': {
-      const geometry = selectedGeometry();
+      // A snapshot by its token (a selection being converted), else the
+      // selection on screen.
+      const token = (args as { selection?: unknown } | undefined)?.selection;
+      const geometry = token === undefined ? selectedGeometry() : selectionSnapshot(token);
       if (!geometry || geometry.docId !== doc.docId) return null;
       const src = doc.pages[geometry.page]?.srcIndex;
       if (src === undefined || src === null) return null;

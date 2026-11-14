@@ -85,6 +85,8 @@ const tauriInvoke = vi.fn(async (command: string, args?: Record<string, unknown>
       };
     case 'project_file_read':
       return { text: 'note', base64: null };
+    case 'get_page_glyphs':
+      return { glyphs: [], groups: [], lines: [] };
     case 'set_extension_enabled':
       dtos[0]!.enabled = args?.enabled as boolean;
       return null;
@@ -570,6 +572,129 @@ describe('a send from the reader', () => {
         call('equations.checking', { ticket: 't999', source: 'journal' })
       )
     ).toEqual({ shown: false });
+  });
+});
+
+describe('the selection converter', () => {
+  /** A selection on page 1 of the open document, captured as the viewer
+   * captures one. */
+  function select(text: string, rects: [number, number, number, number][]) {
+    selection.noteSelectionChanged(
+      () => text,
+      () => ({ docId: 7, page: 1, rects })
+    );
+    selection.settleSelectionNow();
+  }
+
+  function withSelections() {
+    const dto = mathDto();
+    dto.manifest.contributes = {
+      equationConverter: { command: 'copyEquation', selections: true },
+    } as typeof dto.manifest.contributes;
+    dtos = [notepadDto(), dto];
+  }
+
+  it('hands the selection the caller was given to the converter, and its Markdown back', async () => {
+    withSelections();
+    await store.loadExtensions();
+    const notepad = await hostOf(NOTEPAD);
+    const math = await hostOf('dev.speedyf.mathlatex');
+    select('Let x hold', [[10, 20, 30, 40]]);
+    const asked: Record<string, unknown>[] = [];
+    invokeBehaviour = async (id, command, extra) => {
+      if (id !== 'dev.speedyf.mathlatex') return;
+      expect(command).toBe('copyEquation');
+      const value = (extra as { value: Record<string, unknown> }).value;
+      asked.push(value);
+      // It reads the selection as it was asked about, whatever is selected now.
+      await math.options.events.onCall(call('selection.glyphs', { selection: value.selection }));
+      await math.options.events.onCall(
+        call('selection.converted', {
+          ticket: value.ticket,
+          markdown: value.mode === 'local' ? 'Let $x$ hold' : 'Let $x_0$ hold',
+          source: value.mode === 'local' ? 'fonts' : 'arxiv',
+          confidence: 'high',
+        })
+      );
+    };
+    const local = (await notepad.options.events.onCall(
+      call('selection.convert', { text: 'Let  x\nhold', mode: 'local' })
+    )) as Record<string, unknown>;
+    expect(local).toEqual({
+      selection: expect.stringMatching(/^s\d+-/),
+      markdown: 'Let $x$ hold',
+      source: 'fonts',
+      confidence: 'high',
+    });
+    expect(asked[0]).toEqual({
+      selection: local.selection,
+      text: 'Let x hold',
+      page: 1,
+      mode: 'local',
+      ticket: expect.stringMatching(/^t\d+$/),
+    });
+    const glyphCalls = () => tauriCalls.filter((c) => c.command === 'get_page_glyphs');
+    expect(glyphCalls()[0]!.args).toEqual({ docId: 7, src: 1, rects: [[10, 20, 30, 40]] });
+
+    // Later, with something else selected, the same selection is read.
+    select('another passage', [[90, 90, 10, 10]]);
+    expect(
+      await notepad.options.events.onCall(
+        call('selection.convert', { selection: local.selection, mode: 'exact' })
+      )
+    ).toMatchObject({ markdown: 'Let $x_0$ hold', source: 'arxiv' });
+    expect(asked[1]).toMatchObject({ text: 'Let x hold', mode: 'exact' });
+    expect(glyphCalls()[1]!.args).toEqual({ docId: 7, src: 1, rects: [[10, 20, 30, 40]] });
+    // The caller was not timed out while the converter worked.
+    expect(paused).toBe(0);
+    // An answer for a conversion nobody waits on is not taken.
+    expect(
+      await math.options.events.onCall(
+        call('selection.converted', {
+          ticket: 't999',
+          markdown: 'x',
+          source: 'fonts',
+          confidence: 'low',
+        })
+      )
+    ).toEqual({ accepted: false });
+  });
+
+  it('answers null for text that is not the selection, and without a selection converter', async () => {
+    withSelections();
+    await store.loadExtensions();
+    const notepad = await hostOf(NOTEPAD);
+    await hostOf('dev.speedyf.mathlatex');
+    select('Let x hold', [[10, 20, 30, 40]]);
+    const invoked = vi.fn();
+    invokeBehaviour = async (id) => {
+      if (id === 'dev.speedyf.mathlatex') invoked();
+    };
+    // Only what the caller was handed: not some other text.
+    expect(
+      await notepad.options.events.onCall(
+        call('selection.convert', { text: 'something else', mode: 'local' })
+      )
+    ).toBeNull();
+    expect(
+      await notepad.options.events.onCall(
+        call('selection.convert', { selection: 'made-up', mode: 'local' })
+      )
+    ).toBeNull();
+    await expect(
+      notepad.options.events.onCall(call('selection.convert', { text: 'Let x hold', mode: 'x' }))
+    ).rejects.toThrow('"mode"');
+    expect(invoked).not.toHaveBeenCalled();
+
+    // A converter of equations only is not asked about selections.
+    dtos = [notepadDto(), mathDto()];
+    await store.loadExtensions();
+    expect(
+      await notepad.options.events.onCall(
+        call('selection.convert', { text: 'Let x hold', mode: 'local' })
+      )
+    ).toBeNull();
+    expect(invoked).not.toHaveBeenCalled();
   });
 });
 

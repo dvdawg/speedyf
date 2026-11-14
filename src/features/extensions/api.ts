@@ -664,7 +664,9 @@ export const API_PERMISSIONS: Readonly<Record<string, string>> = {
   // projectView.open need no permission: the first is handed a token for
   // the equation the user clicked, the second is a converter naming the
   // source it is trying for a conversion it was asked for, the others draw
-  // into surfaces the extension declared.
+  // into surfaces the extension declared. selection.convert hands back the
+  // text a selection action was given (as Markdown), and
+  // selection.converted is a converter answering it.
   // ui.render and ui.showMath need no permission: an extension may only draw
   // into a panel it declared, or show a formula in the popover SpeedyF owns,
   // and drawing is not access to anything.
@@ -675,6 +677,8 @@ export const API_PERMISSIONS: Readonly<Record<string, string>> = {
 export const OPEN_APIS: ReadonlySet<string> = new Set([
   'equations.convert',
   'equations.checking',
+  'selection.convert',
+  'selection.converted',
   'ui.itemLine',
   'pane.open',
   'projectView.open',

@@ -51,6 +51,7 @@ function extension(overrides: Partial<ExtensionRecord>): ExtensionRecord {
     projectViews: [],
     itemDetailLines: null,
     equationConverter: null,
+    selectionConverter: false,
     commands: [],
     panels: [],
     selectionActions: [],
