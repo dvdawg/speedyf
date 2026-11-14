@@ -24,7 +24,9 @@ The line you are on shows its Markdown (a quote, all of its lines); the
 rest is rendered: headings, _emphasis_, lists, quotes (consecutive `>` lines
 are one quote), `$x^2$` and `$$ ... $$` math, links and images.
 **Source** at the top (or Cmd+A twice) edits the whole note as plain text
-(Escape returns).
+(Escape returns). Once the note has two headings, **Outline** beside it
+lists them (three levels deep); the arrows and Enter, or a click, go to one
+with the caret at its start, and Escape closes the list.
 
 - **@** opens a picker of the project's items; Enter inserts `@citekey`,
   which reads "[AS22]", the same alpha.bst-style label the graph shows. Click it to open the paper. Items dragged in

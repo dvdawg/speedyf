@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
-/** The note editor's tools: a pasted DOI or arXiv id as a citation. */
+/** The note editor's tools: a pasted DOI or arXiv id as a citation, and
+ * the outline of the note's headings. */
 import { render, fireEvent, cleanup } from '@solidjs/testing-library';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { applyOp } from './ops';
@@ -160,5 +161,120 @@ describe('pasting an identifier', () => {
     expect(paste(source, 'Both (arXiv:2401.01234) and doi:10.9999/x.')).toBe(false);
     await settle();
     expect(state.text).toBe('Both (@attias2022quantum) and doi:10.9999/x.');
+  });
+});
+
+describe('the outline', () => {
+  const NOTE = '# Intro\nwords\n## The *bound* on $x^2$\nmore\n### Detail\n#### Too deep\n# End';
+
+  const rows = (root: HTMLElement) =>
+    [...root.querySelectorAll<HTMLElement>('.note-head-menu-row')].map((r) => [
+      r.textContent,
+      r.style.paddingLeft,
+    ]);
+
+  const toggle = (root: HTMLElement) =>
+    root.querySelector<HTMLButtonElement>('.note-outline button') ?? undefined;
+
+  it('shows only once the note has two headings', async () => {
+    const { view } = mount('# Only one\ntext');
+    await settle();
+    expect(toggle(view.container)).toBeUndefined();
+  });
+
+  it('lists the headings, indented by level, three levels at most, as text', async () => {
+    const { view } = mount(NOTE);
+    await settle();
+    const button = toggle(view.container)!;
+    expect(button.textContent).toBe('Outline');
+    fireEvent.click(button);
+    await settle();
+    expect(rows(view.container)).toEqual([
+      ['Intro', ''],
+      ['The bound on x^2', '22px'],
+      ['Detail', '36px'],
+      ['End', ''],
+    ]);
+    const list = view.container.querySelector('.note-head-menu-list')!;
+    expect(document.activeElement).toBe(list);
+  });
+
+  it('moves with the arrows, jumps on Enter with the caret at the heading', async () => {
+    const { view } = mount(NOTE);
+    await settle();
+    fireEvent.click(toggle(view.container)!);
+    await settle();
+    const list = view.container.querySelector<HTMLElement>('.note-head-menu-list')!;
+    fireEvent.keyDown(list, { key: 'ArrowDown' });
+    fireEvent.keyDown(list, { key: 'ArrowDown' });
+    fireEvent.keyDown(list, { key: 'ArrowUp' });
+    expect(list.querySelector('.is-current')?.textContent).toBe('The bound on x^2');
+    fireEvent.keyDown(list, { key: 'Enter' });
+    await settle();
+    expect(view.container.querySelector('.note-head-menu-list')).toBeNull();
+    const field = view.container.querySelector<HTMLTextAreaElement>('.note-field')!;
+    expect(field.value).toBe('## The *bound* on $x^2$');
+    expect(document.activeElement).toBe(field);
+    expect(field.selectionStart).toBe(0);
+  });
+
+  it('jumps on a click, and Escape closes it back to the button', async () => {
+    const { view } = mount(NOTE);
+    await settle();
+    const button = toggle(view.container)!;
+    fireEvent.click(button);
+    await settle();
+    fireEvent.keyDown(view.container.querySelector('.note-head-menu-list')!, { key: 'Escape' });
+    await settle();
+    expect(view.container.querySelector('.note-head-menu-list')).toBeNull();
+    expect(document.activeElement).toBe(button);
+    fireEvent.click(button);
+    await settle();
+    fireEvent.click(view.container.querySelectorAll('.note-head-menu-row')[3]!);
+    await settle();
+    expect(view.container.querySelector<HTMLTextAreaElement>('.note-field')!.value).toBe('# End');
+  });
+
+  it('jumps in Source too', async () => {
+    const { view } = mount(NOTE);
+    await settle();
+    fireEvent.click(view.container.querySelector('.note-source-toggle')!);
+    await settle();
+    fireEvent.click(toggle(view.container)!);
+    await settle();
+    fireEvent.click(view.container.querySelectorAll('.note-head-menu-row')[2]!);
+    await settle();
+    const source = view.container.querySelector<HTMLTextAreaElement>('.note-source')!;
+    expect(source.selectionStart).toBe(NOTE.indexOf('### Detail'));
+  });
+
+  it('follows the note as it changes, the line being typed included', async () => {
+    const { view } = mount(NOTE);
+    await settle();
+    const field = await editAt(view, 1);
+    expect(field.value).toBe('words');
+    field.value = '## Words';
+    field.setSelectionRange(8, 8);
+    fireEvent.input(field);
+    fireEvent.click(toggle(view.container)!);
+    await settle();
+    expect(rows(view.container).map((r) => r[0])).toEqual([
+      'Intro',
+      'Words',
+      'The bound on x^2',
+      'Detail',
+      'End',
+    ]);
+    // Removed by another view: the open list follows.
+    const session = host.noteSessions().get(KEY)!;
+    const at = session.text().indexOf('# End');
+    session.edit({ from: at, to: at + 5, insert: 'end' }, at, at + 3, { outside: true });
+    await settle();
+    expect(rows(view.container).map((r) => r[0])).toEqual([
+      'Intro',
+      'Words',
+      'The bound on x^2',
+      'Detail',
+    ]);
   });
 });

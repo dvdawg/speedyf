@@ -4,7 +4,8 @@
  * It reads as a page, not a form: the line being edited is a bare text
  * field in the rendered text's own font and measure, with no box, border or
  * ring, so only the caret shows where you are. The head is one quiet line,
- * the title and a dim Source toggle.
+ * the title and dim text buttons: Outline (once the note has two headings)
+ * and Source.
  *
  * The note is drawn block by block (`markdown.ts`). The block holding the
  * cursor is a native text field showing its Markdown source - so IME,
@@ -64,6 +65,8 @@ import type {
 } from './noteSession';
 import { registerNoteDrop } from './noteDrop';
 import { citeIdentifiers } from './identifiers';
+import { headingLine, outlineOf } from './outline';
+import HeadMenu from './HeadMenu';
 import {
   citeQuery,
   continueList,
@@ -762,6 +765,52 @@ function EditorBody(props: BodyProps) {
     onCleanup(unregister);
   });
 
+  /* ---- the outline ---- */
+
+  /** Whether each block is a heading, worked out once per block: typing
+   * costs a walk over the list, not over the text. */
+  const headingCache = new WeakMap<Block, { level: number; body: string } | null>();
+  const outline = createMemo(() => {
+    const list = blocks();
+    const editing = active();
+    const live = editing ? liveRaw() : '';
+    const found: { level: number; body: string; offset: number }[] = [];
+    let at = 0;
+    for (const block of list) {
+      const raw = block === editing ? live : block.raw;
+      let heading = block === editing ? headingLine(block.kind, raw) : headingCache.get(block);
+      if (heading === undefined) {
+        heading = headingLine(block.kind, raw);
+        headingCache.set(block, heading);
+      }
+      if (heading) found.push({ ...heading, offset: at });
+      at += raw.length + 1;
+    }
+    const byKey = props.index.byKey;
+    return outlineOf(found, (cite, raw) => byKey.get(cite.key)?.label ?? raw);
+  });
+
+  /** Scroll to a heading and put the caret at its start. */
+  const jumpTo = (offset: number) => {
+    const at = Math.min(offset, s.text().length);
+    if (source()) {
+      if (!sourceField) return;
+      sourceField.focus();
+      sourceField.setSelectionRange(at, at);
+      // The field scrolls itself to a caret only when typing: put the line
+      // near the top.
+      const line = s.text().slice(0, at).split('\n').length - 1;
+      const height = Number.parseFloat(getComputedStyle(sourceField).lineHeight) || 20;
+      sourceField.scrollTop = Math.max(0, line * height - height);
+      return;
+    }
+    rebuild();
+    activateAt(at);
+    queueMicrotask(() =>
+      field?.closest('[data-block]')?.scrollIntoView?.({ block: 'start', behavior: 'auto' })
+    );
+  };
+
   /** The whole note is empty: its one line shows the placeholder, as a dim
    * line while nobody is in it and as the field's own hint once someone is. */
   const blank = () => blocks().length === 1 && blocks()[0]!.raw === '';
@@ -812,6 +861,19 @@ function EditorBody(props: BodyProps) {
               </button>
             </span>
           )}
+        </Show>
+        <Show when={outline().length >= 2}>
+          <HeadMenu
+            label="Outline"
+            title="Go to a heading"
+            listLabel="Outline"
+            class="note-outline"
+            rows={outline().map((h) => ({ text: h.text, depth: h.depth }))}
+            onChoose={(i) => {
+              const heading = outline()[i];
+              if (heading) jumpTo(heading.offset);
+            }}
+          />
         </Show>
         <button
           type="button"
