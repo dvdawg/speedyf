@@ -39,6 +39,7 @@ import type {
   LibraryBackup,
   LibraryCounts,
   LibraryDataInfo,
+  LibraryUndoState,
   LookupBatch,
   LookupCandidate,
   LookupMode,
@@ -262,6 +263,15 @@ export interface EngineApi {
   /** Records that these are not one work, so they are never suggested
    * (or joined through a third record) again. */
   libraryNotDuplicates(paperIds: string[]): Promise<void>;
+  /** Puts items into a project as one undoable step; `reviewed` also
+   * triages them (filing from New). */
+  libraryFileItems(paperIds: string[], projectId: string, reviewed: boolean): Promise<void>;
+  /** Puts back the last library action; resolves to what it was. */
+  libraryUndo(): Promise<string>;
+  /** Does again what the last undo put back; resolves to what it was. */
+  libraryRedo(): Promise<string>;
+  /** What undo and redo would do now. */
+  libraryUndoState(): Promise<LibraryUndoState>;
   /** What the engine suspects about the items, grouped; empty groups are
    * left out, as are findings the user ignored. */
   libraryHealth(): Promise<HealthGroup[]>;
@@ -383,6 +393,11 @@ export const engine: EngineApi = {
   libraryUnmerge: (paperId) => invoke('library_unmerge', { paperId }),
   librarySetPrimaryFile: (paperId, path) => invoke('library_set_primary_file', { paperId, path }),
   libraryNotDuplicates: (paperIds) => invoke('library_not_duplicates', { paperIds }),
+  libraryFileItems: (paperIds, projectId, reviewed) =>
+    invoke('library_file_items', { paperIds, projectId, reviewed }),
+  libraryUndo: () => invoke('library_undo'),
+  libraryRedo: () => invoke('library_redo'),
+  libraryUndoState: () => invoke('library_undo_state'),
   libraryHealth: () => invoke('library_health'),
   libraryHealthIgnore: (paperId, kind) => invoke('library_health_ignore', { paperId, kind }),
   libraryNewItems: (query) => invoke('library_new_items', { query }),

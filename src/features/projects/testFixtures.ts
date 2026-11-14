@@ -8,6 +8,7 @@ import type {
   Graph,
   HealthGroup,
   LibraryCounts,
+  LibraryUndoState,
   LookupBatch,
   LookupCandidate,
   LookupResult,
@@ -753,6 +754,12 @@ export function fakeEngine() {
     }),
     libraryUnmerge: vi.fn(async (): Promise<Paper[]> => [paperFor('e'), paperFor('a')]),
     libraryNotDuplicates: vi.fn(async (_ids: string[]): Promise<void> => undefined),
+    libraryFileItems: vi.fn(
+      async (_ids: string[], _project: string, _reviewed: boolean): Promise<void> => undefined
+    ),
+    libraryUndo: vi.fn(async (): Promise<string> => 'Removed from Noneq'),
+    libraryRedo: vi.fn(async (): Promise<string> => 'Removed from Noneq'),
+    libraryUndoState: vi.fn(async (): Promise<LibraryUndoState> => ({ undo: null, redo: null })),
     librarySetPrimaryFile: vi.fn(async (id: string, path: string): Promise<Paper> => {
       const paper = paperFor(id);
       const at = paper.files.findIndex((file) => file.path === path);

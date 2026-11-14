@@ -46,6 +46,8 @@ interface Binding {
   preventAlways?: boolean;
   /** When the command does not run, the next binding for the key is tried. */
   fallThrough?: boolean;
+  /** Only on the Home and Projects screens, where no document tab shows. */
+  home?: boolean;
 }
 
 const BINDINGS: readonly Binding[] = [
@@ -99,6 +101,10 @@ const BINDINGS: readonly Binding[] = [
 
   // Below here the typing guard applies: the browser owns text-editing
   // undo/redo and the rest while an input has focus.
+  // On the Home and Projects screens Cmd+Z is the library's undo; in the
+  // reader it stays the document's.
+  { key: 'z', mod: true, shift: false, id: 'library.undo', home: true, preventAlways: true },
+  { key: 'z', mod: true, shift: true, id: 'library.redo', home: true, preventAlways: true },
   { key: 'z', mod: true, shift: false, id: 'edit.undo', preventAlways: true },
   { key: 'z', mod: true, shift: true, id: 'edit.redo', preventAlways: true },
   { key: ']', mod: true, shift: true, id: 'nav.nextTab', preventAlways: true },
@@ -263,6 +269,7 @@ export function installShortcuts(): () => void {
     const bindings = isMac ? BINDINGS : [...BINDINGS, REDO_Y, ...NAV_ALT];
     for (const binding of bindings) {
       if (!matches(binding, e, mod)) continue;
+      if (binding.home && ctx.tab) continue;
       if (typing && !binding.whileTyping) return;
       const ran = runCommand(binding.id, ctx);
       if (!ran && binding.fallThrough) continue;
