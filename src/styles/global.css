@@ -7266,3 +7266,12 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   color: var(--text);
   text-decoration: underline;
 }
+
+/* The math in the line being typed, typeset just under it: quieter than
+   the text so it reads as a preview, with no box around it. */
+.note-live-preview {
+  padding: 2px 0 6px;
+  color: var(--text-dim);
+  font-size: 0.95em;
+  pointer-events: none;
+}

@@ -21,7 +21,7 @@ vi.mock('../../../lib/transport/engine', () => ({
 vi.mock('../../../lib/links/followExternalLink', () => ({ followExternalLink: vi.fn() }));
 
 const host = await import('../editorHost');
-const { default: NoteEditor } = await import('./NoteEditor');
+const { default: NoteEditor, liveMath } = await import('./NoteEditor');
 const { noteDropAt } = await import('./noteDrop');
 
 const KEY: NoteKey = { extensionId: 'dev.speedyf.notepad', projectId: 'p1', file: 'notepad.md' };
@@ -176,6 +176,25 @@ describe('the note editor', () => {
     expect(host.noteSessions().get(KEY)!.text()).toBe('See @attias2022quantum');
   });
 
+  it('typesets math in the line being typed, just under it', async () => {
+    const { view } = mount('');
+    await settle();
+    fireEvent.click(view.container.querySelector('.note-placeholder')!);
+    await settle();
+    const field = view.container.querySelector<HTMLTextAreaElement>('.note-field')!;
+    field.value = 'the bound $x^2';
+    fireEvent.input(field);
+    // Not closed yet: nothing to typeset.
+    expect(view.container.querySelector('.note-live-preview')).toBeNull();
+    field.value = 'the bound $x^2$ holds';
+    fireEvent.input(field);
+    const preview = view.container.querySelector('.note-live-preview');
+    expect(preview).not.toBeNull();
+    expect(preview!.querySelector('.np-math')).not.toBeNull();
+    // The line itself stays raw text.
+    expect(field.value).toBe('the bound $x^2$ holds');
+  });
+
   it('shows an empty note as a dim line, and a click anywhere writes at the end', async () => {
     const { view } = mount('', 'Notes for Thesis. Type @ to cite an item; drag items here.');
     await settle();
@@ -244,5 +263,17 @@ describe('the note editor', () => {
     expect(noteDropAt(1, 1)).not.toBeNull();
     cleanup();
     expect(noteDropAt(1, 1)).toBeNull();
+  });
+});
+
+describe('liveMath', () => {
+  it('previews closed inline math and display blocks, nothing else', () => {
+    expect(liveMath('plain text')).toBeNull();
+    expect(liveMath('costs $5 and $6')).toBeNull();
+    expect(liveMath('open $x^2')).toBeNull();
+    expect(liveMath('closed $x^2$ here')).toBe('line');
+    expect(liveMath('$$')).toBeNull();
+    expect(liveMath('$$ \\int f $$')).toBe('math');
+    expect(liveMath('$$\n\\sum_i a_i')).toBe('math');
   });
 });

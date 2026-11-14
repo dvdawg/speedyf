@@ -226,6 +226,12 @@ function EditorBody(props: BodyProps) {
   /** Where the active block starts, and its text as last committed. */
   let activeStart = 0;
   let activeRaw = '';
+  /** The active block's text, live, for the math preview under it. */
+  const [liveRaw, setLiveRaw] = createSignal('');
+  const setActiveRaw = (raw: string) => {
+    activeRaw = raw;
+    setLiveRaw(raw);
+  };
   let composing = false;
   /** An outside change arrived mid-composition, to apply once it ends. */
   let deferredExternal = false;
@@ -249,7 +255,7 @@ function EditorBody(props: BodyProps) {
     const block = list[at];
     if (!block) return;
     activeStart = starts[at]!;
-    activeRaw = block.raw;
+    setActiveRaw(block.raw);
     caret = Math.min(Math.max(offset, activeStart), activeStart + block.raw.length);
     setPicker(null);
     if (active() === block && field) {
@@ -328,7 +334,7 @@ function EditorBody(props: BodyProps) {
     const value = ta.value;
     const local = diffOp(activeRaw, value);
     const before = caret;
-    activeRaw = value;
+    setActiveRaw(value);
     if (!local) return;
     const op: Op = {
       from: activeStart + local.from,
@@ -368,7 +374,7 @@ function EditorBody(props: BodyProps) {
     const insert = `@${entry.key}`;
     const op: Op = { from: p.at, to: caret, insert };
     const after = p.at + insert.length;
-    activeRaw = applyOp(activeRaw, { from: p.at - activeStart, to: caret - activeStart, insert });
+    setActiveRaw(applyOp(activeRaw, { from: p.at - activeStart, to: caret - activeStart, insert }));
     field.value = activeRaw;
     commit(op, caret, after, false);
     setPicker(null);
@@ -783,6 +789,20 @@ function EditorBody(props: BodyProps) {
                         if (!composing) deactivate();
                       }}
                     />
+                    {/* The line being typed stays raw; any math in it is
+                        shown typeset just under it as it is written. */}
+                    <Show when={liveMath(liveRaw())}>
+                      {(kind) => (
+                        <div class="note-live-preview" aria-hidden="true">
+                          {drawBlock({
+                            block: { ...block, kind: kind(), raw: liveRaw() },
+                            index: () => props.index,
+                            noteKey: props.noteKey,
+                            onCite: () => {},
+                          })}
+                        </div>
+                      )}
+                    </Show>
                     <Show when={picker() && matches().length > 0}>
                       <div class="note-picker" role="listbox" aria-label="Cite an item">
                         <For each={matches()}>
@@ -819,6 +839,14 @@ function EditorBody(props: BodyProps) {
 
 /** A space before text inserted at `at`, unless a space or an opening
  * bracket is there already, or nothing. */
+/** Whether a line being typed holds math worth a live preview: a display
+ * block with something between its `$$`s, or a line with a closed inline
+ * formula. Returns the block kind to draw it as, or null. */
+export function liveMath(raw: string): 'math' | 'line' | null {
+  if (/^\s*\$\$/.test(raw)) return mathSource(raw).trim() ? 'math' : null;
+  return inlineSpans(raw).some((span) => span.kind === 'math') ? 'line' : null;
+}
+
 function spaceBefore(text: string, at: number): string {
   const before = text[at - 1];
   return before === undefined || /[\s([{]/.test(before) ? '' : ' ';
