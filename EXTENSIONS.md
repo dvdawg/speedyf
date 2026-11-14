@@ -236,7 +236,7 @@ whenever they suffice.
 | `equationActions`   | A button on each display equation SpeedyF detects; your command receives the block.     |
 | `termProvider`      | `{ "command": "<id>" }`: the terms a document defines, previewed on hover (below).      |
 | `readerPanes`       | A drawer on the right of the reader holding a Markdown editor (below).                  |
-| `projectViews`      | A view beside List and Graph on the Projects screen, holding the same editor (below).   |
+| `projectViews`      | A project's pane in the Projects detail column, holding the same editor (below).        |
 | `itemDetailLines`   | `{ "command": "<id>" }`: one quiet line in the Projects item detail column (below).     |
 | `equationConverter` | `{ "command": "<id>" }`: an equation as LaTeX, for whoever asks the core (below).       |
 
@@ -262,8 +262,14 @@ Both hold the same thing: a Markdown editor SpeedyF draws, bound to one file
 of your project files (`editor.file`, such as `notepad.md`). A reader pane is
 a drawer on the right of the page - a quiet icon at the end of the toolbar,
 and `key` as its toggle when SpeedyF does not use the chord - shown only while
-its `when` holds; a project view is a mode beside List and Graph for one
-project, taking the middle and right columns. Every view of one file, in
+its `when` holds. A project view (the name is historical: it is a pane,
+not a view of the items) fills the Projects detail column while a project is
+the scope and no item is selected; selecting an item shows its details
+there, under a quiet line back to the note, and Escape or that line returns.
+The items stay listed beside it, and rows dragged from the list onto the
+note are inserted as `@key` (several as `@a; @b`) where they land. When
+several extensions contribute one, the first enabled shows, or the one
+`projectView.open` last named. Every view of one file, in
 every window, edits the same text live: SpeedyF holds it once, saves it about
 half a second after typing stops, reloads it when it changes on disk with
 nothing unsaved (and keeps the outside version beside it when there is), and
@@ -506,7 +512,7 @@ cannot reach a tab the user is not looking at. Pages are zero-based.
 | `equations.convert`        | `{ equation }`                           | `{ latex, display }` from the enabled `equationConverter`, or `null`                                                           | -                              |
 | `ui.itemLine`              | `{ itemId, text, action? }`              | `{ shown }`                                                                                                                    | -                              |
 | `pane.open`                | `{ pane, projectId? }`                   | `{ opened }` - your reader pane, when its `when` holds                                                                         | -                              |
-| `projectView.open`         | `{ view, projectId?, offset? }`          | `{ opened }` - your view of a project (the selected one by default)                                                            | -                              |
+| `projectView.open`         | `{ view, projectId?, offset? }`          | `{ opened }` - your pane of a project (the selected one by default), in the detail column, its item let go                     | -                              |
 
 `kind` is `'doi'` or `'arxiv'`. `document.links` reports **every** outbound
 link, including the many references cited by URL alone - a JMLR paper, a book on

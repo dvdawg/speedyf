@@ -50,8 +50,10 @@ manual QA before a public release.
 - Project notepad (the built-in Notepad extension, on by default, offline):
   one Markdown note per project, edited with live rendering (headings,
   emphasis, lists, quotes, KaTeX math, links, images) in a drawer beside the
-  page (Cmd+Shift+N, only for a paper in a project) and as a Notepad view on
-  the Projects screen, the same note live in both and across windows. `@`
+  page (Cmd+Shift+N, only for a paper in a project) and on the Projects
+  screen in the right-hand column while a project is selected and no item
+  is (drag items onto it to cite them), the same note live in both and
+  across windows. `@`
   cites an item of the project ("Attias 2022"); _Quote to Notepad_, the
   equation button's _Send to Notepad_ (LaTeX when Math to LaTeX is on, a
   picture otherwise) and _Send Region to Notepad_ write with a link back to
@@ -161,8 +163,8 @@ is skipped for the one closed before it, and a file that is open again is
 focused instead (raising its window if another window has it). A tab moved to
 another window was not closed and is not on the list.
 
-On Home and Projects the toolbar holds only Open; the reader controls appear
-with a document. Theme, page inversion and low memory live in Home's
+Home and Projects have no toolbar; it appears with a document. Open a PDF
+there with Cmd+O (Ctrl+O), Home's **Open PDF...** button or the palette. Theme, page inversion and low memory live in Home's
 **Settings** panel and in the command palette's Settings group.
 
 | Action                     | macOS                   | Windows/Linux             |

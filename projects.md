@@ -692,7 +692,10 @@ against `reservedChords()` so it collides with nothing SpeedyF already binds.
 
 **Empty states.** No library folders: the screen says so and offers _Add
 folder..._. No projects: the left column holds only the two fixed rows and _New
-project_. Nothing selected: the right column is blank.
+project_ (with a small import icon beside it for _Import Project
+Bundle..._, also in the palette). Nothing selected: the right column is
+blank, or under a project with Notepad on, the project's notepad (sec. 13).
+The right column's left edge drags to resize it, remembered.
 
 **Narrow windows.** Below roughly 900px the right column collapses behind a
 toggle; the Home rail is already 240px, so this was going to come up.
@@ -1081,9 +1084,20 @@ generic, permission-gated extension APIs (`extension_api.md` sec. 7 and 8,
 - **One notepad per project, in Markdown.** A project's notepad is a plain
   `.md` file; images it shows sit in an `assets/` folder beside it.
 - **Projects screen.** With a project selected (not All items, Not filed,
-  Other PDFs, Health or New) the middle column's view toggle reads
-  _List | Graph | Notepad_. Notepad takes the middle and right columns
-  together, full width, and edits that project's notepad.
+  Other PDFs, Health, New, a person's items or a graph focus) and no item
+  selected, the right-hand detail column is that project's notepad, full
+  height. Going to a project shows its note. Selecting an item shows the
+  item's details there instead, under one quiet line at the top,
+  "< <project> notepad"; that line, Escape in the column, or a click on
+  empty space in the list lets the item go and brings the note back. The
+  note is not a view mode: the middle column's switch stays _List | Graph_,
+  and the items stay listed beside the note. Rows dragged from the list onto
+  the note become citations, `@key` (several `@a; @b`), where they land, or
+  at the end. The detail column's left edge drags to resize it (the middle
+  column gives way) and the width is remembered. On a narrow window the
+  column folds behind **Details**, which shows the note while nothing is
+  selected. Under every other scope the column is the item details as
+  before.
 - **Reader.** When the open document is an item in a project, a quiet
   notepad icon sits at the right end of the toolbar, and **Cmd+Shift+N**
   (Ctrl+Shift+N) toggles a drawer on the right side of the page. The drawer
@@ -1102,12 +1116,20 @@ generic, permission-gated extension APIs (`extension_api.md` sec. 7 and 8,
 - **Backlinks.** The Projects detail column shows one quiet line, "Mentioned
   in notepad (3)", when a notepad references the item's cite key (the
   selected project's, or under another scope any of the item's projects').
-  Clicking it opens the Notepad view at the first mention. Nothing in the
-  list or the graph.
+  Clicking it goes to that project with the item let go, so the note shows,
+  at the first mention. Nothing in the list or the graph.
 
 ### Editing
 
-Obsidian-style live rendering, keyboard first, plain and calm:
+Obsidian-style live rendering, keyboard first, plain and calm. The note
+reads as a page, not a form: a reading measure (about 40em), top-aligned,
+scrolling in its column; the line being edited is a bare field in the text's
+own font, size and line height, with no border, ring, fill or handle, so
+only the caret shows where you are; an empty note is one dim line in the
+flow ("Notes for <project>. Type @ to cite an item; drag items here.") and
+a click anywhere on the page below writes at the end. The head is one line
+with no rule: the title and a dim **Source** toggle. The reader's drawer
+looks the same.
 
 - The note is a sequence of blocks: one per line, except a `$$ ... $$`
   display-math block and a fenced code block, which are one block each. The
@@ -1238,8 +1260,9 @@ same document.
 - **Project deleted while its note is open:** pending edits are saved first,
   then the files move to `deleted/`, and every view closes with "This
   project was deleted; its notepad was kept."
-- **Extension disabled:** the drawer, the toolbar icon, the Notepad view, the
-  actions and the backlink line all disappear. The files stay where they
+- **Extension disabled:** the drawer, the toolbar icon, the note in the
+  Projects detail column (which is the item details again), the actions and
+  the backlink line all disappear. The files stay where they
   are, and come back with it.
 
 A 1 MB note stays responsive: blocks are created once and reused across

@@ -10,8 +10,11 @@ never uses the internet.
   (Ctrl+Shift+N) opens a drawer on the right of the page; the page re-fits
   beside it. Drag its left edge to resize. It stays open as you move between
   papers. For a PDF that is in no project there is no icon and no drawer.
-- **On the Projects screen.** Select a project and pick **Notepad** beside
-  List and Graph.
+- **On the Projects screen.** Select a project: with no item selected, the
+  right-hand column is its notepad. Selecting an item shows its details
+  there, under a line back to the note (or press Escape). Drag items from
+  the list onto the note to cite them. Drag the column's left edge to make
+  it wider.
 
 Both are the same note, live, in every window.
 
@@ -19,10 +22,12 @@ Both are the same note, live, in every window.
 
 The line you are on shows its Markdown; the rest is rendered: headings,
 _emphasis_, lists, quotes, `$x^2$` and `$$ ... $$` math, links and images.
-**Source** in the header edits the whole note as plain text (Escape returns).
+**Source** at the top (or Cmd+A twice) edits the whole note as plain text
+(Escape returns).
 
 - **@** opens a picker of the project's items; Enter inserts `@citekey`,
-  which reads "Attias 2022". Click it to open the paper.
+  which reads "Attias 2022". Click it to open the paper. Items dragged in
+  from the Projects list land as `@a; @b`.
 - `[@citekey, p. 12]{box=72,310,240,28}` reads "Attias 2022, p. 12" and opens
   the paper at that place on page 12.
 - A cite key that changes later keeps working: the item remembers the keys it

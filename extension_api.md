@@ -256,7 +256,7 @@ allowlist of hosts declared in the manifest.
 | `equationActions`      | A button on each detected display equation             | v3 (implemented) |
 | `termProvider`         | The provider slot for terms previewed on hover (below) | v3 (implemented) |
 | `readerPanes`          | A right-side drawer in the reader, with a `when`       | v3 (implemented) |
-| `projectViews`         | A view of one project in the Projects middle column    | v3 (implemented) |
+| `projectViews`         | A project's pane in the Projects detail column         | v3 (implemented) |
 | `itemDetailLines`      | One quiet line in the Projects item detail column      | v3 (implemented) |
 | `equationConverter`    | The provider slot for an equation's LaTeX (below)      | v3 (implemented) |
 
@@ -283,7 +283,14 @@ things no extension could have before. Each was built generic:
   (out and back in), and moving a deleted project's files aside rather than
   losing them. Checked twice: by the window's gate, and again by the core
   against the installed grant, the way `net.fetch` is.
-- **`readerPanes` and `projectViews`** - see "Editor surfaces" below.
+- **`readerPanes` and `projectViews`** - see "Editor surfaces" below. A
+  `projectViews` entry is, despite the name, a pane: it fills the Projects
+  detail column while a project is the scope and no item is selected (an
+  item selected shows its details there under a line back to the note). It
+  was first a third mode beside List and Graph in the middle column; a note
+  is not a view of the items, and in the middle column it pushed them off
+  screen, where they could not be dragged in as citations. The manifest key
+  kept its name, so manifests and `projectView.open` did not change.
 - **`itemDetailLines`** - the extension is invoked with the item the
   Projects detail column shows and answers with `ui.itemLine`: one line of
   text, optionally clickable. Drawing, so no permission.
