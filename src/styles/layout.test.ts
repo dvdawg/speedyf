@@ -37,9 +37,19 @@ describe('layout rules', () => {
     expect(rule('.graph-canvas')['margin']).toContain('var(--col-gutter)');
   });
 
+  it('gives Home and Projects one head, so the shared toggle never jumps', () => {
+    expect(rule('.home-panel-head')['padding']).toBe('var(--screen-head-pad)');
+    expect(rule('.projects-head')['padding']).toBe('var(--screen-head-pad)');
+    expect(rule('.home-screen .home-launch-toggle')['top']).toBe('22px');
+  });
+
+  it('keeps the list head row at one control height', () => {
+    expect(rule('.paper-search')['height']).toBe('var(--control-h)');
+  });
+
   it('sizes the View popover controls to their content', () => {
     expect(rule('.graph-view-menu')['justify-items']).toBe('start');
     // The threshold stepper matches the segmented control's outer height.
-    expect(rule('.graph-stepper')['height']).toBe('30px');
+    expect(rule('.graph-stepper')['height']).toBe('var(--control-h)');
   });
 });
