@@ -192,6 +192,13 @@ line. The button goes away when you scroll, change or clear the selection,
 press Escape or pick up a drawing tool; it never appears for a PDF in no
 project.
 
+**Finding in the citation graph.** On the Projects screen the search
+field stays over the graph (Cmd+F, Ctrl+F elsewhere, jumps to it). Matches
+by title, author, year, cite key or label stay lit and labelled while the
+rest fades; nothing moves. Enter and Shift+Enter step through the matches,
+left to right, selecting each; Escape clears, and a second Escape returns
+to the graph. The query is shared with the list view.
+
 **Column zoom** reads a two- or three-column paper one column at a time.
 Double-click blank space inside a column (between lines or paragraphs; a
 double-click on a word still selects it), or choose **Zoom to Column** in the

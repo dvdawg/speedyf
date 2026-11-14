@@ -885,6 +885,27 @@ ghost may be on at once. The defaults draw the graph as before; the
 choices are kept across sessions in their own localStorage key. Escape or
 a press outside closes it.
 
+**Find.** The middle column's search field stays over the graph, beside
+the List | Graph switch, as _Find in graph..._ (Cmd+F / Ctrl+F while the
+graph shows; elsewhere Cmd+F stays the reader's Find in Document). One
+query serves both views, so switching keeps the text. In the graph it
+never hides or moves a node: no relayout, dragged positions kept. It
+spotlights instead: the matches keep full strength and their labels
+(whatever Labels says), the rest and their edges fade as around a
+selection, and an edge between two matches stays. Items match by title,
+authors, year, venue, cite key and the label as drawn ("ZD24" finds
+ZD24a and ZD24b); ghosts by their printed reference and DOI or arXiv id.
+Case and diacritics fold and every word must match, the engine's list
+rule, shared on the frontend by `itemMatch.ts` (which also filters a
+person's items). Enter steps to the next match in reading order (left to
+right, then down), panning to it and selecting it (a ghost is picked as
+a click picks it), zooming in only when it was off the canvas at a zoom
+too far out to read; Shift+Enter goes back. A quiet "2 of 3" sits in the
+field, "No match" when nothing does. Escape clears; a second Escape hands
+the keyboard back to the graph. Inside a focus it finds among the
+neighbourhood shown. Matching is memoized per query and graph, so typing
+recomputes classes and labels, never the layout.
+
 **Dating.** A paper is at least as new as what it cites. Its `yearFloor` is
 the latest year its reference list gives, ignoring years in the future and a
 single newest year more than 3 above the next, and supported by the
