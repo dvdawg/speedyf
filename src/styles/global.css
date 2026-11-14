@@ -7476,3 +7476,40 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
     opacity: 1;
   }
 }
+
+/* ---------- status bar: passing remarks (statusMessage.ts) ---------- */
+.sb-flash {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-dim);
+}
+
+.sb-flash:empty {
+  display: none;
+}
+
+.sb-flash-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sb-flash-action {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.sb-flash-action:hover,
+.sb-flash-action:focus-visible {
+  color: var(--text);
+}
