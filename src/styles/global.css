@@ -6501,7 +6501,19 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   pointer-events: auto;
 }
 
-.equation-action {
+/* The button by a page selection (SelectionActions.tsx): the same quiet
+   small button as an equation's. */
+.selection-actions {
+  position: fixed;
+  z-index: 45;
+  display: flex;
+  gap: 4px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.equation-action,
+.selection-action {
   padding: 1px 7px;
   border: 1px solid var(--border);
   border-radius: 5px;
@@ -6514,12 +6526,14 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   cursor: pointer;
 }
 
-.equation-action:hover {
+.equation-action:hover,
+.selection-action:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
 
-.equation-action:focus-visible {
+.equation-action:focus-visible,
+.selection-action:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
 }
@@ -7054,6 +7068,11 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   padding-left: 0.8em;
   border-left: 3px solid var(--border);
   color: var(--text-dim);
+}
+
+/* A blank `>` line: the gap between a quote's paragraphs. */
+.np-quote-gap {
+  height: 0.6em;
 }
 
 .np-code {

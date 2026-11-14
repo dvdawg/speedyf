@@ -105,6 +105,12 @@ describe('chords', () => {
     expect(new Set(specs).size).toBe(specs.length);
   });
 
+  it('leaves the Notepad quote key (mod+shift+e) free', () => {
+    expect(reservedChords().has('mod+shift+e')).toBe(false);
+    const specs = COMMANDS.map((c) => c.shortcut);
+    expect(specs).not.toContain('mod+shift+e');
+  });
+
   it('dispatches mod+[ and mod+] to Back and Forward, and leaves shifted ones to tabs', () => {
     const uninstall = installShortcuts();
     try {

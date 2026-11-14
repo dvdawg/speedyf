@@ -24,6 +24,10 @@ export interface SelectionGeometry {
   docId: number;
   page: number;
   rects: [number, number, number, number][];
+  /** Where the selection begins, when that is an earlier page than `page`
+   * (a selection running over a page break): what a link back to the
+   * quoted text points at. */
+  start?: { page: number; rects: [number, number, number, number][] };
 }
 
 const [selectedGeometry, setSelectedGeometry] = createSignal<SelectionGeometry | null>(null);
@@ -45,6 +49,9 @@ export function hasSelection(): boolean {
 const SETTLE_MS = 150;
 
 let timer: ReturnType<typeof setTimeout> | undefined;
+/** The capture waiting out the settle time, so an action taken before it
+ * elapses can run it at once. */
+let pending: (() => void) | null = null;
 
 /** Called by the viewer as the selection changes. `compute` is deferred, so a
  * selection that is still being dragged is never reconstructed. */
@@ -53,7 +60,8 @@ export function noteSelectionChanged(
   geometry?: () => SelectionGeometry | null
 ): void {
   clearTimeout(timer);
-  timer = setTimeout(() => {
+  const capture = () => {
+    pending = null;
     // `compute` reads the *live* Selection, which may have collapsed during the
     // settle window — a click lands, focus moves, the drag ends somewhere
     // empty. An empty answer means "there is nothing to read now", never
@@ -64,7 +72,17 @@ export function noteSelectionChanged(
       setSelectedTextSignal(text);
       setSelectedGeometry(geometry?.() ?? null);
     }
-  }, SETTLE_MS);
+  };
+  pending = capture;
+  timer = setTimeout(capture, SETTLE_MS);
+}
+
+/** Capture a selection still inside its settle time now: for an action the
+ * user took on it (a button, a key) a moment after letting go. */
+export function settleSelectionNow(): void {
+  if (!pending) return;
+  clearTimeout(timer);
+  pending();
 }
 
 /** Forget the selection entirely.
@@ -80,6 +98,7 @@ export function noteSelectionChanged(
  */
 export function clearSelection(): void {
   clearTimeout(timer);
+  pending = null;
   setSelectedTextSignal('');
   setSelectedGeometry(null);
 }
@@ -103,12 +122,19 @@ export function selectionGeometryFrom(
   }
   const height = pageHeight(page);
   if (page < 0 || height === undefined) return null;
-  const rects = runs
-    .filter((run) => run.page === page)
-    .map(
-      ({ rect: [x, y, w, h] }) => [x, height - (y + h), w, h] as [number, number, number, number]
+  const rectsOn = (on: number, h: number) =>
+    mergeRows(
+      runs
+        .filter((run) => run.page === on)
+        .map(({ rect: [x, y, w, rh] }) => [x, h - (y + rh), w, rh] as Rect)
     );
-  return { docId, page, rects: mergeRows(rects) };
+  const geometry: SelectionGeometry = { docId, page, rects: rectsOn(page, height) };
+  const first = Math.min(...counts.keys());
+  const firstHeight = pageHeight(first);
+  if (first < page && firstHeight !== undefined) {
+    geometry.start = { page: first, rects: rectsOn(first, firstHeight) };
+  }
+  return geometry;
 }
 
 /** The engine takes at most this many rectangles in one glyph request. */

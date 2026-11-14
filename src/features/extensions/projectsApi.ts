@@ -73,14 +73,16 @@ function readerContext(): unknown {
   const geometry = selectedGeometry();
   let selection: { page: number; box: [number, number, number, number]; text: string } | null =
     null;
-  if (geometry && doc?.loaded && geometry.docId === doc.docId && geometry.rects.length > 0) {
-    const left = Math.min(...geometry.rects.map((r) => r[0]));
-    const top = Math.min(...geometry.rects.map((r) => r[1]));
-    const right = Math.max(...geometry.rects.map((r) => r[0] + r[2]));
-    const bottom = Math.max(...geometry.rects.map((r) => r[1] + r[3]));
+  // A selection over a page break is linked to where it begins.
+  const place = geometry?.start ?? geometry;
+  if (geometry && place && doc?.loaded && geometry.docId === doc.docId && place.rects.length > 0) {
+    const left = Math.min(...place.rects.map((r) => r[0]));
+    const top = Math.min(...place.rects.map((r) => r[1]));
+    const right = Math.max(...place.rects.map((r) => r[0] + r[2]));
+    const bottom = Math.max(...place.rects.map((r) => r[1] + r[3]));
     const round = (v: number) => Math.round(v);
     selection = {
-      page: geometry.page,
+      page: place.page,
       box: [round(left), round(top), round(right - left), round(bottom - top)],
       text: selectedText(),
     };

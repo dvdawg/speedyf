@@ -97,6 +97,20 @@ describe('selectionGeometryFrom', () => {
     });
   });
 
+  it('remembers where a selection over a page break begins', () => {
+    const geometry = selectionGeometryFrom(
+      3,
+      [
+        { page: 1, rect: [10, 40, 50, 12] },
+        { page: 2, rect: [10, 680, 40, 12] },
+        { page: 2, rect: [10, 660, 40, 12] },
+      ],
+      () => 792
+    );
+    expect(geometry?.page).toBe(2);
+    expect(geometry?.start).toEqual({ page: 1, rects: [[10, 740, 50, 12]] });
+  });
+
   it('merges a long selection into lines to stay under the engine cap', () => {
     const runs = Array.from({ length: 100 }, (_, i) => ({
       page: 0,

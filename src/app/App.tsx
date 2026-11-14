@@ -23,6 +23,7 @@ import { clearImagePreviews } from '../features/editor/editorActions';
 import { clearFormFields } from '../features/forms/formStore';
 import PreviewPopover from '../features/citations/PreviewPopover';
 import MathPopover from '../features/extensions/MathPopover';
+import SelectionActions from '../features/extensions/SelectionActions';
 import RegionCaptureLayer from '../features/extensions/RegionCaptureLayer';
 import { ProjectQuestion, ReaderPaneDrawer } from '../features/extensions/ReaderPane';
 import { trackReader } from '../features/extensions/readerContext';
@@ -275,6 +276,7 @@ export default function App() {
         <QuickOpen />
         <PreviewPopover />
         <MathPopover />
+        <SelectionActions />
         <RegionCaptureLayer />
         <ProjectQuestion />
       </div>

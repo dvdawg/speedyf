@@ -112,11 +112,13 @@ export default function CommandPalette() {
     const selection = selectedText();
     if (selection.length > 0) {
       for (const action of selectionActions()) {
+        const chord = boundKey.get(action.id);
         items.push({
           key: `selection:${action.id}`,
           title: action.title,
           group: 'Extensions',
           keywords: ['selection'],
+          ...(chord ? { shortcut: formatShortcut(chord) } : {}),
           context: `${selection.length} characters selected`,
           enabled: true,
           run: () => void runExtensionAction(action, selection),

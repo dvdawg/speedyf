@@ -25,7 +25,7 @@ import { COMMANDS, runCommand } from '../../app/commands';
 import { activeTab } from '../../stores/tabsStore';
 import { jumpToPage } from '../viewer/navHistory';
 import { reservedChords } from '../../app/shortcuts';
-import { selectedGeometry, selectedText } from '../../stores/selectionStore';
+import { selectedGeometry, selectedText, settleSelectionNow } from '../../stores/selectionStore';
 import { canRunGroup, refusalReason, resolveBindings, type ExtensionBinding } from './capabilities';
 import {
   API_PERMISSIONS,
@@ -1454,8 +1454,17 @@ export async function runBoundCommand(extensionId: string, command: string): Pro
   const extension = state.extensions.find((e) => e.id === extensionId);
   if (!extension || !extension.enabled) return;
   const qualified = `${extensionId}/${command}`;
-  const isSelectionAction = extension.selectionActions.some((a) => a.id === qualified);
-  const selection = isSelectionAction ? selectedText() : '';
+  const action = extension.selectionActions.find((a) => a.id === qualified);
+  const isSelectionAction = action !== undefined;
+  // Offered only where its `when` holds, by key as in the palette: a
+  // Notepad quote from a paper in no project does nothing.
+  if (action && !whenHolds(action.when)) return;
+  // A key acts on what is highlighted now: the text the palette would
+  // pass, but only while the page still shows a selection, so a key pressed
+  // after clicking away does not act on an old one.
+  const live = typeof document === 'undefined' ? null : document.getSelection();
+  if (isSelectionAction) settleSelectionNow();
+  const selection = isSelectionAction && live !== null && !live.isCollapsed ? selectedText() : '';
   if (isSelectionAction && selection.length === 0) {
     // Nothing highlighted. Reported against the extension rather than thrown
     // at a keypress nobody is waiting on.
@@ -1463,8 +1472,8 @@ export async function runBoundCommand(extensionId: string, command: string): Pro
     return;
   }
   try {
-    if (isSelectionAction) {
-      await invokeAction(extension, command, command, selection, selectionAnchor());
+    if (action) {
+      await invokeAction(extension, command, action.title, selection, selectionAnchor());
       return;
     }
     await hostFor(extension).invoke(command, selection ? { value: selection } : undefined);
