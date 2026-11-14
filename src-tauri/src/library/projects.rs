@@ -224,6 +224,45 @@ impl PaperStore {
         Ok(())
     }
 
+    /// A project made from an imported bundle (projects.md sec. 13): named
+    /// as the bundle says, with " (2)", " (3)"... when that name is taken,
+    /// holding `members` as (item id, the cite key the bundle knew it by).
+    /// A bundle key the item does not carry now is remembered as one of its
+    /// former keys, so the bundle's notes still find it by that key.
+    pub fn import_project(
+        &mut self,
+        name: &str,
+        members: &[(String, String)],
+    ) -> AppResult<ProjectDto> {
+        self.ensure_writable()?;
+        let base = clean_name(name).unwrap_or_else(|_| "Imported".to_owned());
+        let mut wanted = base.clone();
+        let mut n = 2;
+        while self.refuse_duplicate_name(&wanted, None).is_err() {
+            wanted = format!("{base} ({n})");
+            n += 1;
+        }
+        let created = self.create_project(&wanted)?;
+        for (paper_id, bundle_key) in members {
+            let Ok(index) = self.index_of(paper_id) else {
+                continue;
+            };
+            self.set_membership(paper_id, &created.id, true)?;
+            let paper = &mut self.papers[index];
+            let key = bundle_key.trim();
+            if !key.is_empty()
+                && paper.cite_key != key
+                && !paper.former_keys.iter().any(|k| k == key)
+                && !paper.alias_keys.iter().any(|k| k == key)
+            {
+                paper.former_keys.push(key.to_owned());
+                paper.touch();
+            }
+        }
+        let index = self.project_index(&created.id)?;
+        Ok(self.project_dto_for(&self.projects[index]))
+    }
+
     /// Record where the project's `.bib` goes, or that it goes nowhere. The
     /// file itself is written by the next save (`sync_project_bibs`), which
     /// the command that calls this performs at once.
@@ -708,5 +747,41 @@ mod tests {
         store.set_project_bib(&id, Some("  ".into())).unwrap();
         assert!(store.project_dto(&id).unwrap().bib_path.is_none());
         assert!(store.set_project_bib("nope", None).is_err());
+    }
+
+    #[test]
+    fn an_imported_bundle_becomes_a_project_whose_keys_still_resolve() {
+        let mut store = store();
+        let a = add_paper_with(&mut store, "Attias", 2022, "Quantum things");
+        let b = add_paper_with(&mut store, "Bloch", 1946, "Nuclear induction");
+        store.create_project("Thesis").unwrap();
+        let key_a = store.papers[0].cite_key.clone();
+        let made = store
+            .import_project(
+                "Thesis",
+                &[
+                    (a.clone(), key_a.clone()),
+                    (b.clone(), "bloch1946old".to_owned()),
+                    ("no-such-item".to_owned(), "x".to_owned()),
+                ],
+            )
+            .unwrap();
+        // The name was taken; the import gets its own.
+        assert_eq!(made.name, "Thesis (2)");
+        assert_eq!(made.paper_count, 2);
+        // A key the item already has is not history; another one is.
+        assert!(store.papers[0].former_keys.is_empty());
+        assert_eq!(store.papers[1].former_keys, ["bloch1946old"]);
+        let row = store
+            .paper_rows(&crate::library::types::PaperFilterDto {
+                project: Some(made.id.clone()),
+                ..Default::default()
+            })
+            .rows
+            .into_iter()
+            .find(|row| row.id == b)
+            .unwrap();
+        assert_eq!(row.key_history, ["bloch1946old"]);
+        assert_eq!(row.first_author.as_deref(), Some("Bloch"));
     }
 }

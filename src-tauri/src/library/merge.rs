@@ -731,7 +731,8 @@ impl PaperStore {
             });
             if taken && !self.papers[index].cite_key_pinned {
                 let meta = self.papers[index].meta.clone();
-                self.papers[index].cite_key = self.free_key(&meta, Some(index));
+                let key = self.free_key(&meta, Some(index));
+                self.papers[index].set_cite_key(key);
             }
         }
 

@@ -959,7 +959,7 @@ impl PaperStore {
                 if !paper.cite_key_pinned && base_before != base_after {
                     let meta = paper.meta.clone();
                     let key = self.free_key(&meta, Some(index));
-                    self.papers[index].cite_key = key;
+                    self.papers[index].set_cite_key(key);
                 }
             }
         }

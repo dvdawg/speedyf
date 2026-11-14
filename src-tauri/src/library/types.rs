@@ -280,6 +280,14 @@ pub struct PaperRowDto {
     /// shown as "2019+" and sorted as that year.
     #[serde(default)]
     pub year_floor: Option<i32>,
+    /// The first author's family name, for a short label ("Attias 2022").
+    #[serde(default)]
+    pub first_author: Option<String>,
+    /// Keys this item answered to before: its own earlier keys and the
+    /// pinned keys of records merged into it. A note's `@key` written
+    /// before a change still finds the item through them.
+    #[serde(default)]
+    pub key_history: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

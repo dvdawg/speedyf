@@ -389,6 +389,11 @@ impl PaperStore {
             .map(|(_, error)| error.clone())
     }
 
+    /// Where `library.json` (and the project files beside it) live.
+    pub fn data_dir(&self) -> &Path {
+        &self.data_dir
+    }
+
     pub fn data_info(&self) -> LibraryDataInfoDto {
         LibraryDataInfoDto {
             dir: self.data_dir.to_string_lossy().into_owned(),
@@ -574,7 +579,7 @@ fn write_pointer(app_data_dir: &Path, data_dir: &Path) -> AppResult<()> {
         .map_err(|error| AppError::Io(format!("cannot write {}: {error}", path.display())))
 }
 
-fn now_unix_secs() -> u64 {
+pub(crate) fn now_unix_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())

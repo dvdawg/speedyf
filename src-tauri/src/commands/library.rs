@@ -10,6 +10,7 @@
 //! through the engine's per-host limiter (`library::ratelimit`), and
 //! take the store lock only to apply what came back.
 
+use super::projectfiles::ProjectFilesState;
 use super::EngineState;
 use crate::engine::types::{DocId, Priority, ResolvedCitationDto};
 use crate::engine::{EngineHandle, Work};
@@ -183,12 +184,21 @@ pub async fn library_rename_project(
     .await
 }
 
+/// Delete a project. Its extension files (a notepad) are set aside under
+/// `deleted/`, never removed, after any open editor of them is saved and
+/// closed (projects.md sec. 13).
 #[tauri::command]
 pub async fn library_delete_project(
     state: tauri::State<'_, EngineState>,
+    files: tauri::State<'_, ProjectFilesState>,
     id: String,
 ) -> AppResult<()> {
-    write_store(state.0.clone(), move |store| store.delete_project(&id)).await
+    let project = id.clone();
+    write_store(state.0.clone(), move |store| store.delete_project(&id)).await?;
+    let files = std::sync::Arc::clone(&files.0);
+    tauri::async_runtime::spawn_blocking(move || files.project_deleted(&project))
+        .await
+        .map_err(|error| AppError::Internal(format!("library task failed: {error}")))
 }
 
 #[tauri::command]
@@ -322,12 +332,24 @@ pub async fn library_backups(
 
 /// Put the library back as a backup holds it, after backing up the
 /// current state (`PaperStore::restore_backup`).
+/// The project files come back too: the snapshot nearest the backup's
+/// moment, the present snapshotted first (projects.md sec. 13).
 #[tauri::command]
 pub async fn library_restore_backup(
     state: tauri::State<'_, EngineState>,
+    files: tauri::State<'_, ProjectFilesState>,
     file: String,
 ) -> AppResult<()> {
-    write_store(state.0.clone(), move |store| store.restore_backup(&file)).await
+    let at = crate::library::backup::parse_name(&file);
+    files.0.flush();
+    write_store(state.0.clone(), move |store| store.restore_backup(&file)).await?;
+    if let Some(at) = at {
+        let files = std::sync::Arc::clone(&files.0);
+        tauri::async_runtime::spawn_blocking(move || files.restored(at))
+            .await
+            .map_err(|error| AppError::Internal(format!("library task failed: {error}")))?;
+    }
+    Ok(())
 }
 
 /// Switch the data folder. Adopts a `library.json` already there, otherwise
@@ -335,11 +357,21 @@ pub async fn library_restore_backup(
 #[tauri::command]
 pub async fn library_move_data(
     state: tauri::State<'_, EngineState>,
+    files: tauri::State<'_, ProjectFilesState>,
     dir: String,
 ) -> AppResult<LibraryDataInfoDto> {
     let engine = state.0.clone();
+    let files = std::sync::Arc::clone(&files.0);
     let info = tauri::async_runtime::spawn_blocking(move || {
-        let result = engine.0.papers.lock().move_data(PathBuf::from(dir));
+        let target = PathBuf::from(&dir);
+        // Adopted when a library is already there; copied otherwise, and
+        // then the project files are copied with it.
+        let copied = !target.join(crate::library::store::LIBRARY_FILE).is_file();
+        files.flush();
+        let result = engine.0.papers.lock().move_data(target);
+        if let Ok(info) = &result {
+            files.moved(PathBuf::from(&info.dir), copied);
+        }
         engine.0.notify_library_changed();
         result
     })

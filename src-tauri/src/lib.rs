@@ -241,6 +241,12 @@ pub fn run() {
             }));
 
             engine.start_library_watch();
+            // Extensions' project files (a notepad) live beside library.json;
+            // their saver runs from now on (projects.md sec. 13).
+            let library_dir = engine.0.papers.lock().data_dir().to_path_buf();
+            let project_files =
+                commands::projectfiles::ProjectFiles::start(app.handle().clone(), library_dir);
+            app.manage(commands::projectfiles::ProjectFilesState(project_files));
             app.manage(EngineState(engine));
             app.manage(windows::Windows::default());
             windows::install_menu(app.handle())?;
@@ -479,6 +485,15 @@ pub fn run() {
             commands::library::library_restore_backup,
             commands::library::library_bibtex_options,
             commands::library::library_set_bibtex_options,
+            commands::projectfiles::project_file_open,
+            commands::projectfiles::project_file_edit,
+            commands::projectfiles::project_file_close,
+            commands::projectfiles::project_files_flush,
+            commands::projectfiles::project_file_read,
+            commands::projectfiles::project_file_write,
+            commands::projectfiles::project_file_list,
+            commands::projectfiles::project_file_remove,
+            commands::projectfiles::library_import_bundle,
         ])
         .build(tauri::generate_context!())
         .expect("error while building SpeedyF")

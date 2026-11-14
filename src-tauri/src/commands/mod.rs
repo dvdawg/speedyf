@@ -11,6 +11,7 @@ pub mod citations;
 pub mod health;
 pub mod hovers;
 pub mod library;
+pub mod projectfiles;
 
 pub struct EngineState(pub EngineHandle);
 
@@ -775,6 +776,8 @@ pub struct PaletteCommandDto {
     pub local_id: String,
     pub title: String,
     pub keywords: Vec<String>,
+    /// Listed only while this holds.
+    pub when: Option<extensions::When>,
 }
 
 #[derive(serde::Serialize, Clone, Debug)]
@@ -795,6 +798,8 @@ pub struct ActionDto {
     pub local_id: String,
     pub title: String,
     pub extension_id: String,
+    /// Offered only while this holds.
+    pub when: Option<extensions::When>,
 }
 
 fn actions(manifest: &Manifest, which: &[crate::extensions::ActionContribution]) -> Vec<ActionDto> {
@@ -805,6 +810,7 @@ fn actions(manifest: &Manifest, which: &[crate::extensions::ActionContribution])
             local_id: a.command.clone(),
             title: a.title.clone(),
             extension_id: manifest.id.clone(),
+            when: a.when,
         })
         .collect()
 }
@@ -840,12 +846,13 @@ fn palette_commands(manifest: &Manifest) -> Vec<PaletteCommandDto> {
         .contributes
         .commands
         .iter()
-        .filter(|c| Some(c.id.as_str()) != provider && Some(c.id.as_str()) != terms)
+        .filter(|c| Some(c.id.as_str()) != provider && Some(c.id.as_str()) != terms && !c.hidden)
         .map(|c| PaletteCommandDto {
             id: extensions::qualified_command_id(&manifest.id, &c.id),
             local_id: c.id.clone(),
             title: c.title.clone(),
             keywords: c.keywords.clone(),
+            when: c.when,
         })
         .collect()
 }
@@ -1092,11 +1099,18 @@ pub async fn set_extension_enabled(
     registry.save(&root)
 }
 
-/// The hosts an extension may reach, if it may reach any right now: it is
-/// installed (or built in), switched on, granted `network`, and its manifest
-/// lists them. Read from disk on every call, so disabling an extension stops
-/// its next request without anything to invalidate.
-fn network_hosts(app: &tauri::AppHandle, id: &str) -> AppResult<Vec<String>> {
+/// The manifest of an extension that may use `permission` right now: it is
+/// installed (or built in), switched on, granted the permission at install
+/// (a built-in's grant is its manifest), and its manifest still asks for it.
+/// Read from disk on every call, so disabling an extension stops its next
+/// request without anything to invalidate. `what` names the call in the
+/// refusal.
+pub(crate) fn granted_manifest(
+    app: &tauri::AppHandle,
+    id: &str,
+    permission: extensions::Permission,
+    what: &str,
+) -> AppResult<Manifest> {
     if !extensions::is_valid_id(id) {
         return Err(AppError::Malformed(format!("bad extension id \"{id}\"")));
     }
@@ -1116,29 +1130,39 @@ fn network_hosts(app: &tauri::AppHandle, id: &str) -> AppResult<Vec<String>> {
                     "no extension \"{id}\" is installed"
                 )));
             };
-            let granted = row.permissions.contains(&extensions::Permission::Network);
+            let granted = row.permissions.contains(&permission);
             (user_root, row.enabled, granted)
         }
     };
     if !enabled {
-        return Err(AppError::Unsupported(format!(
-            "\"{id}\" is disabled; enabling it allows its network access"
-        )));
+        return Err(AppError::Unsupported(format!("\"{id}\" is disabled")));
     }
     let text = std::fs::read_to_string(root.join(id).join(extensions::MANIFEST_FILE))
         .map_err(|e| AppError::Io(format!("manifest unreadable: {e}")))?;
     let manifest =
         extensions::parse_manifest(&text).map_err(|e| AppError::Malformed(e.to_string()))?;
-    if !granted
-        || !manifest
-            .permissions
-            .contains(&extensions::Permission::Network)
-    {
-        return Err(AppError::Unsupported(
-            "net.fetch needs the \"network\" permission".into(),
-        ));
+    if !granted || !manifest.permissions.contains(&permission) {
+        let name = serde_json::to_value(permission)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_default();
+        return Err(AppError::Unsupported(format!(
+            "{what} needs the \"{name}\" permission"
+        )));
     }
-    Ok(manifest.network)
+    Ok(manifest)
+}
+
+/// The hosts an extension may reach, if it may reach any right now.
+fn network_hosts(app: &tauri::AppHandle, id: &str) -> AppResult<Vec<String>> {
+    granted_manifest(app, id, extensions::Permission::Network, "net.fetch")
+        .map_err(|error| match error {
+            AppError::Unsupported(message) if message.ends_with("is disabled") => {
+                AppError::Unsupported(format!("{message}; enabling it allows its network access"))
+            }
+            other => other,
+        })
+        .map(|manifest| manifest.network)
 }
 
 /// `net.fetch` for an extension: an HTTPS GET to a host its manifest lists,

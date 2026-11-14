@@ -1,6 +1,9 @@
 //! Export a project as a bundle (projects.md sec. 5): one `.zip` holding the
 //! project's `.bib` and the main PDF of each of its items, named by cite
-//! key, for handing a reading list to a co-author or a submission system.
+//! key, for handing a reading list to a co-author or a submission system;
+//! the project's extension files (its notepad, projects.md sec. 13) under
+//! `project-files/`; and `speedyf-bundle.json`, which lets an import put it
+//! all back together as a project.
 //!
 //! The zip is streamed to a temp file beside the destination and renamed
 //! over it once complete, so a failed export leaves nothing behind and a
@@ -10,7 +13,7 @@
 
 use super::store::PaperStore;
 use crate::errors::{AppError, AppResult};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, Write};
@@ -27,6 +30,31 @@ pub struct BundlePlan {
     /// The papers whose keys go into the `.bib`, pinned once it is written.
     pub paper_ids: Vec<String>,
     pub members: Vec<BundleMember>,
+    /// The project's name, for the import to make a project of.
+    pub project_name: String,
+    /// The project's extension files: (name in the zip, file on disk).
+    pub files: Vec<(String, PathBuf)>,
+}
+
+/// The name of the manifest inside a bundle.
+pub const MANIFEST_NAME: &str = "speedyf-bundle.json";
+
+/// What `speedyf-bundle.json` says: enough to rebuild the project.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BundleManifest {
+    pub version: u32,
+    pub project: String,
+    pub items: Vec<BundleItem>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BundleItem {
+    pub cite_key: String,
+    /// Its PDF inside the zip, when it has one there.
+    #[serde(default)]
+    pub pdf: Option<String>,
 }
 
 /// One item of the project: its cite key and its main file, if it has one.
@@ -45,6 +73,9 @@ pub struct BundleReportDto {
     pub pdfs: Vec<String>,
     /// Cite keys of the items whose main file is not on disk.
     pub missing: Vec<String>,
+    /// Extension files carried along (a notepad and its images).
+    #[serde(default)]
+    pub files: u32,
 }
 
 impl PaperStore {
@@ -75,6 +106,8 @@ impl PaperStore {
             bib_text,
             paper_ids,
             members,
+            files: super::projectfiles::bundle_entries(self.data_dir(), project_id),
+            project_name: name,
         })
     }
 }
@@ -101,6 +134,8 @@ pub fn write_bundle(plan: &BundlePlan, path: &Path) -> AppResult<BundleReportDto
 
     let mut pdfs = Vec::new();
     let mut missing = Vec::new();
+    let mut items: Vec<BundleItem> = Vec::new();
+    let mut files: u32 = 0;
     {
         let mut zip = ZipWriter::new(temp.as_file_mut());
         let deflated = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
@@ -120,6 +155,10 @@ pub fn write_bundle(plan: &BundlePlan, path: &Path) -> AppResult<BundleReportDto
                 .and_then(|source| File::open(source).ok())
             else {
                 missing.push(member.cite_key.clone());
+                items.push(BundleItem {
+                    cite_key: member.cite_key.clone(),
+                    pdf: None,
+                });
                 continue;
             };
             let large = source.metadata().map(|m| m.len()).unwrap_or(0) >= u32::MAX as u64;
@@ -127,8 +166,29 @@ pub fn write_bundle(plan: &BundlePlan, path: &Path) -> AppResult<BundleReportDto
             zip.start_file(name.as_str(), stored.large_file(large))
                 .map_err(zip_error)?;
             io::copy(&mut io::BufReader::new(source), &mut zip).map_err(write_error)?;
+            items.push(BundleItem {
+                cite_key: member.cite_key.clone(),
+                pdf: Some(name.clone()),
+            });
             pdfs.push(name);
         }
+        for (name, source) in &plan.files {
+            let Ok(bytes) = std::fs::read(source) else {
+                continue;
+            };
+            zip.start_file(name.as_str(), deflated).map_err(zip_error)?;
+            zip.write_all(&bytes).map_err(write_error)?;
+            files += 1;
+        }
+        let manifest = BundleManifest {
+            version: 1,
+            project: plan.project_name.clone(),
+            items,
+        };
+        let json = serde_json::to_vec_pretty(&manifest)
+            .map_err(|error| AppError::Internal(format!("bundle manifest: {error}")))?;
+        zip.start_file(MANIFEST_NAME, deflated).map_err(zip_error)?;
+        zip.write_all(&json).map_err(write_error)?;
         zip.finish().map_err(zip_error)?;
     }
     temp.as_file().sync_all().map_err(write_error)?;
@@ -144,6 +204,104 @@ pub fn write_bundle(plan: &BundlePlan, path: &Path) -> AppResult<BundleReportDto
         bib_name: plan.bib_name.clone(),
         pdfs,
         missing,
+        files,
+    })
+}
+
+/// What an import needs out of a bundle.
+pub struct BundleContents {
+    pub manifest: BundleManifest,
+    /// PDFs written out of the zip into the temp folder: (zip name, file).
+    pub pdfs: Vec<(String, PathBuf)>,
+    /// Extension files: (zip name under `project-files/`, bytes).
+    pub files: Vec<(String, Vec<u8>)>,
+}
+
+/// The most a bundle's entries may inflate to, all together.
+const MAX_BUNDLE_INFLATED: u64 = 8 * 1024 * 1024 * 1024;
+
+/// Read a bundle: its manifest (or one made from its `.bib` name and PDF
+/// names, for a bundle written before manifests), its PDFs written into
+/// `temp`, and its project files in memory. Entry names are never used as
+/// paths: a PDF is written under a name made safe here, and project files
+/// are placed later through `projectfiles::bundle_target`.
+pub fn read_bundle(path: &Path, temp: &Path) -> AppResult<BundleContents> {
+    use std::io::Read;
+    let file = File::open(path)
+        .map_err(|error| AppError::Io(format!("cannot open {}: {error}", path.display())))?;
+    let mut archive = zip::ZipArchive::new(io::BufReader::new(file))
+        .map_err(|error| AppError::Io(format!("{} is not a bundle: {error}", path.display())))?;
+    let mut manifest: Option<BundleManifest> = None;
+    let mut bib_stem: Option<String> = None;
+    let mut pdfs = Vec::new();
+    let mut files = Vec::new();
+    let mut total: u64 = 0;
+    let mut taken = HashSet::new();
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|error| AppError::Io(format!("bundle: {error}")))?;
+        if entry.is_dir() {
+            continue;
+        }
+        let name = entry.name().map(|n| n.into_owned()).unwrap_or_default();
+        total = total.saturating_add(entry.size());
+        if total > MAX_BUNDLE_INFLATED {
+            return Err(AppError::Unsupported("the bundle is too large".into()));
+        }
+        if name == MANIFEST_NAME {
+            let mut bytes = Vec::new();
+            (&mut entry)
+                .take(4 * 1024 * 1024)
+                .read_to_end(&mut bytes)
+                .map_err(|error| AppError::Io(format!("bundle: {error}")))?;
+            manifest = serde_json::from_slice(&bytes).ok();
+        } else if let Some(stem) = name.strip_suffix(".bib").filter(|s| !s.contains('/')) {
+            bib_stem = Some(stem.to_owned());
+        } else if let Some(file_name) = name
+            .strip_prefix("pdfs/")
+            .filter(|rest| !rest.contains('/') && rest.to_lowercase().ends_with(".pdf"))
+        {
+            let stem = safe_file_stem(file_name.trim_end_matches(".pdf"), "item");
+            let out = temp.join(unique_pdf_name(&stem, &mut taken).trim_start_matches("pdfs/"));
+            let mut target = File::create(&out).map_err(|error| {
+                AppError::Io(format!("cannot write {}: {error}", out.display()))
+            })?;
+            io::copy(&mut entry, &mut target)
+                .map_err(|error| AppError::Io(format!("bundle: {error}")))?;
+            pdfs.push((name, out));
+        } else if name.starts_with(&format!("{}/", super::projectfiles::ROOT_DIR)) {
+            let mut bytes = Vec::new();
+            (&mut entry)
+                .take(super::projectfiles::MAX_FILE_BYTES as u64 + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|error| AppError::Io(format!("bundle: {error}")))?;
+            if bytes.len() <= super::projectfiles::MAX_FILE_BYTES {
+                files.push((name, bytes));
+            }
+        }
+    }
+    let manifest = match manifest {
+        Some(manifest) => manifest,
+        None => BundleManifest {
+            version: 1,
+            project: bib_stem.unwrap_or_else(|| "Imported".to_owned()),
+            items: pdfs
+                .iter()
+                .map(|(name, _)| BundleItem {
+                    cite_key: name
+                        .trim_start_matches("pdfs/")
+                        .trim_end_matches(".pdf")
+                        .to_owned(),
+                    pdf: Some(name.clone()),
+                })
+                .collect(),
+        },
+    };
+    Ok(BundleContents {
+        manifest,
+        pdfs,
+        files,
     })
 }
 
@@ -193,6 +351,8 @@ mod tests {
             bib_text: "@article{abel1999zeta,\n}\n".into(),
             paper_ids: Vec::new(),
             members,
+            project_name: "Thesis".into(),
+            files: Vec::new(),
         }
     }
 
@@ -248,9 +408,28 @@ mod tests {
             vec![
                 "Thesis.bib",
                 "pdfs/vaswani2017attention.pdf",
-                "pdfs/devlin2019bert.pdf"
+                "pdfs/devlin2019bert.pdf",
+                MANIFEST_NAME,
             ],
-            "the .bib and the PDFs, nothing else"
+            "the .bib, the PDFs and the manifest, nothing else"
+        );
+        let manifest: BundleManifest = serde_json::from_slice(&entries[3].1).unwrap();
+        assert_eq!(manifest.project, "Thesis");
+        assert_eq!(
+            manifest
+                .items
+                .iter()
+                .map(|i| (i.cite_key.as_str(), i.pdf.as_deref()))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    "vaswani2017attention",
+                    Some("pdfs/vaswani2017attention.pdf")
+                ),
+                ("gone2020", None),
+                ("devlin2019bert", Some("pdfs/devlin2019bert.pdf")),
+                ("nofile2021", None),
+            ]
         );
         assert_eq!(entries[0].1, b"@article{abel1999zeta,\n}\n");
         assert_eq!(entries[1].1, b"%PDF-1.7 attention", "a byte copy");
@@ -284,7 +463,66 @@ mod tests {
         )
         .unwrap();
         assert_eq!(report.pdfs, vec!["pdfs/k_1.pdf", "pdfs/k_1-2.pdf"]);
-        assert_eq!(entries(&path).len(), 3);
+        assert_eq!(entries(&path).len(), 4);
+    }
+
+    #[test]
+    fn a_bundle_round_trips_its_notepad_and_assets() {
+        let data = tempfile::tempdir().unwrap();
+        let note = super::super::projectfiles::file_path(
+            data.path(),
+            "dev.speedyf.notepad",
+            "p1",
+            "notepad.md",
+        )
+        .unwrap();
+        let asset = super::super::projectfiles::file_path(
+            data.path(),
+            "dev.speedyf.notepad",
+            "p1",
+            "assets/fig.png",
+        )
+        .unwrap();
+        super::super::projectfiles::write_atomic(&note, "# Notes \u{e9}\n@a2020".as_bytes())
+            .unwrap();
+        super::super::projectfiles::write_atomic(&asset, &[0x89, b'P', b'N', b'G']).unwrap();
+        let library = tempfile::tempdir().unwrap();
+        let a = library.path().join("a.pdf");
+        fs::write(&a, b"%PDF a").unwrap();
+        let mut with_files = plan(vec![member("a2020", Some(&a))]);
+        with_files.files = super::super::projectfiles::bundle_entries(data.path(), "p1");
+        let out = tempfile::tempdir().unwrap();
+        let path = out.path().join("b.zip");
+        let report = write_bundle(&with_files, &path).unwrap();
+        assert_eq!(report.files, 2);
+
+        let temp = tempfile::tempdir().unwrap();
+        let contents = read_bundle(&path, temp.path()).unwrap();
+        assert_eq!(contents.manifest.project, "Thesis");
+        assert_eq!(contents.pdfs.len(), 1);
+        assert_eq!(fs::read(&contents.pdfs[0].1).unwrap(), b"%PDF a");
+        let other = tempfile::tempdir().unwrap();
+        for (name, bytes) in &contents.files {
+            let target =
+                super::super::projectfiles::bundle_target(other.path(), "p2", name).unwrap();
+            super::super::projectfiles::write_atomic(&target, bytes).unwrap();
+        }
+        let back = super::super::projectfiles::file_path(
+            other.path(),
+            "dev.speedyf.notepad",
+            "p2",
+            "notepad.md",
+        )
+        .unwrap();
+        assert_eq!(fs::read_to_string(back).unwrap(), "# Notes \u{e9}\n@a2020");
+        let back_asset = super::super::projectfiles::file_path(
+            other.path(),
+            "dev.speedyf.notepad",
+            "p2",
+            "assets/fig.png",
+        )
+        .unwrap();
+        assert_eq!(fs::read(back_asset).unwrap(), vec![0x89, b'P', b'N', b'G']);
     }
 
     #[test]

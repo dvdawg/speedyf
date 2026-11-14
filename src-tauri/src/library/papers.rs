@@ -119,6 +119,11 @@ pub struct PaperRecord {
     /// uses `cite_key` only.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub alias_keys: Vec<String>,
+    /// Keys this record had before its current one, oldest first. Not
+    /// reserved - another record may be given one - only remembered, so a
+    /// note citing `@oldkey` still finds the item (projects.md sec. 13).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub former_keys: Vec<String>,
     /// On a snapshot in `merged_from` only: how the merge changed things,
     /// for unmerge to put back.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -166,6 +171,9 @@ pub struct MergeTrace {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub auto: bool,
 }
+
+/// Most earlier keys a record remembers.
+pub const MAX_FORMER_KEYS: usize = 20;
 
 /// How long every file of an item must have been missing before the item
 /// is removed (`PaperStore::remove_long_missing`).
@@ -455,6 +463,7 @@ impl PaperRecord {
             merged_from: Vec::new(),
             alias_ids: Vec::new(),
             alias_keys: Vec::new(),
+            former_keys: Vec::new(),
             merge_trace: None,
             auto_merge_reasons: Vec::new(),
             primary_path: None,
@@ -462,7 +471,7 @@ impl PaperRecord {
         }
     }
 
-    fn touch(&mut self) {
+    pub(super) fn touch(&mut self) {
         self.updated_at = now_rfc3339();
     }
 
@@ -528,6 +537,26 @@ impl PaperRecord {
             .as_ref()
             .map(|field| field.value.as_str())
             .filter(|title| !title.trim().is_empty())
+    }
+
+    /// Give the record a new cite key, remembering the one it had
+    /// (`former_keys`), so anything that cited it by the old key can still
+    /// find it. The same key again, or a first key, records nothing.
+    pub fn set_cite_key(&mut self, key: String) {
+        if key == self.cite_key {
+            return;
+        }
+        let old = std::mem::replace(&mut self.cite_key, key);
+        self.former_keys
+            .retain(|k| *k != self.cite_key && *k != old);
+        if !old.is_empty() {
+            self.former_keys.push(old);
+        }
+        // A key changed a hundred times is a bug elsewhere; keep the newest.
+        if self.former_keys.len() > MAX_FORMER_KEYS {
+            let excess = self.former_keys.len() - MAX_FORMER_KEYS;
+            self.former_keys.drain(..excess);
+        }
     }
 
     pub fn authors(&self) -> &[Author] {
@@ -1297,7 +1326,7 @@ impl PaperStore {
         if !paper.cite_key_pinned && (base_before != base_after || paper.cite_key.is_empty()) {
             let meta = paper.meta.clone();
             let key = self.free_key(&meta, Some(index));
-            self.papers[index].cite_key = key;
+            self.papers[index].set_cite_key(key);
             changed = true;
         }
         if changed {
@@ -1647,6 +1676,19 @@ impl PaperStore {
             candidate_count: paper.candidates.len().min(u32::MAX as usize) as u32,
             file_count: mainfile::distinct_present(&paper.files).min(u32::MAX as usize) as u32,
             year_floor: paper.shown_year_floor(),
+            first_author: paper
+                .authors()
+                .iter()
+                .map(|author| author.family.trim())
+                .find(|family| !family.is_empty())
+                .map(str::to_owned),
+            key_history: paper
+                .former_keys
+                .iter()
+                .chain(&paper.alias_keys)
+                .filter(|key| **key != paper.cite_key)
+                .cloned()
+                .collect(),
         }
     }
 
@@ -2197,7 +2239,7 @@ impl PaperStore {
         if !paper.cite_key_pinned && (base_before != base_after || paper.cite_key.is_empty()) {
             let meta = paper.meta.clone();
             let key = self.free_key(&meta, Some(index));
-            self.papers[index].cite_key = key;
+            self.papers[index].set_cite_key(key);
             changed = true;
         }
         if changed {
@@ -2354,11 +2396,11 @@ impl PaperStore {
             None => !paper.cite_key_pinned && base_before != base_after,
         };
         if let Some(key) = pinned_key {
-            paper.cite_key = key;
+            paper.set_cite_key(key);
         } else if regenerate {
             let meta = paper.meta.clone();
             let key = self.free_key(&meta, Some(index));
-            self.papers[index].cite_key = key;
+            self.papers[index].set_cite_key(key);
         }
         self.papers[index].touch();
         let id = self.papers[index].id.clone();
@@ -5839,5 +5881,22 @@ mod tests {
 
     fn now_secs_for_tests() -> u64 {
         parse_rfc3339(&now_rfc3339()).unwrap()
+    }
+
+    #[test]
+    fn a_changed_key_is_remembered_not_reserved() {
+        let mut paper = PaperRecord::new();
+        paper.set_cite_key("attias2022".into());
+        assert!(paper.former_keys.is_empty(), "a first key replaces nothing");
+        paper.set_cite_key("attias2022quantum".into());
+        paper.set_cite_key("attias2022quantum".into());
+        assert_eq!(paper.former_keys, ["attias2022"]);
+        // Going back to an old key takes it out of the history.
+        paper.set_cite_key("attias2022".into());
+        assert_eq!(paper.former_keys, ["attias2022quantum"]);
+        for n in 0..(MAX_FORMER_KEYS + 5) {
+            paper.set_cite_key(format!("k{n}"));
+        }
+        assert_eq!(paper.former_keys.len(), MAX_FORMER_KEYS);
     }
 }

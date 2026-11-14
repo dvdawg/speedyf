@@ -47,16 +47,28 @@ pub struct LibraryBackupDto {
 
 /// `library-20261112-093000.json.gz` for the moment `at` (unix seconds).
 pub fn file_name(at: u64) -> String {
+    stamped_name(PREFIX, SUFFIX, at)
+}
+
+/// `<prefix>YYYYMMDD-HHMMSS<suffix>` for the moment `at`: the naming every
+/// series in the backups folder shares (the library's, the project
+/// files').
+pub fn stamped_name(prefix: &str, suffix: &str, at: u64) -> String {
     let stamp = super::store::format_rfc3339(at);
     // `2026-11-12T09:30:00Z` -> `20261112-093000`
     let digits: String = stamp.chars().filter(char::is_ascii_digit).collect();
-    format!("{PREFIX}{}-{}{SUFFIX}", &digits[..8], &digits[8..14])
+    format!("{prefix}{}-{}{suffix}", &digits[..8], &digits[8..14])
 }
 
 /// The moment a backup's name says it was written, `None` for any other
 /// name - which is also what keeps a restore inside the backups folder.
 pub fn parse_name(name: &str) -> Option<u64> {
-    let stamp = name.strip_prefix(PREFIX)?.strip_suffix(SUFFIX)?;
+    parse_stamped(PREFIX, SUFFIX, name)
+}
+
+/// `parse_name` for any series.
+pub fn parse_stamped(prefix: &str, suffix: &str, name: &str) -> Option<u64> {
+    let stamp = name.strip_prefix(prefix)?.strip_suffix(suffix)?;
     let (date, time) = stamp.split_once('-')?;
     if date.len() != 8
         || time.len() != 6
