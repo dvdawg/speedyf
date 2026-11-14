@@ -60,7 +60,14 @@ import {
 import { engine } from '../../lib/transport/engine';
 import { pdfRectToCssRect } from '../../lib/coordinates/coords';
 import { whenHolds } from './readerContext';
-import { equationFor, equationToken, type EquationRef, type ItemLine } from './editorHost';
+import {
+  clearDecorationsOf,
+  equationFor,
+  equationToken,
+  relabelHandle,
+  type EquationRef,
+  type ItemLine,
+} from './editorHost';
 import { openApi, projectsApi } from './projectsApi';
 import { captureRegion, snapshotRegion } from './regionCapture';
 import { revealPlace } from '../../stores/revealStore';
@@ -512,6 +519,15 @@ const converting = new Map<string, Map<string, (answer: ConvertedEquation) => vo
  * of them is its own popover, never an answer. */
 const ticketAware = new Set<string>();
 let nextTicket = 1;
+/** The status line a conversion's asker gave (`equations.convert {
+ * status }`), by ticket: where the converter's `equations.checking` goes. */
+const statusLines = new Map<string, { owner: string; handle: string }>();
+
+/** What a converter says it is checking, as the status line reads. */
+const CHECKING: Record<string, string> = {
+  arxiv: 'checking arXiv source',
+  journal: 'checking journal source',
+};
 
 /** The capture an un-ticketed `ui.showMath` fills, for a converter written
  * before tickets: its latest conversion. */
@@ -529,7 +545,8 @@ function legacyCapture(extensionId: string): ((answer: ConvertedEquation) => voi
 export async function convertEquation(
   token: string,
   ref: EquationRef,
-  mode?: ConvertMode
+  mode?: ConvertMode,
+  status?: { owner: string; handle: string }
 ): Promise<(ConvertedEquation & { converter: string }) | null> {
   const extension = state.extensions.find(
     (e) => e.enabled && !e.error && e.equationConverter !== null
@@ -542,6 +559,7 @@ export async function convertEquation(
   waiting.set(ticket, (value) => {
     answer = value;
   });
+  if (status) statusLines.set(ticket, status);
   try {
     await hostFor(extension).invoke(extension.equationConverter!, {
       value: {
@@ -562,6 +580,7 @@ export async function convertEquation(
     );
   } finally {
     waiting.delete(ticket);
+    statusLines.delete(ticket);
     if (waiting.size === 0) converting.delete(extension.id);
   }
   const got = answer as ConvertedEquation | null;
@@ -959,6 +978,18 @@ async function handleCall(extension: ExtensionRecord, call: CallMessage): Promis
     // A ticket nobody waits on any more: the conversion gave up. Not shown.
     if (typeof ticket === 'string') return { shown: false };
     showMath(extension.id, args, selectionAnchor());
+    return { shown: true };
+  }
+
+  if (call.api === 'equations.checking') {
+    // No permission: a converter saying which source it is trying, for the
+    // status line of the conversion it was asked for, if the asker gave one.
+    const args = (call.args ?? {}) as { ticket?: unknown; source?: unknown };
+    const live = typeof args.ticket === 'string' && converting.get(extension.id)?.has(args.ticket);
+    const line = live ? statusLines.get(args.ticket as string) : undefined;
+    const label = typeof args.source === 'string' ? CHECKING[args.source] : undefined;
+    if (!line || !label) return { shown: false };
+    relabelHandle(line.owner, line.handle, label);
     return { shown: true };
   }
 
@@ -1486,6 +1517,8 @@ export async function runBoundCommand(extensionId: string, command: string): Pro
 export function stopExtension(id: string): void {
   hosts.get(id)?.stop();
   hosts.delete(id);
+  // Nothing it was sending will come: its placeholders and status lines go.
+  clearDecorationsOf(id);
 }
 
 export async function setExtensionEnabled(id: string, enabled: boolean): Promise<void> {

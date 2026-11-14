@@ -289,6 +289,116 @@ describe('the note editor', () => {
   });
 });
 
+describe('placeholders and status lines', () => {
+  const OWNER = 'dev.speedyf.notepad';
+  const motion = (reduce: boolean) =>
+    vi
+      .spyOn(window, 'matchMedia')
+      .mockImplementation(
+        (query: string) =>
+          ({ matches: reduce && query.includes('reduce'), media: query }) as MediaQueryList
+      );
+
+  afterEach(() => host.clearDecorationsOf(OWNER));
+
+  it('draws a skeleton with its caption where the send will land, outside the text', async () => {
+    motion(false);
+    const { view, state } = mount('Intro.');
+    await settle();
+    await host.insertPending(
+      KEY,
+      { kind: 'equation', shape: null, caption: 'Equation (3), [@attias2022quantum, p. 4]' },
+      'end',
+      OWNER
+    );
+    await settle();
+    const root = view.container;
+    const pending = root.querySelector('.np-pending')!;
+    expect(pending).not.toBeNull();
+    const skeleton = pending.querySelector('.np-skeleton')!;
+    expect(skeleton.classList.contains('is-equation')).toBe(true);
+    expect(skeleton.classList.contains('is-animated')).toBe(true);
+    expect(skeleton.querySelectorAll('.np-skeleton-bar')).toHaveLength(2);
+    // The caption reads as it will once filled in.
+    expect(pending.querySelector('.np-pending-caption')?.textContent).toBe(
+      'Equation (3), [AS22, p. 4]'
+    );
+    // After the text, and not in it.
+    expect(root.querySelector('.note-block')!.nextElementSibling).toBe(pending);
+    expect(state.text).toBe('Intro.');
+  });
+
+  it('keeps an image placeholder in its drawn proportions, still under reduced motion', async () => {
+    motion(true);
+    const { view } = mount('Intro.');
+    await settle();
+    await host.insertPending(
+      KEY,
+      { kind: 'image', shape: { w: 300, h: 120 }, caption: null },
+      'end',
+      OWNER
+    );
+    await settle();
+    const skeleton = view.container.querySelector<HTMLElement>('.np-skeleton')!;
+    expect(skeleton.classList.contains('is-image')).toBe(true);
+    expect(skeleton.classList.contains('is-animated')).toBe(false);
+    expect(skeleton.style.aspectRatio).toBe('300 / 120');
+    expect(view.container.querySelector('.np-pending-caption')).toBeNull();
+  });
+
+  it('shows a text placeholder only when the text is slow to come', async () => {
+    motion(false);
+    const { view } = mount('Intro.');
+    await settle();
+    const { handle } = await host.insertPending(
+      KEY,
+      { kind: 'text', shape: null, caption: null },
+      'end',
+      OWNER
+    );
+    await settle();
+    expect(view.container.querySelector('.np-pending')).not.toBeNull();
+    expect(view.container.querySelector('.np-skeleton')).toBeNull();
+    await new Promise((r) => setTimeout(r, 120));
+    expect(view.container.querySelectorAll('.np-skeleton-bar')).toHaveLength(3);
+    await host.resolvePending(OWNER, handle, '> quoted');
+    await settle();
+    expect(view.container.querySelector('.np-pending')).toBeNull();
+    expect(view.container.querySelector('.np-quote')?.textContent).toBe('quoted');
+  });
+
+  it('puts a dim checking line under a block while it is checked, and clears it', async () => {
+    motion(false);
+    const { view } = mount('Intro.');
+    await settle();
+    const sent = await host.insertIntoNote(KEY, '$$ a $$', 'end', OWNER);
+    await settle();
+    // Tracked, but nothing drawn until there is something to say.
+    expect(view.container.querySelector('.np-checking')).toBeNull();
+    host.markHandle(OWNER, sent.handle, 'checking arXiv source');
+    await new Promise((r) => setTimeout(r, 450));
+    const line = view.container.querySelector('.np-checking')!;
+    expect(line.textContent).toBe('checking arXiv source...');
+    expect(line.querySelector('.np-ellipsis')!.classList.contains('is-animated')).toBe(true);
+    // Under the equation's block.
+    expect(line.previousElementSibling?.querySelector('.np-math-block')).not.toBeNull();
+    host.cancelHandle(OWNER, sent.handle);
+    await settle();
+    expect(view.container.querySelector('.np-checking')).toBeNull();
+  });
+
+  it('holds the ellipsis still under reduced motion', async () => {
+    motion(true);
+    const { view } = mount('Intro.');
+    await settle();
+    const sent = await host.insertIntoNote(KEY, 'x', 'end', OWNER);
+    host.markHandle(OWNER, sent.handle, 'checking journal source');
+    await new Promise((r) => setTimeout(r, 450));
+    const ellipsis = view.container.querySelector('.np-ellipsis')!;
+    expect(ellipsis.classList.contains('is-animated')).toBe(false);
+  });
+});
+
 describe('liveMath', () => {
   it('previews closed inline math and display blocks, nothing else', () => {
     expect(liveMath('plain text')).toBeNull();

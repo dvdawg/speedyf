@@ -7294,3 +7294,103 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   font-size: 0.95em;
   pointer-events: none;
 }
+
+/* ---------- note placeholders and status lines ---------- */
+
+/* Where something being sent will land: soft bars the size of what is
+   coming, then its caption as it will read. Never in the file. */
+.np-pending {
+  margin: 4px 0;
+}
+
+.np-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55em;
+  padding: 0.3em 0;
+}
+
+.np-skeleton.is-equation {
+  align-items: center;
+  justify-content: center;
+  height: 3.2em;
+  gap: 0.5em;
+}
+
+.np-skeleton.is-image {
+  width: 100%;
+  padding: 0;
+  border-radius: 4px;
+  background: var(--bg-inset);
+}
+
+.np-skeleton-bar {
+  display: block;
+  height: 0.6em;
+  border-radius: 0.3em;
+  background: var(--bg-inset);
+}
+
+.np-skeleton.is-equation .np-skeleton-bar {
+  height: 0.85em;
+  border-radius: 0.45em;
+}
+
+.np-skeleton.is-animated .np-skeleton-bar,
+.np-skeleton.is-image.is-animated {
+  background: linear-gradient(
+      100deg,
+      transparent 30%,
+      color-mix(in srgb, var(--text) 6%, transparent) 50%,
+      transparent 70%
+    )
+    var(--bg-inset);
+  background-size: 300% 100%;
+  animation: shimmer 1.8s infinite linear;
+}
+
+.np-pending-caption {
+  color: var(--text);
+}
+
+/* A check under way under a block: one dim small line, gone when done. */
+.np-checking {
+  padding: 0 0 4px;
+  color: var(--text-dim);
+  font-size: 0.85em;
+}
+
+.np-ellipsis.is-animated > span {
+  animation: np-ellipsis 2.4s infinite steps(1, end);
+  opacity: 0;
+}
+
+.np-ellipsis.is-animated > span:nth-child(2) {
+  animation-delay: 0.4s;
+}
+
+.np-ellipsis.is-animated > span:nth-child(3) {
+  animation-delay: 0.8s;
+}
+
+@keyframes np-ellipsis {
+  0% {
+    opacity: 0;
+  }
+  20%,
+  80% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .np-skeleton.is-animated .np-skeleton-bar,
+  .np-skeleton.is-image.is-animated {
+    animation: none;
+  }
+
+  .np-ellipsis.is-animated > span {
+    animation: none;
+    opacity: 1;
+  }
+}

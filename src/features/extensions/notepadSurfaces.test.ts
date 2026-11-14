@@ -378,6 +378,9 @@ describe('the gate', () => {
       'equations.snapshot',
       'editor.insert',
       'editor.replace',
+      'editor.resolve',
+      'editor.mark',
+      'editor.replaceMarked',
     ]) {
       await expect(plain.options.events.onCall(call(api, {}))).rejects.toThrow(/permission/);
     }
@@ -449,6 +452,124 @@ describe('the gate', () => {
         })
       )
     ).toEqual({ shown: true });
+  });
+});
+
+describe('a send from the reader', () => {
+  const KEY = { extensionId: NOTEPAD, projectId: 'p1', file: 'notepad.md' };
+
+  /** A core holding the note, for the host's sessions. */
+  function noteCore(text: string) {
+    const state = { text, rev: 1 };
+    const sessions = hostApi.useNoteSessionsForTest(
+      {
+        open: async () => ({ text: state.text, rev: state.rev }),
+        edit: async (_key, _base, op, origin) => {
+          state.text = state.text.slice(0, op.from) + op.insert + state.text.slice(op.to);
+          const rev = ++state.rev;
+          queueMicrotask(() =>
+            sessions.dispatch({ kind: 'edit', key: KEY, rev, op, origin, len: state.text.length })
+          );
+          return rev;
+        },
+        close: async () => {},
+      },
+      'test-window',
+      () => {}
+    );
+    return state;
+  }
+
+  afterEach(() => hostApi.clearDecorationsOf(NOTEPAD));
+
+  it("opens the reader's drawer on the note when no view of it is showing", async () => {
+    await createRoot(async (dispose) => {
+      noteCore('');
+      const host = await hostOf(NOTEPAD);
+      reader.setReaderItemForTest('/papers/a.pdf', {
+        id: 'i1',
+        citeKey: 'attias2022quantum',
+        title: 'Quantum things',
+        projectIds: ['p1', 'p2'],
+      });
+      reader.noteOrigin('/papers/a.pdf', null);
+      expect(surfaces.shownPane()).toBeNull();
+      const placed = (await host.options.events.onCall(
+        call('editor.insert', { projectId: 'p1', pending: { kind: 'equation' } })
+      )) as { handle: string; offset: number };
+      expect(placed.handle).toMatch(/^test-window:/);
+      // The drawer is open, on the note the send went to.
+      expect(surfaces.shownPane()?.id).toBe(`${NOTEPAD}/notepad`);
+      expect(reader.readerProjectId()).toBe('p1');
+      // Filled in, the text is in the note.
+      expect(
+        await host.options.events.onCall(
+          call('editor.resolve', { handle: placed.handle, text: '$$ a $$' })
+        )
+      ).toEqual({ resolved: true, offset: 0 });
+      dispose();
+    });
+  });
+
+  it('leaves the drawer shut when the Projects notepad shows the note, and reveals there', async () => {
+    await createRoot(async (dispose) => {
+      noteCore('intro\n');
+      const host = await hostOf(NOTEPAD);
+      reader.setReaderItemForTest('/papers/a.pdf', {
+        id: 'i1',
+        citeKey: 'attias2022quantum',
+        title: 'Quantum things',
+        projectIds: ['p1'],
+      });
+      const revealed: [number, string | undefined][] = [];
+      const unregister = hostApi.registerEditor(KEY, {
+        insertAtCaret: () => null,
+        caretBlockEnd: () => null,
+        reveal: (offset, decor) => revealed.push([offset, decor]),
+      });
+      const placed = (await host.options.events.onCall(
+        call('editor.insert', { projectId: 'p1', pending: { kind: 'text' } })
+      )) as { handle: string };
+      expect(surfaces.shownPane()).toBeNull();
+      await host.options.events.onCall(call('editor.reveal', { handle: placed.handle }));
+      expect(revealed).toEqual([[6, placed.handle]]);
+      unregister();
+      dispose();
+    });
+  });
+
+  it("names the converter's source in the status line it was given", async () => {
+    noteCore('');
+    const notepad = await hostOf(NOTEPAD);
+    const math = await hostOf('dev.speedyf.mathlatex');
+    const sent = (await notepad.options.events.onCall(
+      call('editor.insert', { projectId: 'p1', text: '$$ a $$' })
+    )) as { handle: string };
+    await notepad.options.events.onCall(
+      call('editor.mark', { handle: sent.handle, label: 'checking source' })
+    );
+    const token = hostApi.equationToken({ docId: 7, page: 1, bbox: [1, 2, 3, 4], number: null });
+    const session = hostApi.noteSessions().get(KEY)!;
+    let label: unknown = null;
+    invokeBehaviour = async (id, _command, extra) => {
+      if (id !== 'dev.speedyf.mathlatex') return;
+      const value = (extra as { value: Record<string, unknown> }).value;
+      await math.options.events.onCall(
+        call('equations.checking', { ticket: value.ticket, source: 'arxiv' })
+      );
+      const d = session.decoration(sent.handle);
+      label = d?.type === 'mark' ? d.label : null;
+    };
+    await notepad.options.events.onCall(
+      call('equations.convert', { equation: token, mode: 'exact', status: sent.handle })
+    );
+    expect(label).toBe('checking arXiv source');
+    // A ticket nobody waits on names nothing.
+    expect(
+      await math.options.events.onCall(
+        call('equations.checking', { ticket: 't999', source: 'journal' })
+      )
+    ).toEqual({ shown: false });
   });
 });
 

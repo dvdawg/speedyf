@@ -650,12 +650,21 @@ export const API_PERMISSIONS: Readonly<Record<string, string>> = {
   'editor.insert': 'projects:files',
   'editor.replace': 'projects:files',
   'editor.reveal': 'projects:files',
+  // A placeholder while a send is on its way, and a status line while it
+  // is checked: shown in the note's views, never written to the file.
+  'editor.resolve': 'projects:files',
+  'editor.cancel': 'projects:files',
+  'editor.mark': 'projects:files',
+  'editor.unmark': 'projects:files',
+  'editor.replaceMarked': 'projects:files',
   // A PNG of what the user pointed at, and nothing else.
   'region.capture': 'render:region',
   'equations.snapshot': 'render:region',
-  // equations.convert, ui.itemLine, pane.open and projectView.open need no
-  // permission: the first is handed a token for the equation the user
-  // clicked, the others draw into surfaces the extension declared.
+  // equations.convert, equations.checking, ui.itemLine, pane.open and
+  // projectView.open need no permission: the first is handed a token for
+  // the equation the user clicked, the second is a converter naming the
+  // source it is trying for a conversion it was asked for, the others draw
+  // into surfaces the extension declared.
   // ui.render and ui.showMath need no permission: an extension may only draw
   // into a panel it declared, or show a formula in the popover SpeedyF owns,
   // and drawing is not access to anything.
@@ -665,6 +674,7 @@ export const API_PERMISSIONS: Readonly<Record<string, string>> = {
  * equation the user clicked. Listed so the gate can tell them from a typo. */
 export const OPEN_APIS: ReadonlySet<string> = new Set([
   'equations.convert',
+  'equations.checking',
   'ui.itemLine',
   'pane.open',
   'projectView.open',

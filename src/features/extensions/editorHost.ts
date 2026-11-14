@@ -1,21 +1,28 @@
 /** The window's side of extension editors: the note sessions, wired to the
  * core; what each extension told its editors about citations; the editors
  * on screen, for `editor.insert`, `editor.replace` and `editor.reveal` to
- * reach; and the item lines extensions contribute to the Projects detail
- * column. */
+ * reach; the placeholders and marks extensions put in notes while a send
+ * is on its way (`editor.insert { pending }`, `editor.resolve`,
+ * `editor.mark`, `editor.replaceMarked`), told to every window; and the
+ * item lines extensions contribute to the Projects detail column. */
 import { createSignal } from 'solid-js';
 import { createStore, reconcile } from 'solid-js/store';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { emit, listen } from '@tauri-apps/api/event';
 import {
   NoteSessions,
   keyString,
+  type DecorationSnapshot,
   type DocEvent,
   type NoteKey,
   type NoteSession,
   type NoteTransport,
+  type PendingShape,
 } from './editor/noteSession';
-import { applyOp, type Op } from './editor/ops';
+import type { Op } from './editor/ops';
+
+/** The event a window's placeholders and marks travel by to the others. */
+const DECOR_EVENT = 'project-file:decorations';
 
 /* ---- sessions ---- */
 
@@ -59,10 +66,15 @@ export { docEventSeq };
 /** The window's note sessions. Started on first use. */
 export function noteSessions(): NoteSessions {
   if (!sessions) sessions = new NoteSessions(tauriTransport, ORIGIN);
-  listening ??= listen<DocEvent>('project-file:event', (event) => {
-    sessions?.dispatch(event.payload);
-    setDocEventSeq((n) => n + 1);
-  }).then(
+  listening ??= Promise.all([
+    listen<DocEvent>('project-file:event', (event) => {
+      sessions?.dispatch(event.payload);
+      setDocEventSeq((n) => n + 1);
+    }),
+    listen<DecorationSnapshot>(DECOR_EVENT, (event) => {
+      sessions?.get(event.payload.key)?.receiveDecorations(event.payload);
+    }),
+  ]).then(
     () => undefined,
     () => {
       listening = null;
@@ -78,10 +90,16 @@ async function eventsHeard(): Promise<void> {
   await listening;
 }
 
-/** For tests: a window with its own transport. */
-export function useNoteSessionsForTest(transport: NoteTransport, origin: string): NoteSessions {
+/** For tests: a window with its own transport, and where its decorations
+ * go instead of to other windows. */
+export function useNoteSessionsForTest(
+  transport: NoteTransport,
+  origin: string,
+  send?: (snapshot: DecorationSnapshot) => void
+): NoteSessions {
   sessions = new NoteSessions(transport, origin);
   listening = Promise.resolve();
+  if (send) sendDecorations = send;
   return sessions;
 }
 
@@ -170,13 +188,19 @@ export function readCitationEntries(raw: unknown): CitationEntry[] {
 /* ---- editors on screen ---- */
 
 export interface EditorHandle {
-  /** Insert at the caret when there is one in this editor. */
-  insertAtCaret(text: string): boolean;
-  reveal(offset: number): void;
+  /** Insert at the caret when there is one in this editor: as a paragraph
+   * of its own after the block being edited. Returns where the inserted
+   * text starts, or null with no caret here. */
+  insertAtCaret(text: string): number | null;
+  /** Where a paragraph inserted at the caret would go (the end of the block
+   * being edited), or null with no caret here. */
+  caretBlockEnd(): number | null;
+  /** Scroll to `offset`, or to decoration `decor` when it is drawn. */
+  reveal(offset: number, decor?: string): void;
 }
 
 const editors = new Map<string, Set<EditorHandle>>();
-const pendingReveals = new Map<string, number>();
+const pendingReveals = new Map<string, { offset: number; decor: string | undefined }>();
 
 /** An editor on screen for `key`; returns the unregister. */
 export function registerEditor(key: NoteKey, handle: EditorHandle): () => void {
@@ -184,10 +208,10 @@ export function registerEditor(key: NoteKey, handle: EditorHandle): () => void {
   let set = editors.get(id);
   if (!set) editors.set(id, (set = new Set()));
   set.add(handle);
-  const offset = pendingReveals.get(id);
-  if (offset !== undefined) {
+  const wanted = pendingReveals.get(id);
+  if (wanted !== undefined) {
     pendingReveals.delete(id);
-    queueMicrotask(() => handle.reveal(offset));
+    queueMicrotask(() => handle.reveal(wanted.offset, wanted.decor));
   }
   return () => {
     set.delete(handle);
@@ -195,51 +219,338 @@ export function registerEditor(key: NoteKey, handle: EditorHandle): () => void {
   };
 }
 
-/** Scroll an editor of `key` to `offset`, now or when one mounts. */
-export function revealInEditor(key: NoteKey, offset: number): void {
+/** Whether an editor of `key` is on screen in this window. */
+export function noteShown(key: NoteKey): boolean {
+  return (editors.get(keyString(key))?.size ?? 0) > 0;
+}
+
+/** Scroll an editor of `key` to `offset` (or decoration `decor`), now or
+ * when one mounts. */
+export function revealInEditor(key: NoteKey, offset: number, decor?: string): void {
   const set = editors.get(keyString(key));
   const handle = set ? [...set][set.size - 1] : undefined;
-  if (handle) handle.reveal(offset);
-  else pendingReveals.set(keyString(key), offset);
+  if (handle) handle.reveal(offset, decor);
+  else pendingReveals.set(keyString(key), { offset, decor });
+}
+
+/** Text inserted at `at` as a block of its own: after a blank line (unless
+ * at the start), and before one (or the end of the note, ending in a
+ * newline). */
+export function blockInsertOp(text: string, at: number, insert: string): Op {
+  const body = insert.replace(/\n+$/, '');
+  const before = text.slice(0, at);
+  const after = text.slice(at);
+  let lead = '';
+  if (before.length > 0)
+    lead = before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
+  let trail = '\n\n';
+  if (after === '' || (after.startsWith('\n') && !after.startsWith('\n\n'))) trail = '\n';
+  else if (after.startsWith('\n\n')) trail = '';
+  return { from: at, to: at, insert: `${lead}${body}${trail}` };
 }
 
 /** Text appended to a note: after a blank line, ending in a newline. */
 export function appendOp(text: string, insert: string): Op {
-  const body = insert.replace(/\n+$/, '');
-  let lead = '';
-  if (text.length > 0) lead = text.endsWith('\n\n') ? '' : text.endsWith('\n') ? '\n' : '\n\n';
-  return { from: text.length, to: text.length, insert: `${lead}${body}\n` };
+  return blockInsertOp(text, text.length, insert);
+}
+
+/* ---- placeholders and marks ---- */
+
+/** An extension's edit: no view made it, so every view redraws for it. */
+const OUTSIDE = { outside: true };
+
+/** How long a placeholder or mark lives without being resolved, cleared or
+ * renewed. */
+export const DECORATION_TTL_MS = 30_000;
+
+/** Handles this window gave out, each holding its note's session open. */
+interface Held {
+  key: NoteKey;
+  session: NoteSession;
+  owner: string;
+}
+const held = new Map<string, Held>();
+let nextHandle = 1;
+
+/** How this window tells the others about its decorations. */
+let sendDecorations: (snapshot: DecorationSnapshot) => void = (snapshot) => {
+  try {
+    void emit(DECOR_EVENT, snapshot).catch(() => {});
+  } catch {
+    /* no other windows to tell */
+  }
+};
+
+function broadcast(session: NoteSession): void {
+  sendDecorations(session.snapshot());
+}
+
+/** Join `key`'s session for as long as a handle lives. */
+async function hold(key: NoteKey): Promise<NoteSession> {
+  await eventsHeard();
+  const all = noteSessions();
+  const session = all.acquire(key);
+  await session.ready;
+  if (session.status() !== 'ready') {
+    all.release(session);
+    throw new Error(session.reason() ?? 'the note is not open');
+  }
+  session.onExpire = (d) => {
+    if (held.delete(d.id)) all.release(session);
+    broadcast(session);
+  };
+  return session;
+}
+
+function letGo(handle: string): void {
+  const h = held.get(handle);
+  if (!h) return;
+  held.delete(handle);
+  noteSessions().release(h.session);
+}
+
+/** A handle of `owner`'s, or undefined: another extension's is not
+ * reachable. */
+function heldBy(owner: string, handle: unknown): Held | undefined {
+  if (typeof handle !== 'string') return undefined;
+  const h = held.get(handle);
+  return h && h.owner === owner ? h : undefined;
+}
+
+/** Track `[from, to)` under a new handle, unlabelled. */
+function track(session: NoteSession, key: NoteKey, owner: string, from: number, to: number) {
+  const id = `${session.origin}:${nextHandle++}`;
+  const now = Date.now();
+  session.putDecoration({
+    type: 'mark',
+    id,
+    owner,
+    origin: session.origin,
+    created: now,
+    expires: now + DECORATION_TTL_MS,
+    from,
+    to,
+    label: null,
+  });
+  held.set(id, { key, session, owner });
+  return id;
+}
+
+async function confirmed(session: NoteSession): Promise<void> {
+  await session.flush();
+  // Confirmed by its broadcast; never waited on forever.
+  await Promise.race([session.settled(), new Promise((r) => setTimeout(r, 5_000))]);
 }
 
 /** Insert into a note: at the caret of an editor showing it in this window
- * when `at` is 'cursor' and there is one, else at the end. Returns the
- * offset the insertion starts at. */
+ * when `at` is 'cursor' and there is one, else at the end. Returns where
+ * the inserted text starts and a handle tracking it (for `markInNote`). */
 export async function insertIntoNote(
   key: NoteKey,
   insert: string,
-  at: 'cursor' | 'end'
-): Promise<number> {
-  const id = keyString(key);
+  at: 'cursor' | 'end',
+  owner = ''
+): Promise<{ offset: number; handle: string }> {
+  const session = await hold(key);
+  const body = insert.replace(/\n+$/, '');
+  let start: number | null = null;
   if (at === 'cursor') {
-    for (const handle of editors.get(id) ?? []) if (handle.insertAtCaret(insert)) return -1;
+    for (const handle of editors.get(keyString(key)) ?? []) {
+      start = handle.insertAtCaret(insert);
+      if (start !== null) break;
+    }
   }
-  await eventsHeard();
-  const all = noteSessions();
-  const session: NoteSession = all.acquire(key);
-  try {
-    await session.ready;
-    if (session.status() !== 'ready') throw new Error(session.reason() ?? 'the note is not open');
+  if (start === null) {
     const text = session.text();
-    const op = appendOp(text, insert);
-    const caret = applyOp(text, op).length;
-    session.edit(op, text.length, caret);
-    await session.flush();
-    // Confirmed by its broadcast; never waited on forever.
-    await Promise.race([session.settled(), new Promise((r) => setTimeout(r, 5_000))]);
-    return op.from + (op.insert.length - op.insert.trimStart().length);
-  } finally {
-    all.release(session);
+    const op = blockInsertOp(text, text.length, insert);
+    session.edit(op, text.length, op.from + op.insert.length, OUTSIDE);
+    start = op.from + op.insert.indexOf(body);
   }
+  const handle = track(session, key, owner, start, start + body.length);
+  broadcast(session);
+  await confirmed(session);
+  return { offset: start, handle };
+}
+
+/** A placeholder in a note for something on its way: nothing goes into the
+ * text, only a place that moves with edits, drawn by every view. At the
+ * caret's block when `at` is 'cursor' and an editor here has one, else at
+ * the end. */
+export async function insertPending(
+  key: NoteKey,
+  pending: PendingShape,
+  at: 'cursor' | 'end',
+  owner: string
+): Promise<{ offset: number; handle: string }> {
+  const session = await hold(key);
+  let anchor = session.text().length;
+  if (at === 'cursor') {
+    for (const handle of editors.get(keyString(key)) ?? []) {
+      const end = handle.caretBlockEnd();
+      if (end !== null) {
+        anchor = end;
+        break;
+      }
+    }
+  }
+  const id = `${session.origin}:${nextHandle++}`;
+  const now = Date.now();
+  session.putDecoration({
+    type: 'pending',
+    id,
+    owner,
+    origin: session.origin,
+    created: now,
+    expires: now + DECORATION_TTL_MS,
+    at: anchor,
+    pending,
+  });
+  held.set(id, { key, session, owner });
+  broadcast(session);
+  return { offset: anchor, handle: id };
+}
+
+/** Put `text` where placeholder `handle` is, as one undoable edit, and
+ * keep tracking it under the same handle. Null when the placeholder is
+ * gone (expired or cancelled). */
+export async function resolvePending(
+  owner: string,
+  handle: unknown,
+  text: string
+): Promise<{ offset: number } | null> {
+  const h = heldBy(owner, handle);
+  if (!h) return null;
+  const { session } = h;
+  const d = session.removeDecoration(handle as string);
+  if (!d || d.type !== 'pending') {
+    letGo(handle as string);
+    broadcast(session);
+    return null;
+  }
+  const now = session.text();
+  const op = blockInsertOp(now, Math.min(d.at, now.length), text);
+  const body = text.replace(/\n+$/, '');
+  const start = op.from + op.insert.indexOf(body);
+  session.edit(op, op.from, op.from + op.insert.length, OUTSIDE);
+  const at = Date.now();
+  session.putDecoration({
+    type: 'mark',
+    id: d.id,
+    owner,
+    origin: session.origin,
+    created: at,
+    expires: at + DECORATION_TTL_MS,
+    from: start,
+    to: start + body.length,
+    label: null,
+  });
+  broadcast(session);
+  await confirmed(session);
+  return { offset: start };
+}
+
+/** Remove a placeholder or mark, and stop tracking it. */
+export function cancelHandle(owner: string, handle: unknown): boolean {
+  const h = heldBy(owner, handle);
+  if (!h) return false;
+  const gone = h.session.removeDecoration(handle as string);
+  letGo(handle as string);
+  broadcast(h.session);
+  return gone !== undefined;
+}
+
+/** Show a status line under the text `handle` tracks (renewing its
+ * lifetime). False when the text is gone or edited, or still pending. */
+export function markHandle(owner: string, handle: unknown, label: string): boolean {
+  const h = heldBy(owner, handle);
+  const d = h?.session.decoration(handle as string);
+  if (!h || !d || d.type !== 'mark') return false;
+  const now = Date.now();
+  h.session.putDecoration({ ...d, label, created: now, expires: now + DECORATION_TTL_MS });
+  broadcast(h.session);
+  return true;
+}
+
+/** Change the line under a mark, keeping its lifetime: a converter
+ * saying which source it is trying. */
+export function relabelHandle(owner: string, handle: string, label: string): void {
+  const h = heldBy(owner, handle);
+  const d = h?.session.decoration(handle);
+  if (!h || !d || d.type !== 'mark' || d.label === null) return;
+  h.session.putDecoration({ ...d, label });
+  broadcast(h.session);
+}
+
+/** Track `[from, to)` of a note with a status line under it. */
+export async function markRange(
+  key: NoteKey,
+  owner: string,
+  from: number,
+  to: number,
+  label: string
+): Promise<string> {
+  const session = await hold(key);
+  const length = session.text().length;
+  if (from < 0 || to <= from || to > length) {
+    noteSessions().release(session);
+    throw new Error(`expected a range within the note (0 to ${length})`);
+  }
+  const handle = track(session, key, owner, from, to);
+  markHandle(owner, handle, label);
+  return handle;
+}
+
+/** Replace exactly what `handle` tracks with `text`, as one undoable
+ * edit, when nobody has touched it since; the handle is used up. False
+ * (and nothing touched) when it was edited, deleted or has expired. */
+export async function replaceMarked(
+  owner: string,
+  handle: unknown,
+  text: string
+): Promise<boolean> {
+  const h = heldBy(owner, handle);
+  if (!h) return false;
+  const { session } = h;
+  const d = session.removeDecoration(handle as string);
+  if (!d || d.type !== 'mark') {
+    letGo(handle as string);
+    broadcast(session);
+    return false;
+  }
+  if (session.text().slice(d.from, d.to) !== text) {
+    session.edit({ from: d.from, to: d.to, insert: text }, d.to, d.from + text.length, OUTSIDE);
+  }
+  broadcast(session);
+  try {
+    await confirmed(session);
+  } finally {
+    letGo(handle as string);
+  }
+  return true;
+}
+
+/** Where a handle's placeholder or text is now, for `editor.reveal`. */
+export function handlePlace(
+  owner: string,
+  handle: unknown
+): { key: NoteKey; offset: number } | null {
+  const h = heldBy(owner, handle);
+  const d = h?.session.decoration(handle as string);
+  if (!h || !d) return null;
+  return { key: h.key, offset: d.type === 'pending' ? d.at : d.from };
+}
+
+/** Everything an extension has pending or marked, gone: it was disabled
+ * or stopped. */
+export function clearDecorationsOf(owner: string): void {
+  const touched = new Set<NoteSession>();
+  for (const [handle, h] of [...held]) {
+    if (h.owner !== owner) continue;
+    h.session.removeDecoration(handle);
+    letGo(handle);
+    touched.add(h.session);
+  }
+  for (const session of touched) broadcast(session);
 }
 
 /** Replace the first exact occurrence of `find` in a note with `replace`,
@@ -260,10 +571,10 @@ export async function replaceInNote(key: NoteKey, find: string, replace: string)
     session.edit(
       { from: at, to: at + find.length, insert: replace },
       at + find.length,
-      at + replace.length
+      at + replace.length,
+      OUTSIDE
     );
-    await session.flush();
-    await Promise.race([session.settled(), new Promise((r) => setTimeout(r, 5_000))]);
+    await confirmed(session);
     return true;
   } finally {
     all.release(session);

@@ -54,7 +54,13 @@ import {
   type Citation,
   type Span,
 } from './markdown';
-import type { NoteKey, NoteSession } from './noteSession';
+import type {
+  Decoration,
+  MarkDecoration,
+  NoteKey,
+  NoteSession,
+  PendingDecoration,
+} from './noteSession';
 import { registerNoteDrop } from './noteDrop';
 import {
   citeQuery,
@@ -661,16 +667,26 @@ function EditorBody(props: BodyProps) {
   onMount(() => {
     const unregister = registerEditor(props.noteKey, {
       insertAtCaret: (text) => {
-        if (!active()) return false;
+        if (!active()) return null;
         // As a paragraph of its own after the block being edited.
         const end = activeStart + activeRaw.length;
         const insert = `\n${text.replace(/\n+$/, '')}`;
         commit({ from: end, to: end, insert }, caret, end + insert.length, true);
-        return true;
+        return end + 1;
       },
-      reveal: (offset) => {
+      caretBlockEnd: () => (active() ? activeStart + activeRaw.length : null),
+      reveal: (offset, decor) => {
         if (source()) leaveSource();
         deactivate();
+        if (decor) {
+          const drawn = [...scroller.querySelectorAll<HTMLElement>('[data-decor]')].find(
+            (el) => el.dataset.decor === decor
+          );
+          if (drawn) {
+            drawn.scrollIntoView({ block: 'nearest' });
+            return;
+          }
+        }
         const list = blocks();
         const starts = startsOf(list);
         let at = list.length - 1;
@@ -695,7 +711,38 @@ function EditorBody(props: BodyProps) {
   /** The whole note is empty: its one line shows the placeholder, as a dim
    * line while nobody is in it and as the field's own hint once someone is. */
   const blank = () => blocks().length === 1 && blocks()[0]!.raw === '';
-  const empty = () => blank() && !active();
+  const empty = () => blank() && !active() && s.decorations().length === 0;
+
+  /** What is drawn after each block: placeholders at its end, and the
+   * status line of a mark ending in it. By block id, ids of decorations. */
+  const decorSlots = createMemo(() => {
+    const out = new Map<number, string[]>();
+    const list = s.decorations();
+    if (list.length === 0) return out;
+    const all = blocks();
+    const starts = startsOf(all);
+    const put = (index: number, id: string) => {
+      const block = all[Math.max(0, index)];
+      if (!block) return;
+      const ids = out.get(block.id);
+      if (ids) ids.push(id);
+      else out.set(block.id, [id]);
+    };
+    for (const d of list) {
+      if (d.type === 'pending') {
+        // After the last block ending at or before it.
+        let at = 0;
+        for (let i = 0; i < all.length; i++) if (starts[i]! + all[i]!.raw.length <= d.at) at = i;
+        put(at, d.id);
+      } else if (d.label !== null) {
+        // After the block holding its last character.
+        let at = 0;
+        for (let i = 0; i < all.length; i++) if (starts[i]! <= d.to - 1) at = i;
+        put(at, d.id);
+      }
+    }
+    return out;
+  });
 
   return (
     <>
@@ -745,97 +792,112 @@ function EditorBody(props: BodyProps) {
             </Show>
             <For each={blocks()}>
               {(block) => (
-                <Show
-                  when={active() === block}
-                  fallback={
-                    <Show when={!empty()}>
-                      <div
-                        class="note-block"
-                        classList={{ 'is-flash': flash() === block.id }}
-                        data-block={block.id}
-                        onClick={(e) => onBlockClick(e, block)}
-                      >
-                        {drawBlock({
-                          block,
-                          index: () => props.index,
-                          noteKey: props.noteKey,
-                          onCite: activateCitation,
-                        })}
-                      </div>
-                    </Show>
-                  }
-                >
-                  <div class="note-block is-active" data-block={block.id}>
-                    <textarea
-                      ref={(el) => {
-                        field = el;
-                        el.value = activeRaw;
-                        // No inline writing suggestions or their affordance
-                        // beside the line: the page shows only the caret.
-                        el.setAttribute('writingsuggestions', 'false');
-                      }}
-                      class="note-field"
-                      classList={{ 'is-mono': block.kind === 'math' || block.kind === 'code' }}
-                      placeholder={blank() ? props.placeholder : undefined}
-                      rows={1}
-                      spellcheck={true}
-                      aria-label="Note line"
-                      onInput={onInput}
-                      onKeyDown={onKeyDown}
-                      onCompositionStart={() => (composing = true)}
-                      onCompositionEnd={() => {
-                        composing = false;
-                        if (deferredExternal) {
-                          deferredExternal = false;
-                          applyExternal(null);
-                        }
-                      }}
-                      onBlur={(e) => {
-                        // Focus moving to the picker or the head is not leaving.
-                        const next = e.relatedTarget as HTMLElement | null;
-                        if (next?.closest('.note-picker')) return;
-                        if (!composing) deactivate();
-                      }}
-                    />
-                    {/* The line being typed stays raw; any math in it is
-                        shown typeset just under it as it is written. */}
-                    <Show when={liveMath(liveRaw())}>
-                      {(kind) => (
-                        <div class="note-live-preview" aria-hidden="true">
+                <>
+                  <Show
+                    when={active() === block}
+                    fallback={
+                      <Show when={!empty()}>
+                        <div
+                          class="note-block"
+                          classList={{ 'is-flash': flash() === block.id }}
+                          data-block={block.id}
+                          onClick={(e) => onBlockClick(e, block)}
+                        >
                           {drawBlock({
-                            block: { ...block, kind: kind(), raw: liveRaw() },
+                            block,
                             index: () => props.index,
                             noteKey: props.noteKey,
-                            onCite: () => {},
+                            onCite: activateCitation,
                           })}
                         </div>
-                      )}
-                    </Show>
-                    <Show when={picker() && matches().length > 0}>
-                      <div class="note-picker" role="listbox" aria-label="Cite an item">
-                        <For each={matches()}>
-                          {(entry, i) => (
-                            <div
-                              role="option"
-                              class="note-picker-row"
-                              aria-selected={i() === (picker()?.index ?? 0)}
-                              classList={{ 'is-current': i() === (picker()?.index ?? 0) }}
-                              onMouseDown={(e) => {
-                                e.preventDefault();
-                                pick(entry);
-                              }}
-                            >
-                              <span class="note-picker-title">
-                                <MathText text={entry.title || entry.label} />
-                              </span>
-                              <span class="note-picker-detail">{entry.detail}</span>
-                            </div>
-                          )}
-                        </For>
-                      </div>
-                    </Show>
-                  </div>
-                </Show>
+                      </Show>
+                    }
+                  >
+                    <div class="note-block is-active" data-block={block.id}>
+                      <textarea
+                        ref={(el) => {
+                          field = el;
+                          el.value = activeRaw;
+                          // No inline writing suggestions or their affordance
+                          // beside the line: the page shows only the caret.
+                          el.setAttribute('writingsuggestions', 'false');
+                        }}
+                        class="note-field"
+                        classList={{ 'is-mono': block.kind === 'math' || block.kind === 'code' }}
+                        placeholder={blank() ? props.placeholder : undefined}
+                        rows={1}
+                        spellcheck={true}
+                        aria-label="Note line"
+                        onInput={onInput}
+                        onKeyDown={onKeyDown}
+                        onCompositionStart={() => (composing = true)}
+                        onCompositionEnd={() => {
+                          composing = false;
+                          if (deferredExternal) {
+                            deferredExternal = false;
+                            applyExternal(null);
+                          }
+                        }}
+                        onBlur={(e) => {
+                          // Focus moving to the picker or the head is not leaving.
+                          const next = e.relatedTarget as HTMLElement | null;
+                          if (next?.closest('.note-picker')) return;
+                          if (!composing) deactivate();
+                        }}
+                      />
+                      {/* The line being typed stays raw; any math in it is
+                        shown typeset just under it as it is written. */}
+                      <Show when={liveMath(liveRaw())}>
+                        {(kind) => (
+                          <div class="note-live-preview" aria-hidden="true">
+                            {drawBlock({
+                              block: { ...block, kind: kind(), raw: liveRaw() },
+                              index: () => props.index,
+                              noteKey: props.noteKey,
+                              onCite: () => {},
+                            })}
+                          </div>
+                        )}
+                      </Show>
+                      <Show when={picker() && matches().length > 0}>
+                        <div class="note-picker" role="listbox" aria-label="Cite an item">
+                          <For each={matches()}>
+                            {(entry, i) => (
+                              <div
+                                role="option"
+                                class="note-picker-row"
+                                aria-selected={i() === (picker()?.index ?? 0)}
+                                classList={{ 'is-current': i() === (picker()?.index ?? 0) }}
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  pick(entry);
+                                }}
+                              >
+                                <span class="note-picker-title">
+                                  <MathText text={entry.title || entry.label} />
+                                </span>
+                                <span class="note-picker-detail">{entry.detail}</span>
+                              </div>
+                            )}
+                          </For>
+                        </div>
+                      </Show>
+                    </div>
+                  </Show>
+                  <For each={decorSlots().get(block.id) ?? []}>
+                    {(id) => (
+                      <Show when={s.decoration(id)}>
+                        {(d) => (
+                          <DecorationView
+                            decoration={d()}
+                            index={props.index}
+                            noteKey={props.noteKey}
+                          />
+                        )}
+                      </Show>
+                    )}
+                  </For>
+                </>
               )}
             </For>
           </div>
@@ -869,6 +931,124 @@ function spaceAfter(text: string, at: number): string {
 function autosize(el: HTMLTextAreaElement): void {
   el.style.height = 'auto';
   el.style.height = `${el.scrollHeight}px`;
+}
+
+/* ---- placeholders and status lines ---- */
+
+/** Whether the user asked for less motion: the shimmer and the ellipsis
+ * then stand still. */
+export function reducedMotion(): boolean {
+  try {
+    return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+  } catch {
+    return false;
+  }
+}
+
+/** A placeholder for text appears only if the text has not arrived by
+ * then (a quote is usually in at once); a status line only once a check
+ * is clearly under way. Equations and images show at once. */
+const TEXT_PLACEHOLDER_DELAY_MS = 150;
+const STATUS_LINE_DELAY_MS = 400;
+
+/** True from `created + delay` on. */
+function after(created: number, delay: number) {
+  const wait = created + delay - Date.now();
+  const [ready, setReady] = createSignal(wait <= 0);
+  if (wait > 0) {
+    const timer = setTimeout(() => setReady(true), wait);
+    onCleanup(() => clearTimeout(timer));
+  }
+  return ready;
+}
+
+function DecorationView(props: { decoration: Decoration; index: CitationIndex; noteKey: NoteKey }) {
+  return (
+    <Switch>
+      <Match when={props.decoration.type === 'mark' && props.decoration}>
+        {(mark) => <StatusLine mark={mark()} />}
+      </Match>
+      <Match when={props.decoration.type === 'pending' && props.decoration}>
+        {(pending) => (
+          <Placeholder pending={pending()} index={props.index} noteKey={props.noteKey} />
+        )}
+      </Match>
+    </Switch>
+  );
+}
+
+/** "checking arXiv source...", dim, under the block being checked. */
+function StatusLine(props: { mark: MarkDecoration }) {
+  const shown = after(
+    untrack(() => props.mark.created),
+    STATUS_LINE_DELAY_MS
+  );
+  return (
+    <Show when={shown()}>
+      <div class="np-checking" data-decor={props.mark.id} role="status">
+        {props.mark.label}
+        <span
+          class="np-ellipsis"
+          classList={{ 'is-animated': !reducedMotion() }}
+          aria-hidden="true"
+        >
+          <span>.</span>
+          <span>.</span>
+          <span>.</span>
+        </span>
+      </div>
+    </Show>
+  );
+}
+
+/** Where a send will land: bars the size of what is coming, and its
+ * caption as it will read. */
+function Placeholder(props: {
+  pending: PendingDecoration;
+  index: CitationIndex;
+  noteKey: NoteKey;
+}) {
+  const d = untrack(() => props.pending);
+  const moving = !reducedMotion();
+  const { kind, shape, caption } = d.pending;
+  const shown = after(d.created, kind === 'text' ? TEXT_PLACEHOLDER_DELAY_MS : 0);
+  // An image's box keeps the drawn region's proportions, no taller than a
+  // screenful of the column.
+  const ratio = shape ? shape.h / shape.w : 0;
+  const style =
+    kind === 'image' && shape
+      ? { 'aspect-ratio': `${shape.w} / ${shape.h}`, 'max-width': `${Math.round(320 / ratio)}px` }
+      : {};
+  return (
+    <div class="np-pending" data-decor={d.id} aria-busy="true" aria-label="Adding to the note">
+      <Show when={shown()}>
+        <div
+          class={`np-skeleton is-${kind}`}
+          classList={{ 'is-animated': moving }}
+          style={style}
+          aria-hidden="true"
+        >
+          <Show when={kind !== 'image'}>
+            <For each={kind === 'equation' ? [60, 40] : [100, 94, 58]}>
+              {(width) => <span class="np-skeleton-bar" style={{ width: `${width}%` }} />}
+            </For>
+          </Show>
+        </div>
+        <Show when={caption}>
+          {(text) => (
+            <div class="np-p np-pending-caption">
+              <Spans
+                spans={inlineSpans(text())}
+                index={props.index}
+                noteKey={props.noteKey}
+                onCite={() => {}}
+              />
+            </div>
+          )}
+        </Show>
+      </Show>
+    </div>
+  );
 }
 
 /* ---- drawing ---- */
