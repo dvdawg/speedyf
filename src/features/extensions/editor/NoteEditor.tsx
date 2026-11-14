@@ -1209,6 +1209,12 @@ function Spans(props: {
   );
 }
 
+/** The TeX of a quote line that is one `$$ ... $$` display, else null. */
+export function quotedDisplay(body: string): string | null {
+  const m = /^\s*\$\$([\s\S]*\S[\s\S]*)\$\$\s*$/.exec(body);
+  return m && !m[1]!.includes('$$') ? m[1]!.trim() : null;
+}
+
 /** A block as drawn. A plain function rather than a component: a block
  * never changes (an edited one is a new block), so it is drawn once. */
 function drawBlock(args: {
@@ -1242,6 +1248,15 @@ function drawBlock(args: {
             const shape = lineShape(line);
             if (shape.kind !== 'quote' || shape.body.trim() === '') {
               return <div class="np-quote-gap" />;
+            }
+            // A `$$ ... $$` line in a quote is a displayed equation in it.
+            const display = quotedDisplay(shape.body);
+            if (display !== null) {
+              return (
+                <div class="np-quote-line">
+                  <LazyMath tex={display} display={true} />
+                </div>
+              );
             }
             return (
               <div

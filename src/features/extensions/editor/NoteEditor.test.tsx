@@ -23,6 +23,7 @@ vi.mock('../../../lib/links/followExternalLink', () => ({ followExternalLink: vi
 const host = await import('../editorHost');
 const { default: NoteEditor, liveMath } = await import('./NoteEditor');
 const { noteDropAt } = await import('./noteDrop');
+const { loadKatex } = await import('../../../components/MathText');
 
 const KEY: NoteKey = { extensionId: 'dev.speedyf.notepad', projectId: 'p1', file: 'notepad.md' };
 
@@ -164,6 +165,39 @@ describe('the note editor', () => {
     expect(state.text).toBe(
       'Before.\n\n> First paragraph.\n> \n>\n> Second [@attias2022quantum, p. 12]{box=1,2,3,4}\n\nAfter.'
     );
+  });
+
+  it("typesets a quote's inline math and its display lines inside the one quote", async () => {
+    // Formulas are typeset as soon as they are drawn, here.
+    vi.stubGlobal('IntersectionObserver', undefined);
+    await loadKatex();
+    try {
+      const { view } = mount(
+        [
+          '> Let $X^m$ be a sample and $\\|P\\|_q$ its norm:',
+          '>',
+          '> $$ \\|P(A)\\|_{L_q} \\le 62400 d \\tag{3} $$',
+          '>',
+          '> [@attias2022quantum, p. 12]{box=1,2,3,4}',
+        ].join('\n')
+      );
+      await settle();
+      const quotes = view.container.querySelectorAll('.np-quote');
+      expect(quotes).toHaveLength(1);
+      const quote = quotes[0]!;
+      const inline = [...quote.querySelectorAll('.np-math')];
+      expect(inline).toHaveLength(2);
+      expect(inline.every((m) => m.querySelector('.katex') !== null)).toBe(true);
+      const display = quote.querySelectorAll('.np-math-block');
+      expect(display).toHaveLength(1);
+      expect(display[0]!.querySelector('.katex-display')).not.toBeNull();
+      // Its number is typeset with it, not left as text.
+      expect(display[0]!.textContent).toContain('(3)');
+      expect(quote.textContent).not.toContain('$$');
+      expect(quote.querySelector('.np-cite')?.textContent).toBe('[AS22, p. 12]');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('does not split or re-cut while an input method is composing', async () => {
