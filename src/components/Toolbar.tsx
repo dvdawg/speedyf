@@ -79,12 +79,13 @@ export default function Toolbar() {
   const showStroke = () => toolState.active === 'ink' || toolState.active === 'rect';
   const showStyle = () => toolState.active !== 'select' && toolState.active !== 'textbox';
   // Home and Projects show no document, so every reader control would sit
-  // there disabled. Only Open stays; the bar keeps its height.
+  // there disabled, and Open alone would be an empty bar: there is no bar.
+  // Open stays on Cmd+O, Home's own Open PDF... button and the palette.
   const reader = () => tabsStore.state.activeId !== null;
 
   return (
-    <div class="toolbar" role="toolbar" aria-label="Main toolbar">
-      <Show when={reader()}>
+    <Show when={reader()}>
+      <div class="toolbar" role="toolbar" aria-label="Main toolbar">
         <div class="tb-group">
           <IconButton
             label="Toggle sidebar"
@@ -94,16 +95,14 @@ export default function Toolbar() {
             <IconSidebar />
           </IconButton>
         </div>
-      </Show>
 
-      <div class="tb-group">
-        <IconButton
-          label={`Open PDF (${formatShortcut('mod+o')})`}
-          onClick={() => void openFromDialog()}
-        >
-          <IconOpen />
-        </IconButton>
-        <Show when={reader()}>
+        <div class="tb-group">
+          <IconButton
+            label={`Open PDF (${formatShortcut('mod+o')})`}
+            onClick={() => void openFromDialog()}
+          >
+            <IconOpen />
+          </IconButton>
           <IconButton
             label={`Save (${formatShortcut('mod+s')})`}
             disabled={!loaded() || !doc()?.dirty || doc()?.saving || !saveSupported()}
@@ -134,10 +133,8 @@ export default function Toolbar() {
           >
             <IconPrint />
           </IconButton>
-        </Show>
-      </div>
+        </div>
 
-      <Show when={reader()}>
         <div class="tb-group">
           <IconButton
             label={`Undo (${formatShortcut('mod+z')})`}
@@ -435,7 +432,7 @@ export default function Toolbar() {
           <ReaderPaneToggles />
         </div>
         <TextTools />
-      </Show>
-    </div>
+      </div>
+    </Show>
   );
 }
