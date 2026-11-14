@@ -31,17 +31,34 @@ this, the extension consumes exactly this.
 - Equation action: `{ type: 'invoke', command: 'copyEquation', value: { page, bbox: [x, y, w, h], number: string | null } }`
   where bbox is in page points, top-left origin, display orientation.
   Call `region.glyphs { page, bbox }` for the glyphs.
+- As the `equationConverter` (another extension called `equations.convert`):
+  the same command, `value: { page, bbox, number, equation, mode?, ticket }`.
+  - `mode: 'local'`: never touch the network. Tags, then fonts. Fast.
+  - `mode: 'exact'`: only the sources online (arXiv, then the journal), with
+    a 15 s budget; show nothing when none matches.
+  - no `mode`: as the equation action.
+  - `ticket`: echo it in `ui.showMath { ..., ticket }`. The core may run two
+    conversions at once and matches each answer to its request by it.
+- Prefetch: `value: { mode: 'prefetch' }`, sent by the core once per open
+  document per session when the pointer first reveals an equation button,
+  and only while this extension is enabled. Read the settings and
+  `document.identifiers`, start the arXiv download (else the journal one)
+  without awaiting it, and answer nothing.
+
+A source that failed to download is not asked for again for 10 minutes. A
+download cut off by a deadline is not a failure: it goes on and is cached
+when it lands.
 
 ## APIs (all via `call`)
 
-| API                    | Args                                                                                                                           | Returns                                                                                                             | Needs                         |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| `selection.glyphs`     | none                                                                                                                           | `{ page, glyphs, groups, lines } \| null` (current text selection)                                                  | document:layout               |
-| `region.glyphs`        | `{ page, bbox }`                                                                                                               | `{ page, glyphs, groups, lines }` (the equation at `bbox`, grown to all of it)                                      | document:layout               |
-| `document.mathTags`    | `{ page }`                                                                                                                     | `[{ bbox, alt: string \| null, actualText: string \| null, mathml: string \| null }]` (tagged-PDF Formula elements) | document:layout               |
-| `document.identifiers` | none                                                                                                                           | `{ doi: string \| null, arxiv: string \| null, arxivVersion: number \| null }`                                      | document:read                 |
-| `net.fetch`            | `{ url, as: 'text' \| 'bytes', maxBytes?: number }`                                                                            | `{ status, contentType, body: string \| number[] }`                                                                 | network (host must be listed) |
-| `ui.showMath`          | `{ latex: string, display: boolean, source: 'tags' \| 'arxiv' \| 'jats' \| 'fonts', confidence: 'high' \| 'medium' \| 'low' }` | `{ shown: true }`                                                                                                   | none                          |
+| API                    | Args                                                                                                                                            | Returns                                                                                                             | Needs                         |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| `selection.glyphs`     | none                                                                                                                                            | `{ page, glyphs, groups, lines } \| null` (current text selection)                                                  | document:layout               |
+| `region.glyphs`        | `{ page, bbox }`                                                                                                                                | `{ page, glyphs, groups, lines }` (the equation at `bbox`, grown to all of it)                                      | document:layout               |
+| `document.mathTags`    | `{ page }`                                                                                                                                      | `[{ bbox, alt: string \| null, actualText: string \| null, mathml: string \| null }]` (tagged-PDF Formula elements) | document:layout               |
+| `document.identifiers` | none                                                                                                                                            | `{ doi: string \| null, arxiv: string \| null, arxivVersion: number \| null }`                                      | document:read                 |
+| `net.fetch`            | `{ url, as: 'text' \| 'bytes', maxBytes?: number }`                                                                                             | `{ status, contentType, body: string \| number[] }`                                                                 | network (host must be listed) |
+| `ui.showMath`          | `{ latex: string, display: boolean, source: 'tags' \| 'arxiv' \| 'jats' \| 'fonts', confidence: 'high' \| 'medium' \| 'low', ticket?: string }` | `{ shown: boolean }`                                                                                                | none                          |
 
 `Glyph`:
 

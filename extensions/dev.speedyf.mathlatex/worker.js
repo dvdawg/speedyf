@@ -34,6 +34,12 @@ const CACHE_PREFIX = 'src:v1:';
  * five-second invoke timeout. A fetch that is cut off keeps running and fills
  * the in-memory cache, so asking again a moment later finds it. */
 const NETWORK_BUDGET_MS = 3_800;
+/** How long an `exact` conversion (asked for by another extension, in the
+ * background, with an answer already in place) waits on the network. */
+const EXACT_BUDGET_MS = 15_000;
+/** A source that failed to download is not asked for again for this long:
+ * an unreachable host must not cost every conversion its whole budget. */
+const FAILURE_MEMORY_MS = 10 * 60_000;
 const ARXIV_MAX_BYTES = 20_000_000;
 const SCAN_MESSAGE = "This looks like a scan; math can't be read from it.";
 
@@ -41,6 +47,14 @@ let nextRequestId = 1;
 const pending = new Map();
 /** arXiv id+version, or DOI -> Promise of parsed snippets (or null). */
 const sources = new Map();
+/** The same keys -> when the download last failed. A deadline running out
+ * is not a failure: that download goes on and fills `sources`. */
+const failedAt = new Map();
+
+function recentlyFailed(key) {
+  const at = failedAt.get(key);
+  return at !== undefined && Date.now() - at < FAILURE_MEMORY_MS;
+}
 
 self.onmessage = (event) => {
   const message = event.data;
@@ -4062,12 +4076,15 @@ async function handle(command, value) {
   }
   if (command === 'copyEquation') {
     const v = value && typeof value === 'object' ? value : {};
+    if (v.mode === 'prefetch') return prefetch();
     return copyMath({
       kind: 'equation',
       page: v.page,
       bbox: v.bbox,
       number: v.number ?? null,
       text: '',
+      mode: v.mode === 'local' || v.mode === 'exact' ? v.mode : null,
+      ticket: typeof v.ticket === 'string' ? v.ticket : null,
     });
   }
   throw new Error(`unknown command "${command}"`);
@@ -4102,11 +4119,52 @@ async function tryCall(api, args) {
   }
 }
 
-/** The pipeline. Each step is used only when it applies, most exact first;
- * the first that answers is shown. */
-async function copyMath(request) {
-  const started = Date.now();
+/** The pointer reached an equation of the open paper: start downloading
+ * its exact source, without waiting, so a conversion a moment later finds
+ * it. The arXiv source when there is one, else the journal version; each
+ * only when its setting allows and it has not just failed. */
+async function prefetch() {
   const settings = await readSettings();
+  if (!settings.arxiv && !settings.journals) return;
+  const ids = (await tryCall('document.identifiers')) ?? {};
+  const arxiv = settings.arxiv ? normalizeArxiv(ids.arxiv, ids.arxivVersion) : null;
+  const doi = typeof ids.doi === 'string' && ids.doi.trim() ? ids.doi.trim() : null;
+  if (arxiv) void arxivSnippets(arxiv.id, arxiv.version);
+  else if (settings.journals && doi) void journalSnippets(doi);
+}
+
+/** Stage times of one conversion, logged at info as one line. */
+function stopwatch(label) {
+  const started = Date.now();
+  let last = started;
+  const parts = [];
+  return {
+    started,
+    lap(name) {
+      const now = Date.now();
+      parts.push(`${name} ${now - last}ms`);
+      last = now;
+    },
+    log(outcome) {
+      log('info', `${label}: ${parts.join(', ')}; ${outcome} in ${Date.now() - started}ms`);
+    },
+  };
+}
+
+/** The pipeline. Each step is used only when it applies, most exact first;
+ * the first that answers is shown.
+ *
+ * `mode` is how another extension asked (`equations.convert`): `local`
+ * never touches the network (tags, then fonts); `exact` tries only the
+ * sources online, with a longer budget, and shows nothing when none
+ * matches. No mode is this extension's own action: everything, in order. */
+async function copyMath(request) {
+  const mode = request.mode ?? null;
+  const clock = stopwatch(`${request.kind}${mode ? ` (${mode})` : ''}`);
+  const started = clock.started;
+  // A local answer reads no setting: every setting is about the network.
+  const settings = mode === 'local' ? { arxiv: false, journals: false } : await readSettings();
+  clock.lap('settings');
 
   let page = Number.isInteger(request.page) ? request.page : null;
   let glyphs = null;
@@ -4138,22 +4196,29 @@ async function copyMath(request) {
   if (glyphs && looksLikeScan(glyphs)) return refuseScan();
   const fonts = glyphs && glyphs.length > 0 ? reconstruct(glyphs, layout) : null;
   if (fonts && fonts.decoded === 0 && glyphs.some((g) => g.font !== '__rule')) return refuseScan();
+  clock.lap('glyphs');
 
   const display =
     request.kind === 'equation' || (fonts ? fonts.rows > 1 : /\n/.test(request.text.trim()));
-  const show = (latex, source, confidence) =>
-    call('ui.showMath', {
+  const show = (latex, source, confidence) => {
+    clock.lap(source);
+    clock.log(`${source} ${confidence}`);
+    return call('ui.showMath', {
       latex: asciiLatex(latex),
       display: display || /\\\\/.test(latex),
       source,
       confidence,
+      // Echoed for the core: which conversion this answers.
+      ...(request.ticket ? { ticket: request.ticket } : {}),
     });
+  };
 
   // 1. The document's own tags.
-  if (page !== null && bbox) {
+  if (mode !== 'exact' && page !== null && bbox) {
     const tags = await tryCall('document.mathTags', { page });
     const tagged = Array.isArray(tags) ? fromTags(tags, bbox) : null;
     if (tagged) return show(tagged, 'tags', 'high');
+    clock.lap('tags');
   }
 
   // 2 and 3. Source online.
@@ -4162,24 +4227,33 @@ async function copyMath(request) {
   if (request.text) queries.push(textTokens(request.text));
   const number = request.number ?? null;
   const worthMatching = queries.some((q) => q.length >= 3) || Boolean(number);
-  if ((settings.arxiv || settings.journals) && worthMatching) {
+  const budget = mode === 'exact' ? EXACT_BUDGET_MS : NETWORK_BUDGET_MS;
+  if (mode !== 'local' && (settings.arxiv || settings.journals) && worthMatching) {
     const ids = (await tryCall('document.identifiers')) ?? {};
+    clock.lap('identifiers');
     const arxiv = normalizeArxiv(ids.arxiv, ids.arxivVersion);
     if (settings.arxiv && arxiv) {
-      const snippets = await withDeadline(arxivSnippets(arxiv.id, arxiv.version), started);
+      const snippets = await withDeadline(arxivSnippets(arxiv.id, arxiv.version), started, budget);
       const found =
         snippets &&
         matchSnippets(snippets, queries, { number, display: request.kind === 'equation' });
       if (found) return show(found.tex, 'arxiv', found.exact ? 'high' : 'medium');
+      clock.lap('arxiv');
     }
     const doi = typeof ids.doi === 'string' && ids.doi.trim() ? ids.doi.trim() : null;
     if (settings.journals && doi) {
-      const snippets = await withDeadline(journalSnippets(doi), started);
+      const snippets = await withDeadline(journalSnippets(doi), started, budget);
       const found =
         snippets &&
         matchSnippets(snippets, queries, { number, display: request.kind === 'equation' });
       if (found) return show(found.tex, 'jats', found.exact ? 'high' : 'medium');
+      clock.lap('journal');
     }
+  }
+  // Asked for an exact source only: none matched, so nothing to show.
+  if (mode === 'exact') {
+    clock.log('no exact source');
+    return;
   }
 
   // 4. The glyphs.
@@ -4229,8 +4303,8 @@ function toBox(b) {
   return null;
 }
 
-function withDeadline(promise, started) {
-  const left = NETWORK_BUDGET_MS - (Date.now() - started);
+function withDeadline(promise, started, budget = NETWORK_BUDGET_MS) {
+  const left = budget - (Date.now() - started);
   if (left <= 0) return Promise.resolve(null);
   let timer;
   return Promise.race([
@@ -4316,6 +4390,7 @@ function normalizeArxiv(id, version) {
 function arxivSnippets(id, version) {
   const key = `arxiv:${id}${version ? `v${version}` : ''}`;
   if (sources.has(key)) return sources.get(key);
+  if (recentlyFailed(key)) return Promise.resolve(null);
   const work = (async () => {
     const stored = await readStored(key);
     if (stored) return stored;
@@ -4335,6 +4410,7 @@ function arxivSnippets(id, version) {
   })().catch((err) => {
     log('warn', `arXiv source for ${id}: ${String(err?.message ?? err)}`);
     sources.delete(key);
+    failedAt.set(key, Date.now());
     return null;
   });
   sources.set(key, work);
@@ -4353,6 +4429,7 @@ function toBytes(body) {
 function journalSnippets(doi) {
   const key = `doi:${doi.toLowerCase()}`;
   if (sources.has(key)) return sources.get(key);
+  if (recentlyFailed(key)) return Promise.resolve(null);
   const work = (async () => {
     const stored = await readStored(key);
     if (stored) return stored;
@@ -4380,6 +4457,7 @@ function journalSnippets(doi) {
   })().catch((err) => {
     log('warn', `Journal version of ${doi}: ${String(err?.message ?? err)}`);
     sources.delete(key);
+    failedAt.set(key, Date.now());
     return null;
   });
   sources.set(key, work);
