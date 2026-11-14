@@ -21,6 +21,9 @@
   --warn: #a15c00;
   --danger: #c62828;
   --shadow: 0 1px 3px rgba(15, 20, 26, 0.14), 0 4px 14px rgba(15, 20, 26, 0.08);
+  /* A sheet on the desk: the popover shadow's colours, nearer and softer,
+   * so a page never looks lifted the way a menu does. */
+  --page-shadow: 0 1px 2px rgba(15, 20, 26, 0.1), 0 2px 8px rgba(15, 20, 26, 0.05);
   --focus-ring: 0 0 0 2px var(--bg-elev), 0 0 0 4px var(--accent);
   /* Whatever the shell paints behind a rendered page: the sheet itself before
    * its raster arrives, the letterboxing around a thumbnail, a blank page.
@@ -64,7 +67,8 @@
   --bg: #17191c;
   --bg-elev: #212429;
   --bg-inset: #1b1e22;
-  --viewer-bg: #101214;
+  /* A shade under --bg: the desk the pages sit on. */
+  --viewer-bg: #0c0d0f;
   --border: #33383f;
   --text: #e8eaed;
   --text-dim: #9aa3ad;
@@ -74,6 +78,7 @@
   --warn: #e0a24a;
   --danger: #ef6f6c;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.5), 0 4px 16px rgba(0, 0, 0, 0.35);
+  --page-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 10px rgba(0, 0, 0, 0.25);
   --hit: color-mix(in srgb, var(--accent) 30%, transparent);
   --hit-current: color-mix(in srgb, var(--accent) 52%, transparent);
   --hit-current-edge: color-mix(in srgb, var(--accent) 90%, transparent);
@@ -1414,7 +1419,7 @@ html.is-dragging-tab * {
 .page {
   position: absolute;
   background: var(--page-bg);
-  box-shadow: var(--shadow);
+  box-shadow: var(--page-shadow);
   overflow: hidden;
 }
 

@@ -3,6 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { PAGE_GAP } from '../stores/viewportStore';
 
 const css = readFileSync(join(process.cwd(), 'src', 'styles', 'global.css'), 'utf8').replace(
   /\/\*[\s\S]*?\*\//g,
@@ -161,6 +162,20 @@ describe('polish: dim pages', () => {
     expect(brightness).toBeGreaterThanOrEqual(0.8);
     expect(brightness).toBeLessThan(1);
     expect(sepia).toBeLessThan(0.1);
+  });
+});
+
+describe('polish: page presentation', () => {
+  it('sets pages a steady gap apart on a desk, shadowed less than a popover', () => {
+    expect(PAGE_GAP).toBeGreaterThanOrEqual(12);
+    expect(PAGE_GAP).toBeLessThanOrEqual(16);
+    expect(/(?:^|})\s*\.page\s*\{([^}]*)\}/.exec(css)![1]).toContain(
+      'box-shadow: var(--page-shadow)'
+    );
+    const dark = /:root\[data-theme='dark'\]\s*\{([^}]*)\}/.exec(css)![1]!;
+    expect(rootTokens()).toContain('--page-shadow:');
+    expect(dark).toContain('--page-shadow:');
+    expect(dark).toContain('--viewer-bg:');
   });
 });
 
