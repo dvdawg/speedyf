@@ -686,6 +686,10 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
     equals: (a, b) => a.length === b.length && a.every((t, i) => t === b[i]),
   });
   const finding = () => terms().length > 0;
+  /** The node the last find step landed on: a ring fades in on it once
+   * (the CSS), so the eye finds it after the pan. */
+  const [stepped, setStepped] = createSignal<string | null>(null);
+  const isStepped = (id: string) => finding() && stepped() === id;
   /** Each drawn node's searchable text, folded once per graph: an item's
    * fields and label as drawn ("ZD24a"), a ghost's reference and ids. */
   const findText = createMemo(() => {
@@ -1200,6 +1204,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
     const id = order[next]!;
     choose(id);
     reveal(id);
+    setStepped(id);
   };
   /** The keyboard back to the drawing: the selected node, else the first. */
   const focusCanvas = () => {
@@ -1504,6 +1509,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
                           'is-dragged': isDragged(node.id),
                           'is-match': findFlag[node.id] === 'match',
                           'is-faded': findFlag[node.id] === 'faded',
+                          'is-stepped': isStepped(node.id),
                         }}
                         role="button"
                         tabindex={0}
@@ -1549,6 +1555,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
                           'is-dragged': isDragged(id),
                           'is-match': findFlag[id] === 'match',
                           'is-faded': findFlag[id] === 'faded',
+                          'is-stepped': isStepped(id),
                         }}
                         role="button"
                         tabindex={0}
@@ -1591,6 +1598,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
                           'is-dragged': isDragged(id),
                           'is-match': findFlag[id] === 'match',
                           'is-faded': findFlag[id] === 'faded',
+                          'is-stepped': isStepped(id),
                         }}
                         role="button"
                         tabindex={0}

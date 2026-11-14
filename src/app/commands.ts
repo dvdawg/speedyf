@@ -646,6 +646,14 @@ export const COMMANDS: readonly Command[] = [
     run: () => updateSettings({ invertPages: !settings.invertPages }),
   },
   {
+    id: 'settings.toggleDimPages',
+    title: 'Toggle Dim Pages',
+    group: 'Settings',
+    keywords: ['dark', 'night', 'dim', 'brightness', 'warm', 'appearance'],
+    enabled: () => true,
+    run: () => updateSettings({ dimPages: !settings.dimPages }),
+  },
+  {
     id: 'settings.toggleLowMemory',
     title: 'Toggle Low-Memory Mode',
     group: 'Settings',

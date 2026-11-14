@@ -21,6 +21,9 @@
   --warn: #a15c00;
   --danger: #c62828;
   --shadow: 0 1px 3px rgba(15, 20, 26, 0.14), 0 4px 14px rgba(15, 20, 26, 0.08);
+  /* A sheet on the desk: the popover shadow's colours, nearer and softer,
+   * so a page never looks lifted the way a menu does. */
+  --page-shadow: 0 1px 2px rgba(15, 20, 26, 0.1), 0 2px 8px rgba(15, 20, 26, 0.05);
   --focus-ring: 0 0 0 2px var(--bg-elev), 0 0 0 4px var(--accent);
   /* Whatever the shell paints behind a rendered page: the sheet itself before
    * its raster arrives, the letterboxing around a thumbnail, a blank page.
@@ -42,13 +45,30 @@
   /* Screen heads (Home panels, Projects): 30px of content between these
    * paddings, so a 20px title, a count and a --control-h control share it. */
   --screen-head-pad: 22px 28px 10px;
+  /* Motion: short and quiet, colour and opacity rather than movement. Every
+   * use sits under prefers-reduced-motion: no-preference (see the polish
+   * block below). */
+  --ease-quick: 120ms ease-out;
+  /* The sheen across a placeholder, as the notepad's skeleton draws it. */
+  --skeleton-sheen: color-mix(in srgb, var(--text) 6%, transparent);
+  /* Scrollbar thumbs in the columns: between a rule and dim text. */
+  --scrollbar-thumb: color-mix(in srgb, var(--border) 60%, var(--text-dim));
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--border) 25%, var(--text-dim));
+  /* One hover and selection for every list-like row. The hover is a wash of
+   * the text colour rather than an opaque fill, so it reads on whatever
+   * surface the row sits on, in either theme. */
+  --row-hover: color-mix(in srgb, var(--text) 6%, transparent);
+  --row-selected: var(--accent-soft);
+  --row-selected-text: var(--text);
+  --row-radius: 6px;
 }
 
 :root[data-theme='dark'] {
   --bg: #17191c;
   --bg-elev: #212429;
   --bg-inset: #1b1e22;
-  --viewer-bg: #101214;
+  /* A shade under --bg: the desk the pages sit on. */
+  --viewer-bg: #0c0d0f;
   --border: #33383f;
   --text: #e8eaed;
   --text-dim: #9aa3ad;
@@ -58,6 +78,7 @@
   --warn: #e0a24a;
   --danger: #ef6f6c;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.5), 0 4px 16px rgba(0, 0, 0, 0.35);
+  --page-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 10px rgba(0, 0, 0, 0.25);
   --hit: color-mix(in srgb, var(--accent) 30%, transparent);
   --hit-current: color-mix(in srgb, var(--accent) 52%, transparent);
   --hit-current-edge: color-mix(in srgb, var(--accent) 90%, transparent);
@@ -107,6 +128,215 @@ body {
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;
+}
+
+/* ---------- polish: motion ----------
+   One quiet language for the whole shell. Colour changes ease over
+   --ease-quick; popovers fade in from a hair under full size; nothing
+   bounces, nothing on the PDF page moves, and reduced motion turns all of
+   it off. Zero-specificity selectors, so a component's own rule wins. */
+@media (prefers-reduced-motion: no-preference) {
+  :where(
+    button,
+    a,
+    select,
+    [role='button'],
+    [role='option'],
+    [role='menuitem'],
+    [role='treeitem'],
+    .paper-row,
+    .paper-group-head,
+    .projects-row,
+    .palette-row,
+    .note-row,
+    .outline-row,
+    .figure-row,
+    .home-recent-row,
+    .ext-panel-row
+  ):not(:where(.page *, .graph-node)) {
+    transition:
+      background-color var(--ease-quick),
+      color var(--ease-quick),
+      border-color var(--ease-quick);
+  }
+
+  /* Opened, not closed: a menu that lingers on its way out is in the way. */
+  .palette,
+  .tab-menu,
+  .tab-preview,
+  .projects-menu,
+  .graph-view-menu,
+  .citation-popover,
+  .math-popover,
+  .note-picker {
+    animation: pop-in var(--ease-quick);
+  }
+
+  /* The drawer's box takes its width at once, so the page re-fits once and
+     never per frame; only its paint slides a few px and fades. Never on a
+     resize drag: the animation runs when the drawer mounts, nowhere else. */
+  .reader-pane {
+    animation: drawer-in 170ms ease-out;
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    scale: 0.98;
+  }
+}
+
+@keyframes drawer-in {
+  from {
+    opacity: 0;
+    translate: 6px 0;
+  }
+}
+
+/* ---------- polish: placeholder rows ----------
+   A list that is slow to arrive shows rows of its own shape: bars on the
+   inset colour where the title and meta go, at the real rows' height. The
+   sheen is the notepad skeleton's, and stills under reduced motion. */
+.paper-row.is-skeleton {
+  pointer-events: none;
+}
+
+.skeleton-bar {
+  display: inline-block;
+  height: 0.6em;
+  border-radius: 0.3em;
+  background: var(--bg-inset);
+  vertical-align: middle;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .skeleton-bar {
+    background: linear-gradient(100deg, transparent 30%, var(--skeleton-sheen) 50%, transparent 70%)
+      var(--bg-inset);
+    background-size: 300% 100%;
+    animation: shimmer 1.8s infinite linear;
+  }
+}
+
+/* ---------- polish: scrollbars ----------
+   Thin and theme-matched in the scrolling columns and panels: a rounded
+   thumb in a border/text-dim mix on a clear track, darker under the
+   pointer. The page viewport (.viewer) keeps the system's bars, which are
+   already theme-aware and wide enough to grab. */
+:where(
+  .projects-col-scroll,
+  .sidebar-scroll,
+  .search-results,
+  .form-list,
+  .note-editor-scroll,
+  .note-picker,
+  .home-panel,
+  .library-scroll,
+  .palette-list
+) {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+:where(
+  .projects-col-scroll,
+  .sidebar-scroll,
+  .search-results,
+  .form-list,
+  .note-editor-scroll,
+  .note-picker,
+  .home-panel,
+  .library-scroll,
+  .palette-list
+)::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+}
+
+:where(
+  .projects-col-scroll,
+  .sidebar-scroll,
+  .search-results,
+  .form-list,
+  .note-editor-scroll,
+  .note-picker,
+  .home-panel,
+  .library-scroll,
+  .palette-list
+)::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 4px;
+  background: var(--scrollbar-thumb) padding-box;
+}
+
+:where(
+    .projects-col-scroll,
+    .sidebar-scroll,
+    .search-results,
+    .form-list,
+    .note-editor-scroll,
+    .note-picker,
+    .home-panel,
+    .library-scroll,
+    .palette-list
+  )::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
+
+/* ---------- polish: numerals ----------
+   Figures that change in place or stack in a column keep one width, so a
+   count ticking over or a page number stepping never shifts its line. The
+   counts and steppers that already ask for it keep their own rules. */
+.page-input,
+.zoom-input,
+.tb-total,
+.status-bar,
+.paper-row-meta,
+.paper-list-batch,
+.home-recent-date,
+.home-recent-size,
+.thumb-num,
+.note-meta,
+.figure-page,
+.library-status,
+.ext-count {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- polish: rows ----------
+   The row tokens are applied in each row's own rule; what is gathered here
+   is what some rows lacked: a hover where the pointer can pick, and the
+   shared focus ring for keyboard focus. */
+.note-picker-row:hover {
+  background: var(--row-hover);
+}
+
+.outline-row:focus-visible,
+.note-row:focus-visible,
+.figure-row:focus-visible,
+.library-result-head:focus-visible,
+.library-result-hit:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* ---------- polish: dim pages ----------
+   Night reading: the rasters a little darker and warmer, under the dark
+   theme only (App sets the flag only then, and inversion clears it). A
+   per-pixel filter on the images, not an overlay: text stays as crisp as
+   the raster, figures keep their hues, and the text, search and annotation
+   layers above keep their own colours. Blank and loading sheets dim with
+   them; the preview inside a loading sheet is dimmed once, by its sheet. */
+:root[data-theme='dark'][data-dim-pages='on']
+  :is(.page-img, .page-tile, .page-blank, .page-loading),
+:root[data-theme='dark'][data-dim-pages='on'] :is(.thumb-btn img, .thumb-blank) {
+  filter: brightness(0.85) sepia(0.08);
+}
+
+:root[data-theme='dark'][data-dim-pages='on'] .page-loading .page-img {
+  filter: none;
 }
 
 /* ---------- shell ---------- */
@@ -327,7 +557,7 @@ body {
   width: 100%;
   padding: 9px 10px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--row-radius);
   background: transparent;
   color: var(--text);
   text-align: left;
@@ -336,7 +566,7 @@ body {
 }
 
 .home-recent-row:hover {
-  background: var(--bg-inset);
+  background: var(--row-hover);
 }
 
 .home-recent-top {
@@ -1189,7 +1419,7 @@ html.is-dragging-tab * {
 .page {
   position: absolute;
   background: var(--page-bg);
-  box-shadow: var(--shadow);
+  box-shadow: var(--page-shadow);
   overflow: hidden;
 }
 
@@ -1907,11 +2137,11 @@ html.is-dragging-tab * {
   font-size: 13px;
   line-height: 1.35;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--row-radius);
 }
 
 .outline-row:hover:not(:disabled) {
-  background: var(--bg-inset);
+  background: var(--row-hover);
 }
 
 /* Scripts recovered from a PDF's geometry. The reduced size keeps a
@@ -2109,7 +2339,8 @@ html.is-dragging-tab * {
 }
 
 .library-result-head:hover {
-  background: var(--accent-soft);
+  /* The wash over the head's own inset fill, not in place of it. */
+  background: linear-gradient(var(--row-hover), var(--row-hover)) var(--bg-inset);
 }
 
 .library-result-title {
@@ -2162,7 +2393,7 @@ html.is-dragging-tab * {
 }
 
 .library-result-hit:hover {
-  background: var(--bg-inset);
+  background: var(--row-hover);
   color: var(--text);
 }
 
@@ -2311,7 +2542,7 @@ html.is-dragging-tab * {
   width: 100%;
   padding: 8px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--row-radius);
   background: transparent;
   color: var(--text);
   text-align: left;
@@ -2320,7 +2551,7 @@ html.is-dragging-tab * {
 }
 
 .note-row:hover {
-  background: var(--bg-inset);
+  background: var(--row-hover);
 }
 
 /* The annotation's own color, so the list scans the way the page does. */
@@ -2610,7 +2841,7 @@ html.is-dragging-tab * {
   width: 100%;
   padding: 8px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--row-radius);
   background: transparent;
   color: var(--text);
   text-align: left;
@@ -2619,7 +2850,7 @@ html.is-dragging-tab * {
 }
 
 .figure-row:hover {
-  background: var(--bg-inset);
+  background: var(--row-hover);
   border-color: var(--border);
 }
 
@@ -2710,7 +2941,7 @@ html.is-dragging-tab * {
   background: none;
   color: var(--text);
   padding: 6px 8px;
-  border-radius: 6px;
+  border-radius: var(--row-radius);
   cursor: pointer;
   font: inherit;
   white-space: nowrap;
@@ -2719,7 +2950,7 @@ html.is-dragging-tab * {
 }
 
 .search-result:hover {
-  background: var(--bg-inset);
+  background: var(--row-hover);
 }
 
 .search-result-text {
@@ -2746,8 +2977,8 @@ html.is-dragging-tab * {
 }
 
 .search-result.is-current {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--row-selected);
+  color: var(--row-selected-text);
 }
 
 .panel-head {
@@ -3134,7 +3365,7 @@ html.is-dragging-tab * {
   font: inherit;
   font-size: 13px;
   line-height: 1.35;
-  border-radius: 4px;
+  border-radius: var(--row-radius);
   cursor: pointer;
 }
 
@@ -3147,7 +3378,7 @@ html.is-dragging-tab * {
 }
 
 .palette-row.is-active {
-  background: var(--accent-soft);
+  background: var(--row-selected);
   border-left-color: var(--accent);
 }
 
@@ -3547,7 +3778,7 @@ html.is-dragging-tab * {
   gap: 8px;
   padding: 7px 8px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--row-radius);
 }
 
 /* A row that belongs to the one above it — the places a reference is cited,
@@ -3589,7 +3820,7 @@ html.is-dragging-tab * {
 }
 
 .ext-panel-row.is-actionable:hover {
-  background: var(--bg-inset);
+  background: var(--row-hover);
   border-color: var(--border);
 }
 
@@ -4588,18 +4819,18 @@ body.is-resizing-sidebar * {
   gap: 6px;
   min-height: 28px;
   padding: 0 8px;
-  border-radius: 6px;
+  border-radius: var(--row-radius);
   color: var(--text);
   cursor: default;
 }
 
 .projects-row:hover {
-  background: var(--bg-inset);
+  background: var(--row-hover);
 }
 
 .projects-row.is-active {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--row-selected);
+  color: var(--row-selected-text);
 }
 
 .projects-row.is-drop-target {
@@ -4921,12 +5152,12 @@ body.is-resizing-sidebar * {
   align-items: center;
   gap: 12px;
   padding: 5px 8px;
-  border-radius: 6px;
+  border-radius: var(--row-radius);
   cursor: default;
 }
 
 .paper-row:hover {
-  background: var(--bg-inset);
+  background: var(--row-hover);
 }
 
 .paper-row.is-multi {
@@ -4934,7 +5165,7 @@ body.is-resizing-sidebar * {
 }
 
 .paper-row.is-selected {
-  background: var(--accent-soft);
+  background: var(--row-selected);
 }
 
 .paper-row.is-missing .paper-row-main {
@@ -6086,14 +6317,31 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 /* Motion answers the user: a fade where something changed, nothing more,
    and nothing at all under reduced motion. */
 @media (prefers-reduced-motion: no-preference) {
+  /* Paint only: positions are SVG attributes, which never transition, so
+     layout and drags stay immediate. */
   .graph-node,
   .graph-node-halo,
   .graph-node-label,
   .graph-edge {
     transition:
-      opacity 160ms ease,
-      stroke-opacity 160ms ease,
-      visibility 160ms;
+      opacity 150ms ease-out,
+      stroke-opacity 150ms ease-out,
+      visibility 150ms;
+  }
+
+  .graph-node-dot,
+  .graph-node-ring {
+    transition:
+      fill 150ms ease-out,
+      stroke 150ms ease-out,
+      stroke-opacity 150ms ease-out,
+      stroke-width 150ms ease-out;
+  }
+
+  /* The node a find step landed on: its ring fades in once and out again,
+     no loop. */
+  .graph-node.is-stepped .graph-node-halo {
+    animation: graph-stepped 1100ms ease-out;
   }
 
   .graph-card {
@@ -6116,6 +6364,14 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 @keyframes graph-fade-in {
   from {
     opacity: 0;
+  }
+}
+
+@keyframes graph-stepped {
+  20%,
+  55% {
+    opacity: 0.85;
+    stroke-width: 2;
   }
 }
 
@@ -7241,12 +7497,12 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   display: flex;
   flex-direction: column;
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: var(--row-radius);
   cursor: pointer;
 }
 
 .note-picker-row.is-current {
-  background: var(--accent-soft);
+  background: var(--row-selected);
 }
 
 .note-picker-title {

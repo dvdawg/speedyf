@@ -12,6 +12,9 @@ interface Settings {
    * effect. Off by default: it changes how a document *looks*, which is the
    * author's call before it is ours. */
   invertPages: boolean;
+  /** Pages a little darker and warmer while the dark theme is in effect,
+   * for night reading. Off by default; inverted pages ignore it. */
+  dimPages: boolean;
   lowMemory: boolean;
   /** folders in the library; was a single optional root */
   libraryRoots: string[];
@@ -44,6 +47,7 @@ function load(): Settings {
       return {
         theme: parsed.theme === 'light' || parsed.theme === 'dark' ? parsed.theme : 'system',
         invertPages: parsed.invertPages === true,
+        dimPages: parsed.dimPages === true,
         lowMemory: parsed.lowMemory === true,
         libraryRoots: Array.isArray(parsed.libraryRoots)
           ? parsed.libraryRoots.filter((root): root is string => typeof root === 'string')
@@ -68,6 +72,7 @@ function load(): Settings {
   return {
     theme: 'system',
     invertPages: false,
+    dimPages: false,
     lowMemory: false,
     libraryRoots: [],
     trustedLinkHosts: [],
@@ -91,6 +96,7 @@ export function updateSettings(patch: Partial<Settings>) {
       JSON.stringify({
         theme: settings.theme,
         invertPages: settings.invertPages,
+        dimPages: settings.dimPages,
         lowMemory: settings.lowMemory,
         libraryRoots: settings.libraryRoots,
         trustedLinkHosts: settings.trustedLinkHosts,
@@ -146,4 +152,22 @@ export function effectiveTheme(): 'light' | 'dark' {
  * stranding dark pages on a light shell. */
 export function pagesInverted(): boolean {
   return settings.invertPages && effectiveTheme() === 'dark';
+}
+
+/** Whether rendered pages should be dimmed right now: asked for, under the
+ * dark theme, and not inverted (an inverted page is already dark paper, so
+ * inversion wins). */
+export function pagesDimmed(): boolean {
+  return settings.dimPages && effectiveTheme() === 'dark' && !pagesInverted();
+}
+
+/** Tells the stylesheet how pages look: the theme, and whether the engine
+ * inverts them or the shell dims them. */
+export function applyPageAppearance(root: HTMLElement): void {
+  root.dataset.theme = effectiveTheme();
+  // Pages come back inverted from the engine; the shell has to repaint the
+  // paper it draws behind and around them to match.
+  root.dataset.invertPages = pagesInverted() ? 'on' : 'off';
+  // Dimming is the shell's own: a filter over the rasters (global.css).
+  root.dataset.dimPages = pagesDimmed() ? 'on' : 'off';
 }

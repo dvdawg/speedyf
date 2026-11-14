@@ -23,6 +23,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  For,
   Index,
   Match,
   on,
@@ -46,7 +47,8 @@ import { MissingList } from './MissingWorks';
 import { openPaper } from './openPaper';
 import { metaLine } from './paperFields';
 import { beginPointerDrag } from './pointerDrag';
-import { projectsStore } from './projectsStore';
+import { projectsStore, rowsPending } from './projectsStore';
+import { createDelayedFlag } from '../../lib/delayedFlag';
 import { PersonBar } from './PersonScope';
 import { graphFind, registerFindField, registerMergeRequest } from './screenIntents';
 import { filterRows } from './itemMatch';
@@ -465,8 +467,12 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
     }
   };
 
+  /** Placeholder rows while a scope's rows are on their way, after a short
+   * wait so a quick read never flashes them. */
+  const skeleton = createDelayedFlag(() => !store.state.person && rowsPending(store.state));
   const emptyText = () => {
-    if (store.state.loadingRows) return 'Loading...';
+    // Nothing while a read is out: the placeholders follow if it is slow.
+    if (store.state.loadingRows) return '';
     if (hasQuery()) return 'No items match';
     if (libraryStore.state.library.roots.length === 0) {
       return 'No library folders yet. Add one on the Home screen, in the Library panel';
@@ -711,22 +717,27 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
           aria-label="Items"
           onKeyDown={onKeyDown}
           onClick={onListClick}
+          aria-busy={skeleton()}
         >
           <Show
-            when={sourceRows().length > 0 && rowItems().length > 0}
+            when={!skeleton() && sourceRows().length > 0 && rowItems().length > 0}
             fallback={
-              <div class="paper-empty">
-                <p class="library-hint">{emptyText()}</p>
-                <Show when={offerAddFolder()}>
-                  <button
-                    type="button"
-                    class="secondary-btn"
-                    onClick={() => void libraryStore.addLibraryFolder()}
-                  >
-                    Add folder...
-                  </button>
-                </Show>
-              </div>
+              skeleton() ? (
+                <SkeletonRows />
+              ) : (
+                <div class="paper-empty">
+                  <p class="library-hint">{emptyText()}</p>
+                  <Show when={offerAddFolder()}>
+                    <button
+                      type="button"
+                      class="secondary-btn"
+                      onClick={() => void libraryStore.addLibraryFolder()}
+                    >
+                      Add folder...
+                    </button>
+                  </Show>
+                </div>
+              )
             }
           >
             {/* Index, not For: the items are value objects rebuilt on every
@@ -886,5 +897,37 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
         </div>
       </Show>
     </>
+  );
+}
+
+/** Title and meta widths of the placeholder rows, in percent: ragged like
+ * real titles, so the column does not read as a table of bars. */
+const SKELETON_ROWS: [number, number][] = [
+  [72, 38],
+  [58, 30],
+  [66, 44],
+  [50, 26],
+  [62, 34],
+];
+
+/** Rows of the real rows' shape and height, bars where the text goes. */
+function SkeletonRows() {
+  return (
+    <div class="paper-skeleton" aria-hidden="true">
+      <For each={SKELETON_ROWS}>
+        {([title, meta]) => (
+          <div class="paper-row is-skeleton">
+            <span class="paper-row-main">
+              <span class="paper-row-title">
+                <span class="skeleton-bar" style={{ width: `${title}%` }} />
+              </span>
+              <span class="paper-row-meta">
+                <span class="skeleton-bar" style={{ width: `${meta}%` }} />
+              </span>
+            </span>
+          </div>
+        )}
+      </For>
+    </div>
   );
 }
