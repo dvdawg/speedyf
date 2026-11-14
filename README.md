@@ -154,7 +154,8 @@ within the strip to reorder; press Escape to cancel a drag. You can also use
 **File -> New Window**, the tab-bar window buttons, or the command palette's
 **New Window** and **Move Tab to New Window** commands. A tab's right-click
 menu also closes the other tabs or the tabs to its right, and moves the tab
-into a new window or into any other open window, edits and all.
+into a new window or into any other open window, edits and all. A
+middle-click on a tab closes it, as its x button does.
 
 **Reopen Closed Tab** (`Cmd+Shift+T`, or the command palette) brings back the
 most recently closed tab at the page, offset, zoom and rotation it was left
