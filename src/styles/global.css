@@ -558,8 +558,9 @@ textarea:focus-visible {
   outline-offset: 2px;
 }
 
+/* As tall as the .icon-btn beside it. */
 .tb-input {
-  height: 26px;
+  height: 28px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg-inset);
@@ -2833,6 +2834,21 @@ html.is-dragging-tab * {
 
 .sb-right {
   margin-left: auto;
+}
+
+/* One line always: a long state gives up characters, never a second row. */
+.status-bar {
+  white-space: nowrap;
+}
+
+.sb-center > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sb-right > span {
+  flex: none;
 }
 
 .sb-name {
@@ -6879,7 +6895,9 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   gap: 8px;
   box-sizing: border-box;
   width: 100%;
-  max-width: 40em;
+  /* .note-blocks' 40em, but in its 14px rather than this line's 12px: the
+     same measure, or the centred head starts right of the text below. */
+  max-width: calc(40em * 14 / 12);
   min-height: 34px;
   margin: 0 auto;
   padding: 8px 20px 0;
