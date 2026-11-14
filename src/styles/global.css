@@ -6154,14 +6154,31 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 /* Motion answers the user: a fade where something changed, nothing more,
    and nothing at all under reduced motion. */
 @media (prefers-reduced-motion: no-preference) {
+  /* Paint only: positions are SVG attributes, which never transition, so
+     layout and drags stay immediate. */
   .graph-node,
   .graph-node-halo,
   .graph-node-label,
   .graph-edge {
     transition:
-      opacity 160ms ease,
-      stroke-opacity 160ms ease,
-      visibility 160ms;
+      opacity 150ms ease-out,
+      stroke-opacity 150ms ease-out,
+      visibility 150ms;
+  }
+
+  .graph-node-dot,
+  .graph-node-ring {
+    transition:
+      fill 150ms ease-out,
+      stroke 150ms ease-out,
+      stroke-opacity 150ms ease-out,
+      stroke-width 150ms ease-out;
+  }
+
+  /* The node a find step landed on: its ring fades in once and out again,
+     no loop. */
+  .graph-node.is-stepped .graph-node-halo {
+    animation: graph-stepped 1100ms ease-out;
   }
 
   .graph-card {
@@ -6184,6 +6201,14 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 @keyframes graph-fade-in {
   from {
     opacity: 0;
+  }
+}
+
+@keyframes graph-stepped {
+  20%,
+  55% {
+    opacity: 0.85;
+    stroke-width: 2;
   }
 }
 

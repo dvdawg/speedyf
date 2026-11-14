@@ -63,3 +63,17 @@ describe('polish: motion', () => {
     expect(popIn).not.toMatch(/transform|translate/);
   });
 });
+
+describe('polish: graph', () => {
+  it('eases paint only, never position, and the find ring plays once', () => {
+    const guarded = blocks(css, MOTION_OK).join('\n');
+    const graphTransitions = [...guarded.matchAll(/\.graph-[^{]*\{[^}]*transition:([^;]*);/g)].map(
+      (m) => m[1]!
+    );
+    expect(graphTransitions.length).toBeGreaterThan(0);
+    for (const t of graphTransitions)
+      expect(t).not.toMatch(/transform|translate|\b(x|y|cx|cy|d)\b /);
+    const stepped = /\.graph-node\.is-stepped \.graph-node-halo\s*\{([^}]*)\}/.exec(guarded)![1]!;
+    expect(stepped).not.toMatch(/infinite/);
+  });
+});

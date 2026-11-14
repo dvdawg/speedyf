@@ -205,6 +205,18 @@ describe('find in graph', () => {
     expect(container.querySelector('.graph-canvas')!.classList.contains('has-focus')).toBe(false);
   });
 
+  it('marks the node a step landed on, and only while finding', async () => {
+    const { container } = await graph();
+    type('e');
+    expect(has(container, 'is-stepped')).toEqual([]);
+    key('Enter');
+    expect(has(container, 'is-stepped')).toEqual([store.state.selectedId]);
+    key('Enter');
+    expect(has(container, 'is-stepped')).toEqual([store.state.selectedId]);
+    type('');
+    expect(has(container, 'is-stepped')).toEqual([]);
+  });
+
   it('says No match, Escape clears, and a second Escape returns to the canvas', async () => {
     await graph();
     type('nothing like this');
