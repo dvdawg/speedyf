@@ -39,6 +39,9 @@ this, the extension consumes exactly this.
   - no `mode`: as the equation action.
   - `ticket`: echo it in `ui.showMath { ..., ticket }`. The core may run two
     conversions at once and matches each answer to its request by it.
+  - Before trying a source online, `equations.checking { ticket, source:
+'arxiv' | 'journal' }`, not awaited: the asker's status line then reads
+    "checking arXiv source" or "checking journal source".
 - Prefetch: `value: { mode: 'prefetch' }`, sent by the core once per open
   document per session when the pointer first reveals an equation button,
   and only while this extension is enabled. Read the settings and
@@ -59,6 +62,7 @@ when it lands.
 | `document.identifiers` | none                                                                                                                                            | `{ doi: string \| null, arxiv: string \| null, arxivVersion: number \| null }`                                      | document:read                 |
 | `net.fetch`            | `{ url, as: 'text' \| 'bytes', maxBytes?: number }`                                                                                             | `{ status, contentType, body: string \| number[] }`                                                                 | network (host must be listed) |
 | `ui.showMath`          | `{ latex: string, display: boolean, source: 'tags' \| 'arxiv' \| 'jats' \| 'fonts', confidence: 'high' \| 'medium' \| 'low', ticket?: string }` | `{ shown: boolean }`                                                                                                | none                          |
+| `equations.checking`   | `{ ticket: string, source: 'arxiv' \| 'journal' }`                                                                                              | `{ shown: boolean }` (the asker's status line names the source)                                                     | none                          |
 
 `Glyph`:
 

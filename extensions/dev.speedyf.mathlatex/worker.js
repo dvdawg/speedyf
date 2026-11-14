@@ -4228,11 +4228,17 @@ async function copyMath(request) {
   const number = request.number ?? null;
   const worthMatching = queries.some((q) => q.length >= 3) || Boolean(number);
   const budget = mode === 'exact' ? EXACT_BUDGET_MS : NETWORK_BUDGET_MS;
+  // Tell whoever asked which source is being tried, for the status line it
+  // shows meanwhile. Not waited on.
+  const checking = (source) => {
+    if (request.ticket) void tryCall('equations.checking', { ticket: request.ticket, source });
+  };
   if (mode !== 'local' && (settings.arxiv || settings.journals) && worthMatching) {
     const ids = (await tryCall('document.identifiers')) ?? {};
     clock.lap('identifiers');
     const arxiv = normalizeArxiv(ids.arxiv, ids.arxivVersion);
     if (settings.arxiv && arxiv) {
+      checking('arxiv');
       const snippets = await withDeadline(arxivSnippets(arxiv.id, arxiv.version), started, budget);
       const found =
         snippets &&
@@ -4242,6 +4248,7 @@ async function copyMath(request) {
     }
     const doi = typeof ids.doi === 'string' && ids.doi.trim() ? ids.doi.trim() : null;
     if (settings.journals && doi) {
+      checking('journal');
       const snippets = await withDeadline(journalSnippets(doi), started, budget);
       const found =
         snippets &&
