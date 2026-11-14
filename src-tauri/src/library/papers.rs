@@ -59,7 +59,7 @@ pub struct PaperIds {
 
 /// The on-disk and in-memory record. Field names are those of projects.md
 /// sec. 3; the DTOs in `types.rs` are built from it, never serialized from it.
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PaperRecord {
     pub id: String,

@@ -21,7 +21,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectRecord {
     pub id: String,
@@ -59,7 +59,7 @@ impl PaperStore {
 
     /// Give every project a distinct position 0..n in its current order, so
     /// a gap left by a delete or a tie left by an older file never shows.
-    fn renumber(&mut self) {
+    pub(super) fn renumber(&mut self) {
         let mut order: Vec<(u32, usize)> = self
             .projects
             .iter()
@@ -275,7 +275,7 @@ impl PaperStore {
         Ok(())
     }
 
-    pub(super) fn project_name(&self, project_id: &str) -> AppResult<String> {
+    pub fn project_name(&self, project_id: &str) -> AppResult<String> {
         Ok(self.projects[self.project_index(project_id)?].name.clone())
     }
 
