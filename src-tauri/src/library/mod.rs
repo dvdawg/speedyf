@@ -27,6 +27,7 @@ pub mod firstpage;
 pub mod health;
 pub mod identifiers;
 pub mod influence;
+pub mod journal;
 pub mod lookup;
 pub mod mainfile;
 pub mod merge;

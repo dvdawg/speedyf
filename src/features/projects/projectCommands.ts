@@ -33,6 +33,9 @@ import {
   requestTitleLookup,
 } from './screenIntents';
 import { suggestionDismissed } from './suggestionDismissals';
+import { libraryUndoState, redoLibrary, undoLibrary } from './libraryUndo';
+import { flashStatus } from '../../stores/statusMessage';
+import type { LookupBatch } from '../../types/engine';
 
 const store = projectsStore;
 
@@ -139,6 +142,17 @@ export function primeProjectPalette(ctx: CommandCtx): void {
 
 /* ---- actions ---- */
 
+/** "Looked up 9 items": what a batch run from the palette says when it
+ * ends, since nothing else on screen may show it. */
+export function lookedUp(batch: LookupBatch): string {
+  if (batch.attempted === 0) return 'Nothing to look up';
+  return batch.attempted === 1 ? 'Looked up 1 item' : `Looked up ${batch.attempted} items`;
+}
+
+function sayLookedUp(batch: LookupBatch | undefined): void {
+  if (batch) flashStatus(lookedUp(batch));
+}
+
 async function markItem(ctx: CommandCtx, paper: Paper, isPaper: boolean): Promise<void> {
   const updated = await store.updatePaper(paper.id, { isPaper });
   // The reader's record is cached for the other Library commands; the
@@ -177,6 +191,32 @@ const NEEDS_ITEM = 'needs an item selected on the Projects screen, or an open it
 const NEEDS_PROJECT = 'needs a project open on the Projects screen';
 
 export const PROJECT_COMMANDS: readonly Command[] = [
+  // ---- undo (libraryUndo.ts). Cmd+Z reaches these on the Home and
+  // Projects screens only; in the reader it stays the document's. ----
+  {
+    id: 'library.undo',
+    get title() {
+      const step = libraryUndoState().undo;
+      return step ? `Undo Library Change: ${step.description}` : 'Undo Library Change';
+    },
+    group: 'Library',
+    keywords: ['undo', 'revert', 'back', 'project', 'membership', 'restore'],
+    enabled: () => libraryUndoState().undo !== null,
+    disabledReason: 'nothing to undo in the library',
+    run: () => void undoLibrary(),
+  },
+  {
+    id: 'library.redo',
+    get title() {
+      const step = libraryUndoState().redo;
+      return step ? `Redo Library Change: ${step.description}` : 'Redo Library Change';
+    },
+    group: 'Library',
+    keywords: ['redo', 'again', 'project', 'membership'],
+    enabled: () => libraryUndoState().redo !== null,
+    disabledReason: 'nothing to redo in the library',
+    run: () => void redoLibrary(),
+  },
   // ---- the screen ----
   scopeCommand('library.showAllItems', 'Show All Items', { kind: 'all' }, ['library', 'every']),
   scopeCommand('library.showNotFiled', 'Show Not Filed', { kind: 'unfiled' }, [
@@ -316,7 +356,7 @@ export const PROJECT_COMMANDS: readonly Command[] = [
     keywords: ['metadata', 'crossref', 'arxiv', 'doi', 'online', 'fetch', 'batch', 'library'],
     enabled: () => settings.onlineLookup,
     disabledReason: 'turn on online lookup in Settings',
-    run: () => void store.lookupAll(),
+    run: () => void store.lookupAll().then(sayLookedUp),
   },
   {
     id: 'library.lookUpProject',
@@ -327,7 +367,7 @@ export const PROJECT_COMMANDS: readonly Command[] = [
     disabledReason: `${NEEDS_PROJECT}, and online lookup on in Settings`,
     run: (ctx) => {
       const project = currentProject(ctx);
-      if (project) void store.lookupProject(project.id);
+      if (project) void store.lookupProject(project.id).then(sayLookedUp);
     },
   },
   {

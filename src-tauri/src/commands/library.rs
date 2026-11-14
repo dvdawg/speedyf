@@ -23,9 +23,11 @@ use crate::library::chain::{
     TitleOutcome, Turn, PARK_LIMIT,
 };
 use crate::library::filing;
+use crate::library::journal::UndoStateDto;
 use crate::library::lookup;
 use crate::library::papers::normalize_doi;
 use crate::library::papers::{LookupPlan, LookupTarget};
+use crate::library::store::now_unix_secs;
 use crate::library::store::PaperStore;
 use crate::library::types::{
     CitationLinksDto, DuplicateGroupDto, GraphDto, LibraryCountsDto, LibraryDataInfoDto,
@@ -156,7 +158,54 @@ pub async fn library_update_paper(
     id: String,
     patch: MetaPatchDto,
 ) -> AppResult<PaperDto> {
-    write_store(state.0.clone(), move |store| store.apply_patch(&id, patch)).await
+    write_store(state.0.clone(), move |store| {
+        let key = store.paper_dto(&id)?.cite_key;
+        store.journaled(patch_description(&patch, &key), |store| {
+            store.apply_patch(&id, patch)
+        })
+    })
+    .await
+}
+
+/// What an edit in the detail column did, for the undo line: "Marked as
+/// not an item", "Pinned cite key", "Edited year", "Edited 3 fields".
+pub(super) fn patch_description(patch: &MetaPatchDto, current_key: &str) -> String {
+    match &patch.is_paper {
+        Some(Some(true)) => return "Marked as an item".into(),
+        Some(Some(false)) => return "Marked as not an item".into(),
+        Some(None) => return "Left it to the scan whether this is an item".into(),
+        None => {}
+    }
+    match &patch.cite_key {
+        Some(Some(key)) if key.trim() == current_key => return "Pinned cite key".into(),
+        Some(Some(key)) => return format!("Changed cite key to {}", key.trim()),
+        Some(None) => return "Unpinned cite key".into(),
+        None => {}
+    }
+    let fields: [(&str, Option<bool>); 13] = [
+        ("title", patch.title.as_ref().map(Option::is_some)),
+        ("authors", patch.authors.as_ref().map(Option::is_some)),
+        ("year", patch.year.as_ref().map(Option::is_some)),
+        ("venue", patch.venue.as_ref().map(Option::is_some)),
+        ("volume", patch.volume.as_ref().map(Option::is_some)),
+        ("issue", patch.issue.as_ref().map(Option::is_some)),
+        ("pages", patch.pages.as_ref().map(Option::is_some)),
+        ("publisher", patch.publisher.as_ref().map(Option::is_some)),
+        ("abstract", patch.abstract_.as_ref().map(Option::is_some)),
+        ("type", patch.kind.as_ref().map(Option::is_some)),
+        ("DOI", patch.doi.as_ref().map(Option::is_some)),
+        ("arXiv id", patch.arxiv.as_ref().map(Option::is_some)),
+        ("ISBN", patch.isbn.as_ref().map(Option::is_some)),
+    ];
+    let touched: Vec<(&str, bool)> = fields
+        .into_iter()
+        .filter_map(|(name, set)| set.map(|set| (name, set)))
+        .collect();
+    match touched.as_slice() {
+        [(name, true)] => format!("Edited {name}"),
+        [(name, false)] => format!("Cleared {name}"),
+        many => format!("Edited {} fields", many.len()),
+    }
 }
 
 #[tauri::command]
@@ -169,7 +218,12 @@ pub async fn library_create_project(
     state: tauri::State<'_, EngineState>,
     name: String,
 ) -> AppResult<ProjectDto> {
-    write_store(state.0.clone(), move |store| store.create_project(&name)).await
+    write_store(state.0.clone(), move |store| {
+        store.journaled(format!("Created {}", name.trim()), |store| {
+            store.create_project(&name)
+        })
+    })
+    .await
 }
 
 #[tauri::command]
@@ -179,7 +233,10 @@ pub async fn library_rename_project(
     name: String,
 ) -> AppResult<()> {
     write_store(state.0.clone(), move |store| {
-        store.rename_project(&id, &name)
+        let old = store.project_name(&id)?;
+        store.journaled(format!("Renamed {old} to {}", name.trim()), |store| {
+            store.rename_project(&id, &name)
+        })
     })
     .await
 }
@@ -194,7 +251,11 @@ pub async fn library_delete_project(
     id: String,
 ) -> AppResult<()> {
     let project = id.clone();
-    write_store(state.0.clone(), move |store| store.delete_project(&id)).await?;
+    write_store(state.0.clone(), move |store| {
+        let name = store.project_name(&id)?;
+        store.journaled(format!("Deleted {name}"), |store| store.delete_project(&id))
+    })
+    .await?;
     let files = std::sync::Arc::clone(&files.0);
     tauri::async_runtime::spawn_blocking(move || files.project_deleted(&project))
         .await
@@ -206,7 +267,10 @@ pub async fn library_reorder_projects(
     state: tauri::State<'_, EngineState>,
     ids: Vec<String>,
 ) -> AppResult<()> {
-    write_store(state.0.clone(), move |store| store.reorder_projects(&ids)).await
+    write_store(state.0.clone(), move |store| {
+        store.journaled("Reordered projects", |store| store.reorder_projects(&ids))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -217,9 +281,102 @@ pub async fn library_set_membership(
     member: bool,
 ) -> AppResult<()> {
     write_store(state.0.clone(), move |store| {
-        store.set_membership(&paper_id, &project_id, member)
+        let name = store.project_name(&project_id)?;
+        let description = if member {
+            format!("Added to {name}")
+        } else {
+            format!("Removed from {name}")
+        };
+        store.journaled(description, |store| {
+            store.set_membership(&paper_id, &project_id, member)
+        })
     })
     .await
+}
+
+/// Put items into a project as one undoable step: a drag of several rows,
+/// or a new item filed from the New list (`reviewed`), which also triages
+/// them.
+#[tauri::command]
+pub async fn library_file_items(
+    state: tauri::State<'_, EngineState>,
+    paper_ids: Vec<String>,
+    project_id: String,
+    reviewed: bool,
+) -> AppResult<()> {
+    write_store(state.0.clone(), move |store| {
+        let name = store.project_name(&project_id)?;
+        let description = match (reviewed, paper_ids.len()) {
+            (true, _) => format!("Filed into {name}"),
+            (false, 1) => format!("Added to {name}"),
+            (false, n) => format!("Added {n} items to {name}"),
+        };
+        store.journaled(description, |store| {
+            for id in &paper_ids {
+                store.set_membership(id, &project_id, true)?;
+            }
+            if reviewed {
+                store.mark_reviewed(&paper_ids, now_unix_secs())?;
+            }
+            Ok(())
+        })
+    })
+    .await
+}
+
+/// Put back the user's last library action (`library::journal`) and say
+/// which; `library_redo` does it again. A project it brings back gets its
+/// set-aside files back; one it takes away has them set aside, as a
+/// delete does.
+#[tauri::command]
+pub async fn library_undo(
+    state: tauri::State<'_, EngineState>,
+    files: tauri::State<'_, ProjectFilesState>,
+) -> AppResult<String> {
+    step_journal(state.0.clone(), std::sync::Arc::clone(&files.0), true).await
+}
+
+#[tauri::command]
+pub async fn library_redo(
+    state: tauri::State<'_, EngineState>,
+    files: tauri::State<'_, ProjectFilesState>,
+) -> AppResult<String> {
+    step_journal(state.0.clone(), std::sync::Arc::clone(&files.0), false).await
+}
+
+async fn step_journal(
+    engine: EngineHandle,
+    files: std::sync::Arc<super::projectfiles::ProjectFiles>,
+    undo: bool,
+) -> AppResult<String> {
+    let undone = write_store(
+        engine,
+        move |store| {
+            if undo {
+                store.undo()
+            } else {
+                store.redo()
+            }
+        },
+    )
+    .await?;
+    tauri::async_runtime::spawn_blocking(move || {
+        for project in &undone.projects_removed {
+            files.project_deleted(project);
+        }
+        for project in &undone.projects_restored {
+            files.project_restored(project);
+        }
+        undone.description
+    })
+    .await
+    .map_err(|error| AppError::Internal(format!("library task failed: {error}")))
+}
+
+/// What undo and redo would do now.
+#[tauri::command]
+pub async fn library_undo_state(state: tauri::State<'_, EngineState>) -> AppResult<UndoStateDto> {
+    read_store(state.0.clone(), |store| Ok(store.undo_state())).await
 }
 
 /// The paper's first file that is on disk and inside a library folder,
@@ -1083,7 +1240,10 @@ pub async fn library_merge_papers(
     merge_ids: Vec<String>,
 ) -> AppResult<PaperDto> {
     write_store(state.0.clone(), move |store| {
-        store.merge_papers(&keep_id, &merge_ids)
+        let description = format!("Merged {} items", merge_ids.len() + 1);
+        store.journaled(description, |store| {
+            store.merge_papers(&keep_id, &merge_ids)
+        })
     })
     .await
 }
@@ -1109,7 +1269,10 @@ pub async fn library_unmerge(
     state: tauri::State<'_, EngineState>,
     paper_id: String,
 ) -> AppResult<Vec<PaperDto>> {
-    write_store(state.0.clone(), move |store| store.unmerge(&paper_id)).await
+    write_store(state.0.clone(), move |store| {
+        store.journaled("Split item", |store| store.unmerge(&paper_id))
+    })
+    .await
 }
 
 /// The user says these records are not duplicates of one another.
@@ -1119,7 +1282,9 @@ pub async fn library_not_duplicates(
     paper_ids: Vec<String>,
 ) -> AppResult<()> {
     write_store(state.0.clone(), move |store| {
-        store.mark_not_duplicates(&paper_ids)
+        store.journaled("Marked as not duplicates", |store| {
+            store.mark_not_duplicates(&paper_ids)
+        })
     })
     .await
 }

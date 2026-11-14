@@ -222,6 +222,40 @@ pub fn set_aside(data_dir: &Path, project: &str) -> AppResult<usize> {
     Ok(moved)
 }
 
+/// Bring a project's files back from `deleted/` when undo brings the
+/// project back: in every extension's folder, the copy set aside last
+/// (`<project>`, or its highest `-n`) moves back to `<project>`, unless
+/// something is there already. Returns how many folders came back.
+pub fn bring_back(data_dir: &Path, project: &str) -> AppResult<usize> {
+    if !is_valid_project_id(project) {
+        return Ok(0);
+    }
+    let Ok(extensions) = fs::read_dir(root(data_dir)) else {
+        return Ok(0);
+    };
+    let mut back = 0;
+    for entry in extensions.flatten() {
+        let to = entry.path().join(project);
+        let deleted = entry.path().join(DELETED_DIR);
+        if to.exists() || !deleted.is_dir() {
+            continue;
+        }
+        let mut last = deleted.join(project);
+        let mut n = 2;
+        while deleted.join(format!("{project}-{n}")).is_dir() {
+            last = deleted.join(format!("{project}-{n}"));
+            n += 1;
+        }
+        if !last.is_dir() {
+            continue;
+        }
+        fs::rename(&last, &to)
+            .map_err(|error| AppError::Io(format!("cannot move {}: {error}", last.display())))?;
+        back += 1;
+    }
+    Ok(back)
+}
+
 /// FNV over every file's path and bytes: whether the tree changed since
 /// the last snapshot.
 pub fn tree_hash(data_dir: &Path) -> u64 {
@@ -608,6 +642,21 @@ mod tests {
         let big = vec![b'x'; MAX_FILE_BYTES + 1];
         assert!(write_atomic(&path, &big).is_err());
         assert_eq!(read(&path).unwrap().unwrap(), b"two");
+    }
+
+    #[test]
+    fn an_undone_delete_brings_the_last_set_aside_files_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = file_path(dir.path(), EXT, PROJECT, "notepad.md").unwrap();
+        write_atomic(&path, b"first").unwrap();
+        set_aside(dir.path(), PROJECT).unwrap();
+        write_atomic(&path, b"second").unwrap();
+        set_aside(dir.path(), PROJECT).unwrap();
+        assert_eq!(bring_back(dir.path(), PROJECT).unwrap(), 1);
+        assert_eq!(read(&path).unwrap().unwrap(), b"second");
+        // Something there already is never replaced.
+        assert_eq!(bring_back(dir.path(), PROJECT).unwrap(), 0);
+        assert_eq!(read(&path).unwrap().unwrap(), b"second");
     }
 
     #[test]

@@ -513,6 +513,18 @@ export interface LibraryCounts {
 
 /** What a whole-project lookup did. Papers without an identifier are
  * skipped, never searched by title. */
+/** One step of library undo (`library_undo_state`). `seq` rises with each
+ * new action; a redone step keeps its own. */
+export interface LibraryUndoEntry {
+  seq: number;
+  description: string;
+}
+
+export interface LibraryUndoState {
+  undo: LibraryUndoEntry | null;
+  redo: LibraryUndoEntry | null;
+}
+
 export interface LookupBatch {
   attempted: number;
   applied: number;

@@ -469,8 +469,14 @@ export const projectsStore = {
 
   /** Files a new item into a project, which also triages it. */
   async fileNew(paperId: string, projectId: string): Promise<void> {
-    await guarded(() => engine.librarySetMembership(paperId, projectId, true));
-    await projectsStore.markReviewed([paperId]);
+    await projectsStore.fileItems([paperId], projectId, true);
+  },
+
+  /** Puts items into a project as one undoable step; `reviewed` also
+   * triages them (filing from New). */
+  async fileItems(paperIds: string[], projectId: string, reviewed: boolean): Promise<void> {
+    if (paperIds.length === 0) return;
+    await guarded(() => engine.libraryFileItems(paperIds, projectId, reviewed));
   },
 
   /** The project the graph and the missing works are read for; null for
@@ -706,9 +712,14 @@ export const projectsStore = {
     return guarded(() => engine.libraryBibtex(paperIds));
   },
 
-  /** Writes the project's entries once, to a path the user chose. */
-  async exportBib(projectId: string, path: string): Promise<void> {
-    await guarded(() => engine.libraryExportBib(projectId, path));
+  /** Writes the project's entries once, to a path the user chose. True
+   * when it was written. */
+  async exportBib(projectId: string, path: string): Promise<boolean> {
+    const done = await guarded(async () => {
+      await engine.libraryExportBib(projectId, path);
+      return true;
+    });
+    return done === true;
   },
 
   /** Writes the project's bundle (.bib and main PDFs as one .zip) and says
@@ -722,8 +733,12 @@ export const projectsStore = {
 
   /** Records (or with null, forgets) the .bib the engine keeps rewriting for
    * this project. The project's `bibPath` arrives with the next refresh. */
-  async setProjectBib(projectId: string, path: string | null): Promise<void> {
-    await guarded(() => engine.librarySetProjectBib(projectId, path));
+  async setProjectBib(projectId: string, path: string | null): Promise<boolean> {
+    const done = await guarded(async () => {
+      await engine.librarySetProjectBib(projectId, path);
+      return true;
+    });
+    return done === true;
   },
 
   /** Looks up every paper in the project that has an identifier. Sequential

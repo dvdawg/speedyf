@@ -10,6 +10,7 @@
 
 use super::backup::{self, BackupState, LibraryBackupDto};
 use super::bibtex::BibtexOptions;
+use super::journal::Journal;
 use super::papers::PaperRecord;
 use super::persons::PersonsSection;
 use super::projects::ProjectRecord;
@@ -99,6 +100,8 @@ pub struct PaperStore {
     /// the command that set the path can tell the user instead of the log.
     bib_errors: Vec<(String, String)>,
     last_flush: Instant,
+    /// The user's last actions, for undo (`journal`). Memory only.
+    pub(super) journal: Journal,
 }
 
 impl PaperStore {
@@ -125,6 +128,7 @@ impl PaperStore {
             dirty: false,
             bib_errors: Vec::new(),
             last_flush: Instant::now(),
+            journal: Journal::default(),
         };
         if unavailable {
             // Falling back to the copy left in app data would quietly fork
@@ -363,6 +367,7 @@ impl PaperStore {
             self.review = review;
         }
         self.persons = restored.persons.loaded();
+        self.clear_journal();
         self.mark_dirty();
         Ok(())
     }
@@ -465,6 +470,7 @@ impl PaperStore {
             self.projects = projects;
             self.bibtex_options = bibtex_options;
             self.dirty = false;
+            self.clear_journal();
         }
         Ok(self.data_info())
     }

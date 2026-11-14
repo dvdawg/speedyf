@@ -315,11 +315,14 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
         .filter((row) => row.projectIds.includes(projectId))
         .map((row) => row.id)
     );
-    for (const id of ids) {
-      if (!already.has(id)) void store.setMembership(id, projectId, true);
+    // Filing a new item is triaging it: one step for undo either way.
+    if (triage()) {
+      void store.fileItems(ids, projectId, true);
+      return;
     }
-    // Filing a new item is triaging it.
-    if (triage()) void store.markReviewed(ids);
+    const fresh = ids.filter((id) => !already.has(id));
+    if (fresh.length === 1) void store.setMembership(fresh[0]!, projectId, true);
+    else if (fresh.length > 1) void store.fileItems(fresh, projectId, false);
   };
 
   /** Under New: a digit files the item into that project, D or Backspace

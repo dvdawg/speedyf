@@ -4,6 +4,8 @@ import { engine } from '../lib/transport/engine';
 import type { EngineMetrics, LookupActivity } from '../lib/transport/engine';
 import { libraryStore } from '../features/citations/libraryStore';
 import { extensionsOnline } from '../features/extensions/extensionStore';
+import { installLibraryUndo } from '../features/projects/libraryUndo';
+import StatusMessage from './StatusMessage';
 
 export default function StatusBar() {
   const doc = () => activeTab()?.documentStore.state;
@@ -14,6 +16,8 @@ export default function StatusBar() {
   const [lookingUp, setLookingUp] = createSignal<LookupActivity | null>(null);
 
   onMount(() => {
+    // Says each library action with its Undo (libraryUndo.ts).
+    void installLibraryUndo();
     let disposed = false;
     // Both polls cross the IPC boundary and take engine locks, so they are
     // skipped whenever their answer cannot be seen or cannot have changed:
@@ -84,6 +88,7 @@ export default function StatusBar() {
         </Show>
       </div>
       <div class="sb-center" aria-live="polite">
+        <StatusMessage />
         <Show when={doc()?.loaded && !s()!.indexingDone && s()!.total > 0}>
           <span class="sb-dim">
             Indexing text {s()!.indexed}/{s()!.total}

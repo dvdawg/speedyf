@@ -252,18 +252,19 @@ describe('New', () => {
     const { container } = render(() => <PaperList onMoveFocus={() => {}} />);
     const list = screen.getByRole('listbox', { name: 'Items' });
 
+    // Filed and triaged in one step, so one undo takes back both.
     fireEvent.keyDown(list, { key: '2' });
-    await waitFor(() => expect(engine.libraryMarkReviewed).toHaveBeenCalledWith(['c']));
-    expect(engine.librarySetMembership).toHaveBeenCalledWith('c', 'p2', true);
+    await waitFor(() => expect(engine.libraryFileItems).toHaveBeenCalledWith(['c'], 'p2', true));
+    expect(engine.libraryMarkReviewed).not.toHaveBeenCalled();
 
     // Fewer projects than the digit: nothing happens.
     fireEvent.keyDown(list, { key: '7' });
-    expect(engine.librarySetMembership).toHaveBeenCalledTimes(1);
+    expect(engine.libraryFileItems).toHaveBeenCalledTimes(1);
 
-    vi.mocked(engine.libraryMarkReviewed).mockClear();
     fireEvent.keyDown(list, { key: 'd' });
     await waitFor(() => expect(engine.libraryMarkReviewed).toHaveBeenCalledWith(['c']));
-    expect(engine.librarySetMembership).toHaveBeenCalledTimes(1);
+    expect(engine.libraryFileItems).toHaveBeenCalledTimes(1);
+    expect(engine.librarySetMembership).not.toHaveBeenCalled();
 
     // The engine has the first one triaged now; the list re-reads.
     fixture.newItems = NEWEST.slice(1);

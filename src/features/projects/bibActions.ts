@@ -10,6 +10,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { chooseInbox } from './fileDrop';
 import type { Project } from '../../types/engine';
 import { projectsStore } from './projectsStore';
+import { flashStatus } from '../../stores/statusMessage';
 
 async function chooseBibPath(project: Project, title: string): Promise<string | null> {
   try {
@@ -27,7 +28,9 @@ async function chooseBibPath(project: Project, title: string): Promise<string | 
 
 export async function exportBib(project: Project): Promise<void> {
   const path = await chooseBibPath(project, `Export "${project.name}" as BibTeX`);
-  if (path) await projectsStore.exportBib(project.id, path);
+  if (path && (await projectsStore.exportBib(project.id, path))) {
+    flashStatus(`Exported ${baseName(path)}`);
+  }
 }
 
 /** Export bundle (.zip)...: the project's .bib and each item's main PDF in
@@ -99,7 +102,9 @@ export async function importBundle(): Promise<void> {
 
 export async function syncBib(project: Project): Promise<void> {
   const path = await chooseBibPath(project, `Keep a .bib for "${project.name}"`);
-  if (path) await projectsStore.setProjectBib(project.id, path);
+  if (path && (await projectsStore.setProjectBib(project.id, path))) {
+    flashStatus(`Synced ${baseName(path)}`);
+  }
 }
 
 export async function stopSyncingBib(project: Project): Promise<void> {
