@@ -7492,6 +7492,8 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   padding: 5px 8px 5px 10px;
   font-size: 13px;
   line-height: 1.35;
+  color: var(--text);
+}
 
 /* ---------- status bar: passing remarks (statusMessage.ts) ---------- */
 .sb-flash {
