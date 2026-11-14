@@ -47,6 +47,17 @@ manual QA before a public release.
   per service so no rate limit is tripped. A Paper panel in the reader files
   the open document and shows which of your papers it cites and which cite it.
   See `projects.md`
+- Project notepad (the built-in Notepad extension, on by default, offline):
+  one Markdown note per project, edited with live rendering (headings,
+  emphasis, lists, quotes, KaTeX math, links, images) in a drawer beside the
+  page (Cmd+Shift+N, only for a paper in a project) and as a Notepad view on
+  the Projects screen, the same note live in both and across windows. `@`
+  cites an item of the project ("Attias 2022"); _Quote to Notepad_, the
+  equation button's _Send to Notepad_ (LaTeX when Math to LaTeX is on, a
+  picture otherwise) and _Send Region to Notepad_ write with a link back to
+  the place on the page. Saved half a second after typing stops, beside
+  `library.json`, backed up, carried in project bundles, kept when a project
+  is deleted. See `projects.md` sec. 13
 - Highlights, freehand ink, rectangle annotations, text boxes, and notes
 - Annotation select, move, resize, delete, undo, and redo
 - Annotations already in a file are read back and stay editable across saves,
@@ -58,8 +69,9 @@ manual QA before a public release.
 - Light/dark/system themes, optional hue-preserving page inversion, and a
   lower-memory cache mode
 - Extensions: isolated, permission-gated third-party workers contributing
-  commands, keybindings, sidebar panels, selection and citation actions, and
-  batch document tasks. See `EXTENSIONS.md` to write one, `extension_api.md`
+  commands, keybindings, sidebar panels, selection, citation and equation
+  actions, batch document tasks, Markdown editors in a reader drawer or a
+  Projects view, item-detail lines, and provider slots. See `EXTENSIONS.md` to write one, `extension_api.md`
   for the design, `extensions/` for the ones that ship with the app, and
   `examples/extensions/` for working code
 - Live status counters for cache hits and skipped stale render work

@@ -3,7 +3,7 @@
 Everything an extension can do, and how. For _why_ it works this way, see
 `extension_api.md` - this file is the reference.
 
-SpeedyF ships with References, Notation and Math to LaTeX already installed;
+SpeedyF ships with References, Notation, Math to LaTeX and Notepad already installed;
 their source is in `extensions/`, and a built-in is an ordinary extension that
 happens to live in the app bundle - see that folder's README for the three ways
 it differs. Math to LaTeX uses the internet, so it ships **disabled**; switching
@@ -85,7 +85,11 @@ rather than a silently ignored setting.
   "permissions": ["citations:read"],
   "network": ["api.example.org"],
   "contributes": {
-    "commands": [{ "id": "run", "title": "Thing: Run", "keywords": ["go"] }],
+    "commands": [
+      { "id": "run", "title": "Thing: Run", "keywords": ["go"] },
+      { "id": "events", "title": "Thing: Editor Events", "hidden": true },
+      { "id": "clip", "title": "Thing: Clip Page", "when": "documentInProject" }
+    ],
     "keybindings": [{ "command": "run", "key": "mod+shift+t" }],
     "panels": [{ "id": "main", "title": "Thing" }],
     "selectionActions": [{ "command": "run", "title": "Send to Thing" }],
@@ -94,6 +98,20 @@ rather than a silently ignored setting.
     "referenceProvider": { "command": "run" },
     "termProvider": { "command": "run" },
     "equationActions": [{ "command": "run", "title": "Copy LaTeX" }],
+    "equationConverter": { "command": "run" },
+    "readerPanes": [
+      {
+        "id": "pad",
+        "title": "Pad",
+        "when": "documentInProject",
+        "key": "mod+shift+y",
+        "editor": { "file": "pad.md", "command": "events" }
+      }
+    ],
+    "projectViews": [
+      { "id": "pad", "title": "Pad", "editor": { "file": "pad.md", "command": "events" } }
+    ],
+    "itemDetailLines": { "command": "run" },
     "settings": [
       {
         "key": "mode",
@@ -120,12 +138,18 @@ rather than a silently ignored setting.
 | `network`     | no       | Hosts `net.fetch` may reach, with the `network` permission (and only with it). See [Network](#network).                                                                                                              |
 | `contributes` | no       | Where you appear. See below.                                                                                                                                                                                         |
 
-Command and panel ids must be non-empty and contain no `/` - that character
-separates them from your extension id. Every `keybindings`, `selectionActions`,
+Command, panel, pane and view ids must be non-empty and contain no `/` -
+that character separates them from your extension id. A command may say
+`"hidden": true` (not listed in the palette; reached only through the
+contribution that names it) and `"when": "documentInProject"` (listed only
+while the reader's document is an item in a project). Actions and reader
+panes take the same `when`; it is the only condition there is. Every `keybindings`, `selectionActions`,
 `citationActions`, `documentTasks` and `equationActions` entry, and
 `referenceProvider` and `termProvider`, must name a command you declared;
 `referenceProvider` also needs the `library:contributeReferences` permission,
-and `termProvider` the `document:contributeTerms` permission. (The example above lists every
+`termProvider` the `document:contributeTerms` permission, `itemDetailLines`
+`projects:read`, and a pane's or view's `editor` `projects:files` (its `file`
+a project file path, below). (The example above lists every
 field - a real extension would not make one command all of these.)
 
 ---
@@ -134,24 +158,29 @@ field - a real extension would not make one command all of these.)
 
 Declared in the manifest, refused if not declared. Absent = refused.
 
-| Permission                     | Grants                                                                                                                                                                                                 |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `document:read`                | The open document's text, outline and figures. Note this is the **whole document's text** - page text in a loop is everything it says.                                                                 |
-| `citations:read`               | Citations found in the document, and resolving them against your library.                                                                                                                              |
-| `library:read`                 | Searching the library, and reading its items and projects: titles, authors, years, cite keys and which project holds what. Never a file path.                                                          |
-| `commands:run`                 | Running SpeedyF's own commands - **View, Navigate, Panels and Search only**. Never File, Edit, Page, Tools or Settings, so an extension cannot delete a page or overwrite a file.                      |
-| `clipboard:write`              | Writing text to the clipboard.                                                                                                                                                                         |
-| `storage`                      | A private key/value store, namespaced to you.                                                                                                                                                          |
-| `render:read`                  | Page rasters as PNG bytes.                                                                                                                                                                             |
-| `document:contributeText`      | Writing a text layer for a document, stored in a sidecar.                                                                                                                                              |
-| `library:contributeReferences` | Being handed the stored text of library documents during idle indexing - never their paths - and returning their reference entries. Only with `referenceProvider`.                                     |
-| `document:layout`              | The open document's typeset characters with their fonts, sizes and boxes, the thin rules between them, and its tagged-PDF Formula elements (`selection.glyphs`, `region.glyphs`, `document.mathTags`). |
-| `network`                      | `net.fetch` to the hosts in your manifest's `network` list, and nowhere else. Needs a non-empty list; a list needs it.                                                                                 |
-| `document:contributeTerms`     | Answering `termProvider` with the terms the open document defines (`terms.contribute`), which SpeedyF previews when the reader hovers them. Only with `termProvider`.                                  |
+| Permission                     | Grants                                                                                                                                                                                                                                    |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `document:read`                | The open document's text, outline and figures. Note this is the **whole document's text** - page text in a loop is everything it says.                                                                                                    |
+| `citations:read`               | Citations found in the document, and resolving them against your library.                                                                                                                                                                 |
+| `library:read`                 | Searching the library, and reading its items and projects: titles, authors, years, cite keys and which project holds what. Never a file path.                                                                                             |
+| `commands:run`                 | Running SpeedyF's own commands - **View, Navigate, Panels and Search only**. Never File, Edit, Page, Tools or Settings, so an extension cannot delete a page or overwrite a file.                                                         |
+| `clipboard:write`              | Writing text to the clipboard.                                                                                                                                                                                                            |
+| `storage`                      | A private key/value store, namespaced to you.                                                                                                                                                                                             |
+| `render:read`                  | Page rasters as PNG bytes.                                                                                                                                                                                                                |
+| `document:contributeText`      | Writing a text layer for a document, stored in a sidecar.                                                                                                                                                                                 |
+| `library:contributeReferences` | Being handed the stored text of library documents during idle indexing - never their paths - and returning their reference entries. Only with `referenceProvider`.                                                                        |
+| `document:layout`              | The open document's typeset characters with their fonts, sizes and boxes, the thin rules between them, and its tagged-PDF Formula elements (`selection.glyphs`, `region.glyphs`, `document.mathTags`).                                    |
+| `network`                      | `net.fetch` to the hosts in your manifest's `network` list, and nowhere else. Needs a non-empty list; a list needs it.                                                                                                                    |
+| `document:contributeTerms`     | Answering `termProvider` with the terms the open document defines (`terms.contribute`), which SpeedyF previews when the reader hovers them. Only with `termProvider`.                                                                     |
+| `projects:read`                | The library's projects and their items' ids, cite keys (with the keys each had before), titles, authors and years - never a path; the reader's item and the project it is read in; opening an item at a page and place.                   |
+| `projects:files`               | Files of your own, per project, which SpeedyF keeps beside the library: written atomically, backed up, carried in project bundles, set aside when the project is deleted. Also what a `readerPanes` or `projectViews` editor is bound to. |
+| `render:region`                | A PNG of what the user pointed at: a rectangle they drag (`region.capture`), or the equation they clicked (`equations.snapshot`). Never a page they did not pick.                                                                         |
 
-`ui.render`, `ui.showMath` and `settings.get` need no permission: drawing into
-a panel you declared, showing a formula in SpeedyF's popover, and reading
-settings the user set for you, are not access to anything.
+`ui.render`, `ui.showMath`, `ui.itemLine`, `pane.open`, `projectView.open`
+and `settings.get` need no permission: drawing into a surface you declared,
+showing a formula in SpeedyF's popover, and reading settings the user set for
+you, are not access to anything. Nor does `equations.convert`: you hand back
+the token of the equation the user clicked.
 
 ### Network
 
@@ -206,6 +235,10 @@ whenever they suffice.
 | `referenceProvider` | `{ "command": "<id>" }`: reads library documents' reference lists at idle (below).      |
 | `equationActions`   | A button on each display equation SpeedyF detects; your command receives the block.     |
 | `termProvider`      | `{ "command": "<id>" }`: the terms a document defines, previewed on hover (below).      |
+| `readerPanes`       | A drawer on the right of the reader holding a Markdown editor (below).                  |
+| `projectViews`      | A view beside List and Graph on the Projects screen, holding the same editor (below).   |
+| `itemDetailLines`   | `{ "command": "<id>" }`: one quiet line in the Projects item detail column (below).     |
+| `equationConverter` | `{ "command": "<id>" }`: an equation as LaTeX, for whoever asks the core (below).       |
 
 ### `equationActions`
 
@@ -222,6 +255,55 @@ action's `title`. A click invokes your command with
 the block in page points from the displayed page's top-left corner, and the
 printed number (`"3"`, `"2.4"`) or `null`. Read the block's characters with
 `region.glyphs { page, bbox }`, and answer with `ui.showMath`.
+
+### `readerPanes` and `projectViews`: the editor
+
+Both hold the same thing: a Markdown editor SpeedyF draws, bound to one file
+of your project files (`editor.file`, such as `notepad.md`). A reader pane is
+a drawer on the right of the page - a quiet icon at the end of the toolbar,
+and `key` as its toggle when SpeedyF does not use the chord - shown only while
+its `when` holds; a project view is a mode beside List and Graph for one
+project, taking the middle and right columns. Every view of one file, in
+every window, edits the same text live: SpeedyF holds it once, saves it about
+half a second after typing stops, reloads it when it changes on disk with
+nothing unsaved (and keeps the outside version beside it when there is), and
+closes it when its project is deleted.
+
+The editor draws headings, emphasis, lists, block quotes, `$...$` and
+`$$...$$` math (KaTeX), links (opened only after the usual confirmation),
+images from your own project files (never from the web), and Pandoc
+citations: `@key` and `[@key, p. 12]{box=x,y,w,h}`, the box in top-left page
+points. The line with the cursor shows its Markdown. Typing `@` offers the
+entries you marked `pick`.
+
+The rest is yours, through `editor.command`, invoked with `value: { event,
+projectId, file, cite? }`:
+
+- `event: 'citations'` when an editor opens and when the library changes:
+  answer with `editor.citations { projectId, entries }`, each entry `{ key,
+label, title, detail, pick, aliases }`. A citation of `key` or of any of its
+  `aliases` is drawn as `label` (with its locator); one no entry has is
+  drawn as written, muted, and never rewritten.
+- `event: 'activate'` when a citation is clicked, with `cite: { key,
+locator, page, box }` (`page` zero-based from a "p." locator). Typically
+  `navigate.openItem`.
+
+### `itemDetailLines`
+
+When the Projects detail column shows an item, your command is invoked with
+`value: { item: { id, citeKey, keyHistory, projectIds }, projectId }`
+(`projectId` the selected project, or `null` under the other scopes), and
+again shortly after any project file changes. Answer with `ui.itemLine {
+itemId, text, action? }`: `text` null removes your line; `action: { command,
+value }` makes it clickable and must name one of your own commands.
+
+### `equationConverter`
+
+An equation's LaTeX for any extension that asks (`equations.convert`), from
+whichever enabled extension declares a converter - the first one. Your
+command is invoked exactly as an equation action is, `{ page, bbox, number,
+equation }`, and your `ui.showMath` answer is taken as the result instead of
+being shown. Math to LaTeX is the converter that ships.
 
 ### `referenceProvider`
 
@@ -310,7 +392,9 @@ Asynchronous request/response with correlation ids, both directions.
 ```
 
 `value` carries the selected text or citation for an action, `{ page, bbox,
-number }` for an equation action, `{ document, text }` for a
+number, equation }` for an equation action (`equation` an opaque token for
+`equations.convert` and `equations.snapshot`), an editor event for an
+editor's command, `{ item, projectId }` for an `itemDetailLines` command, `{ document, text }` for a
 `referenceProvider` command, and `{ document }` for a `termProvider`
 command. `reason` is
 `'panel'` when your panel was opened rather than a command being run.
@@ -405,6 +489,24 @@ cannot reach a tab the user is not looking at. Pages are zero-based.
 | `document.identifiers`     | -                                        | `{ doi, arxiv, arxivVersion }`, each `null` when unknown                                                                       | `document:read`                |
 | `net.fetch`                | `{ url, as?, maxBytes? }`                | `{ status, contentType, body }` - `body` a string for `as: 'text'` (the default), `number[]` for `as: 'bytes'`                 | `network` (host listed)        |
 | `ui.showMath`              | `{ latex, display, source, confidence }` | `{ shown: true }`                                                                                                              | -                              |
+| `projects.list`            | -                                        | `[{ id, name, itemCount }]`                                                                                                    | `projects:read`                |
+| `projects.items`           | `{ projectId? }`                         | `[{ id, citeKey, keyHistory, title, authors, firstAuthor, year, projectIds }]` - a project's items, or every item              | `projects:read`                |
+| `reader.context`           | -                                        | `{ item: { id, citeKey, title } \| null, projectIds, projectId, page, selection: { page, box, text } \| null }`                | `projects:read`                |
+| `reader.chooseProject`     | -                                        | a project id or `null`: asks once which of the paper's projects, kept for the session                                          | `projects:read`                |
+| `navigate.openItem`        | `{ itemId, projectId?, page?, box? }`    | `{ opened }` - opens it (at a page and box), with Back                                                                         | `projects:read`                |
+| `projectFiles.read`        | `{ projectId, path, as? }`               | a string (`as: 'text'`, the default; the live text of an open editor), `number[]` for `as: 'bytes'`, or `null`                 | `projects:files`               |
+| `projectFiles.write`       | `{ projectId, path, text \| bytes }`     | `{ written }` - atomically; into an open editor as an edit                                                                     | `projects:files`               |
+| `projectFiles.list`        | `{ projectId }`                          | `[{ path, size }]`                                                                                                             | `projects:files`               |
+| `projectFiles.remove`      | `{ projectId, path }`                    | `{ removed }` - not a file open in an editor                                                                                   | `projects:files`               |
+| `editor.citations`         | `{ projectId, entries }`                 | `{ stored }`                                                                                                                   | `projects:files`               |
+| `editor.insert`            | `{ projectId, text, at?, file? }`        | `{ offset }` - at the end after a blank line, or `at: 'cursor'` in an editor showing it                                        | `projects:files`               |
+| `editor.reveal`            | `{ projectId, offset, file? }`           | `{ revealed }` - scrolls an editor there, now or when one opens                                                                | `projects:files`               |
+| `region.capture`           | `{ prompt? }`                            | `{ page, box, png }` or `null` when the user pressed Escape                                                                    | `render:region`                |
+| `equations.snapshot`       | `{ equation }`                           | `{ page, box, png }` of the equation you were invoked with                                                                     | `render:region`                |
+| `equations.convert`        | `{ equation }`                           | `{ latex, display }` from the enabled `equationConverter`, or `null`                                                           | -                              |
+| `ui.itemLine`              | `{ itemId, text, action? }`              | `{ shown }`                                                                                                                    | -                              |
+| `pane.open`                | `{ pane, projectId? }`                   | `{ opened }` - your reader pane, when its `when` holds                                                                         | -                              |
+| `projectView.open`         | `{ view, projectId?, offset? }`          | `{ opened }` - your view of a project (the selected one by default)                                                            | -                              |
 
 `kind` is `'doi'` or `'arxiv'`. `document.links` reports **every** outbound
 link, including the many references cited by URL alone - a JMLR paper, a book on
@@ -556,6 +658,10 @@ anything unreadable is ignored rather than costing you the whole panel.
 | `net.fetch` pacing                        | per host, shared with library lookups; 1 s between requests to a host without its own row |
 | Time to answer an `invoke` with `network` | 60 s                                                                                      |
 | `ui.showMath` LaTeX                       | 20 000 characters                                                                         |
+| A project file                            | 8 MB; a path is plain names (letters, digits, `.`, `_`, `-`), at most four parts          |
+| `editor.insert` text                      | 200 000 characters                                                                        |
+| `editor.citations` entries                | 20 000                                                                                    |
+| An invoke waiting on the user             | the clock stops while SpeedyF waits for a rectangle or a project pick                     |
 
 Storage and settings are namespaced to your extension and removed when it is
 uninstalled. Contributed text sidecars deliberately **survive** uninstall -
@@ -589,9 +695,12 @@ three files in.
 - **Reach the network from the worker.** Structurally impossible under the
   current CSP. With `network`, SpeedyF fetches the hosts you list on your
   behalf, and nothing else.
-- **Draw arbitrary UI.** Only the vocabulary above. No canvas, no custom layout.
+- **Draw arbitrary UI.** Only the vocabulary above, and the editor SpeedyF
+  draws for a pane or view. No canvas, no custom layout, no iframe.
 - **Read or write files.** No filesystem access, and no path to the open
-  document - `document.info` reports a name, never a path.
+  document - `document.info` reports a name, never a path. The one
+  exception is your own project files (`projects:files`), named by a
+  relative path SpeedyF resolves inside your folder.
 - **Get the PDF bytes.** There is no `document.bytes`.
 - **Edit the document.** No annotations, no page operations, no saving.
 - **Run SpeedyF's File, Edit, Page, Tools or Settings commands.**

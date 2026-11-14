@@ -637,7 +637,9 @@ palette's _Export Project Bundle..._) writes one zip through the save
 dialog: `<project name>.bib`, rendered as Export .bib renders it and its
 keys pinned the same way, and `pdfs/<citekey>.pdf`, a byte copy of each
 item's main file that is on disk (stored, not recompressed; a key made safe
-as a file name that would collide gets `-2`). Nothing else goes in. Items
+as a file name that would collide gets `-2`); since sec. 13, the project's
+extension files (its notepad) under `project-files/` and a
+`speedyf-bundle.json` that _Import Project Bundle..._ reads. Items
 whose main file is missing are skipped and named only in the screen's
 inline result ("Exported 23 PDFs and the .bib; 2 missing: key1, key2").
 The zip is streamed to a temp file in the destination folder and renamed
@@ -1064,3 +1066,183 @@ re-estimated when it is reached.
 - **`library:changed` from day one.** Multiple windows exist today.
 - **Filing is copy, never move.** The one filesystem write beyond the data
   files, and the one a user cannot undo from inside SpeedyF.
+
+## 13. Project notepad
+
+**Status:** designed and implemented 2026-11-13 as the built-in extension
+**Notepad** (`dev.speedyf.notepad`), enabled by default (it needs no
+network). The notes logic lives in the extension; the user's data lives with
+the library, and the core provides the storage and the surfaces through
+generic, permission-gated extension APIs (`extension_api.md` sec. 7 and 8,
+`EXTENSIONS.md`). Any other extension can use the same APIs.
+
+### What the user sees
+
+- **One notepad per project, in Markdown.** A project's notepad is a plain
+  `.md` file; images it shows sit in an `assets/` folder beside it.
+- **Projects screen.** With a project selected (not All items, Not filed,
+  Other PDFs, Health or New) the middle column's view toggle reads
+  _List | Graph | Notepad_. Notepad takes the middle and right columns
+  together, full width, and edits that project's notepad.
+- **Reader.** When the open document is an item in a project, a quiet
+  notepad icon sits at the right end of the toolbar, and **Cmd+Shift+N**
+  (Ctrl+Shift+N) toggles a drawer on the right side of the page. The drawer
+  pushes the page, which re-fits; its left edge drags to resize, and the
+  width is remembered. Whether it is open is remembered per window, so it
+  stays open while moving between papers of the same project. Its header
+  reads "<project name> notepad", with a switcher only when the paper is in
+  several projects. An unfiled PDF has no icon, no chord and no drawer: the
+  reader stays a PDF viewer first.
+- **The drawer and the Projects view edit the same note live**, in one
+  window or across windows: the core holds one in-memory document per note,
+  and every view is a client of it.
+- **Palette:** _Open Notepad_, _Quote to Notepad_ (with a selection), _Send
+  Region to Notepad_ (in the reader). The equation hover button gains _Send
+  to Notepad_.
+- **Backlinks.** The Projects detail column shows one quiet line, "Mentioned
+  in notepad (3)", when a notepad references the item's cite key (the
+  selected project's, or under another scope any of the item's projects').
+  Clicking it opens the Notepad view at the first mention. Nothing in the
+  list or the graph.
+
+### Editing
+
+Obsidian-style live rendering, keyboard first, plain and calm:
+
+- The note is a sequence of blocks: one per line, except a `$$ ... $$`
+  display-math block and a fenced code block, which are one block each. The
+  block holding the cursor shows its raw Markdown in a native text field;
+  every other block is rendered: headings (`#` to `######`), emphasis
+  (`*em*`, `**strong**`, `` `code` ``), list items (`-`, `*`, `1.`), block
+  quotes, inline `$...$` and display `$$...$$` math through the KaTeX the
+  app already lazy-loads, links (`[text](https://...)`, opened outside the
+  app), images (`![alt](assets/x.png)` from the note's own folder) and
+  citations.
+- Up/Down/Left/Right at a block's edge move to the next block; Enter splits,
+  Backspace at the start joins; a multi-line paste becomes several blocks.
+  Copying a selection across rendered blocks copies their Markdown source.
+- **Source** in the header (or Cmd+A twice) shows the whole note as one plain
+  text field, for bulk edits; Escape returns.
+- Undo and redo (Cmd+Z, Cmd+Shift+Z) are the note's own history, across
+  blocks and modes. IME composition is the platform's own: the active block
+  is a native field, nothing is split or rendered while composing.
+- **Autosave** about 500 ms after typing stops, written atomically (temp file,
+  then rename).
+
+**Why not CodeMirror 6.** It is the obvious candidate (Obsidian is built on
+it), but it would add about 120 KB gzipped of new dependencies to a project
+that has three, and this session could not vendor and verify a pinned
+release with no network. The block design gets the hard parts from the
+platform instead: IME, spell check, plain-text paste and caret movement are
+a native `<textarea>`'s, rendering is SpeedyF's own components, and there is
+no contenteditable selection to map back to source offsets. The cost is that
+a keyboard selection cannot grow past one block outside Source mode.
+
+### Links into papers
+
+- **Cite.** Typing `@` opens a picker of the project's items (title, authors,
+  year; fuzzy). Enter inserts `@citekey`, rendered as "Attias 2022". Clicking
+  it opens the paper.
+- **Pinpoint.** `[@key, p. 12]{box=72,310,240,28}` renders "Attias 2022,
+  p. 12". Clicking opens the paper at page 12 and briefly marks the box (page
+  points from the displayed page's top-left corner), through the reader's
+  Back/Forward history like any other jump. Without `{box=...}` it opens at
+  the page. Pandoc reads the citation; the attribute is ours.
+- **A changed cite key keeps working.** The note stores `@citekey`. A key the
+  library no longer gives any item is looked up in each item's key history:
+  a record now remembers the keys it had before (`formerKeys`, written when a
+  key changes, never reserved) beside the pinned keys of records merged into
+  it (`aliasKeys`). Found, it renders and opens as the item; not found, it is
+  shown as the raw key, muted, and the text is never touched.
+
+### Quotes, equations and regions from the reader
+
+Which notepad a reader action writes to: the project the paper was opened
+from (the Projects list, graph or detail of a project, or a notepad link);
+otherwise, if the paper is in exactly one project, that one; if it is in
+several, a small picker asks once and the answer is kept for the session
+(the drawer's switcher sets it too); if it is in none, the actions are not
+offered.
+
+- **Quote to Notepad** (a selection action) appends
+  `> "selected text" [@key, p. 12]{box=...}`. The text is escaped so it
+  stays one quote block and reads as itself: whitespace, newlines included,
+  collapses to single spaces, and every character Markdown or a citation
+  would take for markup (backslash, backtick, `*`, `_`, `[`, `]`, `{`, `}`,
+  `<`, `>`, `$`, `@`, `|`, `~`, and a leading `#`, `-`, `+` or `1.`) is
+  backslash-escaped.
+- **Send to Notepad** (an equation action) asks the core for the equation's
+  LaTeX. The core asks whichever enabled extension provides an
+  `equationConverter`; Math to LaTeX does when it is enabled. With LaTeX, the
+  note gets `$$ latex $$` and a page link; without (no converter, or it could
+  not read it), a PNG snapshot of the equation region goes into
+  `assets/` and the note gets `![Equation (3)](assets/...png)` and the link.
+- **Send Region to Notepad** (palette, and the drawer's region button)
+  enters a crosshair mode: drag a rectangle on a page, Escape cancels. The
+  PNG goes into `assets/` and the note gets the image and a page link.
+
+### Storage
+
+```
+<library data dir>/
+  library.json
+  project-files/
+    dev.speedyf.notepad/
+      <project id>/notepad.md
+      <project id>/assets/<name>.png
+      deleted/<project id>/...        a deleted project's files, kept
+  backups/
+    library-YYYYMMDD-HHMMSS.json.gz
+    project-files-YYYYMMDD-HHMMSS.zip
+```
+
+Generic, not Notepad's: every extension holding `projects:files` gets
+`project-files/<its id>/<project id>/`, and the core does the rest for all
+of them alike.
+
+- Beside `library.json`, so the files move (and sync) with the library; a
+  data-folder move that copies the library copies them too.
+- **Atomic writes**; paths are relative, `[A-Za-z0-9._-]` names at most three
+  folders deep, no dot files; 8 MB a file.
+- **Deleted project:** its folders move to `deleted/<project id>/` (a
+  number appended on a clash). Kept, and covered by the backups. A renamed
+  project keeps its files: they are keyed by id.
+- **Backups:** `project-files-*.zip`, a full snapshot, written at most hourly
+  and only when something changed, rotated like the library's. Restoring a
+  library backup first snapshots the present, then puts back the
+  project-files snapshot nearest in time to the chosen backup; open notes
+  reload.
+- **Bundle export** adds `project-files/<extension id>/...` for the project
+  and a `speedyf-bundle.json` (project name, each item's cite key and PDF).
+  **Import Project Bundle...** (palette, and the projects column) files the
+  PDFs through the inbox, makes a project with the bundle's name, records
+  each bundle cite key as a former key of the item it became (so `@key`
+  links keep resolving even when the library chose another key), and
+  restores the files under the new project's id.
+
+### One owner, many views
+
+The core holds each open note once: its text, a revision number and a short
+log of recent edits. A view sends an edit as one range replacement against
+the revision it last saw; the core moves it past anything that landed in
+between (positions shift; overlapping edits keep both texts), applies it,
+and broadcasts it to every window, the sender included, which is how the
+sender learns its edit's place in the order. A window's views of one note
+share one session, so the drawer and the Projects view in a window are the
+same document.
+
+- **Changed on disk while open** (a sync service, another editor): checked
+  every second. With no unsaved edits the note reloads. With unsaved edits
+  they win and are saved; what was on disk is kept beside it as
+  `notepad.external-<time>.md`, and the view says so.
+- **Project deleted while its note is open:** pending edits are saved first,
+  then the files move to `deleted/`, and every view closes with "This
+  project was deleted; its notepad was kept."
+- **Extension disabled:** the drawer, the toolbar icon, the Notepad view, the
+  actions and the backlink line all disappear. The files stay where they
+  are, and come back with it.
+
+A 1 MB note stays responsive: blocks are created once and reused across
+edits, typing in a line changes only that block, off-screen blocks skip
+layout (`content-visibility`), and formulas are typeset only when scrolled
+into view.

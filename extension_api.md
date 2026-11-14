@@ -1,7 +1,7 @@
 # SpeedyF Extension API - design plan
 
-**Status:** design, not implemented. Nothing in this document exists in the
-codebase yet.
+**Status:** v1 and v2 implemented; v3 in part - the rows marked
+"implemented" or "shipped" below exist in the codebase.
 
 **Decision it supersedes:** a plugin API was considered on 2026-08-21 and
 deliberately deferred in favour of a versioned on-disk data contract between
@@ -181,23 +181,26 @@ custom URI scheme path.
 
 ## 7. Permission catalogue
 
-| Permission                             | Grants                                                                                     | Version          |
-| -------------------------------------- | ------------------------------------------------------------------------------------------ | ---------------- |
-| `commands:run`                         | Run SpeedyF's own commands, View/Navigate/Panels/Search only                               | v2               |
-| `document:read`                        | Text, outline, figures, page geometry of the open document                                 | v2               |
-| `document:annotate`                    | Create and modify annotations                                                              | v2               |
-| `document:edit`                        | Page operations: rotate, delete, reorder, insert                                           | v3               |
-| `citations:read`                       | Extracted and resolved citations                                                           | v2               |
-| `library:read`                         | Library entries and library-wide search                                                    | v2               |
-| `clipboard:write`                      | Write text or images to the clipboard                                                      | v2               |
-| `storage`                              | Private key/value store, namespaced to the extension                                       | v2               |
-| `render:read`                          | Request page and region rasters                                                            | v2               |
-| `document:contributeText`              | Contribute a text layer and outline for a document                                         | v2               |
-| `library:contributeReferences`         | Read library documents' stored text (never paths) at idle and return their reference lists | v3 (implemented) |
-| `filesystem:read` / `filesystem:write` | User-chosen paths only, via a picker                                                       | v3               |
-| `document:layout`                      | Glyph geometry and math tags of the open document                                          | v3 (implemented) |
-| `network`                              | Outbound HTTPS to the manifest's listed hosts, made by the core                            | v3 (implemented) |
-| `document:contributeTerms`             | Contribute the terms the open document defines, matched and previewed on hover by the core | v3 (implemented) |
+| Permission                             | Grants                                                                                           | Version          |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------ | ---------------- |
+| `commands:run`                         | Run SpeedyF's own commands, View/Navigate/Panels/Search only                                     | v2               |
+| `document:read`                        | Text, outline, figures, page geometry of the open document                                       | v2               |
+| `document:annotate`                    | Create and modify annotations                                                                    | v2               |
+| `document:edit`                        | Page operations: rotate, delete, reorder, insert                                                 | v3               |
+| `citations:read`                       | Extracted and resolved citations                                                                 | v2               |
+| `library:read`                         | Library entries and library-wide search                                                          | v2               |
+| `clipboard:write`                      | Write text or images to the clipboard                                                            | v2               |
+| `storage`                              | Private key/value store, namespaced to the extension                                             | v2               |
+| `render:read`                          | Request page and region rasters                                                                  | v2               |
+| `document:contributeText`              | Contribute a text layer and outline for a document                                               | v2               |
+| `library:contributeReferences`         | Read library documents' stored text (never paths) at idle and return their reference lists       | v3 (implemented) |
+| `filesystem:read` / `filesystem:write` | User-chosen paths only, via a picker                                                             | v3               |
+| `document:layout`                      | Glyph geometry and math tags of the open document                                                | v3 (implemented) |
+| `network`                              | Outbound HTTPS to the manifest's listed hosts, made by the core                                  | v3 (implemented) |
+| `document:contributeTerms`             | Contribute the terms the open document defines, matched and previewed on hover by the core       | v3 (implemented) |
+| `projects:read`                        | Projects, membership, items' cite keys, titles, authors, years; the reader's item; opening items | v3 (implemented) |
+| `projects:files`                       | Read and write the extension's own files per project, stored, backed up and bundled by the core  | v3 (implemented) |
+| `render:region`                        | PNG of a region the user picked: a rectangle they drew, or an equation they clicked              | v3 (implemented) |
 
 **What `document:read` actually grants.** Page text, in a loop, is the whole
 document's text. The permission means "everything this document says", not "a
@@ -252,6 +255,10 @@ allowlist of hosts declared in the manifest.
 | `referenceProvider`    | The provider slot for library reference lists (below)  | v3 (implemented) |
 | `equationActions`      | A button on each detected display equation             | v3 (implemented) |
 | `termProvider`         | The provider slot for terms previewed on hover (below) | v3 (implemented) |
+| `readerPanes`          | A right-side drawer in the reader, with a `when`       | v3 (implemented) |
+| `projectViews`         | A view of one project in the Projects middle column    | v3 (implemented) |
+| `itemDetailLines`      | One quiet line in the Projects item detail column      | v3 (implemented) |
+| `equationConverter`    | The provider slot for an equation's LaTeX (below)      | v3 (implemented) |
 
 **`termProvider`.** Knowing what a document defines is reading, which is an
 extension's job; matching it against the page is the core's, which alone
@@ -263,6 +270,52 @@ the terms by whole token and shows them in the link-preview popover. An
 answer for a token is dropped once the reader has switched documents, since
 the extension's page reads went to whatever was open. One provider is active,
 the first enabled one; disabling it takes every term back.
+
+**Project notepad: the surfaces it needed** (projects.md sec. 13). The
+built-in Notepad keeps one Markdown note per project, and needed five
+things no extension could have before. Each was built generic:
+
+- **`projects:files`** - files of the extension's own, per project, under
+  `<library data dir>/project-files/<extension id>/<project id>/`. The
+  extension names a relative path; the core owns everything a user's data
+  needs: atomic writes, one in-memory copy of an open text file shared by
+  every window, hourly snapshots in the backups folder, the project bundle
+  (out and back in), and moving a deleted project's files aside rather than
+  losing them. Checked twice: by the window's gate, and again by the core
+  against the installed grant, the way `net.fetch` is.
+- **`readerPanes` and `projectViews`** - see "Editor surfaces" below.
+- **`itemDetailLines`** - the extension is invoked with the item the
+  Projects detail column shows and answers with `ui.itemLine`: one line of
+  text, optionally clickable. Drawing, so no permission.
+- **`equationConverter`** - a second provider slot, beside
+  `referenceProvider` and `termProvider`, for "this equation as LaTeX".
+  The consumer never names the provider: it calls `equations.convert` with
+  the equation token it was handed, and the core invokes the first enabled
+  extension declaring a converter with the same `{ page, bbox, number }` an
+  equation action gets, and takes its `ui.showMath` answer as the result
+  instead of showing it. Math to LaTeX is the provider and changed nothing
+  but its manifest. No converter enabled, or it fails, and the answer is
+  `null` - the consumer falls back.
+- **`render:region`** - the narrow form of `render:read`: a PNG only of what
+  the user pointed at (`region.capture`, a rectangle they drag; or
+  `equations.snapshot`, the equation they clicked).
+
+**Editor surfaces: why not a custom iframe pane.** Section 5 kept sandboxed
+iframe panes as the escape hatch for what the vocabulary cannot express, and
+a live Markdown editor is such a thing. It was weighed and not built, on the
+principles of section 3. An iframe would put every keystroke of the user's
+own notes behind a postMessage bridge, ship a second KaTeX and a second
+editor inside every such extension, break the app's keyboard shortcuts and
+theme at the frame's edge, and need `frame-src` opened in the CSP - for one
+extension. Instead the vocabulary gains exactly one primitive, an **editor**:
+a pane or project view declares `editor: { file, command }`, and SpeedyF
+draws a Markdown editor bound to that project file. The extension stays the
+brains - it is invoked with editor events (`citations`, `activate`) and
+answers through `editor.citations`, `editor.insert` and `editor.reveal` - while
+it still cannot touch the DOM (principle 1), the editor matches the app
+(principle 2), and the binding is to a file and a dialect, not to the
+editor's internals (principle 3). The iframe pane stays v3 and unbuilt
+until an extension needs a surface that is not text.
 
 ## 9. Consumers and contributors
 
@@ -549,7 +602,12 @@ own search and text layer, not a parallel one.
 
 _Capability_
 
-- Custom panes: sandboxed iframe views with their own message bridge
+- Custom panes: sandboxed iframe views with their own message bridge.
+  _Not built; an editor primitive covers the one extension that wanted a
+  pane (section 8)._
+- **[shipped]** `readerPanes`, `projectViews`, `itemDetailLines`,
+  `equationConverter`, `projects:read`, `projects:files` and `render:region`,
+  for the built-in Notepad (section 8, projects.md sec. 13).
 - Synchronous provider slots (citation resolution, metadata) with timeouts and
   precedence - only if something actually needs them; OCR does not.
   _Implemented for one:_ `referenceProvider` (library reference lists), as an
