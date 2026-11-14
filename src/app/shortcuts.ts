@@ -24,7 +24,6 @@ import {
 } from '../features/extensions/extensionStore';
 import { toggleReaderPane } from '../features/extensions/surfaces';
 import { parseChord } from '../features/extensions/capabilities';
-import { columnModeFor } from '../features/viewer/columns/columnMode';
 
 const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.userAgent);
 
@@ -113,9 +112,6 @@ const BINDINGS: readonly Binding[] = [
   { key: '-', mod: true, id: 'view.zoomOut', preventAlways: true },
   // ⌘1-9 took the digits for tabs, so "zoom to 100%" sits on ⌘⇧0 beside
   // ⌘0's fit-page.
-  // Column zoom joins the fits on 0, with Option; ahead of fit-page, which
-  // does not look at Alt and would otherwise take Ctrl+Alt+0 elsewhere.
-  { key: '0', mod: true, shift: false, alt: true, id: 'view.zoomToColumn', preventAlways: true },
   { key: '0', mod: true, shift: false, id: 'view.fitPage', preventAlways: true },
   { key: '0', mod: true, shift: true, id: 'view.actualSize', preventAlways: true },
   // Library. ⌘⇧C sits beside the webview's own ⌘C — copy, but the key — and
@@ -202,8 +198,7 @@ function matches(binding: Binding, event: KeyboardEvent, mod: boolean): boolean 
   if (binding.alt) {
     if (!event.altKey) return false;
     const physical =
-      (/^[a-z]$/.test(binding.key) && event.code === `Key${binding.key.toUpperCase()}`) ||
-      (/^[0-9]$/.test(binding.key) && event.code === `Digit${binding.key}`);
+      /^[a-z]$/.test(binding.key) && event.code === `Key${binding.key.toUpperCase()}`;
     if (!physical && event.key.toLowerCase() !== binding.key.toLowerCase()) return false;
   } else {
     const key = binding.key.length === 1 ? event.key.toLowerCase() : event.key;
@@ -232,12 +227,7 @@ function handleEscape(): void {
     setActiveTool('select');
     return;
   }
-  if (tab.viewport.state.formPanelOpen) {
-    tab.viewport.setState('formPanelOpen', false);
-    return;
-  }
-  // Last: column zoom is the view itself, the outermost layer.
-  columnModeFor(tab.id)?.exit();
+  if (tab.viewport.state.formPanelOpen) tab.viewport.setState('formPanelOpen', false);
 }
 
 export function installShortcuts(): () => void {

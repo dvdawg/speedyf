@@ -183,11 +183,9 @@ async function openPath(
       const reopen = opts?.reopen;
       const resume = reopen ?? recentStore.positionFor(path);
       if (reopen) {
-        // Column zoom is a mode over a settled layout; it comes back as its
-        // zoom, the way Back treats it.
         record.viewport.setState({
           zoom: reopen.zoom,
-          fitMode: reopen.fitMode === 'column' ? 'custom' : reopen.fitMode,
+          fitMode: reopen.fitMode,
           viewRotation: reopen.viewRotation,
         });
       }
