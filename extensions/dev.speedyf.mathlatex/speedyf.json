@@ -57,6 +57,9 @@
         "options": ["most exact", "fonts only (offline)"],
         "description": "\"Fonts only\" never uses the internet: it reads the document's tags and its fonts, nothing else."
       }
-    ]
+    ],
+    "equationConverter": {
+      "command": "copyEquation"
+    }
   }
 }

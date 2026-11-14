@@ -1,0 +1,54 @@
+{
+  "id": "dev.speedyf.notepad",
+  "apiVersion": 1,
+  "name": "Notepad",
+  "version": "1.0.0",
+  "description": "One Markdown notepad per project, beside the paper you are reading and on the Projects screen. Cite items with @, quote the page, send equations and figures, and click any of them to go back to the place on the page.",
+  "author": "speedyf",
+  "entry": "worker.js",
+  "icon": "icon.svg",
+  "permissions": ["projects:read", "projects:files", "render:region"],
+  "contributes": {
+    "commands": [
+      {
+        "id": "open",
+        "title": "Open Notepad",
+        "keywords": ["notes", "project", "markdown", "write"]
+      },
+      {
+        "id": "region",
+        "title": "Send Region to Notepad",
+        "keywords": ["figure", "snapshot", "picture", "notes", "capture"],
+        "when": "documentInProject"
+      },
+      { "id": "quote", "title": "Quote to Notepad", "hidden": true },
+      { "id": "equation", "title": "Send Equation to Notepad", "hidden": true },
+      { "id": "editor", "title": "Notepad: Editor Events", "hidden": true },
+      { "id": "mentions", "title": "Notepad: Mentions", "hidden": true },
+      { "id": "jump", "title": "Notepad: Go To Mention", "hidden": true }
+    ],
+    "selectionActions": [
+      { "command": "quote", "title": "Quote to Notepad", "when": "documentInProject" }
+    ],
+    "equationActions": [
+      { "command": "equation", "title": "Send to Notepad", "when": "documentInProject" }
+    ],
+    "readerPanes": [
+      {
+        "id": "notepad",
+        "title": "Notepad",
+        "when": "documentInProject",
+        "key": "mod+shift+n",
+        "editor": { "file": "notepad.md", "command": "editor" }
+      }
+    ],
+    "projectViews": [
+      {
+        "id": "notepad",
+        "title": "Notepad",
+        "editor": { "file": "notepad.md", "command": "editor" }
+      }
+    ],
+    "itemDetailLines": { "command": "mentions" }
+  }
+}
