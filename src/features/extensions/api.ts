@@ -648,6 +648,7 @@ export const API_PERMISSIONS: Readonly<Record<string, string>> = {
   // Its editors are bound to its project files.
   'editor.citations': 'projects:files',
   'editor.insert': 'projects:files',
+  'editor.replace': 'projects:files',
   'editor.reveal': 'projects:files',
   // A PNG of what the user pointed at, and nothing else.
   'region.capture': 'render:region',

@@ -7,11 +7,13 @@
  * too, and caches them), so scrolling never waits on detection. The blocks are
  * not drawn as hit areas — that would steal text selection from the very
  * formulas someone might want to select — the pointer is tracked on the page
- * instead, and only the button for the block under it is shown.
+ * instead, and only the button for the block under it is shown. The first
+ * button shown in a document tells the equation converter, if one is
+ * enabled, to start fetching the paper's exact source.
  */
 import { createMemo, createResource, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
-import { equationActions, runEquationAction } from './extensionStore';
+import { equationActions, prefetchEquationSource, runEquationAction } from './extensionStore';
 
 export interface EquationBlock {
   /** `[x, y, w, h]`, page points from the displayed page's top-left. */
@@ -100,6 +102,9 @@ function EquationButtons(props: Props) {
           x >= bx && x <= bx + bw && y >= by - REACH_ABOVE_PT && y <= by + bh
       );
       setHovered(index >= 0 ? index : null);
+      // A button is about to be clicked, maybe: the converter may start on
+      // the paper's source now (once per document; the store dedupes).
+      if (index >= 0) prefetchEquationSource(props.docId);
     };
     const onLeave = () => setHovered(null);
     space.addEventListener('pointermove', onMove);

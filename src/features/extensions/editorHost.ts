@@ -1,7 +1,8 @@
 /** The window's side of extension editors: the note sessions, wired to the
  * core; what each extension told its editors about citations; the editors
- * on screen, for `editor.insert` and `editor.reveal` to reach; and the item
- * lines extensions contribute to the Projects detail column. */
+ * on screen, for `editor.insert`, `editor.replace` and `editor.reveal` to
+ * reach; and the item lines extensions contribute to the Projects detail
+ * column. */
 import { createSignal } from 'solid-js';
 import { createStore, reconcile } from 'solid-js/store';
 import { invoke } from '@tauri-apps/api/core';
@@ -236,6 +237,34 @@ export async function insertIntoNote(
     // Confirmed by its broadcast; never waited on forever.
     await Promise.race([session.settled(), new Promise((r) => setTimeout(r, 5_000))]);
     return op.from + (op.insert.length - op.insert.trimStart().length);
+  } finally {
+    all.release(session);
+  }
+}
+
+/** Replace the first exact occurrence of `find` in a note with `replace`,
+ * as one edit through the note's session: undoable in this window, ordered
+ * by the core with every other window's edits. False when `find` is not
+ * there (the user changed it meanwhile): nothing is touched. */
+export async function replaceInNote(key: NoteKey, find: string, replace: string): Promise<boolean> {
+  await eventsHeard();
+  const all = noteSessions();
+  const session: NoteSession = all.acquire(key);
+  try {
+    await session.ready;
+    if (session.status() !== 'ready') throw new Error(session.reason() ?? 'the note is not open');
+    const text = session.text();
+    const at = text.indexOf(find);
+    if (at < 0) return false;
+    if (find === replace) return true;
+    session.edit(
+      { from: at, to: at + find.length, insert: replace },
+      at + find.length,
+      at + replace.length
+    );
+    await session.flush();
+    await Promise.race([session.settled(), new Promise((r) => setTimeout(r, 5_000))]);
+    return true;
   } finally {
     all.release(session);
   }

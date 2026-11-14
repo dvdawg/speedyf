@@ -10,6 +10,7 @@ const [actions, setActions] = createSignal<
   { id: string; localId: string; title: string; extensionId: string }[]
 >([]);
 const runEquationAction = vi.fn(async () => {});
+const prefetchEquationSource = vi.fn((_docId: number) => {});
 const invoke = vi.fn(async (_command: string, _args?: unknown) => [
   { bbox: [100, 200, 300, 40], number: '3' },
 ]);
@@ -20,6 +21,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 vi.mock('./extensionStore', () => ({
   equationActions: () => actions(),
   runEquationAction: (...args: unknown[]) => runEquationAction(...(args as [])),
+  prefetchEquationSource: (docId: number) => prefetchEquationSource(docId),
 }));
 
 const { default: EquationLayer } = await import('./EquationLayer');
@@ -36,6 +38,7 @@ afterEach(() => {
   setActions([]);
   invoke.mockClear();
   runEquationAction.mockClear();
+  prefetchEquationSource.mockClear();
 });
 
 /** Mount the layer inside a page-space container, as PageView does. */
@@ -66,7 +69,10 @@ describe('EquationLayer', () => {
     const space = screen.getByTestId('space');
     fireEvent.pointerMove(space, { clientX: 20, clientY: 20 });
     expect(screen.queryByRole('button')).toBeNull();
+    expect(prefetchEquationSource).not.toHaveBeenCalled();
     fireEvent.pointerMove(space, { clientX: 200, clientY: 220 });
+    // Revealing a button lets the converter start on the source.
+    expect(prefetchEquationSource).toHaveBeenCalledWith(2);
     const button = screen.getByRole('button', { name: 'Copy LaTeX for equation 3' });
     fireEvent.click(button);
     expect(runEquationAction).toHaveBeenCalledTimes(1);

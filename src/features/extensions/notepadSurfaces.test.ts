@@ -374,6 +374,7 @@ describe('the gate', () => {
       'region.capture',
       'equations.snapshot',
       'editor.insert',
+      'editor.replace',
     ]) {
       await expect(plain.options.events.onCall(call(api, {}))).rejects.toThrow(/permission/);
     }
@@ -456,11 +457,13 @@ describe('the equation converter slot', () => {
     invokeBehaviour = async (id, command, extra) => {
       if (id !== 'dev.speedyf.mathlatex') return;
       expect(command).toBe('copyEquation');
-      expect((extra as { value: unknown }).value).toEqual({
+      const value = (extra as { value: Record<string, unknown> }).value;
+      expect(value).toEqual({
         page: 1,
         bbox: [1, 2, 3, 4],
         number: '3',
         equation: token,
+        ticket: expect.stringMatching(/^t\d+$/),
       });
       // It answers as it would an equation action.
       await math.options.events.onCall(
@@ -469,9 +472,74 @@ describe('the equation converter slot', () => {
     };
     expect(
       await notepad.options.events.onCall(call('equations.convert', { equation: token }))
-    ).toEqual({ latex: 'a^2', display: true });
+    ).toEqual({ latex: 'a^2', display: true, source: 'fonts', confidence: 'high' });
     // The consumer was not timed out while the converter worked.
     expect(paused).toBe(0);
+  });
+
+  it('passes the mode through, and keeps two conversions at once apart by ticket', async () => {
+    const notepad = await hostOf(NOTEPAD);
+    const math = await hostOf('dev.speedyf.mathlatex');
+    const token = hostApi.equationToken({ docId: 7, page: 1, bbox: [1, 2, 3, 4], number: null });
+    const seen: Record<string, unknown>[] = [];
+    let releaseExact: () => void = () => {};
+    const exactGate = new Promise<void>((resolve) => (releaseExact = resolve));
+    invokeBehaviour = async (id, _command, extra) => {
+      if (id !== 'dev.speedyf.mathlatex') return;
+      const value = (extra as { value: Record<string, unknown> }).value;
+      seen.push(value);
+      const answer = (latex: string, source: string) =>
+        math.options.events.onCall(
+          call('ui.showMath', {
+            latex,
+            display: true,
+            source,
+            confidence: 'high',
+            ticket: value.ticket,
+          })
+        );
+      if (value.mode === 'exact') {
+        await exactGate;
+        await answer('exact', 'arxiv');
+      } else {
+        await answer('local', 'fonts');
+      }
+    };
+    const exact = notepad.options.events.onCall(
+      call('equations.convert', { equation: token, mode: 'exact' })
+    );
+    const local = await notepad.options.events.onCall(
+      call('equations.convert', { equation: token, mode: 'local' })
+    );
+    expect(local).toMatchObject({ latex: 'local', source: 'fonts' });
+    releaseExact();
+    expect(await exact).toMatchObject({ latex: 'exact', source: 'arxiv' });
+    expect(seen.map((v) => v.mode)).toEqual(['exact', 'local']);
+    expect(seen[0]!.ticket).not.toBe(seen[1]!.ticket);
+    await expect(
+      notepad.options.events.onCall(call('equations.convert', { equation: token, mode: 'fast' }))
+    ).rejects.toThrow(/mode/);
+  });
+
+  it('asks the converter to prefetch once per document, and nobody else', async () => {
+    const math = await hostOf('dev.speedyf.mathlatex');
+    const notepad = await hostOf(NOTEPAD);
+    math.invoke.mockClear();
+    notepad.invoke.mockClear();
+    store.prefetchEquationSource(41);
+    store.prefetchEquationSource(41);
+    store.prefetchEquationSource(42);
+    expect(math.invoke.mock.calls).toEqual([
+      ['copyEquation', expect.objectContaining({ value: { mode: 'prefetch' } })],
+      ['copyEquation', expect.objectContaining({ value: { mode: 'prefetch' } })],
+    ]);
+    expect(notepad.invoke).not.toHaveBeenCalled();
+    // A disabled converter (its hosts not consented to) is never asked.
+    dtos = [notepadDto(), { ...mathDto(), enabled: false }];
+    await store.loadExtensions();
+    math.invoke.mockClear();
+    store.prefetchEquationSource(43);
+    expect(math.invoke).not.toHaveBeenCalled();
   });
 
   it('answers null with no converter, and refuses a token nobody issued', async () => {

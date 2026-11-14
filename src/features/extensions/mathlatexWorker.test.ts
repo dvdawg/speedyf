@@ -9,7 +9,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const SOURCE = readFileSync(
   join(__dirname, '../../../extensions/dev.speedyf.mathlatex/worker.js'),
@@ -76,6 +76,8 @@ interface HostSetup {
   identifiers?: { doi: string | null; arxiv: string | null; arxivVersion: number | null };
   settings?: Record<string, string>;
   fetch?: (req: Fetch) => Promise<{ status: number; contentType: string; body: unknown }>;
+  /** Told of every call before it is answered. */
+  onCall?: (api: string) => void;
 }
 
 function startWorker(setup: HostSetup) {
@@ -99,6 +101,7 @@ function startWorker(setup: HostSetup) {
     const args = (message.args ?? {}) as Record<string, unknown>;
     const api = String(message.api);
     calls.push(api);
+    setup.onCall?.(api);
     let value: unknown = null;
     let ok = true;
     let error = '';
@@ -424,5 +427,164 @@ describe('Math to LaTeX: the pipeline', () => {
     expect(w.shown).toEqual([
       { latex: '\\alpha \\leq \\sin x', display: false, source: 'fonts', confidence: 'low' },
     ]);
+  });
+});
+
+// ---------- asked by another extension ----------
+
+/** A clock the worker reads through `Date.now`. */
+function fakeClock() {
+  let now = 1_700_000_000_000;
+  vi.spyOn(Date, 'now').mockImplementation(() => now);
+  return { advance: (ms: number) => (now += ms) };
+}
+
+/** Wait for work the worker does after its command is done. */
+async function until(condition: () => boolean, ms = 1_000) {
+  const end = performance.now() + ms;
+  while (!condition()) {
+    if (performance.now() > end) throw new Error('timed out waiting');
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+}
+
+const EQ = { page: 0, bbox: [90, 180, 60, 30], number: '(1)' };
+
+describe('Math to LaTeX: as the equation converter', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('answers a local conversion from the page alone, echoing its ticket', async () => {
+    const w = startWorker({
+      region: BOLTZMANN,
+      identifiers: IDS,
+      fetch: network({ arxiv: 'tex', jats: true }),
+    });
+    await w.invoke('copyEquation', { ...EQ, mode: 'local', ticket: 't7' });
+    expect(w.shown).toEqual([
+      {
+        latex: 'e^{-\\beta E}',
+        display: true,
+        source: 'fonts',
+        confidence: 'high',
+        ticket: 't7',
+      },
+    ]);
+    expect(w.fetched).toEqual([]);
+    expect(w.calls).not.toContain('net.fetch');
+    expect(w.calls).not.toContain('document.identifiers');
+    expect(w.logs.some((l) => /^equation \(local\): .*fonts high in \d+ms$/.test(l))).toBe(true);
+  });
+
+  it('answers an exact conversion only from a source online, else nothing', async () => {
+    const found = startWorker({
+      region: BOLTZMANN,
+      tags: [tagOver('$e^{-\\beta E}$')],
+      identifiers: IDS,
+      fetch: network({ arxiv: 'tex' }),
+    });
+    await found.invoke('copyEquation', { ...EQ, mode: 'exact', ticket: 't1' });
+    expect(found.shown).toEqual([
+      {
+        latex: 'Z = \\sum_{s} e^{-\\beta E_s}',
+        display: true,
+        source: 'arxiv',
+        confidence: 'high',
+        ticket: 't1',
+      },
+    ]);
+    // The tags were the local answer's business.
+    expect(found.calls).not.toContain('document.mathTags');
+
+    const none = startWorker({ region: BOLTZMANN, identifiers: IDS, fetch: network({}) });
+    await none.invoke('copyEquation', { ...EQ, mode: 'exact', ticket: 't2' });
+    expect(none.shown).toEqual([]);
+  });
+
+  it('remembers a failed download for ten minutes, then tries again', async () => {
+    const clock = fakeClock();
+    const w = startWorker({
+      selection,
+      identifiers: { ...IDS, doi: null },
+      fetch: network({ arxiv: 'fail' }),
+    });
+    await w.invoke('copyLatex', 'e\u2212\u03b2E');
+    expect(w.fetched).toEqual(['https://arxiv.org/e-print/2101.00001v2']);
+    clock.advance(9 * 60_000);
+    await w.invoke('copyLatex', 'e\u2212\u03b2E');
+    // Answered from the fonts at once, without asking arXiv again.
+    expect(w.fetched).toHaveLength(1);
+    expect(w.shown.map((x) => x.source)).toEqual(['fonts', 'fonts']);
+    clock.advance(60_001);
+    await w.invoke('copyLatex', 'e\u2212\u03b2E');
+    expect(w.fetched).toHaveLength(2);
+  });
+
+  it('does not count a download cut off by the deadline as failed, and uses it when it lands', async () => {
+    const clock = fakeClock();
+    let land: () => void = () => {};
+    const landed = new Promise<void>((resolve) => (land = resolve));
+    const real = network({ arxiv: 'tex' });
+    let first = true;
+    const w = startWorker({
+      region: BOLTZMANN,
+      identifiers: { ...IDS, doi: null },
+      fetch: async (req) => {
+        await landed;
+        return real(req);
+      },
+      // The budget is spent by the time the source is waited on.
+      onCall: (api) => {
+        if (api === 'document.identifiers' && first) {
+          first = false;
+          clock.advance(5_000);
+        }
+      },
+    });
+    await w.invoke('copyEquation', EQ);
+    expect(w.shown.map((x) => x.source)).toEqual(['fonts']);
+    expect(w.fetched).toHaveLength(1);
+    land();
+    await until(() => w.storage.size > 0);
+    await w.invoke('copyEquation', EQ);
+    expect(w.shown.map((x) => x.source)).toEqual(['fonts', 'arxiv']);
+    expect(w.fetched).toHaveLength(1);
+  });
+
+  it('starts the download on a prefetch without waiting for it', async () => {
+    let land: () => void = () => {};
+    const landed = new Promise<void>((resolve) => (land = resolve));
+    const real = network({ arxiv: 'tex', jats: true });
+    const w = startWorker({
+      region: BOLTZMANN,
+      identifiers: IDS,
+      fetch: async (req) => {
+        await landed;
+        return real(req);
+      },
+    });
+    // Done while the download is still on its way.
+    await w.invoke('copyEquation', { mode: 'prefetch' });
+    await until(() => w.fetched.length > 0);
+    expect(w.fetched).toEqual(['https://arxiv.org/e-print/2101.00001v2']);
+    expect(w.shown).toEqual([]);
+    expect(w.calls).not.toContain('region.glyphs');
+    land();
+    await w.invoke('copyEquation', { ...EQ, mode: 'exact', ticket: 't3' });
+    expect(w.shown.map((x) => x.source)).toEqual(['arxiv']);
+    expect(w.fetched).toHaveLength(1);
+  });
+
+  it('prefetches nothing when the internet is switched off in its settings', async () => {
+    const w = startWorker({
+      identifiers: IDS,
+      settings: { prefer: 'fonts only (offline)' },
+      fetch: network({ arxiv: 'tex', jats: true }),
+    });
+    await w.invoke('copyEquation', { mode: 'prefetch' });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(w.fetched).toEqual([]);
+    expect(w.calls).not.toContain('document.identifiers');
   });
 });

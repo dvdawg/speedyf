@@ -55,6 +55,7 @@ import {
   toPapers,
   toProjects,
   toResolvedCitation,
+  type ShowMathArgs,
 } from './api';
 import { engine } from '../../lib/transport/engine';
 import { pdfRectToCssRect } from '../../lib/coordinates/coords';
@@ -488,28 +489,69 @@ export async function runItemLineAction(line: ItemLine): Promise<void> {
   await runPanelAction(line.extensionId, line.command, line.value as InvokeValue | undefined);
 }
 
-/** Extensions waiting on a converter's `ui.showMath`, by converter id. */
-const converting = new Map<string, (answer: { latex: string; display: boolean }) => void>();
+/** What a converter answered: the formula, and where it says it came from. */
+export interface ConvertedEquation {
+  latex: string;
+  display: boolean;
+  source: ShowMathArgs['source'];
+  confidence: ShowMathArgs['confidence'];
+}
+
+/** How a consumer wants an equation converted: `local` answers from the
+ * document alone (fast), `exact` only from an exact source online (slow,
+ * nothing when none matches). Omitted, the converter does as its own action
+ * would. */
+export type ConvertMode = 'local' | 'exact';
+
+/** Conversions waiting on a converter's `ui.showMath`: by converter id, then
+ * by the ticket the converter was invoked with and echoes back, so two at
+ * once (a quick local answer while an exact one is still fetching) never
+ * take each other's formula. */
+const converting = new Map<string, Map<string, (answer: ConvertedEquation) => void>>();
+/** Converters seen echoing a ticket: an un-ticketed `ui.showMath` from one
+ * of them is its own popover, never an answer. */
+const ticketAware = new Set<string>();
+let nextTicket = 1;
+
+/** The capture an un-ticketed `ui.showMath` fills, for a converter written
+ * before tickets: its latest conversion. */
+function legacyCapture(extensionId: string): ((answer: ConvertedEquation) => void) | undefined {
+  if (ticketAware.has(extensionId)) return undefined;
+  const waiting = converting.get(extensionId);
+  return waiting ? [...waiting.values()].at(-1) : undefined;
+}
 
 /** An equation's LaTeX from the first enabled extension declaring an
- * `equationConverter`: invoked as an equation action would be, its
- * `ui.showMath` taken as the answer instead of shown. Null when there is no
- * converter, it fails, or it answers nothing. */
+ * `equationConverter`: invoked as an equation action would be (with the
+ * `mode` asked for and a `ticket`), its `ui.showMath` taken as the answer
+ * instead of shown. Null when there is no converter, it fails, or it
+ * answers nothing. */
 export async function convertEquation(
   token: string,
-  ref: EquationRef
-): Promise<{ latex: string; display: boolean; converter: string } | null> {
+  ref: EquationRef,
+  mode?: ConvertMode
+): Promise<(ConvertedEquation & { converter: string }) | null> {
   const extension = state.extensions.find(
     (e) => e.enabled && !e.error && e.equationConverter !== null
   );
   if (!extension) return null;
-  let answer: { latex: string; display: boolean } | null = null;
-  converting.set(extension.id, (value) => {
+  const ticket = `t${nextTicket++}`;
+  let answer: ConvertedEquation | null = null;
+  let waiting = converting.get(extension.id);
+  if (!waiting) converting.set(extension.id, (waiting = new Map()));
+  waiting.set(ticket, (value) => {
     answer = value;
   });
   try {
     await hostFor(extension).invoke(extension.equationConverter!, {
-      value: { page: ref.page, bbox: ref.bbox, number: ref.number, equation: token },
+      value: {
+        page: ref.page,
+        bbox: ref.bbox,
+        number: ref.number,
+        equation: token,
+        ...(mode ? { mode } : {}),
+        ticket,
+      },
       timeoutMs: invokeTimeout(extension),
     });
   } catch (err) {
@@ -519,10 +561,42 @@ export async function convertEquation(
       `converter: ${err instanceof Error ? err.message : String(err)}`
     );
   } finally {
-    converting.delete(extension.id);
+    waiting.delete(ticket);
+    if (waiting.size === 0) converting.delete(extension.id);
   }
-  const got = answer as { latex: string; display: boolean } | null;
+  const got = answer as ConvertedEquation | null;
   return got ? { ...got, converter: extension.name } : null;
+}
+
+/** Documents whose equation source the converter was already asked to
+ * fetch, by converter and document. */
+const prefetched = new Set<string>();
+
+/** The pointer has reached an equation in `docId`: let the enabled converter
+ * start fetching the paper's exact source, once per document per session,
+ * so a send a moment later finds it ready. Only the converter (and only
+ * while it is enabled, which is the user's consent to its hosts) is told;
+ * it answers nothing and its failure is only logged. */
+export function prefetchEquationSource(docId: number): void {
+  const extension = state.extensions.find(
+    (e) => e.enabled && !e.error && e.equationConverter !== null
+  );
+  if (!extension) return;
+  const key = `${extension.id}\u0000${docId}`;
+  if (prefetched.has(key)) return;
+  prefetched.add(key);
+  void hostFor(extension)
+    .invoke(extension.equationConverter!, {
+      value: { mode: 'prefetch' },
+      timeoutMs: invokeTimeout(extension),
+    })
+    .catch((err: unknown) =>
+      appendLog(
+        extension.id,
+        'info',
+        `prefetch: ${err instanceof Error ? err.message : String(err)}`
+      )
+    );
 }
 
 /** Actions offered on a citation. */
@@ -871,12 +945,19 @@ async function handleCall(extension: ExtensionRecord, call: CallMessage): Promis
   if (call.api === 'ui.showMath') {
     // No permission: the popover is SpeedyF's, and only a formula goes in it.
     const args = readShowMathArgs(call.args);
-    const capture = converting.get(extension.id);
+    const ticket = (call.args as { ticket?: unknown } | undefined)?.ticket;
+    if (typeof ticket === 'string') ticketAware.add(extension.id);
+    const capture =
+      typeof ticket === 'string'
+        ? converting.get(extension.id)?.get(ticket)
+        : legacyCapture(extension.id);
     if (capture) {
       // Invoked as an equation converter: the formula is the answer.
-      capture({ latex: args.latex, display: args.display });
+      capture(args);
       return { shown: true };
     }
+    // A ticket nobody waits on any more: the conversion gave up. Not shown.
+    if (typeof ticket === 'string') return { shown: false };
     showMath(extension.id, args, selectionAnchor());
     return { shown: true };
   }

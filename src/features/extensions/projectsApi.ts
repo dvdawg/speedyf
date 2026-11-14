@@ -12,11 +12,17 @@ import {
   equationFor,
   insertIntoNote,
   readCitationEntries,
+  replaceInNote,
   revealInEditor,
   setCitations,
   setItemLine,
 } from './editorHost';
-import type { ExtensionEditor, ExtensionRecord } from './extensionStore';
+import type {
+  ConvertMode,
+  ConvertedEquation,
+  ExtensionEditor,
+  ExtensionRecord,
+} from './extensionStore';
 import { openItemAt } from './navigateItem';
 import { askReaderProject, readerItem, readerProjectId } from './readerContext';
 import { openProjectView, openReaderPane } from './surfaces';
@@ -209,6 +215,22 @@ export async function projectsApi(
       const offset = await insertIntoNote({ extensionId: extension.id, projectId, file }, text, at);
       return { offset };
     }
+    case 'editor.replace': {
+      const projectId = readProjectIdArg(args);
+      const file = editorFile(extension, args);
+      const { find, replace } = record;
+      if (typeof find !== 'string' || !find) throw new Error('expected a non-empty "find"');
+      if (typeof replace !== 'string') throw new Error('expected a string "replace"');
+      if (find.length > 200_000 || replace.length > 200_000) {
+        throw new Error('editor.replace takes at most 200 000 characters');
+      }
+      const replaced = await replaceInNote(
+        { extensionId: extension.id, projectId, file },
+        find,
+        replace
+      );
+      return { replaced };
+    }
     case 'editor.reveal': {
       const projectId = readProjectIdArg(args);
       const file = editorFile(extension, args);
@@ -230,16 +252,28 @@ export async function openApi(
   args: unknown,
   convert: (
     token: string,
-    ref: ReturnType<typeof equationFor>
-  ) => Promise<{ latex: string; display: boolean } | null>
+    ref: ReturnType<typeof equationFor>,
+    mode?: ConvertMode
+  ) => Promise<ConvertedEquation | null>
 ): Promise<unknown> {
   const record = (args ?? {}) as Record<string, unknown>;
   switch (api) {
     case 'equations.convert': {
       const token = record.equation;
       const ref = equationFor(token);
-      const answer = await convert(token as string, ref);
-      return answer ? { latex: answer.latex, display: answer.display } : null;
+      const mode = record.mode;
+      if (mode !== undefined && mode !== 'local' && mode !== 'exact') {
+        throw new Error('equations.convert: "mode" must be "local" or "exact"');
+      }
+      const answer = await convert(token as string, ref, mode);
+      return answer
+        ? {
+            latex: answer.latex,
+            display: answer.display,
+            source: answer.source,
+            confidence: answer.confidence,
+          }
+        : null;
     }
     case 'ui.itemLine': {
       const itemId = record.itemId;
