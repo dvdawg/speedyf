@@ -42,6 +42,10 @@
   /* Screen heads (Home panels, Projects): 30px of content between these
    * paddings, so a 20px title, a count and a --control-h control share it. */
   --screen-head-pad: 22px 28px 10px;
+  /* Motion: short and quiet, colour and opacity rather than movement. Every
+   * use sits under prefers-reduced-motion: no-preference (see the polish
+   * block below). */
+  --ease-quick: 120ms ease-out;
 }
 
 :root[data-theme='dark'] {
@@ -107,6 +111,70 @@ body {
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;
+}
+
+/* ---------- polish: motion ----------
+   One quiet language for the whole shell. Colour changes ease over
+   --ease-quick; popovers fade in from a hair under full size; nothing
+   bounces, nothing on the PDF page moves, and reduced motion turns all of
+   it off. Zero-specificity selectors, so a component's own rule wins. */
+@media (prefers-reduced-motion: no-preference) {
+  :where(
+    button,
+    a,
+    select,
+    [role='button'],
+    [role='option'],
+    [role='menuitem'],
+    [role='treeitem'],
+    .paper-row,
+    .paper-group-head,
+    .projects-row,
+    .palette-row,
+    .note-row,
+    .outline-row,
+    .figure-row,
+    .home-recent-row,
+    .ext-panel-row
+  ):not(:where(.page *, .graph-node)) {
+    transition:
+      background-color var(--ease-quick),
+      color var(--ease-quick),
+      border-color var(--ease-quick);
+  }
+
+  /* Opened, not closed: a menu that lingers on its way out is in the way. */
+  .palette,
+  .tab-menu,
+  .tab-preview,
+  .projects-menu,
+  .graph-view-menu,
+  .citation-popover,
+  .math-popover,
+  .note-picker {
+    animation: pop-in var(--ease-quick);
+  }
+
+  /* The drawer's box takes its width at once, so the page re-fits once and
+     never per frame; only its paint slides a few px and fades. Never on a
+     resize drag: the animation runs when the drawer mounts, nowhere else. */
+  .reader-pane {
+    animation: drawer-in 170ms ease-out;
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    scale: 0.98;
+  }
+}
+
+@keyframes drawer-in {
+  from {
+    opacity: 0;
+    translate: 6px 0;
+  }
 }
 
 /* ---------- shell ---------- */
