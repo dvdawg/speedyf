@@ -5,10 +5,11 @@
  * CommonMark and Pandoc read them where they agree, plus Pandoc's citations.
  * Anything it does not recognise is shown as the text it is. */
 
-export type BlockKind = 'line' | 'math' | 'code';
+export type BlockKind = 'line' | 'math' | 'code' | 'quote';
 
-/** A run of the note's text that is edited and drawn as one: a line, or a
- * `$$ ... $$` / fenced block spanning several. Joining every block's `raw`
+/** A run of the note's text that is edited and drawn as one: a line, a
+ * `$$ ... $$` / fenced block spanning several, or a run of consecutive `>`
+ * lines, which reads as one block quote. Joining every block's `raw`
  * with newlines gives the note back exactly. */
 export interface BlockSpan {
   kind: BlockKind;
@@ -18,6 +19,7 @@ export interface BlockSpan {
 }
 
 const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
+const QUOTE = /^\s*>/;
 
 /** Cut a note into blocks. Linear in its length, and the only pass over the
  * whole text an edit costs. */
@@ -49,6 +51,11 @@ export function splitBlocks(text: string): BlockSpan[] {
         end = i + 1;
         while (end < lines.length && !lines[end]!.trim().startsWith(mark)) end++;
         if (end >= lines.length) end = lines.length - 1;
+      } else if (QUOTE.test(line)) {
+        // A quote of several paragraphs is one block, drawn with one border:
+        // `>` lines run on, a bare `>` between paragraphs included.
+        kind = 'quote';
+        while (end + 1 < lines.length && QUOTE.test(lines[end + 1]!)) end++;
       }
     }
     const raw = lines.slice(i, end + 1).join('\n');
@@ -304,7 +311,7 @@ export function inlineSpans(text: string): Span[] {
 export function citationsIn(text: string): { cite: Citation; offset: number }[] {
   const out: { cite: Citation; offset: number }[] = [];
   for (const block of splitBlocks(text)) {
-    if (block.kind !== 'line') continue;
+    if (block.kind === 'math' || block.kind === 'code') continue;
     let searchFrom = 0;
     const walk = (spans: Span[]) => {
       for (const span of spans) {

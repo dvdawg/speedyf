@@ -139,6 +139,33 @@ describe('the note editor', () => {
     expect(host.noteSessions().get(KEY)!.text()).toBe('first line\nsecond line');
   });
 
+  it('renders consecutive quote lines as one quote, and continues it on Enter', async () => {
+    const { view, state } = mount(
+      'Before.\n\n> First paragraph.\n>\n> Second [@attias2022quantum, p. 12]{box=1,2,3,4}\n\nAfter.'
+    );
+    await settle();
+    const root = view.container;
+    const quotes = root.querySelectorAll('.np-quote');
+    expect(quotes).toHaveLength(1);
+    const lines = [...quotes[0]!.querySelectorAll('.np-quote-line')].map((l) => l.textContent);
+    expect(lines).toEqual(['First paragraph.', 'Second [AS22, p. 12]']);
+    expect(quotes[0]!.querySelectorAll('.np-quote-gap')).toHaveLength(1);
+    // Clicked, the whole quote is edited as its source.
+    fireEvent.click(quotes[0]!.closest('.note-block')!);
+    await settle();
+    const field = root.querySelector<HTMLTextAreaElement>('.note-field')!;
+    expect(field.value).toBe(
+      '> First paragraph.\n>\n> Second [@attias2022quantum, p. 12]{box=1,2,3,4}'
+    );
+    // Enter at the end of its first line continues the quote.
+    field.setSelectionRange(18, 18);
+    fireEvent.keyDown(field, { key: 'Enter' });
+    await settle();
+    expect(state.text).toBe(
+      'Before.\n\n> First paragraph.\n> \n>\n> Second [@attias2022quantum, p. 12]{box=1,2,3,4}\n\nAfter.'
+    );
+  });
+
   it('does not split or re-cut while an input method is composing', async () => {
     const { view } = mount('abc');
     await settle();

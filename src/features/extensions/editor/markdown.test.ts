@@ -51,6 +51,19 @@ describe('note blocks', () => {
     expect(splitBlocks('')).toEqual([{ kind: 'line', raw: '', start: 0 }]);
   });
 
+  it('keeps a run of quote lines together as one quote block', () => {
+    const text = 'intro\n> one\n>\n> two [@k]\n\n> again';
+    const blocks = splitBlocks(text);
+    expect(blocks.map((b) => [b.kind, b.raw])).toEqual([
+      ['line', 'intro'],
+      ['quote', '> one\n>\n> two [@k]'],
+      ['line', ''],
+      ['quote', '> again'],
+    ]);
+    expect(blocks.map((b) => b.raw).join('\n')).toBe(text);
+    expect(citationsIn(text).map((c) => c.offset)).toEqual([text.indexOf('[@k]')]);
+  });
+
   it('reads line shapes', () => {
     expect(lineShape('## Sub')).toEqual({ kind: 'heading', level: 2, body: 'Sub' });
     expect(lineShape('  - a')).toMatchObject({ kind: 'bullet', indent: 2, body: 'a' });

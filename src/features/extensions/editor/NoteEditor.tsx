@@ -343,12 +343,15 @@ function EditorBody(props: BodyProps) {
     };
     const after = activeStart + ta.selectionStart;
     const block = active();
+    // A line that became more than one, or a quote with a line that is no
+    // longer quoted, is re-cut at once.
     const structural =
       !composing &&
-      block?.kind === 'line' &&
-      (value.includes('\n') ||
-        value.trimStart().startsWith('$$') ||
-        /^\s{0,3}(```|~~~)/.test(value));
+      ((block?.kind === 'line' &&
+        (value.includes('\n') ||
+          value.trimStart().startsWith('$$') ||
+          /^\s{0,3}(```|~~~)/.test(value))) ||
+        (block?.kind === 'quote' && value.split('\n').some((l) => lineShape(l).kind !== 'quote')));
     commit(op, before, after, structural);
     if (!composing && !structural) updatePicker(value, ta.selectionStart);
   };
@@ -444,14 +447,19 @@ function EditorBody(props: BodyProps) {
     const collapsed = start === end;
     const list = blocks();
     const index = list.indexOf(block);
-    if (e.key === 'Enter' && !e.shiftKey && block.kind === 'line') {
+    if (e.key === 'Enter' && !e.shiftKey && (block.kind === 'line' || block.kind === 'quote')) {
       e.preventDefault();
-      const tail = ta.value.slice(end);
-      const marker = tail === '' ? continueList(ta.value) : null;
+      // The line the caret is on: the whole value for a line, one of its
+      // lines for a quote.
+      const lineFrom = ta.value.lastIndexOf('\n', start - 1) + 1;
+      const newline = ta.value.indexOf('\n', end);
+      const lineTo = newline < 0 ? ta.value.length : newline;
+      const tail = ta.value.slice(end, lineTo);
+      const marker = tail === '' ? continueList(ta.value.slice(lineFrom, lineTo)) : null;
       if (marker === '') {
         // An empty list item ends the list: the marker goes.
-        const op: Op = { from: activeStart, to: activeStart + ta.value.length, insert: '' };
-        commit(op, caret, activeStart, true);
+        const op: Op = { from: activeStart + lineFrom, to: activeStart + lineTo, insert: '' };
+        commit(op, caret, activeStart + lineFrom, true);
         return;
       }
       const insert = `\n${marker ?? ''}`;
@@ -767,7 +775,7 @@ function EditorBody(props: BodyProps) {
                         el.setAttribute('writingsuggestions', 'false');
                       }}
                       class="note-field"
-                      classList={{ 'is-mono': block.kind !== 'line' }}
+                      classList={{ 'is-mono': block.kind === 'math' || block.kind === 'code' }}
                       placeholder={blank() ? props.placeholder : undefined}
                       rows={1}
                       spellcheck={true}
@@ -1036,8 +1044,7 @@ function drawBlock(args: {
   if (block.kind === 'code') {
     return <pre class="np-pre">{codeSource(block.raw)}</pre>;
   }
-  const shape = lineShape(block.raw);
-  const inline = (text: string) => (
+  const inlineSpansOf = (text: string) => (
     <Spans
       spans={inlineSpans(text)}
       index={args.index()}
@@ -1045,6 +1052,32 @@ function drawBlock(args: {
       onCite={args.onCite}
     />
   );
+  if (block.kind === 'quote') {
+    // One border for the whole run; a bare `>` is the gap between its
+    // paragraphs.
+    return (
+      <div class="np-quote">
+        <For each={block.raw.split('\n')}>
+          {(line) => {
+            const shape = lineShape(line);
+            if (shape.kind !== 'quote' || shape.body.trim() === '') {
+              return <div class="np-quote-gap" />;
+            }
+            return (
+              <div
+                class="np-quote-line"
+                style={shape.depth > 1 ? { 'margin-left': `${(shape.depth - 1) * 0.8}em` } : {}}
+              >
+                {inlineSpansOf(shape.body)}
+              </div>
+            );
+          }}
+        </For>
+      </div>
+    );
+  }
+  const shape = lineShape(block.raw);
+  const inline = inlineSpansOf;
   switch (shape.kind) {
     case 'blank':
       return <div class="np-blank" />;
