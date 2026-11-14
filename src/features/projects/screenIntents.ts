@@ -50,6 +50,55 @@ export function requestMerge(): boolean {
   return true;
 }
 
+/** The graph's find: how many of what is drawn match the query, which of
+ * them is current, and the way between them. The graph leaves it here
+ * while mounted; the search field above it reads it. A signal, since the
+ * field is drawn before the graph that answers it. */
+export interface GraphFind {
+  /** Null while the query is blank; `current` is 1-based, 0 for none. */
+  status: () => { total: number; current: number } | null;
+  /** Pans to the next match (-1: the previous) and selects it. */
+  step: (dir: 1 | -1) => void;
+  /** Hands the keyboard back to the drawing. */
+  focusCanvas: () => void;
+}
+
+const [find, setFind] = createSignal<GraphFind | null>(null);
+let findNow: GraphFind | null = null;
+let findField: (() => void) | null = null;
+
+/** Returns the unregister. */
+export function registerGraphFind(controls: GraphFind): () => void {
+  findNow = controls;
+  setFind(() => controls);
+  return () => {
+    if (findNow !== controls) return;
+    findNow = null;
+    setFind(null);
+  };
+}
+
+/** The graph's find, if a graph is on screen. Reactive. */
+export function graphFind(): GraphFind | null {
+  return find();
+}
+
+/** The middle column's search field, for Cmd+F over the graph. Returns
+ * the unregister. */
+export function registerFindField(focus: () => void): () => void {
+  findField = focus;
+  return () => {
+    if (findField === focus) findField = null;
+  };
+}
+
+/** Focuses the search field; false when none is there. */
+export function focusFindField(): boolean {
+  if (!findField) return false;
+  findField();
+  return true;
+}
+
 /* ---- requests ---- */
 
 const [newProject, setNewProject] = createSignal(false);

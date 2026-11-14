@@ -26,6 +26,7 @@ import { searchFullText } from './fullTextHandoff';
 import { clearPositions, loadPositions, positionsKey } from './graphPositions';
 import { healthCount, projectsStore, sameScope, type Scope } from './projectsStore';
 import {
+  focusFindField,
   graphControls,
   requestMerge,
   requestNewProject,
@@ -236,6 +237,19 @@ export const PROJECT_COMMANDS: readonly Command[] = [
       if (controls && graphShowing(ctx) && !store.state.missingList) controls.fit();
       // A graph that arrives is fitted as it arrives.
       else showGraph();
+    },
+  },
+  {
+    id: 'library.findInGraph',
+    title: 'Find in Graph',
+    group: 'Library',
+    // Cmd+F, shared with Find in Document (shortcuts.ts tries this first),
+    // so no `shortcut` here: the registry lists each chord once.
+    keywords: ['search', 'citation', 'spotlight', 'filter'],
+    enabled: (ctx) => graphShowing(ctx) && !store.state.missingList,
+    disabledReason: 'needs the graph on the Projects screen',
+    run: () => {
+      focusFindField();
     },
   },
   {

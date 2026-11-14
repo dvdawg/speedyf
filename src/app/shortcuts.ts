@@ -45,6 +45,8 @@ interface Binding {
    * letting one through means the webview answers it (⌘P opening its own
    * print dialog for the viewer's DOM is the case that bites). */
   preventAlways?: boolean;
+  /** When the command does not run, the next binding for the key is tried. */
+  fallThrough?: boolean;
 }
 
 const BINDINGS: readonly Binding[] = [
@@ -78,6 +80,15 @@ const BINDINGS: readonly Binding[] = [
     id: 'file.reopenClosedTab',
     whileTyping: true,
     preventAlways: true,
+  },
+  // Over the Projects graph Cmd+F finds in the graph; anywhere else the
+  // chord falls through to the reader's find.
+  {
+    key: 'f',
+    mod: true,
+    id: 'library.findInGraph',
+    whileTyping: true,
+    fallThrough: true,
   },
   {
     key: 'f',
@@ -264,6 +275,7 @@ export function installShortcuts(): () => void {
       if (!matches(binding, e, mod)) continue;
       if (typing && !binding.whileTyping) return;
       const ran = runCommand(binding.id, ctx);
+      if (!ran && binding.fallThrough) continue;
       if (ran || binding.preventAlways) e.preventDefault();
       return;
     }
