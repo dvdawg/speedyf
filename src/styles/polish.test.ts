@@ -105,6 +105,47 @@ describe('polish: numerals', () => {
   });
 });
 
+describe('polish: rows', () => {
+  /** The declarations of the first rule whose selector list is exactly `selector`. */
+  function rule(selector: string): string {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = new RegExp(`(?:^|})\\s*${escaped}\\s*\\{([^}]*)\\}`).exec(css);
+    if (!match) throw new Error(`no rule for ${selector}`);
+    return match[1]!;
+  }
+
+  it('defines one hover, selection and radius', () => {
+    for (const token of ['--row-hover', '--row-selected', '--row-selected-text', '--row-radius']) {
+      expect(rootTokens()).toContain(`${token}:`);
+    }
+  });
+
+  it('gives every list-like row the shared hover and selection', () => {
+    for (const sel of [
+      '.paper-row:hover',
+      '.projects-row:hover',
+      '.home-recent-row:hover',
+      '.note-row:hover',
+      '.outline-row:hover:not(:disabled)',
+      '.search-result:hover',
+      '.library-result-hit:hover',
+      '.ext-panel-row.is-actionable:hover',
+      '.note-picker-row:hover',
+    ]) {
+      expect(rule(sel), sel).toContain('var(--row-hover)');
+    }
+    for (const sel of [
+      '.paper-row.is-selected',
+      '.projects-row.is-active',
+      '.palette-row.is-active',
+      '.search-result.is-current',
+      '.note-picker-row.is-current',
+    ]) {
+      expect(rule(sel), sel).toContain('var(--row-selected)');
+    }
+  });
+});
+
 describe('polish: scrollbars', () => {
   it('thins the columns from shared tokens and leaves the page viewport alone', () => {
     expect(rootTokens()).toMatch(/--scrollbar-thumb:/);

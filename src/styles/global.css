@@ -51,6 +51,13 @@
   /* Scrollbar thumbs in the columns: between a rule and dim text. */
   --scrollbar-thumb: color-mix(in srgb, var(--border) 60%, var(--text-dim));
   --scrollbar-thumb-hover: color-mix(in srgb, var(--border) 25%, var(--text-dim));
+  /* One hover and selection for every list-like row. The hover is a wash of
+   * the text colour rather than an opaque fill, so it reads on whatever
+   * surface the row sits on, in either theme. */
+  --row-hover: color-mix(in srgb, var(--text) 6%, transparent);
+  --row-selected: var(--accent-soft);
+  --row-selected-text: var(--text);
+  --row-radius: 6px;
 }
 
 :root[data-theme='dark'] {
@@ -293,6 +300,23 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---------- polish: rows ----------
+   The row tokens are applied in each row's own rule; what is gathered here
+   is what some rows lacked: a hover where the pointer can pick, and the
+   shared focus ring for keyboard focus. */
+.note-picker-row:hover {
+  background: var(--row-hover);
+}
+
+.outline-row:focus-visible,
+.note-row:focus-visible,
+.figure-row:focus-visible,
+.library-result-head:focus-visible,
+.library-result-hit:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 /* ---------- shell ---------- */
 .app-shell {
   display: flex;
@@ -511,7 +535,7 @@ body {
   width: 100%;
   padding: 9px 10px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--row-radius);
   background: transparent;
   color: var(--text);
   text-align: left;
@@ -520,7 +544,7 @@ body {
 }
 
 .home-recent-row:hover {
-  background: var(--bg-inset);
+  background: var(--row-hover);
 }
 
 .home-recent-top {
@@ -2091,11 +2115,11 @@ html.is-dragging-tab * {
   font-size: 13px;
   line-height: 1.35;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--row-radius);
 }
 
 .outline-row:hover:not(:disabled) {
-  background: var(--bg-inset);
+  background: var(--row-hover);
 }
 
 /* Scripts recovered from a PDF's geometry. The reduced size keeps a
@@ -2293,7 +2317,8 @@ html.is-dragging-tab * {
 }
 
 .library-result-head:hover {
-  background: var(--accent-soft);
+  /* The wash over the head's own inset fill, not in place of it. */
+  background: linear-gradient(var(--row-hover), var(--row-hover)) var(--bg-inset);
 }
 
 .library-result-title {
@@ -2346,7 +2371,7 @@ html.is-dragging-tab * {
 }
 
 .library-result-hit:hover {
-  background: var(--bg-inset);
+  background: var(--row-hover);
   color: var(--text);
 }
 
@@ -2495,7 +2520,7 @@ html.is-dragging-tab * {
   width: 100%;
   padding: 8px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--row-radius);
   background: transparent;
   color: var(--text);
   text-align: left;
@@ -2504,7 +2529,7 @@ html.is-dragging-tab * {
 }
 
 .note-row:hover {
-  background: var(--bg-inset);
+  background: var(--row-hover);
 }
 
 /* The annotation's own color, so the list scans the way the page does. */
@@ -2794,7 +2819,7 @@ html.is-dragging-tab * {
   width: 100%;
   padding: 8px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--row-radius);
   background: transparent;
   color: var(--text);
   text-align: left;
@@ -2803,7 +2828,7 @@ html.is-dragging-tab * {
 }
 
 .figure-row:hover {
-  background: var(--bg-inset);
+  background: var(--row-hover);
   border-color: var(--border);
 }
 
@@ -2894,7 +2919,7 @@ html.is-dragging-tab * {
   background: none;
   color: var(--text);
   padding: 6px 8px;
-  border-radius: 6px;
+  border-radius: var(--row-radius);
   cursor: pointer;
   font: inherit;
   white-space: nowrap;
@@ -2903,7 +2928,7 @@ html.is-dragging-tab * {
 }
 
 .search-result:hover {
-  background: var(--bg-inset);
+  background: var(--row-hover);
 }
 
 .search-result-text {
@@ -2930,8 +2955,8 @@ html.is-dragging-tab * {
 }
 
 .search-result.is-current {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--row-selected);
+  color: var(--row-selected-text);
 }
 
 .panel-head {
@@ -3318,7 +3343,7 @@ html.is-dragging-tab * {
   font: inherit;
   font-size: 13px;
   line-height: 1.35;
-  border-radius: 4px;
+  border-radius: var(--row-radius);
   cursor: pointer;
 }
 
@@ -3331,7 +3356,7 @@ html.is-dragging-tab * {
 }
 
 .palette-row.is-active {
-  background: var(--accent-soft);
+  background: var(--row-selected);
   border-left-color: var(--accent);
 }
 
@@ -3731,7 +3756,7 @@ html.is-dragging-tab * {
   gap: 8px;
   padding: 7px 8px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--row-radius);
 }
 
 /* A row that belongs to the one above it — the places a reference is cited,
@@ -3773,7 +3798,7 @@ html.is-dragging-tab * {
 }
 
 .ext-panel-row.is-actionable:hover {
-  background: var(--bg-inset);
+  background: var(--row-hover);
   border-color: var(--border);
 }
 
@@ -4772,18 +4797,18 @@ body.is-resizing-sidebar * {
   gap: 6px;
   min-height: 28px;
   padding: 0 8px;
-  border-radius: 6px;
+  border-radius: var(--row-radius);
   color: var(--text);
   cursor: default;
 }
 
 .projects-row:hover {
-  background: var(--bg-inset);
+  background: var(--row-hover);
 }
 
 .projects-row.is-active {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--row-selected);
+  color: var(--row-selected-text);
 }
 
 .projects-row.is-drop-target {
@@ -5105,12 +5130,12 @@ body.is-resizing-sidebar * {
   align-items: center;
   gap: 12px;
   padding: 5px 8px;
-  border-radius: 6px;
+  border-radius: var(--row-radius);
   cursor: default;
 }
 
 .paper-row:hover {
-  background: var(--bg-inset);
+  background: var(--row-hover);
 }
 
 .paper-row.is-multi {
@@ -5118,7 +5143,7 @@ body.is-resizing-sidebar * {
 }
 
 .paper-row.is-selected {
-  background: var(--accent-soft);
+  background: var(--row-selected);
 }
 
 .paper-row.is-missing .paper-row-main {
@@ -7450,12 +7475,12 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   display: flex;
   flex-direction: column;
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: var(--row-radius);
   cursor: pointer;
 }
 
 .note-picker-row.is-current {
-  background: var(--accent-soft);
+  background: var(--row-selected);
 }
 
 .note-picker-title {
