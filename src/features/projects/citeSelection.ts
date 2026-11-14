@@ -10,6 +10,10 @@
  * while it is mounted; the Library command reads it from here, and falls
  * back to the open document when nothing is registered or selected. */
 import { engine } from '../../lib/transport/engine';
+import { flashStatus } from '../../stores/statusMessage';
+
+/** What the status bar says after a \cite{} copy nothing else confirms. */
+export const COPIED_CITE = 'Copied \\cite';
 
 export interface CiteRow {
   id: string;
@@ -79,7 +83,8 @@ export function copyListSelection(): boolean {
   const rows = current?.rows() ?? [];
   if (!current || rows.length === 0) return false;
   void copyCite(rows).then((ok) => {
-    if (!ok) current.failed();
+    if (ok) flashStatus(COPIED_CITE);
+    else current.failed();
   });
   return true;
 }

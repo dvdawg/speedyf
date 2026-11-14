@@ -36,7 +36,13 @@ import {
 } from '../features/projects/activePaper';
 import { engine } from '../lib/transport/engine';
 import { openQuickOpen } from '../features/palette/quickOpenStore';
-import { citeSelection, copyCite, copyListSelection } from '../features/projects/citeSelection';
+import {
+  citeSelection,
+  copyCite,
+  copyListSelection,
+  COPIED_CITE,
+} from '../features/projects/citeSelection';
+import { flashStatus } from '../stores/statusMessage';
 import { PROJECT_COMMANDS } from '../features/projects/projectCommands';
 import { setUi, ui, type SidebarMode } from '../stores/uiStore';
 import { tabsStore, type TabRecord } from '../stores/tabsStore';
@@ -167,7 +173,10 @@ async function paperForActiveTab(): Promise<Paper | null> {
  * an await and may be refused. That case, and a file with no record at all,
  * both end in the Paper panel, where the same text can be copied by hand.
  */
-async function copyFromPaper(text: (paper: Paper) => string | Promise<string>): Promise<void> {
+async function copyFromPaper(
+  text: (paper: Paper) => string | Promise<string>,
+  said: string
+): Promise<void> {
   const paper = await paperForActiveTab();
   if (!paper) {
     showPaperPanel();
@@ -184,7 +193,10 @@ async function copyFromPaper(text: (paper: Paper) => string | Promise<string>): 
     await navigator.clipboard.writeText(value);
   } catch {
     showPaperPanel();
+    return;
   }
+  // Nothing on screen changes for a copy by key or palette: say it.
+  flashStatus(said);
 }
 
 /** \cite{} for the Projects list's selection when the list is showing
@@ -196,6 +208,7 @@ async function copyCiteSelection(ctx: CommandCtx): Promise<void> {
   if (ctx.tab === null && copyListSelection()) return;
   const paper = await paperForActiveTab();
   if (!paper || !(await copyCite([paper]))) showPaperPanel();
+  else flashStatus(COPIED_CITE);
 }
 
 async function lookUpActivePaper(): Promise<void> {
@@ -504,7 +517,7 @@ export const COMMANDS: readonly Command[] = [
     shortcut: 'mod+shift+c',
     keywords: ['citation', 'bibtex', 'key', 'clipboard', 'latex'],
     enabled: loaded,
-    run: () => void copyFromPaper((paper) => paper.citeKey),
+    run: () => void copyFromPaper((paper) => paper.citeKey, 'Copied cite key'),
   },
   {
     id: 'library.copyCiteSelection',
@@ -522,7 +535,7 @@ export const COMMANDS: readonly Command[] = [
     group: 'Library',
     keywords: ['citation', 'entry', 'clipboard', 'latex', 'reference'],
     enabled: loaded,
-    run: () => void copyFromPaper((paper) => engine.libraryBibtex([paper.id])),
+    run: () => void copyFromPaper((paper) => engine.libraryBibtex([paper.id]), 'Copied BibTeX'),
   },
   {
     id: 'library.showPaperPanel',
