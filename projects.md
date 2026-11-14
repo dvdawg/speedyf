@@ -1110,7 +1110,8 @@ generic, permission-gated extension APIs (`extension_api.md` sec. 7 and 8,
 - **The drawer and the Projects view edit the same note live**, in one
   window or across windows: the core holds one in-memory document per note,
   and every view is a client of it.
-- **Palette:** _Open Notepad_, _Quote to Notepad_ (with a selection), _Send
+- **Palette:** _Open Notepad_, _Quote to Notepad_ (with a selection; also
+  a small **Quote** button by the selection and Cmd+Shift+E), _Send
   Region to Notepad_ (in the reader). The equation hover button gains _Send
   to Notepad_.
 - **Backlinks.** The Projects detail column shows one quiet line, "Mentioned
@@ -1186,13 +1187,18 @@ several, a small picker asks once and the answer is kept for the session
 (the drawer's switcher sets it too); if it is in none, the actions are not
 offered.
 
-- **Quote to Notepad** (a selection action) appends
-  `> "selected text" [@key, p. 12]{box=...}`. The text is escaped so it
-  stays one quote block and reads as itself: whitespace, newlines included,
-  collapses to single spaces, and every character Markdown or a citation
-  would take for markup (backslash, backtick, `*`, `_`, `[`, `]`, `{`, `}`,
-  `<`, `>`, `$`, `@`, `|`, `~`, and a leading `#`, `-`, `+` or `1.`) is
-  backslash-escaped.
+- **Quote to Notepad** (a selection action: the small **Quote** button by a
+  selection, Cmd+Shift+E, or the palette) appends a block quote that keeps
+  the selection's paragraphs: `> one ...`, a bare `>`, then
+  `> two ... [@key, p. 12]{box=...}`, the page link on the last line. Lines wrapped within a
+  paragraph are rejoined (a word hyphenated at a line end put back
+  together, as smart copy does); within a paragraph whitespace collapses
+  to single spaces, and every character Markdown or a citation would take
+  for markup (backslash, backtick, `*`, `_`, `[`, `]`, `{`, `}`, `<`, `>`,
+  `$`, `@`, `|`, `~`, and a leading `#`, `-`, `+` or `1.`) is
+  backslash-escaped. A selection over a page break links to where it
+  begins; a long one is quoted whole. The editor draws consecutive `>`
+  lines as one quote.
 - **Send to Notepad** (an equation action) asks the core for the equation's
   LaTeX. The core asks whichever enabled extension provides an
   `equationConverter`; Math to LaTeX does when it is enabled. With LaTeX, the

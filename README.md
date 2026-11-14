@@ -54,7 +54,9 @@ manual QA before a public release.
   screen in the right-hand column while a project is selected and no item
   is (drag items onto it to cite them), the same note live in both and
   across windows. `@`
-  cites an item of the project ("Attias 2022"); _Quote to Notepad_, the
+  cites an item of the project ("Attias 2022"); _Quote to Notepad_ (the
+  small **Quote** button by a selection, or Cmd+Shift+E; paragraphs are
+  kept, as one block quote), the
   equation button's _Send to Notepad_ (LaTeX when Math to LaTeX is on, a
   picture otherwise) and _Send Region to Notepad_ write with a link back to
   the place on the page. Saved half a second after typing stops, beside
@@ -180,6 +182,15 @@ there with Cmd+O (Ctrl+O), Home's **Open PDF...** button or the palette. Theme, 
 | Zoom to column             | `Cmd+Option+0`          | `Ctrl+Alt+0`              |
 | Previous/next page         | Page Up / Page Down     | Page Up / Page Down       |
 | Close panel/tool/selection | Escape                  | Escape                    |
+
+**Quoting into the Notepad.** In a paper that belongs to a project, select
+text and let go: a small **Quote** button appears just past the end of the
+selection. Click it (or press Cmd+Shift+E, Ctrl+Shift+E elsewhere) to add the
+passage to the project's notepad as a block quote, its paragraphs kept and
+lines wrapped on the page rejoined, with a link back to the page on its last
+line. The button goes away when you scroll, change or clear the selection,
+press Escape or pick up a drawing tool; it never appears for a PDF in no
+project.
 
 **Column zoom** reads a two- or three-column paper one column at a time.
 Double-click blank space inside a column (between lines or paragraphs; a

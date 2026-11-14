@@ -223,22 +223,22 @@ whenever they suffice.
 
 ## Contribution points
 
-| Point               | What it does                                                                            |
-| ------------------- | --------------------------------------------------------------------------------------- |
-| `commands`          | Entries in the command palette (Cmd+Shift+P).                                           |
-| `keybindings`       | A key chord that invokes one of your commands.                                          |
-| `panels`            | A tab in the sidebar, drawn from a description you send.                                |
-| `selectionActions`  | Offered in the palette when text is selected; your command receives the selected text.  |
-| `citationActions`   | A button on the citation hover popover; your command receives `doi:...` or `arxiv:...`. |
-| `documentTasks`     | A batch job over a whole document, offered in the palette.                              |
-| `settings`          | Fields rendered in the Extensions panel; `type` is `text`, `checkbox` or `select`.      |
-| `referenceProvider` | `{ "command": "<id>" }`: reads library documents' reference lists at idle (below).      |
-| `equationActions`   | A button on each display equation SpeedyF detects; your command receives the block.     |
-| `termProvider`      | `{ "command": "<id>" }`: the terms a document defines, previewed on hover (below).      |
-| `readerPanes`       | A drawer on the right of the reader holding a Markdown editor (below).                  |
-| `projectViews`      | A project's pane in the Projects detail column, holding the same editor (below).        |
-| `itemDetailLines`   | `{ "command": "<id>" }`: one quiet line in the Projects item detail column (below).     |
-| `equationConverter` | `{ "command": "<id>" }`: an equation as LaTeX, for whoever asks the core (below).       |
+| Point               | What it does                                                                             |
+| ------------------- | ---------------------------------------------------------------------------------------- |
+| `commands`          | Entries in the command palette (Cmd+Shift+P).                                            |
+| `keybindings`       | A key chord that invokes one of your commands.                                           |
+| `panels`            | A tab in the sidebar, drawn from a description you send.                                 |
+| `selectionActions`  | A small button by a page selection, and a palette entry; your command receives the text. |
+| `citationActions`   | A button on the citation hover popover; your command receives `doi:...` or `arxiv:...`.  |
+| `documentTasks`     | A batch job over a whole document, offered in the palette.                               |
+| `settings`          | Fields rendered in the Extensions panel; `type` is `text`, `checkbox` or `select`.       |
+| `referenceProvider` | `{ "command": "<id>" }`: reads library documents' reference lists at idle (below).       |
+| `equationActions`   | A button on each display equation SpeedyF detects; your command receives the block.      |
+| `termProvider`      | `{ "command": "<id>" }`: the terms a document defines, previewed on hover (below).       |
+| `readerPanes`       | A drawer on the right of the reader holding a Markdown editor (below).                   |
+| `projectViews`      | A project's pane in the Projects detail column, holding the same editor (below).         |
+| `itemDetailLines`   | `{ "command": "<id>" }`: one quiet line in the Projects item detail column (below).      |
+| `equationConverter` | `{ "command": "<id>" }`: an equation as LaTeX, for whoever asks the core (below).        |
 
 ### `equationActions`
 
@@ -398,7 +398,18 @@ refused and reported in the Extensions panel - built-ins always win. If two
 extensions want the same chord, the first installed keeps it.
 
 A keybinding on a command that is _also_ a selection action receives the current
-selection, exactly as the palette does.
+selection, exactly as the palette does. It fires only while text is selected on
+the page and the action's `when` holds; otherwise it does nothing.
+
+**Selection actions** are offered two ways: in the palette while text is
+selected, and as a small text button just past the end of a selection on a
+page, shown once the pointer is let go (the first word of each title, "Quote"
+for "Quote to Notepad", when that tells them apart; at most three). The button
+hides on scroll, a new or cleared selection, Escape and while a drawing tool
+is out, and pressing it keeps the selection. The text your command receives is
+SpeedyF's smart copy of the selection: ligatures expanded, lines wrapped within
+a paragraph joined (a word hyphenated across a line end rejoined), and
+paragraphs separated by a blank line.
 
 ---
 
