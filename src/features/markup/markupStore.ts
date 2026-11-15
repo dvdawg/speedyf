@@ -32,7 +32,7 @@ import {
 } from './labels';
 import { buildEntries, newCommentId, parseMarkup, serializeMarkup, type Entry } from './model';
 import { buildCiteIndex, EMPTY_INDEX, type CiteIndex } from './citations';
-import { markupTransport, type MarkupTransport } from './markupTransport';
+import { markupApi } from '../../lib/transport/markup';
 import {
   emptyMarkup,
   MARKUP_EXTENSION_ID,
@@ -42,7 +42,10 @@ import {
   type MarkupDoc,
 } from './types';
 
-let transport: MarkupTransport = markupTransport;
+/** The backend's Markup calls; a fake in tests. */
+export type MarkupTransport = Pick<typeof markupApi, 'load' | 'save' | 'exportPdf'>;
+
+let transport: MarkupTransport = markupApi;
 
 /** For tests: talk to a fake backend. */
 export function setMarkupTransport(next: MarkupTransport): void {

@@ -175,12 +175,12 @@ describe('sheets', () => {
 
   it('links each entry number to its place on the page', async () => {
     const request = await buildExportRequest(input(list));
-    const targets = request.sheets[0]!.links.map((l) => l.target);
+    const targets = request.sheets[0]!.links!.map((l) => l.target);
     expect(targets).toContainEqual({ kind: 'page', page: 0, y: 76 });
     expect(targets).toContainEqual({ kind: 'page', page: 1, y: 276 });
     // The folded repeat's "also" link.
     expect(targets).toContainEqual({ kind: 'page', page: 1, y: 576 });
-    for (const link of request.sheets[0]!.links) {
+    for (const link of request.sheets[0]!.links!) {
       expect(link.rect.x).toBeGreaterThanOrEqual(feedbackColumn(792).left);
       expect(link.rect.y).toBeGreaterThanOrEqual(FEEDBACK.top);
     }
@@ -189,9 +189,9 @@ describe('sheets', () => {
   it('links each margin note to its entry in the letter, the repeat to the first', async () => {
     const request = await buildExportRequest(input(list));
     const margin = request.sheets[2]!;
-    expect(margin.links).toHaveLength(3);
-    for (const link of margin.links) expect(link.target).toMatchObject({ kind: 'sheet', sheet: 0 });
-    const ys = margin.links.map((l) => (l.target as { y: number }).y);
+    expect(margin.links!).toHaveLength(3);
+    for (const link of margin.links!) expect(link.target).toMatchObject({ kind: 'sheet', sheet: 0 });
+    const ys = margin.links!.map((l) => (l.target as { y: number }).y);
     expect(ys[0]).toBe(ys[2]);
     expect(margin.html).toContain('mk-margin');
     expect(margin.html).toContain(
@@ -232,7 +232,7 @@ describe('sheets', () => {
     expect(feedback.at(-1)!.html).toContain(`${feedback.length} of ${feedback.length}`);
     // Margin notes say which page of the letter to see.
     const margin = request.sheets.find((s) => s.kind === 'margin')!;
-    const sheetTargets = new Set(margin.links.map((l) => (l.target as { sheet: number }).sheet));
+    const sheetTargets = new Set(margin.links!.map((l) => (l.target as { sheet: number }).sheet));
     expect(sheetTargets.size).toBeGreaterThan(1);
   });
 });

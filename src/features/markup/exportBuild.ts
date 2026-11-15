@@ -32,12 +32,12 @@ import {
 } from './model';
 import { layoutMargin, MARGIN, paginate, type FlowBlock } from './layout';
 import type {
-  ExportMark,
-  ExportSheet,
-  LinkTarget,
   MarkupExportRequest,
-  SheetLink,
-} from './markupTransport';
+  MarkupLinkTarget as LinkTarget,
+  MarkupMark as ExportMark,
+  MarkupSheet as ExportSheet,
+  MarkupSheetLink as SheetLink,
+} from '../../lib/transport/markup';
 import { KIND_LABEL, type MarkupComment } from './types';
 
 export const DEFAULT_MARGIN_PT = 180;

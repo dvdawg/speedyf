@@ -10,6 +10,21 @@
  * #f6f7f9; the kinds use --danger, --accent, --warn and --text-dim. Blocks
  * are spaced with padding, never margin, so measured heights add up. */
 
+/* The print page itself: one sheet at a time at its top-left corner. */
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: #fff;
+  overflow: hidden;
+}
+
+#sheet {
+  position: relative;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
 .mk-sheet {
   position: relative;
   overflow: hidden;

@@ -18,6 +18,7 @@ pub mod hovers;
 pub mod invert;
 pub mod layout_text;
 pub mod links;
+pub mod markup_export;
 pub mod ocr;
 pub mod ocr_thread;
 pub mod outline_gen;
@@ -215,6 +216,19 @@ pub enum Work {
         plan: EditPlan,
         dest: PathBuf,
         respond: Respond<()>,
+    },
+    /// Write a markup export (`markup_export`): the source widened and
+    /// annotated, its captured comment sheets placed and appended.
+    MarkupExport {
+        request: Box<markup_export::MarkupExportRequest>,
+        sheets: Vec<Vec<u8>>,
+        respond: Respond<markup_export::MarkupExportResult>,
+    },
+    /// A file's permanent identifier (trailer /ID[0], hex) and page count,
+    /// when it has a usable one: the key markup is stored under.
+    MarkupKey {
+        path: String,
+        respond: Respond<Option<(String, usize)>>,
     },
     Save {
         doc: DocId,

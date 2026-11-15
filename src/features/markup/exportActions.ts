@@ -21,9 +21,10 @@ import {
   reviewFor,
   settleLabelSources,
 } from './markupStore';
-import { markupTransport, type MarkupTransport } from './markupTransport';
+import { markupApi } from '../../lib/transport/markup';
+import type { MarkupTransport } from './markupStore';
 
-let transport: MarkupTransport = markupTransport;
+let transport: MarkupTransport = markupApi;
 let measure: MeasureFn = measureBlocks;
 
 /** For tests: a fake backend and measurer. */
