@@ -1,7 +1,9 @@
 //! EditPlan materialization + safe atomic save.
 //!
 //! Uses the high-level pdfium-render wrapper (editing happens once per save,
-//! so wrapper ergonomics beat raw FFI here):
+//! so wrapper ergonomics beat raw FFI here). A plan that keeps the page list
+//! edits the source in place and appends an incremental update; one that
+//! restructures pages goes:
 //!   new doc -> import kept/reordered/duplicated pages (FPDF_ImportPages under
 //!   the hood) -> blank pages -> true PDF annotations (Highlight/Square/Text
 //!   note/ink/stamp) with explicit text/image appearances -> AcroForm edits ->
@@ -16,6 +18,8 @@ use crate::engine::types::{EditPlan, RectDto, TextFontFamily};
 use crate::errors::{AppError, AppResult};
 use pdfium_render::prelude::*;
 use std::collections::HashMap;
+use std::io::Write;
+use std::os::raw::{c_int, c_ulong, c_void};
 use std::path::Path;
 
 type TextFonts = HashMap<(TextFontFamily, bool, bool), PdfFontToken>;
@@ -53,6 +57,225 @@ pub fn verified_atomic_replace(
         .persist(dest)
         .map_err(|e| AppError::Io(format!("cannot replace destination: {e}")))?;
     Ok(bytes)
+}
+
+// `FPDF_SaveAsCopy` flags from fpdf_save.h. pdfium-render does not re-export
+// them. REMOVE_SECURITY is a value, not a bit to combine with the others.
+const FPDF_INCREMENTAL: c_ulong = 1;
+const FPDF_REMOVE_SECURITY: c_ulong = 3;
+
+/// How a document already open in PDFium is written back out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SaveMode {
+    /// The original bytes, untouched, followed by an appended update holding
+    /// what changed. Everything the editor does not model - links, outline,
+    /// metadata, signatures, structure tree - stays byte-identical.
+    Incremental,
+    /// A complete rewrite of the same document. Still the same object graph,
+    /// so nothing is lost, but the bytes are PDFium's own.
+    Rewrite,
+    /// A complete rewrite with the encryption removed.
+    RewriteDecrypted,
+}
+
+impl SaveMode {
+    fn flags(self) -> c_ulong {
+        match self {
+            SaveMode::Incremental => FPDF_INCREMENTAL,
+            SaveMode::Rewrite => 0,
+            SaveMode::RewriteDecrypted => FPDF_REMOVE_SECURITY,
+        }
+    }
+}
+
+/// Pick the safest way to write the document behind `handle` back out.
+///
+/// An incremental update is only appended to a file PDFium parsed cleanly.
+/// When it had to rebuild a broken cross-reference table on load, the offsets
+/// an update would chain back into are exactly the ones that were wrong, so
+/// the file is rewritten instead.
+///
+/// Encrypted sources are rewritten without their encryption. That is what
+/// every save of one produced before (a document assembled from imported pages
+/// never carried the source's security handler), and the save path reopens
+/// its output without a password to verify it.
+///
+/// A document created in memory has no parser, which PDFium reports as an
+/// invalid cross-reference table - so it is rewritten too, as it must be.
+pub(crate) fn save_mode(bindings: &dyn PdfiumLibraryBindings, handle: FPDF_DOCUMENT) -> SaveMode {
+    if bindings.FPDF_GetSecurityHandlerRevision(handle) != -1 {
+        SaveMode::RewriteDecrypted
+    } else if bindings.is_true(bindings.FPDF_DocumentHasValidCrossReferenceTable(handle)) {
+        SaveMode::Incremental
+    } else {
+        SaveMode::Rewrite
+    }
+}
+
+/// Streams what PDFium writes during `FPDF_SaveAsCopy` into a file.
+///
+/// `inner` must stay the first field: PDFium is handed a pointer to it and
+/// hands that same pointer back to `sink_write_block`, which casts it back to
+/// the whole struct. That only holds while the two share an address.
+#[repr(C)]
+struct FileSink {
+    inner: FPDF_FILEWRITE,
+    out: std::io::BufWriter<std::fs::File>,
+    error: Option<std::io::Error>,
+}
+
+unsafe extern "C" fn sink_write_block(
+    this: *mut FPDF_FILEWRITE,
+    data: *const c_void,
+    size: c_ulong,
+) -> c_int {
+    if this.is_null() {
+        return 0;
+    }
+    // Safe by construction: `inner` is the first field of `FileSink`, and the
+    // only pointer PDFium ever receives came from one.
+    let sink = unsafe { &mut *(this as *mut FileSink) };
+    if size == 0 {
+        return 1;
+    }
+    if data.is_null() || sink.error.is_some() {
+        return 0;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(data as *const u8, size as usize) };
+    match sink.out.write_all(bytes) {
+        Ok(()) => 1,
+        Err(error) => {
+            sink.error = Some(error);
+            0
+        }
+    }
+}
+
+/// Write `document` to `path` in the given mode, flushed and synced.
+fn write_document(document: &PdfDocument<'_>, path: &Path, mode: SaveMode) -> AppResult<()> {
+    let bindings = document.bindings();
+    let handle = bindings.get_handle_from_document(document);
+    let file = std::fs::File::create(path)?;
+    let mut sink = FileSink {
+        inner: FPDF_FILEWRITE {
+            version: 1,
+            WriteBlock: Some(sink_write_block),
+        },
+        out: std::io::BufWriter::new(file),
+        error: None,
+    };
+    let ok = bindings.FPDF_SaveAsCopy(handle, &mut sink.inner, mode.flags());
+    if let Some(error) = sink.error.take() {
+        return Err(AppError::Io(format!("write failed: {error}")));
+    }
+    if !bindings.is_true(ok) {
+        return Err(AppError::Io("write failed: PDFium refused to save".into()));
+    }
+    let file = sink
+        .out
+        .into_inner()
+        .map_err(|e| AppError::Io(format!("write failed: {}", e.error())))?;
+    file.sync_all()?;
+    Ok(())
+}
+
+/// Save an edited, loaded-from-disk document to `path`, keeping everything
+/// it does not know it changed.
+///
+/// Appends an incremental update to the original bytes whenever that is safe
+/// (see `save_mode`), and otherwise rewrites the same document in full. Either
+/// way the output is the source's own object graph, never a copy assembled
+/// from imported pages, so links, the outline, named destinations, document
+/// info and XMP metadata all survive.
+///
+/// `path` must not be the file `document` was loaded from: PDFium may still be
+/// reading from it while the output is written. Write to a sibling and rename,
+/// as `verified_atomic_replace` does.
+pub fn save_incremental(document: &PdfDocument<'_>, path: &Path) -> AppResult<()> {
+    let bindings = document.bindings();
+    let mode = save_mode(bindings, bindings.get_handle_from_document(document));
+    write_document(document, path, mode)?;
+    if mode == SaveMode::Incremental && !mend_xref_stream_type(path)? {
+        log::warn!("incremental save produced an unexpected tail; rewriting in full");
+        write_document(document, path, SaveMode::Rewrite)?;
+    }
+    Ok(())
+}
+
+/// Make the cross-reference section PDFium just appended to `path` well
+/// formed, returning `false` if the file's tail is not in a shape this
+/// understands (the caller then rewrites the file in full instead).
+///
+/// Appending to a file whose cross-reference data is a stream - every modern
+/// pdfTeX paper - PDFium writes its own section as a cross-reference stream
+/// too, but without the `/Type /XRef` entry the specification requires.
+/// PDFium and Poppler read past that; stricter readers (pypdf among them)
+/// refuse the whole file. That stream is the last object written and
+/// `startxref` points at its first byte, so inserting the missing key inside
+/// its dictionary moves nothing any offset in the file refers to.
+fn mend_xref_stream_type(path: &Path) -> AppResult<bool> {
+    use std::io::{Read, Seek, SeekFrom};
+    // A cross-reference stream for an incremental update lists only the
+    // objects it rewrote; anything larger than this is not what PDFium writes.
+    const MAX_SECTION: u64 = 16 << 20;
+
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)?;
+    let len = file.metadata()?.len();
+    let tail_len = len.min(1024);
+    let mut tail = vec![0u8; tail_len as usize];
+    file.seek(SeekFrom::Start(len - tail_len))?;
+    file.read_exact(&mut tail)?;
+    let Some(at) = tail.windows(9).rposition(|w| w == b"startxref") else {
+        return Ok(false);
+    };
+    let Some(section_at) = std::str::from_utf8(&tail[at + 9..])
+        .ok()
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|n| n.parse::<u64>().ok())
+    else {
+        return Ok(false);
+    };
+    if section_at >= len || len - section_at > MAX_SECTION {
+        return Ok(false);
+    }
+    let mut section = Vec::with_capacity((len - section_at) as usize);
+    file.seek(SeekFrom::Start(section_at))?;
+    file.read_to_end(&mut section)?;
+
+    if section.starts_with(b"xref") {
+        // A classic table: nothing to mend.
+        return Ok(true);
+    }
+    // Otherwise it must be `N G obj << ... >> stream`.
+    let header_ok = std::str::from_utf8(&section[..section.len().min(32)])
+        .ok()
+        .and_then(|head| head.split("obj").next())
+        .map(|head| head.split_whitespace().collect::<Vec<_>>())
+        .is_some_and(|parts| parts.len() == 2 && parts.iter().all(|p| p.parse::<u32>().is_ok()));
+    let open = section.windows(2).position(|w| w == b"<<");
+    let stream = section.windows(6).position(|w| w == b"stream");
+    let (Some(open), Some(stream), true) = (open, stream, header_ok) else {
+        return Ok(false);
+    };
+    if open > stream {
+        return Ok(false);
+    }
+    let dict = &section[open..stream];
+    if dict.windows(5).any(|w| w == b"/Type") {
+        return Ok(true);
+    }
+    let insert_at = open + 2;
+    let mut mended = Vec::with_capacity(section.len() - insert_at + 10);
+    mended.extend_from_slice(b"/Type/XRef");
+    mended.extend_from_slice(&section[insert_at..]);
+    file.seek(SeekFrom::Start(section_at + insert_at as u64))?;
+    file.write_all(&mended)?;
+    file.flush()?;
+    file.sync_all()?;
+    Ok(true)
 }
 
 fn parse_color(hex: &str, opacity: f32) -> PdfColor {
@@ -513,28 +736,25 @@ fn preserves_source_pages(plan: &EditPlan, src_page_count: u16) -> bool {
 /// Build the output document from `plan` and write it to `out_path`.
 ///
 /// Two ways to produce the output, and which one is used comes down to
-/// whether the document is a form.
+/// whether the plan changes the page list.
 ///
-/// The default is to assemble a fresh document and import the pages the plan
-/// asks for, which is what makes reordering, deletion and inserted blanks
-/// possible at all. It also loses anything that lives on the *document*
-/// rather than on a page - and an AcroForm is exactly that. `FPDF_ImportPages`
-/// copies each widget annotation faithfully and leaves the `/AcroForm`
-/// dictionary that gives them meaning behind, so a filled-in form came out the
-/// other side as a page of inert boxes: the fields unreachable, the radio
-/// groups' parents orphaned, and filling text fields silently doing
-/// nothing because the output no longer had a form to fill.
+/// When it does not - annotations, text, images, rotation and form values are
+/// all per-page edits - the source document itself is edited and saved, as an
+/// incremental update appended to its original bytes wherever that is safe
+/// (see `save_incremental`). Everything that lives on the *document* rather
+/// than in what this editor models survives untouched: link annotations and
+/// the destinations they point at, the outline, named destinations, document
+/// info and XMP metadata, page labels, the AcroForm, the structure tree.
 ///
-/// So when the document has a form and the plan is not restructuring pages -
-/// open a form, tick boxes, save, which is what filling one in *is* - the
-/// source document is edited in place and saved instead. Every later step
-/// works the same either way; they only care about pages.
-///
-/// Restructuring a form's pages still goes through the import path and still
-/// loses the form. That is a real limitation rather than an oversight: pdfium
-/// exposes no way to carry a catalog entry across documents, and dropping
-/// pages out of a form raises questions about the fields on them that this
-/// has no answer for.
+/// When pages are deleted, reordered, duplicated or inserted, a fresh document
+/// is assembled from imported pages, which is what makes those possible at
+/// all. `FPDF_ImportPages` copies each page with its annotations, and re-points
+/// a link's explicit page destination when that page is imported too - but it
+/// copies nothing from the catalog. So that path loses the outline, the named
+/// destinations hyperref links go through (those links stay but lead
+/// nowhere), XMP metadata and the AcroForm (widgets come across as inert
+/// boxes), and the document info. Rebuilding those is not attempted: PDFium
+/// exposes no way to write them.
 pub fn build_output(
     pdfium: &Pdfium,
     src_path: &str,
@@ -546,7 +766,7 @@ pub fn build_output(
         .load_pdf_from_file(src_path, password)
         .map_err(|e| AppError::Malformed(format!("cannot reopen source: {e:?}")))?;
     let has_form = src.form().is_some();
-    let edit_in_place = has_form && preserves_source_pages(plan, src.pages().len());
+    let edit_in_place = preserves_source_pages(plan, src.pages().len());
     if has_form && !edit_in_place {
         log::warn!(
             "{src_path} has an AcroForm, but the save reorders, adds or removes \
@@ -638,13 +858,11 @@ pub fn build_output(
     }
 
     // 3) write
-    let mut file = std::fs::File::create(out_path)?;
-    out.save_to_writer(&mut file)
-        .map_err(|e| AppError::Io(format!("write failed: {e:?}")))?;
-    use std::io::Write;
-    file.flush()?;
-    file.sync_all()?;
-    drop(file);
+    if edit_in_place {
+        save_incremental(&out, out_path)?;
+    } else {
+        write_document(&out, out_path, SaveMode::Rewrite)?;
+    }
 
     // 4) Commit form values AND their appearances through PDFium's form-fill
     //    environment; setting /V alone leaves stale or missing text on disk.
