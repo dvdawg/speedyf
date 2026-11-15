@@ -916,6 +916,35 @@ describe('notepad: citations in quotes', () => {
   });
 });
 
+describe('notepad: one references section for the note', () => {
+  it('names the shared entry of each work, its printed label kept, nothing under the quote', async () => {
+    const { calls, invoke } = boot({
+      ...EDITOR,
+      'reader.context': readerIn('p1'),
+      'selection.context': () => ({ selection: 's0', statement: null, parts: null, xrefs: [] }),
+      'projects.references': () => REFS,
+      'projectFiles.read': () => '',
+      'selection.convert': () => null,
+      'editor.references': (args) => ({
+        ids: (args.add as unknown[]).map((_, i) => ['simon2015spectral', 'larsen2023blocks'][i]),
+      }),
+    });
+    await invoke('quote', 'As in [Sim15], by [Han16, Lar23, AAHLZ24].');
+    const add = calls.find((c) => c.api === 'editor.references')!.args.add;
+    expect(add).toEqual([
+      { text: REFS[0]!.text, ids: ['arxiv:1501.01234'], title: null, author: null, year: null },
+      { text: REFS[2]!.text, ids: ['doi:10.1000/blocks'], title: null, author: null, year: null },
+    ]);
+    // The section is written before the quote, so its markers name entries
+    // that are there.
+    const order = calls.map((c) => c.api);
+    expect(order.indexOf('editor.references')).toBeLessThan(order.indexOf('editor.resolve'));
+    expect(calls.find((c) => c.api === 'editor.resolve')!.args.text).toBe(
+      '> As in [^simon2015spectral]{label=Sim15}, by [@han2016; @aahlz2024][^larsen2023blocks]{label=Lar23 at=1}. [@attias2022quantum, p. 5]{box=10,20,30,40}'
+    );
+  });
+});
+
 describe('notepad: cross-references in quotes', () => {
   it('links the mentions the reader resolved, as printed, and leaves the rest', () => {
     const xrefs: Xref[] = [

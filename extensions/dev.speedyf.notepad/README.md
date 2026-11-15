@@ -104,10 +104,21 @@ with the caret at its start, and Escape closes the list.
 - **Citations in a quote** ("[Sim15]", "[Han16, Lar23]", "[12]", "[3-5]")
   are read through the quoted paper's reference list: one an item in your
   library is becomes `[@citekey]` (several `[@a; @b]`); one that is not
-  keeps its label as `[^Sim15]`, with the reference itself written once
-  under the quote as `[^Sim15]: [Sim15] B. Simon, ...` (a Pandoc footnote;
-  a number gets the paper's key, `[^key-12]`). It reads "[Sim15]", dim, and
-  pointing at it shows the reference with its DOI or arXiv link.
+  becomes a footnote marker naming the note's entry for that work, with
+  the label the paper printed, `[^simon2015spectral]{label=Sim15}`. It
+  reads "[Sim15]", dim, and pointing at it shows the reference with its
+  DOI or arXiv link. A bracket that mixes both, "[Han16, Lar23, AAHLZ24]",
+  stays one bracket in that order:
+  `[@han2016; @aahlz2024][^larsen2023blocks]{label=Lar23 at=1}`.
+- **One References section** at the end of the note holds every entry
+  once, as Pandoc footnotes under `## References`. Two quotes citing the
+  same work share its entry, however each paper prints it (the same DOI or
+  arXiv id, else the same title, first author and year); different works
+  never merge. It shows as one quiet line, "References (12)"; open it to
+  see the entries, dim the unused ones and **Remove unused**, or, when
+  some of the works are now in your library, link them as citations.
+  Entries an earlier version wrote under each quote move there on the next
+  quote, or with **Move to References**.
 - **Cross-references in a quote** ("Theorem 2.1", "Eq. (3)", "Section 2",
   "Fig. 1") that the reader resolved become links into the paper,
   `[Theorem 2.1](@key#p3){box=...}`: they read as the words, preview the
@@ -143,7 +154,8 @@ with a project open, or in the reader for a paper in a project):
   `<name>-assets/` folder beside the file, and the links point there.
   Citations stay Pandoc's `@key`; a page link `[@key, p. 12]{box=...}`
   becomes `[@key, p. 12]` (and a statement's `[@key, Prop. 2.2]`), a
-  cross-reference its words, and a quoted reference stays a footnote.
+  cross-reference its words, and a quoted reference stays a footnote
+  (the References heading goes; Pandoc gathers footnotes itself).
 - **Copy Notepad as LaTeX** puts the note on the clipboard as LaTeX:
   headings as `\section`, `\subsection` and `\subsubsection`, emphasis as
   `\emph` and `\textbf`, lists as `itemize` and `enumerate`, quotes as
@@ -151,7 +163,8 @@ with a project open, or in the reader for a paper in a project):
   `\cite{a,b}` and `[@key, p. 12]` as `\cite[p.~12]{key}` (with the key the
   item has now; `[@key, Prop. 2.2]` as `\cite[Prop.~2.2]{key}`), a statement
   as a `quote` with its label in `\textbf` and its body `\itshape`, a
-  cross-reference as its words, a quoted reference as `[Sim15]\footnote{...}`,
+  cross-reference as its words, a quoted reference as `[Sim15]\footnote{...}`
+  (after the `\cite` of the items in its bracket),
   and each picture as a `% figure: <path>` comment. LaTeX's
   special characters in the prose are escaped; nothing in math is.
 

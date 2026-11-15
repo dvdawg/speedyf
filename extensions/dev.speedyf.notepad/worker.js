@@ -464,9 +464,10 @@ function authorYear(ref) {
  * `entries` to go under the quote. Brackets that are not all labels of the
  * list stay as they are. Author-year citations, in a paper whose list has
  * no labels: "Simon (2015)" and "(Simon, 2015)". */
-function linkCitations(markdown, refs, citingKey) {
+function linkCitations(markdown, refs, citingKey, shared = null) {
   const entries = new Map();
-  if (!Array.isArray(refs) || refs.length === 0) return { markdown, entries };
+  const needed = [];
+  if (!Array.isArray(refs) || refs.length === 0) return { markdown, entries, needed };
   const byLabel = new Map();
   for (const ref of refs) {
     if (ref.label && !byLabel.has(ref.label)) byLabel.set(ref.label, ref);
@@ -483,16 +484,22 @@ function linkCitations(markdown, refs, citingKey) {
         return;
       }
       const label = printed[i];
-      const id = noteId(label, citingKey);
-      if (!entries.has(id)) entries.set(id, noteEntry(id, label, ref));
-      if (!items.some((it) => it.id === id)) items.push({ id });
+      // The note's shared entry for the work, when the note gave one; else
+      // (an older core) the printed label, its entry under the quote.
+      let id = shared ? shared.get(ref) : null;
+      if (!id) {
+        if (shared && !needed.includes(ref)) needed.push(ref);
+        id = noteId(label, citingKey);
+        if (!entries.has(id)) entries.set(id, noteEntry(id, label, ref));
+      }
+      if (!items.some((it) => it.id === id)) items.push({ id, label: shared ? label : null });
     });
     const keys = items.filter((it) => it.key);
     const head = keys.length > 0 ? `[${keys.map((it) => `@${it.key}`).join('; ')}]` : '';
     const marks = items.flatMap((it, at) => {
       if (!it.id) return [];
       const placed = keys.length > 0 && items.slice(at + 1).some((later) => later.key);
-      return [`[^${it.id}]${placed ? `{at=${at}}` : ''}`];
+      return [markerText(it.id, it.label, placed ? at : null)];
     });
     return head + marks.join('');
   };
@@ -530,7 +537,28 @@ function linkCitations(markdown, refs, citingKey) {
       );
     }
   }
-  return { markdown: out, entries };
+  return { markdown: out, entries, needed };
+}
+
+/** A reference marker: `[^simon2015almost]{label=Sim15 at=1}`, the label
+ * the quoted paper printed (it reads so in the note) and its place in a
+ * citation group. */
+function markerText(id, label, at) {
+  const attrs = [];
+  if (label) attrs.push(`label=${/[\s}"]/.test(label) ? `"${label.replace(/"/g, '')}"` : label}`);
+  if (Number.isInteger(at)) attrs.push(`at=${at}`);
+  return `[^${id}]${attrs.length > 0 ? `{${attrs.join(' ')}}` : ''}`;
+}
+
+/** What `editor.references` is told of a work no item is. */
+function workOf(ref) {
+  return {
+    text: String(ref.text || ''),
+    ids: Array.isArray(ref.ids) ? ref.ids : [],
+    title: ref.title || null,
+    author: ref.author || null,
+    year: Number.isInteger(ref.year) ? ref.year : null,
+  };
 }
 
 /** How a cross-reference of each kind may be printed: "Theorem 2.1",
@@ -709,10 +737,36 @@ async function quoteSelection({ text, selection, statement: given = null }) {
     await drop(placeholder);
     throw err;
   }
+  // The works cited that no item is go into the note's shared references
+  // section (one entry a work, however each paper prints it); their
+  // markers name those entries.
+  const shared = new Map();
+  let sharing = true;
+  const share = async () => {
+    if (!sharing) return;
+    const needed = [];
+    for (const part of parts) {
+      for (const markdown of [part.markdown, part.tail].filter(Boolean)) {
+        for (const ref of linkCitations(markdown, refs, key, shared).needed) {
+          if (!needed.includes(ref)) needed.push(ref);
+        }
+      }
+    }
+    if (needed.length === 0) return;
+    try {
+      const { ids } = await call('editor.references', { projectId, add: needed.map(workOf) });
+      needed.forEach((ref, i) => {
+        if (Array.isArray(ids) && typeof ids[i] === 'string') shared.set(ref, ids[i]);
+      });
+    } catch (err) {
+      sharing = false;
+      log('info', `references kept under the quote: ${String((err && err.message) || err)}`);
+    }
+  };
   const compose = () => {
     const entries = new Map();
     const written = (markdown) => {
-      const cited = linkCitations(markdown, refs, key);
+      const cited = linkCitations(markdown, refs, key, sharing ? shared : null);
       for (const [id, line] of cited.entries) if (!known.has(id)) entries.set(id, line);
       return linkXrefs(cited.markdown, xrefs, key);
     };
@@ -730,6 +784,7 @@ async function quoteSelection({ text, selection, statement: given = null }) {
       '\n\n'
     );
   };
+  await share();
   const block = compose();
   const handle = await fill(projectId, placeholder, block);
   const upgradable = parts.filter((part) => part.local && part.local.selection);
@@ -758,7 +813,9 @@ async function quoteSelection({ text, selection, statement: given = null }) {
           source = exact.source;
         }
       }
-      return source ? { text: compose(), source } : null;
+      if (!source) return null;
+      await share();
+      return { text: compose(), source };
     },
   });
 }
