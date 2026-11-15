@@ -599,6 +599,134 @@ fn export_places_sheets_in_the_strip_without_moving_content() {
     b.FPDF_CloseDocument(after);
 }
 
+/// The object number at the byte offset the last `startxref` points to.
+fn last_xref_object(bytes: &[u8]) -> Option<u32> {
+    let at = bytes.windows(9).rposition(|w| w == b"startxref")?;
+    let offset: usize = std::str::from_utf8(&bytes[at + 9..])
+        .ok()?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()?;
+    let head = std::str::from_utf8(&bytes[offset..(offset + 24).min(bytes.len())]).ok()?;
+    head.split_whitespace().next()?.parse().ok()
+}
+
+#[test]
+fn links_on_a_stream_xref_file_do_not_reuse_the_xref_stream_number() {
+    let _guard = pdfium_init::test_guard();
+    let pdfium = test_pdfium();
+    let dir = scratch();
+    let classic = dir.path().join("classic.pdf");
+    source_fixture(&classic);
+    let src = dir.path().join("modern.pdf");
+    let mut modern = lopdf::Document::load(&classic).unwrap();
+    let mut file = std::fs::File::create(&src).unwrap();
+    modern.save_modern(&mut file).unwrap();
+    drop(file);
+
+    let mut req = request(&src, &dir.path().join("unused.pdf"));
+    let mut margin = sheet(SheetKind::Margin, Some(0), 180.0, 400.0);
+    margin.links.push(SheetLink {
+        rect: rect(10.0, 10.0, 60.0, 14.0),
+        target: LinkTarget::Page { page: 2, y: 0.0 },
+    });
+    req.sheets = vec![margin];
+    let sheets = vec![sheet_pdf(&pdfium, 180.0, 400.0, "M")];
+    let pass_path = dir.path().join("pass.pdf");
+    let pass = pdfium_pass(&pdfium, &req, &sheets, false, &pass_path).unwrap();
+    let pass_bytes = std::fs::read(&pass_path).unwrap();
+    let xref_obj = last_xref_object(&pass_bytes).expect("PDFium wrote an xref stream");
+    let out = lopdf_pass(&pass_bytes, &pass.links, &pass.carets).unwrap();
+
+    let doc = lopdf::Document::load_mem(&out).unwrap();
+    let page = doc.get_pages()[&1];
+    let annots = doc
+        .get_dictionary(page)
+        .unwrap()
+        .get(b"Annots")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .clone();
+    let refs: Vec<u32> = annots
+        .iter()
+        .filter_map(|a| a.as_reference().ok())
+        .map(|(n, _)| n)
+        .collect();
+    assert!(!refs.contains(&xref_obj), "{refs:?} reuses {xref_obj}");
+    let declared = doc.trailer.get(b"Size").unwrap().as_i64().unwrap() as u32;
+    assert!(refs.iter().all(|&n| n < declared));
+}
+
+#[test]
+fn only_outward_sheet_links_are_kept() {
+    assert!(keeps_sheet_uri("https://doi.org/10.1000/x"));
+    assert!(keeps_sheet_uri("HTTP://arxiv.org/abs/1234"));
+    assert!(keeps_sheet_uri("mailto:someone@example.org"));
+    assert!(!keeps_sheet_uri("http://localhost:1420/markup-print.html#"));
+    assert!(!keeps_sheet_uri(
+        "http://tauri.localhost/markup-print.html#c3"
+    ));
+    assert!(!keeps_sheet_uri("tauri://localhost/markup-print.html"));
+    assert!(!keeps_sheet_uri("http://127.0.0.1/x"));
+    assert!(!keeps_sheet_uri("#c3"));
+    assert!(!keeps_sheet_uri(""));
+}
+
+#[test]
+fn webkit_links_back_into_the_print_page_are_dropped() {
+    let _guard = pdfium_init::test_guard();
+    let pdfium = test_pdfium();
+    let dir = scratch();
+    let src = dir.path().join("paper.pdf");
+    let dest = dir.path().join("out.pdf");
+    source_fixture(&src);
+
+    // A feedback sheet carrying what WebKit makes of two anchors.
+    let sheet_bytes = {
+        let mut document = pdfium.create_new_pdf().unwrap();
+        let mut page = document
+            .pages_mut()
+            .create_page_at_end(PdfPagePaperSize::Custom(
+                PdfPoints::new(480.0),
+                PdfPoints::new(400.0),
+            ))
+            .unwrap();
+        for (i, uri) in [
+            "http://localhost:1420/markup-print.html#",
+            "https://doi.org/10.1000/x",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let mut link = page.annotations_mut().create_link_annotation(uri).unwrap();
+            link.set_bounds(PdfRect::new_from_values(
+                300.0 - 40.0 * i as f32,
+                20.0,
+                320.0 - 40.0 * i as f32,
+                200.0,
+            ))
+            .unwrap();
+        }
+        drop(page);
+        document.save_to_bytes().unwrap()
+    };
+    let mut req = request(&src, &dest);
+    req.sheets = vec![sheet(SheetKind::Feedback, None, 480.0, 400.0)];
+    export(&pdfium, &req, &[sheet_bytes]).unwrap();
+
+    let doc = pdfium.load_pdf_from_file(&dest, None).unwrap();
+    let page = doc.pages().get(4).unwrap();
+    let uris: Vec<String> = page
+        .links()
+        .iter()
+        .filter_map(|l| l.action())
+        .filter_map(|a| a.as_uri_action().and_then(|u| u.uri().ok()))
+        .collect();
+    assert_eq!(uris, vec!["https://doi.org/10.1000/x".to_string()]);
+}
+
 #[test]
 fn export_refuses_to_overwrite_the_source() {
     let _guard = pdfium_init::test_guard();
@@ -793,5 +921,102 @@ fn markup_export_real_paper() {
     if let Ok(keep) = std::env::var("SPEEDYF_MARKUP_E2E_KEEP") {
         std::fs::copy(&dest, &keep).expect("keep output");
         eprintln!("kept a copy at {keep}");
+    }
+}
+
+/// Checks the output of the app's markup self-test (`markup_selftest.rs`):
+/// the WebKit-captured sheets sit where they belong, upright, carry their
+/// text, and are not blank. Pixel statistics only; no image is written.
+///
+///   SPEEDYF_MARKUP_INSPECT=/path/out.pdf cargo test ... markup_selftest_output -- --ignored --nocapture
+#[cfg(debug_assertions)]
+#[test]
+#[ignore]
+fn markup_selftest_output() {
+    let _guard = pdfium_init::test_guard();
+    let pdfium = test_pdfium();
+    let path = std::env::var("SPEEDYF_MARKUP_INSPECT").expect("set SPEEDYF_MARKUP_INSPECT");
+    let doc = pdfium.load_pdf_from_file(&path, None).unwrap();
+    let n = doc.pages().len();
+    let margin = 180.0f32;
+    // (page, x where the sheet starts, its marker)
+    let checks = [
+        (0u16, None, crate::markup_selftest::MARKERS[0]),
+        (1, None, crate::markup_selftest::MARKERS[1]),
+        (n - 2, Some(0.0f32), crate::markup_selftest::MARKERS[2]),
+        (n - 1, Some(0.0), crate::markup_selftest::MARKERS[3]),
+    ];
+    for (index, x0, marker) in checks {
+        let page = doc.pages().get(index).unwrap();
+        let (w, h) = (page.width().value, page.height().value);
+        let x0 = x0.unwrap_or(w - margin);
+        let sheet_w = w - x0;
+        // Text: the marker is inside the sheet, near its top-left.
+        let text = page.text().unwrap();
+        let in_sheet = text.inside_rect(PdfRect::new_from_values(0.0, x0, h, w));
+        let top_band = text.inside_rect(PdfRect::new_from_values(h - 80.0, x0, h, x0 + sheet_w));
+        eprintln!(
+            "page {index}: {w}x{h}, sheet from x={x0}; marker in sheet: {}, in top band: {}, math text: {}",
+            in_sheet.contains(marker),
+            top_band.contains(marker),
+            in_sheet.contains("Inline math")
+        );
+        assert!(in_sheet.contains(marker), "page {index}: marker missing");
+        assert!(
+            top_band.contains(marker),
+            "page {index}: sheet not top-aligned"
+        );
+        assert!(
+            in_sheet.contains("long comment"),
+            "page {index}: wrapped text missing"
+        );
+
+        // Pixels at 1 px per pt: ink in the sheet, and the red corner mark
+        // the sheet draws at its own bottom-left lands at the sheet's
+        // bottom-left (not flipped, not offset).
+        let bitmap = page
+            .render_with_config(
+                &PdfRenderConfig::new()
+                    .set_target_width(w.round() as i32)
+                    .set_target_height(h.round() as i32),
+            )
+            .unwrap();
+        let (bw, bh) = (bitmap.width() as usize, bitmap.height() as usize);
+        let rgba = bitmap.as_rgba_bytes();
+        let px = |x: usize, y: usize| {
+            let i = (y.min(bh - 1) * bw + x.min(bw - 1)) * 4;
+            (rgba[i], rgba[i + 1], rgba[i + 2])
+        };
+        let xs = x0.round() as usize..bw;
+        let mut ink = 0usize;
+        for y in 0..bh {
+            for x in xs.clone() {
+                let (r, g, b) = px(x, y);
+                if (r as u32 + g as u32 + b as u32) < 600 {
+                    ink += 1;
+                }
+            }
+        }
+        let frac = ink as f32 / (xs.len() * bh) as f32;
+        let red = |x: usize, y: usize| {
+            let (r, g, b) = px(x, y);
+            r > 150 && g < 80 && b < 80
+        };
+        let corner = red(x0.round() as usize + 10, bh - 10);
+        let other_corners = [
+            red(bw - 10, bh - 10),
+            red(x0.round() as usize + 10, 10),
+            red(bw - 10, 10),
+        ];
+        eprintln!("   ink fraction in sheet {frac:.3}; red at bottom-left {corner}, elsewhere {other_corners:?}");
+        assert!(frac > 0.005, "page {index}: sheet looks blank");
+        assert!(
+            corner,
+            "page {index}: corner mark not at the sheet's bottom-left"
+        );
+        assert!(
+            !other_corners.iter().any(|&c| c),
+            "page {index}: sheet flipped"
+        );
     }
 }
