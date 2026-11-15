@@ -150,9 +150,9 @@ const BINDINGS: readonly Binding[] = [
   // region. Each acts only when it can (a live selection, review mode on),
   // so the keys otherwise stay free.
   { key: 'm', mod: true, shift: true, id: 'markup.toggle', preventAlways: true },
-  { key: 'c', mod: false, shift: false, id: 'markup.comment' },
-  { key: 't', mod: false, shift: false, id: 'markup.typo' },
-  { key: 'r', mod: false, shift: false, id: 'markup.region' },
+  { key: 'c', mod: false, shift: false, id: 'markup.comment', fallThrough: true },
+  { key: 't', mod: false, shift: false, id: 'markup.typo', fallThrough: true },
+  { key: 'r', mod: false, shift: false, id: 'markup.region', fallThrough: true },
 
   // Unmodified keys only swallow the event when they actually act.
   { key: 'Delete', id: 'edit.deleteSelection' },
