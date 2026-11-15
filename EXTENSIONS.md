@@ -98,6 +98,7 @@ rather than a silently ignored setting.
     "referenceProvider": { "command": "run" },
     "termProvider": { "command": "run" },
     "equationActions": [{ "command": "run", "title": "Copy LaTeX" }],
+    "statementActions": [{ "command": "run", "title": "Send to Thing" }],
     "equationConverter": { "command": "run", "selections": true },
     "readerPanes": [
       {
@@ -144,7 +145,7 @@ that character separates them from your extension id. A command may say
 contribution that names it) and `"when": "documentInProject"` (listed only
 while the reader's document is an item in a project). Actions and reader
 panes take the same `when`; it is the only condition there is. Every `keybindings`, `selectionActions`,
-`citationActions`, `documentTasks` and `equationActions` entry, and
+`citationActions`, `documentTasks`, `equationActions` and `statementActions` entry, and
 `referenceProvider` and `termProvider`, must name a command you declared;
 `referenceProvider` also needs the `library:contributeReferences` permission,
 `termProvider` the `document:contributeTerms` permission, `itemDetailLines`
@@ -236,6 +237,7 @@ whenever they suffice.
 | `settings`          | Fields rendered in the Extensions panel; `type` is `text`, `checkbox` or `select`.       |
 | `referenceProvider` | `{ "command": "<id>" }`: reads library documents' reference lists at idle (below).       |
 | `equationActions`   | A button on each display equation SpeedyF detects; your command receives the block.      |
+| `statementActions`  | A button by each theorem-like statement's label; your command receives the statement.    |
 | `termProvider`      | `{ "command": "<id>" }`: the terms a document defines, previewed on hover (below).       |
 | `readerPanes`       | A drawer on the right of the reader holding a Markdown editor (below).                   |
 | `projectViews`      | A project's pane in the Projects detail column, holding the same editor (below).         |
@@ -257,6 +259,27 @@ action's `title`. A click invokes your command with
 the block in page points from the displayed page's top-left corner, and the
 printed number (`"3"`, `"2.4"`) or `null`. Read the block's characters with
 `region.glyphs { page, bbox }`, and answer with `ui.showMath`.
+
+### `statementActions`
+
+SpeedyF finds the formal statements of the document you read - theorems,
+lemmas, propositions, corollaries, definitions, remarks, examples,
+conjectures, claims, assumptions - from a label in a face of its own at the
+start of a line ("**Proposition 2.2** (Name)."), with its number, its
+optional name in parentheses, and its extent: from the label down to
+"Proof", the next labelled block or a gap. They are read with the hover
+index, at idle, cached by the file's content, and only while an enabled
+extension contributes a statement action.
+
+Hovering a statement's label shows a small button just above it, titled with
+your action's `title`, in the equation buttons' style. A click invokes your
+command with `value: { kind, word, number, title, page, box, labelBox,
+selection, text }`: `kind` lower case (`'proposition'`), `word` as printed
+(`'Proposition'`), `number` (`'2.2'`), `title` or `null`, the reader's
+zero-based `page`, the statement's extent `box` and its label's `labelBox`
+(page points, top-left), `text` the statement as printed, and `selection` a
+selection token for its whole extent: pass it to `selection.convert` (its
+Markdown) and `selection.context`, as you would a quoted selection's.
 
 ### `readerPanes` and `projectViews`: the editor
 
@@ -282,7 +305,36 @@ The editor draws headings, emphasis, lists, block quotes, `$...$` and
 images from your own project files (never from the web), and Pandoc
 citations: `@key` and `[@key, p. 12]{box=x,y,w,h}`, the box in top-left page
 points. The line with the cursor shows its Markdown. Typing `@` offers the
-entries you marked `pick`. Its head offers an Outline of the note's headings
+entries you marked `pick`.
+
+It also draws what a reader knows about the papers a note quotes:
+
+- **Statements.** A block quote whose first line opens with a bold
+  statement label, `> **Proposition 2.2** (Name). ...` (Theorem, Lemma,
+  Proposition, Corollary, Claim, Conjecture, Definition, Remark, Example,
+  Assumption, Hypothesis, Fact, Observation, Problem, Question, Notation,
+  Exercise; the number and name optional), is drawn as the paper's theorem
+  environment: the label bold, the name upright, the body italic for the
+  theorem-like kinds and upright for definitions, remarks and examples, no
+  quote rule, and a last line holding only a page link small and dim. Any
+  other Markdown reader shows the same bold-labelled quote.
+- **Statement citations.** `[@key, Prop. 2.2]{box=x,y,w,h page=3}` reads
+  "[RZ26, Prop. 2.2]" and opens the paper at the statement (`page` one-based;
+  a "p." locator wins over it). After an entry is picked from `@` (or
+  `@key,` is typed), the picker offers that paper's statements and numbered
+  equations ("Reading statements..." while the paper is read); choosing one
+  writes this form. Entries need `item` for it.
+- **Cross-references.** `[Theorem 2.1](@key#p3){box=x,y,w,h}` reads
+  "Theorem 2.1" and opens the paper at page 3 (one-based), at the box.
+- **A quoted paper's references.** `[^id]` reads as the printed label its
+  entry line opens with, `[^id]: [Sim15] B. Simon, ...` (Pandoc footnote
+  syntax), dim; hovering shows the entry and its DOI or arXiv link. Entry
+  lines are drawn as small dim reference lines.
+
+Citations and cross-references read as hyperref's links do in a PDF: the
+words in the link colour (dim when they name no item), underlined on hover
+or focus, with a hover preview - a picture of the place in the paper (the
+paper need not be open), else the item's title, or the reference entry. Its head offers an Outline of the note's headings
 (from two on) and Export: the note as a Markdown file with its pictures in a
 `<name>-assets/` folder beside it, or as LaTeX on the clipboard (also the
 palette's "Export Notepad as Markdown..." and "Copy Notepad as LaTeX", for
@@ -293,7 +345,9 @@ projectId, file, cite? }`:
 
 - `event: 'citations'` when an editor opens and when the library changes:
   answer with `editor.citations { projectId, entries }`, each entry `{ key,
-label, title, detail, pick, aliases, doi?, arxiv? }`. A citation of `key` or of any of its
+label, title, detail, pick, aliases, doi?, arxiv?, item? }` (`item` the library item id, as
+  `projects.items` gives it: what lets the editor offer the paper's statements and preview places
+  in it). A citation of `key` or of any of its
   `aliases` is drawn as `label` (with its locator); one no entry has is
   drawn as written, muted, and never rewritten. With `doi` or `arxiv`
   (any common form; read as `projects.items` gives them), a DOI or arXiv
@@ -584,6 +638,7 @@ cannot reach a tab the user is not looking at. Pages are zero-based.
 | `projects.items`           | `{ projectId? }`                                            | `[{ id, citeKey, keyHistory, title, authors, firstAuthor, alphaLabel, year, projectIds, doi, arxiv }]` - a project's items, or every item                                        | `projects:read`                |
 | `reader.context`           | -                                                           | `{ item: { id, citeKey, title } \| null, projectIds, projectId, page, selection: { page, box, text } \| null }`                                                                  | `projects:read`                |
 | `reader.chooseProject`     | -                                                           | a project id or `null`: asks once which of the paper's projects, kept for the session                                                                                            | `projects:read`                |
+| `projects.references`      | `{ itemId }`                                                | `[{ label, text, year, ids, itemId, citeKey }]` - the item's reference list, each entry with the item it names or `null`                                                         | `projects:read`                |
 | `navigate.openItem`        | `{ itemId, projectId?, page?, box? }`                       | `{ opened }` - opens it (at a page and box), with Back                                                                                                                           | `projects:read`                |
 | `projectFiles.read`        | `{ projectId, path, as? }`                                  | a string (`as: 'text'`, the default; the live text of an open editor), `number[]` for `as: 'bytes'`, or `null`                                                                   | `projects:files`               |
 | `projectFiles.write`       | `{ projectId, path, text \| bytes }`                        | `{ written }` - atomically; into an open editor as an edit                                                                                                                       | `projects:files`               |
@@ -604,6 +659,7 @@ cannot reach a tab the user is not looking at. Pages are zero-based.
 | `equations.checking`       | `{ ticket, source }`                                        | `{ shown }` - for a converter: the source (`'arxiv'`, `'journal'`) it is trying for that conversion                                                                              | -                              |
 | `selection.convert`        | `{ text \| selection, mode, status? }`                      | `{ selection, markdown, source, confidence }` or `null`: the text you were handed (or its token) as Markdown, from the selection converter                                       | -                              |
 | `selection.converted`      | `{ ticket, markdown, source, confidence }`                  | `{ accepted }` - for a converter: the answer to the selection conversion it was invoked for                                                                                      | -                              |
+| `selection.context`        | `{ text \| selection }`                                     | `{ selection, statement, parts, xrefs }` or `null` - the statement the selection quotes and the cross-references in it (below)                                                   | -                              |
 | `ui.itemLine`              | `{ itemId, text, action? }`                                 | `{ shown }`                                                                                                                                                                      | -                              |
 | `pane.open`                | `{ pane, projectId? }`                                      | `{ opened }` - your reader pane, when its `when` holds                                                                                                                           | -                              |
 | `projectView.open`         | `{ view, projectId?, offset? }`                             | `{ opened }` - your pane of a project (the selected one by default), in the detail column, its item let go                                                                       | -                              |
@@ -665,6 +721,24 @@ an untagged page answers `[]`.
 (which keeps the user's corrections), then from the library scan, then from a
 reading of the document's first page; `arxivVersion` is the file's own version
 (from the arXiv stamp, the id, or the file name).
+
+**What a selection quotes.** `selection.context` takes the text a selection
+action handed you (while it is still on screen) or a selection token, and
+answers what the reader knows about it:
+
+- `selection`: a token for it (for `selection.convert`).
+- `statement`: `{ kind, word, number, title, page, box, labelBox }`, or
+  `null`. A selection quotes a statement when it covers its label, starts on
+  the label's line, or starts inside it and runs to its end (the label
+  missed).
+- `parts`: with a statement, `{ before, statement, after }`, each `{
+selection, text }` or `null`: the selection cut at the statement's extent,
+  each part a token of its own, so a quote of a statement and the paragraph
+  after it can be written as the two things they are.
+- `xrefs`: the cross-references in it the reader resolved, `[{ label, kind,
+number, page, box }]` - `label` as `"Theorem 2.1"`, `"Equation 12"`,
+  `"Section 2"`, `page` the target's page in the file, `box` its extent
+  (top-left page points) or `null`.
 
 **Showing a formula.** `ui.showMath` opens SpeedyF's math popover, anchored at
 the selection or at the equation the user clicked: the LaTeX typeset by KaTeX

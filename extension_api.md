@@ -254,6 +254,7 @@ allowlist of hosts declared in the manifest.
 | `documentTasks`        | Batch work over a document, contributing results back  | v2               |
 | `referenceProvider`    | The provider slot for library reference lists (below)  | v3 (implemented) |
 | `equationActions`      | A button on each detected display equation             | v3 (implemented) |
+| `statementActions`     | A button by each detected theorem-like statement       | v3 (implemented) |
 | `termProvider`         | The provider slot for terms previewed on hover (below) | v3 (implemented) |
 | `readerPanes`          | A right-side drawer in the reader, with a `when`       | v3 (implemented) |
 | `projectViews`         | A project's pane in the Projects detail column         | v3 (implemented) |
@@ -679,6 +680,18 @@ _Capability_
   extension contributes one), invoked with `{ page, bbox, number }`; and
   `ui.showMath`, a popover SpeedyF owns that typesets the answer with KaTeX
   and copies it as LaTeX, Markdown or an `align` block on the user's click.
+- **[shipped]** `contributes.statementActions` - the same for formal
+  statements: a button by the label of each theorem, lemma, proposition,
+  definition... the core detects (with the hover index, at idle, cached by
+  content, only while an enabled extension contributes one), invoked with
+  the statement (`kind`, `word`, `number`, `title`, `page`, `box`,
+  `labelBox`, `text`) and a selection token for its extent, label to the
+  end of the statement before "Proof". With it, `selection.context` (no
+  permission: about a selection the caller was handed) answers which
+  statement a selection quotes, the selection cut around it, and the
+  resolved cross-references in it; and `projects.references`
+  (`projects:read`) an item's reference list, each entry with the item it
+  names. Notepad uses all three.
 - `filesystem:read`/`write`, user-chosen paths only, through a picker
 - `document:annotate` and `document:edit`
 - `render:read` - page and region rasters

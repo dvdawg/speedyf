@@ -1134,7 +1134,7 @@ generic, permission-gated extension APIs (`extension_api.md` sec. 7 and 8,
 - **Palette:** _Open Notepad_, _Quote to Notepad_ (with a selection; also
   a small **Quote** button by the selection and Cmd+Shift+E), _Send
   Region to Notepad_ (in the reader). The equation hover button gains _Send
-  to Notepad_.
+  to Notepad_, and so does a statement's label (Theorem 2.1, Definition 3).
 - **Backlinks.** The Projects detail column shows one quiet line, "Mentioned
   in notepad (3)", when a notepad references the item's cite key (the
   selected project's, or under another scope any of the item's projects').
@@ -1283,6 +1283,87 @@ pending }`): the core keeps a zero-width place in the note's session that
   the window shows (the drawer shut), the drawer opens on that project's
   note and scrolls to the placeholder. When the Projects notepad is the
   view showing it, it just scrolls there.
+
+### What a quote knows about its paper
+
+**Status:** implemented 2026-11-14. A quote uses what the reader already
+knows about the paper: its formal statements, its resolved reference list
+and its cross-references. The core finds them (generic, documented APIs);
+Notepad writes them.
+
+- **Statements as blocks.** The hover index (`engine::hovers::xref`) already
+  finds theorem-like labels set in a face of their own and each statement's
+  extent (label down to "Proof", the next labelled block or a gap); it now
+  also reads the name in parentheses and the statement's text, and keeps
+  every statement and numbered equation per document
+  (`get_doc_statements`, cached by content fingerprint, 64 documents). A
+  quote whose selection covers a label, starts on its line, or starts inside
+  the statement and runs to its end (`selection.context`) becomes a
+  statement block, its header from the engine even when the selection
+  missed the label:
+
+  ```
+  > **Proposition 2.2** (Moments of two block overlaps). Let $P$ be ...
+  >
+  > $$ ... $$
+  >
+  > [@rz26, p. 2]{box=72,100,468,80}
+  ```
+
+  The bold label opening a quote is the whole marker: Pandoc and any other
+  reader show the bold-labelled quote amsthm would print, and nothing extra
+  sits in the text. The editor draws it as the theorem environment: label
+  bold, name upright, body italic for theorem, lemma, proposition,
+  corollary, claim, conjecture (upright for definition, remark, example), a
+  little space around it and no quote rule, the page link small and dim.
+  Text selected before or after the statement is cut off at its extent
+  (`parts`) and quoted on its own. Hovering a statement's label shows a
+  quiet **Send to Notepad** button (`statementActions`, as `equationActions`)
+  that sends the whole statement through the same pipeline: placeholder,
+  local Markdown, then the exact source with the checking line.
+
+- **The exact source.** Math to LaTeX now reads theorem-like environments
+  (`\newtheorem`, `\declaretheorem`, the usual names, starred ones): an
+  alignment that starts in `\begin{proposition}[Name]` or just after its
+  `\label` takes the head in and writes `**Proposition 2.2** (Name).`, never
+  the stray "]" it used to leak, and a `\cite` the page text did not pair
+  reads its label from the source's `.bbl` (`\bibitem[Sim15]{key}`, else
+  its number).
+- **Citations.** Printed citations in a quote (`[Sim15]`, `[Han16, Lar23,
+AAHLZ24]`, `[12]`, `[3-5]`, and "Simon (2015)" / "(Simon, 2015)" in a
+  paper whose list has no labels) are mapped through the quoted paper's
+  reference list (`projects.references`: the refs sidecar, each entry
+  resolved to a library item when one is it). An item: `[@key]`, several
+  `[@a; @b]`, drawn with the note's own labels, LaTeX `\cite{...}`. Not in
+  the library: the printed label kept as a Pandoc footnote, `[^Sim15]`
+  (a numeric label prefixed with the quoted paper's key, `[^rz26-12]`, since
+  "[12]" is another work in every paper), its entry written once under the
+  quote, `[^Sim15]: [Sim15] B. Simon, ... arXiv:1501.01234`. It reads
+  "[Sim15]", dim, and hovering shows the entry with its DOI or arXiv link.
+  Footnotes were chosen over an inline attribute (`[Sim15]{ref=...}` keeps
+  the entry out of the text, so it needs a sidecar and is lost to other
+  readers) and over a "References" footer (which has to be found and kept
+  in step with the note); the entry right under its quote travels with it
+  when the quote is moved, Pandoc and GitHub render it as a footnote, and
+  the LaTeX export writes `[Sim15]\footnote{...}`.
+- **Cross-references.** The reader's resolved cross-references in the
+  selection (`selection.context` `xrefs`) become links into the paper,
+  `[Theorem 2.1](@rz26#p1){box=72,300,400,60}`: the words as printed, the
+  page one-based, the target's box. A mention the reader did not resolve
+  stays text. Exports keep just the words.
+- **Cite a statement.** After an item is picked from `@`, or when
+  `@key,` is typed, the picker offers that paper's statements and numbered
+  equations (read on demand, with "Reading statements..." meanwhile; a paper
+  not open is opened in the engine in the background, three kept);
+  choosing one writes `[@rz26, Prop. 2.2]{box=72,100,468,80 page=2}`, read
+  "[RZ26, Prop. 2.2]", exported as `[@rz26, Prop. 2.2]` and
+  `\cite[Prop.~2.2]{rz26}`.
+- **Reading them.** Every citation, statement citation and cross-reference
+  reads as hyperref's links do: the words in the link colour (dim for a
+  key no item has and for a quoted reference), underlined on hover or
+  focus, never a chip. Hovering shows the reader's preview: a picture of the
+  place in the paper (rendered from the paper's own document, open or not),
+  else the item's title. A click opens the paper there.
 
 ### Storage
 
