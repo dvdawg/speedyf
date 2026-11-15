@@ -864,7 +864,7 @@ describe('notepad: citations in quotes', () => {
       'rz26'
     );
     expect(markdown).toBe(
-      'As in [^Sim15], by [@han2016][^Lar23][@aahlz2024] and [@aahlz2024]; not \\[Thm. 2\\] nor $[a, b]$.'
+      'As in [^Sim15], by [@han2016; @aahlz2024][^Lar23]{at=1} and [@aahlz2024]; not \\[Thm. 2\\] nor $[a, b]$.'
     );
     expect([...entries.values()]).toEqual([
       '[^Sim15]: [Sim15] B. Simon, Spectral theory, arXiv:1501.01234 (2015).',
@@ -986,7 +986,7 @@ describe('notepad: quoting Proposition 2.2 and the paragraph after it', () => {
       '>',
       '> [@rz26, p. 2]{box=72,100,468,80}',
       '',
-      '> By [Theorem 2.1](@rz26#p1){box=72,300,400,60} and [@han2016][^Lar23][@aahlz2024], it holds. [@rz26, p. 2]{box=72,90,468,200}',
+      '> By [Theorem 2.1](@rz26#p1){box=72,300,400,60} and [@han2016; @aahlz2024][^Lar23]{at=1}, it holds. [@rz26, p. 2]{box=72,90,468,200}',
       '',
       // Lar23's entry is in the note already; Sim15's goes under the quote.
       '[^Sim15]: [Sim15] B. Simon, Spectral theory, arXiv:1501.01234 (2015).',
@@ -999,6 +999,44 @@ describe('notepad: quoting Proposition 2.2 and the paragraph after it', () => {
     expect(calls.filter((c) => c.api === 'selection.convert').map((c) => c.args.selection)).toEqual(
       ['s1', 's2', 's1', 's2']
     );
+  });
+
+  it('keeps the paragraph after the statement out of it when the exact source runs on', async () => {
+    // The reader did not split the selection (one part), but the source
+    // says where the proposition closes.
+    const tail = 'This result is analogous to the overlap estimate of Simon \\[Sim15\\].';
+    const head =
+      '**Proposition 2.2** (Moments of two block overlaps). Let $P$ be a distribution on the cube.';
+    const { calls, invoke } = boot({
+      ...EDITOR,
+      'reader.context': readerIn('p1'),
+      'selection.context': () => ({ selection: 's0', statement: null, parts: null, xrefs: [] }),
+      'selection.convert': (args) =>
+        args.mode === 'local'
+          ? {
+              selection: 's0',
+              markdown: `Proposition 2.2 (Moments of two block overlaps). Let $P$ be a distribution on the cube. ${tail}`,
+              source: 'fonts',
+              confidence: 'high',
+            }
+          : {
+              selection: 's0',
+              markdown: `${head}\n\n${tail}`,
+              statementEnd: head.length,
+              source: 'arxiv',
+              confidence: 'high',
+            },
+    });
+    await invoke('quote', 'Proposition 2.2 ...');
+    await until(() => calls.some((c) => c.api === 'editor.replaceMarked'));
+    const text = calls.find((c) => c.api === 'editor.replaceMarked')!.args.text as string;
+    const blocks = splitBlocks(text);
+    // Two block quotes, a blank line between: the statement, then the
+    // paragraph after it on its own.
+    expect(blocks.filter((b) => b.kind === 'quote')).toHaveLength(2);
+    expect(blocks[0]!.raw.startsWith('> **Proposition 2.2**')).toBe(true);
+    expect(blocks[0]!.raw).not.toContain('analogous');
+    expect(blocks[2]!.raw.startsWith('> This result is analogous')).toBe(true);
   });
 
   it('sends a statement whole from its button', async () => {

@@ -5154,16 +5154,18 @@ function exactQuote(doc, quote) {
     const m = /^\s*([.,;:])/.exec(doc.body.slice(to, to + 8));
     if (m && m[1] === tail[0]) to += m[0].length;
   }
-  const markdown = texToMarkdown(doc.body, from, to, {
+  const ctx = {
     macros: doc.macros,
     refLabel,
     tagAt,
     theorems: doc.theorems,
     bib: doc.bib,
     number: printed ? printed[2] : null,
-  });
+    statementEnd: null,
+  };
+  const markdown = texToMarkdown(doc.body, from, to, ctx);
   if (!markdown) return null;
-  return { markdown, exact: found.words >= 0.95 * words };
+  return { markdown, exact: found.words >= 0.95 * words, statementEnd: ctx.statementEnd };
 }
 
 /** One use of a macro with arguments, its arguments read from `j` (just
@@ -5283,8 +5285,15 @@ function texToMarkdown(text, from, to, ctx, depth = 0) {
         i = env.end;
         continue;
       }
-      m = /^\\(begin|end)\s*\{[^}]*\}/.exec(rest);
+      m = /^\\(begin|end)\s*\{([^}]*)\}/.exec(rest);
       if (m) {
+        // Where a theorem-like environment closes, at the top: anything
+        // after it is not the statement (`statementEnd`).
+        if (depth === 0 && m[1] === 'end' && ctx.theorems?.has(m[2].replace(/\*$/, ''))) {
+          out += `\n\n${STATEMENT_END}\n\n`;
+          i += m[0].length;
+          continue;
+        }
         out += '\n\n';
         i = m[1] === 'begin' ? skipArguments(text, i + m[0].length, 0) : i + m[0].length;
         continue;
@@ -5410,13 +5419,22 @@ function texToMarkdown(text, from, to, ctx, depth = 0) {
     i++;
   }
   if (depth > 0) return out;
-  return out
+  const paragraphs = out
     .split(/\n{2,}/)
     .map((p) => p.replace(/\s+/g, ' ').trim())
-    .filter((p) => p !== '')
-    .map((p) => (p.startsWith('$$') ? p : escapeLeading(p)))
-    .join('\n\n');
+    .filter((p) => p !== '');
+  const end = paragraphs.indexOf(STATEMENT_END);
+  const kept = paragraphs
+    .filter((p) => p !== STATEMENT_END)
+    .map((p) => (p.startsWith('$$') ? p : escapeLeading(p)));
+  // The first statement's end, when text follows it.
+  if (end > 0 && end < kept.length) ctx.statementEnd = kept.slice(0, end).join('\n\n').length;
+  return kept.join('\n\n');
 }
+
+/** Where a theorem-like environment closed in `texToMarkdown`'s output,
+ * before it is read into paragraphs: a paragraph no source can hold. */
+const STATEMENT_END = '\u0000end-of-statement\u0000';
 
 // ---------- commands ----------
 
@@ -5638,9 +5656,15 @@ async function convertSelection(v) {
   const ticket = typeof v.ticket === 'string' ? v.ticket : null;
   const text = typeof v.text === 'string' ? v.text : '';
   const clock = stopwatch(`selection (${mode})`);
-  const answer = (markdown, source, confidence) => {
+  const answer = (markdown, source, confidence, statementEnd = null) => {
     clock.log(`${source} ${confidence}`);
-    return call('selection.converted', { ticket, markdown, source, confidence });
+    return call('selection.converted', {
+      ticket,
+      markdown,
+      source,
+      confidence,
+      ...(Number.isInteger(statementEnd) ? { statementEnd } : {}),
+    });
   };
   const layout = await tryCall('selection.glyphs', { selection: v.selection });
   const glyphs = Array.isArray(layout?.glyphs) ? layout.glyphs : [];
@@ -5678,7 +5702,9 @@ async function convertSelection(v) {
   );
   clock.lap('arxiv');
   const found = doc ? exactQuote(doc, quote) : null;
-  if (found) return answer(found.markdown, 'arxiv', found.exact ? 'high' : 'medium');
+  if (found) {
+    return answer(found.markdown, 'arxiv', found.exact ? 'high' : 'medium', found.statementEnd);
+  }
   clock.log('not in the source');
 }
 

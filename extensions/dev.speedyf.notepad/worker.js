@@ -471,26 +471,30 @@ function linkCitations(markdown, refs, citingKey) {
   for (const ref of refs) {
     if (ref.label && !byLabel.has(ref.label)) byLabel.set(ref.label, ref);
   }
+  // One bracket as printed: the items as one Pandoc group, `[@a; @b]`,
+  // then each reference no item is as a marker, `{at=1}` its place in the
+  // printed order when an item follows it (the editor draws the group as
+  // the paper printed it, "[Han16, Lar23, AAHLZ24]").
   const write = (refsHere, printed) => {
-    const out = [];
-    let group = [];
-    const flush = () => {
-      if (group.length > 0) out.push(`[${[...new Set(group)].map((k) => `@${k}`).join('; ')}]`);
-      group = [];
-    };
+    const items = [];
     refsHere.forEach((ref, i) => {
       if (ref.citeKey) {
-        group.push(ref.citeKey);
+        if (!items.some((it) => it.key === ref.citeKey)) items.push({ key: ref.citeKey });
         return;
       }
-      flush();
       const label = printed[i];
       const id = noteId(label, citingKey);
       if (!entries.has(id)) entries.set(id, noteEntry(id, label, ref));
-      out.push(`[^${id}]`);
+      if (!items.some((it) => it.id === id)) items.push({ id });
     });
-    flush();
-    return out.join('');
+    const keys = items.filter((it) => it.key);
+    const head = keys.length > 0 ? `[${keys.map((it) => `@${it.key}`).join('; ')}]` : '';
+    const marks = items.flatMap((it, at) => {
+      if (!it.id) return [];
+      const placed = keys.length > 0 && items.slice(at + 1).some((later) => later.key);
+      return [`[^${it.id}]${placed ? `{at=${at}}` : ''}`];
+    });
+    return head + marks.join('');
   };
   let out = markdown;
   if (byLabel.size > 0) {
@@ -707,12 +711,20 @@ async function quoteSelection({ text, selection, statement: given = null }) {
   }
   const compose = () => {
     const entries = new Map();
-    const blocks = parts.map((part) => {
-      const cited = linkCitations(part.markdown, refs, key);
+    const written = (markdown) => {
+      const cited = linkCitations(markdown, refs, key);
       for (const [id, line] of cited.entries) if (!known.has(id)) entries.set(id, line);
-      const markdown = linkXrefs(cited.markdown, xrefs, key);
-      if (part.statement) return statementBlock(part.statement, markdown, part.link);
-      return markdownQuote(markdown, part.link) || `> ${part.link}`;
+      return linkXrefs(cited.markdown, xrefs, key);
+    };
+    const blocks = parts.flatMap((part) => {
+      const markdown = written(part.markdown);
+      const own = part.statement
+        ? statementBlock(part.statement, markdown, part.link)
+        : markdownQuote(markdown, part.link) || `> ${part.link}`;
+      // What an exact source says came after the statement's end: a quote
+      // of its own, never the statement's body.
+      const tail = part.tail ? markdownQuote(written(part.tail), selectionLink) : null;
+      return tail ? [own, tail] : [own];
     });
     return [...blocks, ...(entries.size > 0 ? [[...entries.values()].join('\n')] : [])].join(
       '\n\n'
@@ -736,7 +748,13 @@ async function quoteSelection({ text, selection, statement: given = null }) {
           status: handle,
         });
         if (exact) {
-          part.markdown = exact.markdown;
+          const end = exact.statementEnd;
+          const split =
+            Number.isInteger(end) && end > 0 && end < exact.markdown.length
+              ? [exact.markdown.slice(0, end).trim(), exact.markdown.slice(end).trim()]
+              : null;
+          part.markdown = split && split[0] ? split[0] : exact.markdown;
+          part.tail = split && split[0] && split[1] ? split[1] : null;
           source = exact.source;
         }
       }

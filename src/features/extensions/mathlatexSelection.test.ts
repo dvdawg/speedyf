@@ -37,7 +37,10 @@ interface Ext {
     opts?: { text?: string }
   ): { markdown: string; confidence: string; math: number } | null;
   texDocument(files: { name: string; text: string }[]): Doc;
-  exactQuote(doc: Doc, quote: string): { markdown: string; exact: boolean } | null;
+  exactQuote(
+    doc: Doc,
+    quote: string
+  ): { markdown: string; exact: boolean; statementEnd: number | null } | null;
 }
 
 const ext = new Function(
@@ -333,6 +336,8 @@ Some earlier words in the paper that do not matter at all for this.
 Let $P$ be a distribution on the cube, as in~\cite{simon}. Then every pair
 of block overlaps has bounded moments~\cite{han,larsen}.
 \end{proposition}
+This result is analogous to the overlap estimate of Simon~\cite{simon}, and the
+bound is tight in general.
 \begin{theorem*}\label{thm:bw}
 Every bounded sequence of real numbers has, by~\cite{simon}, a convergent subsequence.
 \end{theorem*}
@@ -381,6 +386,28 @@ describe('Math to LaTeX: a statement found in the TeX source', () => {
     expect(after!.markdown.startsWith('**Proposition** (Moments of two block overlaps). Let')).toBe(
       true
     );
+  });
+
+  it('says where the statement ends when the quote runs on past it', () => {
+    const found = ext.exactQuote(
+      doc,
+      'Proposition 2.2 (Moments of two block overlaps). Let $P$ be a distribution on the cube, ' +
+        'as in \\[Sim15\\]. Then every pair of block overlaps has bounded moments \\[Han16, Lar23\\]. ' +
+        'This result is analogous to the overlap estimate of Simon \\[Sim15\\], and the bound is tight in general.'
+    );
+    const end = found!.statementEnd!;
+    expect(found!.markdown.slice(0, end)).toBe(
+      '**Proposition 2.2** (Moments of two block overlaps). Let $P$ be a distribution on the ' +
+        'cube, as in \\[Sim15\\]. Then every pair of block overlaps has bounded moments ' +
+        '\\[Han16, Lar23\\].'
+    );
+    expect(found!.markdown.slice(end).trim()).toMatch(/^This result is analogous/);
+    // A quote of the statement alone has no end to report.
+    const alone = ext.exactQuote(
+      doc,
+      'Let $P$ be a distribution on the cube, as in \\[Sim15\\]. Then every pair of block overlaps'
+    );
+    expect(alone!.statementEnd).toBeNull();
   });
 
   it('reads a starred environment and its label, and cites by the bibliography', () => {

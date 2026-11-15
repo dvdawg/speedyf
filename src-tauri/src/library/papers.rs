@@ -1837,10 +1837,13 @@ impl PaperStore {
                     .resolve_reference(reference, own)
                     .filter(|&index| index != own)
                     .map(|index| &self.papers[index]);
+                let read = super::witness::parse(&reference.text, reference.year);
                 PaperReferenceDto {
                     label: reference.label.clone(),
                     text: reference.text.clone(),
-                    year: reference.year,
+                    year: reference.year.or(read.year),
+                    title: read.title.clone(),
+                    author: read.authors.first().map(|a| a.family.clone()),
                     ids: reference
                         .ids
                         .iter()
@@ -2503,7 +2506,8 @@ fn push_once(list: &mut Vec<usize>, index: usize) {
 }
 
 /// One entry of a paper's reference list, for a notepad: its printed label
-/// and text, its identifiers (`doi:...`, `arxiv:...`), and the library item
+/// and text, its identifiers (`doi:...`, `arxiv:...`), what `witness`
+/// reads of it (title, first author's family name), and the library item
 /// it names, when one does.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -2511,6 +2515,8 @@ pub struct PaperReferenceDto {
     pub label: Option<String>,
     pub text: String,
     pub year: Option<i32>,
+    pub title: Option<String>,
+    pub author: Option<String>,
     pub ids: Vec<String>,
     pub item_id: Option<String>,
     pub cite_key: Option<String>,
@@ -6053,7 +6059,10 @@ mod tests {
                 "Sim15",
                 "B. Simon, Spectral theory, arXiv:1501.01234 (2015).",
             ),
-            ("Lar23", "L. Larsen, Not in the library (2023)."),
+            (
+                "Lar23",
+                "L. Larsen, Blocks of random matrices, Ann. Probab. 51, 1 (2023).",
+            ),
         ]
         .map(|(label, text)| ProvidedRef {
             label: Some(label.into()),
@@ -6073,6 +6082,10 @@ mod tests {
         assert!(list[0].cite_key.is_some());
         assert_eq!(list[1].item_id, None);
         assert!(list[1].text.contains("Larsen"));
+        // What the entry says of the work, for telling one work from another.
+        assert_eq!(list[1].author.as_deref(), Some("Larsen"));
+        assert_eq!(list[1].title.as_deref(), Some("Blocks of random matrices"));
+        assert_eq!(list[1].year, Some(2023));
         // A paper whose list was never read has none.
         assert!(store.paper_references(&simon_id, &refs).unwrap().is_empty());
     }

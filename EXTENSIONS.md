@@ -437,7 +437,10 @@ lines rejoined, a paragraph break a blank line), each run of inline math as
 `$...$` and each displayed equation as a `$$ ... $$` paragraph of its own.
 `mode: 'local'` answers from the page alone (and nothing when the passage
 has no math); `mode: 'exact'` answers only from an exact source, with
-`equations.checking` before it looks.
+`equations.checking` before it looks. An answer whose selection opens a
+formal statement and runs on past it may add `statementEnd`, the offset in
+`markdown` where the statement ends (an exact source knows where its
+environment closes); `selection.convert` hands it on.
 
 ### `referenceProvider`
 
@@ -658,7 +661,7 @@ cannot reach a tab the user is not looking at. Pages are zero-based.
 | `equations.convert`        | `{ equation, mode?, status? }`                              | `{ latex, display, source, confidence }` from the enabled `equationConverter`, or `null`; `status` a mark handle the converter names its source in                               | -                              |
 | `equations.checking`       | `{ ticket, source }`                                        | `{ shown }` - for a converter: the source (`'arxiv'`, `'journal'`) it is trying for that conversion                                                                              | -                              |
 | `selection.convert`        | `{ text \| selection, mode, status? }`                      | `{ selection, markdown, source, confidence }` or `null`: the text you were handed (or its token) as Markdown, from the selection converter                                       | -                              |
-| `selection.converted`      | `{ ticket, markdown, source, confidence }`                  | `{ accepted }` - for a converter: the answer to the selection conversion it was invoked for                                                                                      | -                              |
+| `selection.converted`      | `{ ticket, markdown, source, confidence, statementEnd? }`   | `{ accepted }` - for a converter: the answer to the selection conversion it was invoked for                                                                                      | -                              |
 | `selection.context`        | `{ text \| selection }`                                     | `{ selection, statement, parts, xrefs }` or `null` - the statement the selection quotes and the cross-references in it (below)                                                   | -                              |
 | `ui.itemLine`              | `{ itemId, text, action? }`                                 | `{ shown }`                                                                                                                                                                      | -                              |
 | `pane.open`                | `{ pane, projectId? }`                                      | `{ opened }` - your reader pane, when its `when` holds                                                                                                                           | -                              |
