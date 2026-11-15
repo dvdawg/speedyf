@@ -278,6 +278,153 @@ fn mend_xref_stream_type(path: &Path) -> AppResult<bool> {
     Ok(true)
 }
 
+/// The document info entries worth carrying into a rebuilt document, as
+/// (key, value) pairs.
+fn info_entries(document: &PdfDocument<'_>) -> Vec<(&'static str, String)> {
+    document
+        .metadata()
+        .iter()
+        .filter(|tag| !tag.value().is_empty())
+        .map(|tag| {
+            let key = match tag.tag_type() {
+                PdfDocumentMetadataTagType::Title => "Title",
+                PdfDocumentMetadataTagType::Author => "Author",
+                PdfDocumentMetadataTagType::Subject => "Subject",
+                PdfDocumentMetadataTagType::Keywords => "Keywords",
+                PdfDocumentMetadataTagType::Creator => "Creator",
+                PdfDocumentMetadataTagType::Producer => "Producer",
+                PdfDocumentMetadataTagType::CreationDate => "CreationDate",
+                PdfDocumentMetadataTagType::ModificationDate => "ModDate",
+            };
+            (key, tag.value().to_string())
+        })
+        .collect()
+}
+
+/// A PDF string token for `value`: a literal when it is plain printable
+/// ASCII, otherwise UTF-16BE hex with a byte order mark.
+fn pdf_text_string(value: &str) -> String {
+    if value.chars().all(|c| (' '..='~').contains(&c)) {
+        let mut out = String::with_capacity(value.len() + 2);
+        out.push('(');
+        for c in value.chars() {
+            if matches!(c, '(' | ')' | '\\') {
+                out.push('\\');
+            }
+            out.push(c);
+        }
+        out.push(')');
+        out
+    } else {
+        let mut out = String::from("<FEFF");
+        for unit in value.encode_utf16() {
+            out.push_str(&format!("{unit:04X}"));
+        }
+        out.push('>');
+        out
+    }
+}
+
+/// The raw value following `key` in a trailer dictionary: an array up to its
+/// closing bracket, anything else up to the next key or the dictionary end.
+fn trailer_value<'t>(trailer: &'t str, key: &str) -> Option<&'t str> {
+    let mut search = 0;
+    while let Some(found) = trailer[search..].find(key) {
+        let start = search + found + key.len();
+        // `/Root` must not match `/RootX`: a delimiter has to follow.
+        let next = trailer[start..].chars().next()?;
+        if next.is_ascii_whitespace() || matches!(next, '[' | '<' | '(' | '/') {
+            let rest = trailer[start..].trim_start();
+            let end = if rest.starts_with('[') {
+                rest.find(']')? + 1
+            } else {
+                rest.find(['/', '>']).unwrap_or(rest.len())
+            };
+            return Some(rest[..end].trim());
+        }
+        search = start;
+    }
+    None
+}
+
+/// Give a rebuilt document the source's document info by appending a small
+/// incremental update holding a fresh /Info dictionary.
+///
+/// PDFium can read /Info but offers no way to write it, and a document
+/// assembled from imported pages starts with PDFium's own. The update is
+/// written by hand against the trailer PDFium itself just produced - a classic
+/// cross-reference table - and if that trailer is not in the expected shape
+/// the file is left as it was: this is best effort, never a reason to fail a
+/// save.
+fn append_info_update(path: &Path, entries: &[(&'static str, String)]) -> AppResult<()> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let bytes = std::fs::read(path)?;
+    let Some(update) = info_update(&bytes, entries) else {
+        log::warn!("cannot carry document info into the rebuilt file: unexpected trailer");
+        return Ok(());
+    };
+    let mut file = std::fs::OpenOptions::new().append(true).open(path)?;
+    file.write_all(&update)?;
+    file.flush()?;
+    file.sync_all()?;
+    Ok(())
+}
+
+/// The bytes of an incremental update making `entries` the /Info of the PDF
+/// in `bytes`, or `None` if its last trailer cannot be read.
+fn info_update(bytes: &[u8], entries: &[(&'static str, String)]) -> Option<Vec<u8>> {
+    fn rfind(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        haystack.windows(needle.len()).rposition(|w| w == needle)
+    }
+    let startxref = rfind(bytes, b"startxref")?;
+    let trailer_at = rfind(&bytes[..startxref], b"trailer")?;
+    let trailer = std::str::from_utf8(&bytes[trailer_at..startxref]).ok()?;
+    let prev: u64 = std::str::from_utf8(&bytes[startxref + b"startxref".len()..])
+        .ok()?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()?;
+    let size: u32 = trailer_value(trailer, "/Size")?.parse().ok()?;
+    let root = trailer_value(trailer, "/Root")?;
+    let root_parts: Vec<&str> = root.split_whitespace().collect();
+    let root_is_reference = root_parts.len() == 3
+        && root_parts[2] == "R"
+        && root_parts[..2].iter().all(|p| p.parse::<u32>().is_ok());
+    if !root_is_reference {
+        return None;
+    }
+    let id = trailer_value(trailer, "/ID");
+
+    let mut out: Vec<u8> = Vec::new();
+    if !bytes.ends_with(b"\n") && !bytes.ends_with(b"\r") {
+        out.push(b'\n');
+    }
+    let object_at = bytes.len() + out.len();
+    out.extend_from_slice(format!("{size} 0 obj\n<<").as_bytes());
+    for (key, value) in entries {
+        out.extend_from_slice(format!(" /{key} {}", pdf_text_string(value)).as_bytes());
+    }
+    out.extend_from_slice(b" >>\nendobj\n");
+    let xref_at = bytes.len() + out.len();
+    // Each cross-reference entry is exactly 20 bytes, newline included.
+    out.extend_from_slice(format!("xref\n{size} 1\n{object_at:010} 00000 n \n").as_bytes());
+    out.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root {root} /Info {size} 0 R /Prev {prev}",
+            size + 1
+        )
+        .as_bytes(),
+    );
+    if let Some(id) = id {
+        out.extend_from_slice(format!(" /ID {id}").as_bytes());
+    }
+    out.extend_from_slice(format!(" >>\nstartxref\n{xref_at}\n%%EOF\n").as_bytes());
+    Some(out)
+}
+
 fn parse_color(hex: &str, opacity: f32) -> PdfColor {
     let h = hex.trim_start_matches('#');
     let v = u32::from_str_radix(h, 16).unwrap_or(0);
@@ -753,8 +900,10 @@ fn preserves_source_pages(plan: &EditPlan, src_page_count: u16) -> bool {
 /// copies nothing from the catalog. So that path loses the outline, the named
 /// destinations hyperref links go through (those links stay but lead
 /// nowhere), XMP metadata and the AcroForm (widgets come across as inert
-/// boxes), and the document info. Rebuilding those is not attempted: PDFium
-/// exposes no way to write them.
+/// boxes). The document info dictionary is carried over by hand (see
+/// `append_info_update`). Rebuilding the outline and the name tree is not
+/// attempted: PDFium exposes no way to write either, and doing it with
+/// hand-written objects is a PDF writer this module does not want to own.
 pub fn build_output(
     pdfium: &Pdfium,
     src_path: &str,
@@ -773,6 +922,11 @@ pub fn build_output(
              pages; the form cannot be carried across and will be dropped"
         );
     }
+    let source_info = if edit_in_place {
+        Vec::new()
+    } else {
+        info_entries(&src)
+    };
 
     let mut out = if edit_in_place {
         src
@@ -862,6 +1016,7 @@ pub fn build_output(
         save_incremental(&out, out_path)?;
     } else {
         write_document(&out, out_path, SaveMode::Rewrite)?;
+        append_info_update(out_path, &source_info)?;
     }
 
     // 4) Commit form values AND their appearances through PDFium's form-fill
