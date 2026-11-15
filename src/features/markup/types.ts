@@ -54,6 +54,11 @@ export interface Anchor {
   rect: Rect | null;
   /** The text under it (empty for a region). */
   quote: string;
+  /** The same words as Markdown with their math as LaTeX (`$...$`, displays
+   * as `$$ ... $$`), when a math converter could read them: what the
+   * drawer shows and the letter quotes. Absent in reviews written before
+   * it, and when there was no math or no converter. */
+  quoteTex?: string;
 }
 
 export interface MarkupComment {

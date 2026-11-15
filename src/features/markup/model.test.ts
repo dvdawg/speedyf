@@ -3,6 +3,7 @@ import { quadsFromRects } from './geometry';
 import type { CommentLabel } from './labels';
 import {
   alsoText,
+  anchorQuote,
   buildEntries,
   citationsAsText,
   citedKeys,
@@ -13,6 +14,7 @@ import {
   parseMarkup,
   plainLetter,
   serializeMarkup,
+  shortMathQuote,
   shortQuote,
   summarySkeleton,
   typoSuggestion,
@@ -274,5 +276,36 @@ describe('plainLetter', () => {
 
   it('is ASCII', () => {
     expect(letter).toMatch(/^[\x20-\x7e\n]*$/);
+  });
+});
+
+describe('quotes with their math as LaTeX', () => {
+  it('reads quoteTex back, and leaves it out of reviews without it', () => {
+    const quad = { x1: 0, y1: 10, x2: 5, y2: 10, x3: 0, y3: 0, x4: 5, y4: 0 };
+    const json = (anchor: object) =>
+      JSON.stringify({
+        version: 1,
+        summary: '',
+        comments: [{ id: 'c_1', kind: 'proof', anchor, body: '', created: 1 }],
+      });
+    const withTex = parseMarkup(json({ page: 0, quads: [quad], quote: 'a', quoteTex: '$a$' }));
+    expect(withTex.comments[0]!.anchor.quoteTex).toBe('$a$');
+    const without = parseMarkup(json({ page: 0, quads: [quad], quote: 'a' }));
+    expect('quoteTex' in without.comments[0]!.anchor).toBe(false);
+  });
+
+  it('never cuts a quote inside a formula', () => {
+    const tex = 'we bound $\\sum_{i=1}^{n} x_i^2 \\le C$ and then the rest of it goes on';
+    expect(shortMathQuote(tex, 45)).toBe('we bound $\\sum_{i=1}^{n} x_i^2 \\le C$ and...');
+    expect(shortMathQuote(tex, 30)).toBe('we bound...');
+    expect(shortMathQuote(tex, 12)).toBe('we bound...');
+    expect(shortMathQuote('$$ a + b = c $$ then', 5)).toBe('$$ a + b = c $$...');
+  });
+
+  it('quotes the LaTeX in the letter when there is some', () => {
+    expect(anchorQuote({ page: 0, quads: null, rect: null, quote: 'x2', quoteTex: '$x^2$' })).toBe(
+      '$x^2$'
+    );
+    expect(anchorQuote({ page: 0, quads: null, rect: null, quote: 'x2' })).toBe('x2');
   });
 });
