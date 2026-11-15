@@ -15,6 +15,7 @@
  */
 import { cssToPdf, type PageGeom } from '../../lib/coordinates/coords';
 import {
+  displayEdge,
   hitTest,
   wordAt,
   type PagePoint,
@@ -164,9 +165,16 @@ function select(anchor: DomPoint, focus: DomPoint): void {
   selection.setBaseAndExtent(anchor.node, anchor.offset, focus.node, focus.offset);
 }
 
-function selectBetween(anchor: Located, focus: Located): void {
-  const a = domPoint(anchor.entry, anchor.pos);
-  const f = domPoint(focus.entry, focus.pos);
+/** Select from `anchor` to `focus`, a display equation at either end
+ * taken whole (even when the two are one point in it, unless `caret`: a
+ * click places a caret, a drag inside a display selects it). */
+function selectBetween(anchor: Located, focus: Located, caret = false): void {
+  const forward = compare(focus, anchor) >= 0;
+  const collapsed = caret && compare(focus, anchor) === 0;
+  const from = collapsed ? anchor.pos : displayEdge(anchor.entry.model(), anchor.pos, !forward);
+  const to = collapsed ? focus.pos : displayEdge(focus.entry.model(), focus.pos, forward);
+  const a = domPoint(anchor.entry, from);
+  const f = domPoint(focus.entry, to);
   if (a && f) select(a, f);
 }
 
@@ -209,7 +217,7 @@ export function pressTextLayer(entry: LayerEntry, event: MouseEvent): boolean {
     anchor = locate(selection.anchorNode, selection.anchorOffset) ?? at;
     selectBetween(anchor, at);
   } else {
-    selectBetween(at, at);
+    selectBetween(at, at, true);
   }
 
   let moved = event.detail === 2 || event.shiftKey;

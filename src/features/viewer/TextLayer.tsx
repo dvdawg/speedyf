@@ -10,6 +10,7 @@
 import { createMemo, createSignal, For, Index, onCleanup, onMount } from 'solid-js';
 import type { TextRunDto } from '../../types/engine';
 import type { Rotation } from '../../types/model';
+import type { EquationBlock } from '../extensions/EquationLayer';
 import { registerCopyRun } from '../../lib/text/copySelection';
 import { buildTextModel, selectionRects } from '../../lib/text/textHit';
 import { toolState } from '../annotations/toolStore';
@@ -48,13 +49,27 @@ interface Props {
   zoom: number;
   /** position in the document, so a selection spanning pages can be ordered */
   page: number;
+  /** the page's display equations, boxes from its top-left */
+  equations?: readonly EquationBlock[];
 }
 
 const measureChar = (text: string) => measureAt100px(text);
 
 export default function TextLayer(props: Props) {
   let layer!: HTMLDivElement;
-  const model = createMemo(() => buildTextModel(props.runs, measureChar));
+  const model = createMemo(() =>
+    buildTextModel(
+      props.runs,
+      measureChar,
+      (props.equations ?? []).map(({ bbox: [x, y, w, h], number }) => ({
+        x,
+        y: props.pageHeightPt - y - h,
+        w,
+        h,
+        number,
+      }))
+    )
+  );
   const [painted, setPainted] = createSignal<[number, number, number, number][]>([]);
 
   const repaint = () => {

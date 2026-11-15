@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, fireEvent, render } from '@solidjs/testing-library';
 import TextLayer from './TextLayer';
 import type { TextRunDto } from '../../types/engine';
@@ -123,4 +123,65 @@ it('paints a selection as one band per line', () => {
   const bands = document.querySelectorAll('.text-selection div');
   expect(bands).toHaveLength(4);
   expect((bands[0] as HTMLElement).style.width).toBe('200px');
+});
+
+describe('display equations', () => {
+  // prose, a display (two rows numbered (3)), prose; page 800pt tall, so a
+  // run's client y is 800 - its page y
+  const eqRuns: TextRunDto[] = [
+    { text: 'we have', start: 0, x: 60, y: 700, w: 200, h: 10 },
+    { text: 'a + b', start: 0, x: 140, y: 680, w: 30, h: 10 },
+    { text: 'c', start: 0, x: 152, y: 668, w: 6, h: 10 },
+    { text: '(3)', start: 0, x: 480, y: 674, w: 14, h: 10 },
+    { text: 'and so on', start: 0, x: 60, y: 650, w: 200, h: 10 },
+  ];
+  // the engine's box, from the page's top-left
+  const equations = [{ bbox: [138, 109, 34, 24] as [number, number, number, number], number: '3' }];
+
+  function mountEq() {
+    const { container } = render(() => (
+      <TextLayer
+        runs={eqRuns}
+        pageWidthPt={600}
+        pageHeightPt={800}
+        rotation={0}
+        zoom={1}
+        page={0}
+        equations={equations}
+      />
+    ));
+    return container.querySelectorAll('.text-layer span');
+  }
+
+  it('takes a display whole when a drag ends in it', () => {
+    const spans = mountEq();
+    fireEvent.mouseDown(spans[0]!, { button: 0, detail: 1, clientX: 60, clientY: 95 });
+    // onto the numerator
+    fireEvent.mouseMove(window, { clientX: 150, clientY: 115 });
+    fireEvent.mouseUp(window, {});
+    expect(selected().focus).toBe(spans[3]!.firstChild);
+    expect(selected().focusOffset).toBe(3);
+  });
+
+  it('selects a display by a drag inside it', () => {
+    const spans = mountEq();
+    fireEvent.mouseDown(spans[1]!, { button: 0, detail: 1, clientX: 150, clientY: 115 });
+    fireEvent.mouseMove(window, { clientX: 155, clientY: 127 });
+    fireEvent.mouseUp(window, {});
+    expect(selected()).toEqual({
+      anchor: spans[1]!.firstChild,
+      anchorOffset: 0,
+      focus: spans[3]!.firstChild,
+      focusOffset: 3,
+    });
+    document.dispatchEvent(new Event('selectionchange'));
+    expect(document.querySelectorAll('.text-selection div')).toHaveLength(1);
+  });
+
+  it('places a caret on a click inside a display', () => {
+    const spans = mountEq();
+    fireEvent.mouseDown(spans[1]!, { button: 0, detail: 1, clientX: 150, clientY: 115 });
+    fireEvent.mouseUp(window, {});
+    expect(document.getSelection()!.isCollapsed).toBe(true);
+  });
 });
