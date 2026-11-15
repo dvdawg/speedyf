@@ -174,6 +174,11 @@ export async function projectsApi(
     }
     case 'reader.context':
       return readerContext();
+    case 'projects.references': {
+      const itemId = record.itemId;
+      if (typeof itemId !== 'string' || !itemId) throw new Error('expected an "itemId"');
+      return invoke('library_paper_references', { paperId: itemId });
+    }
     case 'reader.chooseProject': {
       const resume = host().pauseDeadlines();
       try {

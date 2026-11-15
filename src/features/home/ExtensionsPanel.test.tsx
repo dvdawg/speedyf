@@ -58,6 +58,7 @@ function extension(overrides: Partial<ExtensionRecord>): ExtensionRecord {
     citationActions: [],
     documentTasks: [],
     equationActions: [],
+    statementActions: [],
     network: [],
     settings: [],
     keybindings: [],

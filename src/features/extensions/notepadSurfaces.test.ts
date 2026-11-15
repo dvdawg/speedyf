@@ -190,6 +190,15 @@ function notepadDto() {
         when: 'documentInProject',
       },
     ],
+    statementActions: [
+      {
+        id: `${NOTEPAD}/statement`,
+        localId: 'statement',
+        title: 'Send to Notepad',
+        extensionId: NOTEPAD,
+        when: 'documentInProject',
+      },
+    ],
     network: [],
     settings: [],
     iconUrl: null,
@@ -213,6 +222,7 @@ function mathDto() {
     commands: [],
     selectionActions: [],
     equationActions: [],
+    statementActions: [],
   };
 }
 
@@ -302,6 +312,7 @@ describe('the reader project', () => {
       expect(store.readerPanes()).toEqual([]);
       expect(store.selectionActions()).toEqual([]);
       expect(store.equationActions()).toEqual([]);
+      expect(store.statementActions()).toEqual([]);
       expect(store.extensionCommands().map((c) => c.title)).toEqual(['Open Notepad']);
       expect(surfaces.toggleReaderPane()).toBe(false);
       expect(surfaces.shownPane()).toBeNull();
@@ -320,6 +331,7 @@ describe('the reader project', () => {
       expect(store.readerPanes().map((p) => p.id)).toEqual([`${NOTEPAD}/notepad`]);
       expect(store.selectionActions().map((a) => a.title)).toEqual(['Quote to Notepad']);
       expect(store.equationActions().map((a) => a.title)).toEqual(['Send to Notepad']);
+      expect(store.statementActions().map((a) => a.id)).toEqual([`${NOTEPAD}/statement`]);
       expect(surfaces.toggleReaderPane()).toBe(true);
       expect(surfaces.shownPane()?.title).toBe('Notepad');
       // Moving to an unfiled PDF hides it; coming back shows it again.
@@ -359,6 +371,7 @@ describe('a disabled Notepad', () => {
       expect(store.projectViews()).toEqual([]);
       expect(store.selectionActions()).toEqual([]);
       expect(store.equationActions()).toEqual([]);
+      expect(store.statementActions()).toEqual([]);
       expect(surfaces.shownPane()).toBeNull();
       expect(hostApi.itemLines('i1', store.extensionUsable)).toEqual([]);
       // Nothing was removed: the files stay for when it comes back.

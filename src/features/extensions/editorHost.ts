@@ -130,6 +130,10 @@ export interface CitationEntry {
    * becomes a citation of the entry holding it. */
   doi?: string | null;
   arxiv?: string | null;
+  /** The library item it is, when the extension says: what lets the
+   * editor offer the paper's statements after `@key` and preview a place
+   * in it on hover. */
+  item?: string | null;
 }
 
 export interface CitationIndex {
@@ -206,6 +210,7 @@ export function readCitationEntries(raw: unknown): CitationEntry[] {
         : [],
       doi: typeof r.doi === 'string' ? normalizeDoi(r.doi.slice(0, 500)) : null,
       arxiv: typeof r.arxiv === 'string' ? normalizeArxiv(r.arxiv.slice(0, 200)) : null,
+      item: typeof r.item === 'string' && r.item.length <= 200 ? r.item : null,
     });
   }
   return out;

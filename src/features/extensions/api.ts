@@ -638,6 +638,8 @@ export const API_PERMISSIONS: Readonly<Record<string, string>> = {
   'projects.items': 'projects:read',
   'reader.context': 'projects:read',
   'reader.chooseProject': 'projects:read',
+  // An item's reference list, each entry with the item it names.
+  'projects.references': 'projects:read',
   // Opening an item (at a page and place) is reading where it is.
   'navigate.openItem': 'projects:read',
   // The extension's own files, per project, kept by the core.
@@ -666,7 +668,9 @@ export const API_PERMISSIONS: Readonly<Record<string, string>> = {
   // source it is trying for a conversion it was asked for, the others draw
   // into surfaces the extension declared. selection.convert hands back the
   // text a selection action was given (as Markdown), and
-  // selection.converted is a converter answering it.
+  // selection.converted is a converter answering it. selection.context
+  // says which statement that selection quotes and where its
+  // cross-references point.
   // ui.render and ui.showMath need no permission: an extension may only draw
   // into a panel it declared, or show a formula in the popover SpeedyF owns,
   // and drawing is not access to anything.
@@ -679,6 +683,7 @@ export const OPEN_APIS: ReadonlySet<string> = new Set([
   'equations.checking',
   'selection.convert',
   'selection.converted',
+  'selection.context',
   'ui.itemLine',
   'pane.open',
   'projectView.open',

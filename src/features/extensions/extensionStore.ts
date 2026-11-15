@@ -74,7 +74,9 @@ import { revealPlace } from '../../stores/revealStore';
 import { parseUi, type UiDescription } from './ui';
 import { ReferenceQueue, chooseProvider, idleWait, readerBusy } from './referenceProvider';
 import { TermSession, chooseTermProvider } from './termProvider';
-import { clearAllTerms, setDocumentTerms } from '../hovers/hoverStore';
+import { clearAllTerms, setDocumentTerms, spansFor, termsVersion } from '../hovers/hoverStore';
+import { docStatements, type Rect, type Statement } from './paperDocs';
+import { splitStatementRects, splitStatementText, statementAt, xrefsIn } from './selectionContext';
 import {
   openMathLoading,
   settleMath,
@@ -188,6 +190,8 @@ export interface ExtensionRecord {
   documentTasks: ExtensionAction[];
   /** Buttons on the display equations SpeedyF detects on a page. */
   equationActions: ExtensionAction[];
+  /** Buttons by the labels of the formal statements SpeedyF detects. */
+  statementActions: ExtensionAction[];
   /** Hosts it may reach through `net.fetch`; empty for one that never
    * touches the network. Shown on its card whether it is on or off. */
   network: string[];
@@ -282,6 +286,7 @@ interface ExtensionDto {
   citationActions: ExtensionAction[];
   documentTasks: ExtensionAction[];
   equationActions?: ExtensionAction[];
+  statementActions?: ExtensionAction[];
   network?: string[];
   settings: ExtensionSetting[];
   referenceProvider?: string | null;
@@ -305,6 +310,7 @@ export async function loadExtensions(): Promise<void> {
           citationActions: dto.citationActions ?? [],
           documentTasks: dto.documentTasks ?? [],
           equationActions: dto.equationActions ?? [],
+          statementActions: dto.statementActions ?? [],
           network: dto.network ?? [],
           settings: dto.settings ?? [],
           iconUrl: dto.iconUrl ?? null,
@@ -432,6 +438,16 @@ export function equationActions(): ExtensionAction[] {
   return state.extensions
     .filter((e) => e.enabled && !e.error)
     .flatMap((e) => e.equationActions)
+    .filter((a) => whenHolds(a.when));
+}
+
+/** Actions offered on a detected formal statement (theorem, lemma,
+ * definition...). Empty - and so no statement buttons and no detection
+ * asked for - unless an enabled extension contributes one. */
+export function statementActions(): ExtensionAction[] {
+  return state.extensions
+    .filter((e) => e.enabled && !e.error)
+    .flatMap((e) => e.statementActions)
     .filter((a) => whenHolds(a.when));
 }
 
@@ -651,6 +667,102 @@ export function selectionSnapshot(token: unknown): SelectionSnapshot | null {
   return typeof token === 'string' ? (snapshots.get(token) ?? null) : null;
 }
 
+/** Keep a selection the core made itself (a statement's extent, a part of
+ * a selection) as a snapshot: its token. */
+export function registerSnapshot(snapshot: SelectionSnapshot): string {
+  const token = `s${nextSnapshot++}-${Math.random().toString(36).slice(2, 8)}`;
+  snapshots.set(token, {
+    docId: snapshot.docId,
+    page: snapshot.page,
+    rects: snapshot.rects.map((r) => [r[0], r[1], r[2], r[3]]),
+    text: snapshot.text,
+  });
+  while (snapshots.size > SNAPSHOT_LIMIT) snapshots.delete(snapshots.keys().next().value!);
+  return token;
+}
+
+/** `selection.context { text | selection }`: the statement a selection
+ * quotes (with the selection cut into what precedes it, the statement and
+ * what follows, each a token of its own) and the cross-references in it.
+ * Null when the selection is not on screen (by text) or not known (by
+ * token). */
+async function selectionContextCall(args: unknown): Promise<unknown> {
+  const record = (args ?? {}) as Record<string, unknown>;
+  let token: string | null;
+  if (record.selection !== undefined) {
+    token = selectionSnapshot(record.selection) ? (record.selection as string) : null;
+  } else {
+    if (typeof record.text !== 'string') {
+      throw new Error('selection.context needs the selected "text" or a "selection" token');
+    }
+    token = snapshotSelection(record.text);
+  }
+  const snap = token ? snapshots.get(token) : undefined;
+  if (!token || !snap) return null;
+  const empty = { selection: token, statement: null, parts: null, xrefs: [] };
+  const tab = activeTab();
+  const doc = tab?.documentStore.state;
+  if (!tab || !doc?.loaded || doc.docId !== snap.docId) return empty;
+  const src = doc.pages[snap.page]?.srcIndex;
+  const height = tab.zoom.pagesGeom()[snap.page]?.heightPt;
+  if (src === undefined || src === null || height === undefined) return empty;
+  const heightOf = (file: number) => {
+    const at = doc.pages.findIndex((p) => p.srcIndex === file);
+    return tab.zoom.pagesGeom()[at]?.heightPt ?? null;
+  };
+  const [statements, spans] = await Promise.all([
+    docStatements(doc.docId),
+    spansFor(doc.docId, src, termsVersion(doc.docId)),
+  ]);
+  const shape = { rects: snap.rects as Rect[] };
+  const hit = statementAt(
+    shape,
+    statements.filter((s) => s.page === src),
+    height
+  );
+  const xrefs = xrefsIn(shape, spans, height, heightOf);
+  if (!hit) return { ...empty, xrefs };
+  const text = splitStatementText(snap.text, hit.statement.text);
+  const rects = splitStatementRects(snap.rects as Rect[], hit.box);
+  const part = (words: string, own: Rect[], fallback: Rect[]) =>
+    words
+      ? {
+          selection: registerSnapshot({
+            docId: snap.docId,
+            page: snap.page,
+            rects: own.length > 0 ? own : fallback,
+            text: words,
+          }),
+          text: words,
+        }
+      : null;
+  const first = snap.rects.slice(0, 1) as Rect[];
+  const round = (r: Rect) => r.map((v) => Math.round(v)) as Rect;
+  return {
+    selection: token,
+    statement: statementOut(hit.statement, snap.page, round(hit.box), round(hit.labelBox)),
+    parts: {
+      before: part(text.before, rects.before, first),
+      statement: part(text.statement || snap.text, rects.statement, snap.rects as Rect[]),
+      after: part(text.after, rects.after, snap.rects.slice(-1) as Rect[]),
+    },
+    xrefs,
+  };
+}
+
+/** A statement as an extension is told it. */
+function statementOut(statement: Statement, page: number, box: Rect, labelBox: Rect) {
+  return {
+    kind: statement.kind,
+    word: statement.word,
+    number: statement.number,
+    title: statement.title,
+    page,
+    box,
+    labelBox,
+  };
+}
+
 /** A selection snapshot as Markdown from the first enabled converter that
  * reads selections: invoked with `{ selection, text, page, mode, ticket }`,
  * its `selection.converted` taken as the answer. Null when there is no such
@@ -830,6 +942,36 @@ export async function runEquationAction(
     value,
     popover ? anchor : null,
     popover
+  );
+}
+
+/** Run a statement action on the statement the user pointed at: the
+ * extension gets the statement and a selection token for its whole extent
+ * (label to its end), to convert like any selection. */
+export async function runStatementAction(
+  action: ExtensionAction,
+  target: { page: number; box: Rect; labelBox: Rect; statement: Statement }
+): Promise<void> {
+  const extension = state.extensions.find((e) => e.id === action.extensionId);
+  const doc = activeTab()?.documentStore.state;
+  if (!extension || !extension.enabled || !doc?.loaded) return;
+  const round = (r: Rect) => r.map((v) => Math.round(v)) as Rect;
+  const selection = registerSnapshot({
+    docId: doc.docId,
+    page: target.page,
+    rects: [target.box],
+    text: target.statement.text,
+  });
+  await invokeAction(
+    extension,
+    action.localId,
+    action.title,
+    {
+      ...statementOut(target.statement, target.page, round(target.box), round(target.labelBox)),
+      selection,
+      text: target.statement.text,
+    },
+    null
   );
 }
 
@@ -1168,6 +1310,13 @@ async function handleCall(extension: ExtensionRecord, call: CallMessage): Promis
     if (!capture) return { accepted: false };
     capture({ markdown: answer.markdown, source: answer.source, confidence: answer.confidence });
     return { accepted: true };
+  }
+
+  if (call.api === 'selection.context') {
+    // No permission: like selection.convert, about the selection the
+    // caller was handed - which statement it quotes, and where the
+    // references in it point.
+    return selectionContextCall(call.args);
   }
 
   if (call.api === 'selection.convert') {
