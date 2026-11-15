@@ -14,7 +14,14 @@ import { activeTab } from '../../stores/tabsStore';
 import { flashStatus } from '../../stores/statusMessage';
 import { revealPlace } from '../../stores/revealStore';
 import { selectedGeometry, selectedText, settleSelectionNow } from '../../stores/selectionStore';
-import { extensionUsable } from '../extensions/extensionStore';
+import {
+  convertEquation,
+  convertSelection,
+  extensionUsable,
+  snapshotSelection,
+  type ConvertMode,
+} from '../extensions/extensionStore';
+import { equationToken } from '../extensions/editorHost';
 import { closeReaderPane } from '../extensions/surfaces';
 import { docStatements } from '../extensions/paperDocs';
 import { pickRegion } from '../extensions/regionCapture';
@@ -285,18 +292,100 @@ export function beginComment(mode: DraftMode): boolean {
   const quads = quadsFromRects(geometry.rects, page.heightPt);
   if (quads.length === 0) return false;
   ensureLoaded(path);
+  // Taken while the selection is still the one the text came from: what a
+  // math converter reads the quote's formulas from.
+  const token = snapshotSelection(selectedText());
   document.getSelection()?.removeAllRanges();
+  const anchor: Anchor = { page: page.srcIndex!, quads, rect: null, quote: text };
   batch(() => {
     setEditing(null);
     setDraft({
       path,
       mode,
-      anchor: { page: page.srcIndex!, quads, rect: null, quote: text },
+      anchor,
       kind: mode === 'typo' ? 'typo' : 'exposition',
       quickmark: mode === 'typo' ? 'typo' : null,
     });
   });
+  if (token && mode === 'comment') {
+    void readQuoteMath(path, anchor, async (m) => {
+      const answer = await convertSelection(token, m);
+      const markdown = answer?.markdown.trim() ?? '';
+      return markdown.includes('$') ? markdown : null;
+    });
+  }
   return true;
+}
+
+/** Start a comment on a display equation (its button on the page): the
+ * equation's box is the anchor, "Equation (3)" the quote, and its LaTeX,
+ * when a converter reads it, what the drawer shows. `page` is the reader's
+ * page, `bbox` the equation's box from that page's top-left. */
+export function beginEquationComment(target: {
+  page: number;
+  bbox: [number, number, number, number];
+  number: string | null;
+}): boolean {
+  if (!reviewing()) return false;
+  const tab = activeTab();
+  const doc = tab?.documentStore.state;
+  const path = activePath();
+  if (!tab || !doc || !path) return false;
+  const page = doc.pages[target.page];
+  if (!page || page.srcIndex === null) return false;
+  const quads = quadsFromRects([target.bbox], page.heightPt);
+  if (quads.length === 0) return false;
+  ensureLoaded(path);
+  const anchor: Anchor = {
+    page: page.srcIndex,
+    quads,
+    rect: null,
+    quote: target.number ? `Equation (${target.number})` : 'Equation',
+  };
+  batch(() => {
+    setEditing(null);
+    setDraft({ path, mode: 'comment', anchor, kind: 'exposition', quickmark: null });
+  });
+  const ref = { docId: doc.docId, page: target.page, bbox: target.bbox, number: target.number };
+  const token = equationToken(ref);
+  void readQuoteMath(path, anchor, async (m) => {
+    const answer = await convertEquation(token, ref, m);
+    const latex = answer?.latex.trim() ?? '';
+    return latex ? `$$ ${latex.replace(/\s*\n\s*/g, ' ')} $$` : null;
+  });
+  return true;
+}
+
+/** Read a quote's math as LaTeX, into its anchor: from the page itself at
+ * once, then, when that found math, quietly from an exact source if the
+ * converter has one (which goes online only when its extension is
+ * enabled, the user's consent to it). Nothing happens without a converter. */
+async function readQuoteMath(
+  path: string,
+  anchor: Anchor,
+  read: (mode: ConvertMode) => Promise<string | null>
+): Promise<void> {
+  const local = await read('local').catch(() => null);
+  if (!local) return;
+  setQuoteTex(path, anchor, local);
+  const exact = await read('exact').catch(() => null);
+  if (exact && exact !== local) setQuoteTex(path, anchor, exact);
+}
+
+/** Put a quote's LaTeX on its anchor: the draft's, while it is being
+ * written, else the kept comment's (the draft's anchor is the comment's). */
+function setQuoteTex(path: string, anchor: Anchor, tex: string): void {
+  const d = untrack(draft);
+  if (d && d.anchor === anchor) {
+    anchor.quoteTex = tex;
+    setDraft({ ...d });
+    return;
+  }
+  const entry = untrack(() => reviews[path]);
+  if (!entry?.doc.comments.some((c) => unwrap(c.anchor) === anchor)) return;
+  change(path, (doc) => {
+    for (const c of doc.comments) if (unwrap(c.anchor) === anchor) c.anchor.quoteTex = tex;
+  });
 }
 
 /** Drag a box on a page for a figure, an equation, a diagram. */
