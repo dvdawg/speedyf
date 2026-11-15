@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, fireEvent, render } from '@solidjs/testing-library';
 import TextLayer from './TextLayer';
+import { selectedRunRects } from '../../lib/text/copySelection';
 import type { TextRunDto } from '../../types/engine';
 
 afterEach(() => {
@@ -176,6 +177,12 @@ describe('display equations', () => {
     });
     document.dispatchEvent(new Event('selectionchange'));
     expect(document.querySelectorAll('.text-selection div')).toHaveLength(1);
+    // and where it is, for a comment's anchor, is the display's one box
+    // (happy-dom's containsNode also counts the prose either side)
+    const rects = selectedRunRects(document.getSelection()!, document.body);
+    expect(rects.filter((r) => r.rect[1] < 700 && r.rect[1] > 650)).toEqual([
+      { page: 0, rect: [138, 667, 356, 24] },
+    ]);
   });
 
   it('places a caret on a click inside a display', () => {

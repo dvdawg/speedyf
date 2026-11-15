@@ -7,11 +7,20 @@
  * press is hit-tested against the page's lines (`textSelection`), and the
  * selection is painted here as one band per line, under the spans, with
  * the browser's own per-span highlight switched off. */
-import { createMemo, createSignal, For, Index, onCleanup, onMount } from 'solid-js';
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  Index,
+  onCleanup,
+  onMount,
+  untrack,
+} from 'solid-js';
 import type { TextRunDto } from '../../types/engine';
 import type { Rotation } from '../../types/model';
 import type { EquationBlock } from '../extensions/EquationLayer';
-import { registerCopyRun } from '../../lib/text/copySelection';
+import { registerCopyRun, setSpanDisplay } from '../../lib/text/copySelection';
 import { buildTextModel, selectionRects } from '../../lib/text/textHit';
 import { toolState } from '../annotations/toolStore';
 import {
@@ -77,6 +86,19 @@ export default function TextLayer(props: Props) {
     if (pieces.length === 0 && painted().length === 0) return;
     setPainted(selectionRects(model(), pieces));
   };
+
+  // What a selection's geometry reads: a span of a display equation stands
+  // for the whole display. And a selection already there is repainted when
+  // the equations arrive.
+  createEffect(() => {
+    const m = model();
+    const spans = layer.children;
+    for (let i = 0; i < spans.length; i += 1) {
+      const display = m.displays[m.displayOfRun[i] ?? -1];
+      setSpanDisplay(spans[i]!, display ? display.box : null);
+    }
+    untrack(repaint);
+  });
 
   let entry: LayerEntry | undefined;
   onMount(() => {
