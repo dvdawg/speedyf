@@ -271,7 +271,7 @@ pub fn validate(req: &MarkupExportRequest) -> AppResult<()> {
     let mut margin_pages = HashSet::new();
     let mut links = 0usize;
     for sheet in &req.sheets {
-        let size_ok = |v: f32| v.is_finite() && v >= 1.0 && v <= MAX_SHEET_PT;
+        let size_ok = |v: f32| (1.0..=MAX_SHEET_PT).contains(&v);
         if !size_ok(sheet.width_pt) || !size_ok(sheet.height_pt) {
             return bad("sheet size out of range");
         }
@@ -561,6 +561,8 @@ type BoxGetter = fn(
     *mut f32,
 ) -> pdfium_render::prelude::FPDF_BOOL;
 
+type BoxSetter = fn(&dyn PdfiumLibraryBindings, FPDF_PAGE, f32, f32, f32, f32);
+
 fn read_box(b: &dyn PdfiumLibraryBindings, page: FPDF_PAGE, get: BoxGetter) -> Option<Bounds> {
     let (mut l, mut bo, mut r, mut t) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
     let ok = get(b, page, &mut l, &mut bo, &mut r, &mut t) != 0;
@@ -633,10 +635,7 @@ fn widen_page(b: &dyn PdfiumLibraryBindings, page: FPDF_PAGE, m: f32) -> AppResu
     let new_media = union(media, new_crop);
     b.FPDFPage_SetMediaBox(page, new_media[0], new_media[1], new_media[2], new_media[3]);
     b.FPDFPage_SetCropBox(page, new_crop[0], new_crop[1], new_crop[2], new_crop[3]);
-    let boxes: [(
-        BoxGetter,
-        fn(&dyn PdfiumLibraryBindings, FPDF_PAGE, f32, f32, f32, f32),
-    ); 3] = [
+    let boxes: [(BoxGetter, BoxSetter); 3] = [
         (
             |b, p, l, bo, r, t| b.FPDFPage_GetTrimBox(p, l, bo, r, t),
             |b, p, l, bo, r, t| b.FPDFPage_SetTrimBox(p, l, bo, r, t),

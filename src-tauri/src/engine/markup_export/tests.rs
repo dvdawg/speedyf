@@ -29,7 +29,8 @@ fn source_fixture(path: &Path) {
             format!("BT /F1 18 Tf 40 200 Td ({label}) Tj ET").into_bytes(),
         )
     };
-    let specs: [(&str, i64, Option<[i64; 4]>, Option<[i64; 4]>); 4] = [
+    type Spec = (&'static str, i64, Option<[i64; 4]>, Option<[i64; 4]>);
+    let specs: [Spec; 4] = [
         ("PAGE-A", 0, Some([0, 0, 300, 400]), None),
         (
             "PAGE-B",
@@ -424,7 +425,7 @@ fn export_fixture(pdfium: &Pdfium) -> Exported {
         sheet_pdf(pdfium, 180.0, 380.0, "MARGIN-TWO"),
         sheet_pdf(pdfium, 480.0, 400.0, "FEEDBACK"),
     ];
-    let result = export(&pdfium, &req, &sheets).expect("export");
+    let result = export(pdfium, &req, &sheets).expect("export");
     Exported {
         _dir: dir,
         src,
@@ -677,7 +678,6 @@ fn permanent_id_reads_the_trailer() {
 fn markup_export_real_paper() {
     let _guard = pdfium_init::test_guard();
     let pdfium = test_pdfium();
-    let b = pdfium.bindings();
     let original = std::env::var("SPEEDYF_MARKUP_E2E").expect("set SPEEDYF_MARKUP_E2E to a PDF");
     let dir = scratch();
     let src = dir.path().join("paper.pdf");
