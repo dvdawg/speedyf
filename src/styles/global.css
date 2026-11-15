@@ -8054,7 +8054,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 /* ---------- Markup: reviewing a paper ----------
    The marks on the page, the review drawer and its cards. Each kind of
    comment wears one token: proofs --danger, exposition --accent,
-   literature --warn, typos --text-dim. */
+   questions --text, literature --warn, typos --text-dim. */
 
 .mk-layer {
   position: absolute;
@@ -8094,6 +8094,16 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .mk-filter-chip.is-exposition,
 .mk-menu-kind.is-exposition {
   --mk-ink: var(--accent);
+}
+
+.mk-mark.is-question,
+.mk-pin.is-question,
+.mk-card.is-question,
+.mk-num-badge.is-question,
+.mk-kind-chip.is-question,
+.mk-filter-chip.is-question,
+.mk-menu-kind.is-question {
+  --mk-ink: var(--text);
 }
 
 .mk-mark.is-literature,

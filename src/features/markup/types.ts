@@ -12,14 +12,21 @@ export const MARKUP_VERSION = 1;
 /** The built-in extension whose switch turns all of this on. */
 export const MARKUP_EXTENSION_ID = 'dev.speedyf.markup';
 
-export type CommentKind = 'proof' | 'exposition' | 'literature' | 'typo';
+export type CommentKind = 'proof' | 'exposition' | 'question' | 'literature' | 'typo';
 
-export const COMMENT_KINDS: readonly CommentKind[] = ['proof', 'exposition', 'literature', 'typo'];
+export const COMMENT_KINDS: readonly CommentKind[] = [
+  'proof',
+  'exposition',
+  'question',
+  'literature',
+  'typo',
+];
 
 /** What each kind reads as on a chip, in a filter and in the letter. */
 export const KIND_LABEL: Record<CommentKind, string> = {
   proof: 'Proof',
   exposition: 'Exposition',
+  question: 'Question',
   literature: 'Literature',
   typo: 'Typo',
 };

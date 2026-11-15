@@ -156,7 +156,13 @@ export function groupBySection(entries: readonly Entry[]): Group[] {
 
 /** How many comments of each kind. */
 export function kindCounts(comments: readonly MarkupComment[]): Record<CommentKind, number> {
-  const out: Record<CommentKind, number> = { proof: 0, exposition: 0, literature: 0, typo: 0 };
+  const out: Record<CommentKind, number> = {
+    proof: 0,
+    exposition: 0,
+    question: 0,
+    literature: 0,
+    typo: 0,
+  };
   for (const c of comments) out[c.kind] += 1;
   return out;
 }
@@ -253,6 +259,7 @@ export function summarySkeleton(comments: readonly MarkupComment[]): string {
   };
   say(counts.proof, 'on a proof', 'on proofs');
   say(counts.exposition, 'on exposition', 'on exposition');
+  say(counts.question, 'question', 'questions');
   say(counts.literature, 'on the literature', 'on the literature');
   say(counts.typo, 'typo', 'typos');
   const total = comments.length;

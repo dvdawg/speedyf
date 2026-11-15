@@ -13,6 +13,7 @@ describe('QuickMarks', () => {
       'gap',
       'justify',
       'hypothesis',
+      'why',
       'cite',
       'related',
       'define',

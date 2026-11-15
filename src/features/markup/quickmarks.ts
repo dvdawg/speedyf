@@ -12,7 +12,8 @@ export interface QuickMark {
 export const QUICKMARKS: readonly QuickMark[] = [
   { id: 'gap', text: 'Gap in the argument', kind: 'proof' },
   { id: 'justify', text: 'Justify this step', kind: 'proof' },
-  { id: 'hypothesis', text: 'Which hypothesis is used here?', kind: 'proof' },
+  { id: 'hypothesis', text: 'Which hypothesis is used here?', kind: 'question' },
+  { id: 'why', text: 'Why does this hold?', kind: 'question' },
   { id: 'cite', text: 'Citation needed', kind: 'literature' },
   { id: 'related', text: 'Related work to consider', kind: 'literature' },
   { id: 'define', text: 'Define this notation before use', kind: 'exposition' },

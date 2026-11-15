@@ -150,6 +150,10 @@ body {
   color: #694fe3;
 }
 
+.mk-sheet .mk-k-question {
+  color: #1c2127;
+}
+
 .mk-sheet .mk-k-literature {
   color: #a15c00;
 }
@@ -205,6 +209,10 @@ body {
 
 .mk-sheet .mk-badge.mk-k-exposition {
   background: #694fe3;
+}
+
+.mk-sheet .mk-badge.mk-k-question {
+  background: #1c2127;
 }
 
 .mk-sheet .mk-badge.mk-k-literature {

@@ -115,7 +115,13 @@ describe('entries and groups', () => {
   });
 
   it('counts each kind', () => {
-    expect(kindCounts(list)).toEqual({ proof: 1, exposition: 1, literature: 1, typo: 1 });
+    expect(kindCounts(list)).toEqual({
+      proof: 1,
+      exposition: 1,
+      question: 0,
+      literature: 1,
+      typo: 1,
+    });
   });
 });
 
