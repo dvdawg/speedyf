@@ -8,8 +8,9 @@
 //!      `markup_capture`) is placed into its page's new strip as a form XObject;
 //!   3. comment marks become real annotations (highlight, strikeout, square);
 //!   4. feedback sheets are appended as pages;
-//!   5. PDFium saves all of that as an incremental update, so the original
-//!      bytes are kept verbatim at the start of the output;
+//!   5. PDFium saves all of that as an incremental update
+//!      (`save::save_incremental`), so the original bytes are kept verbatim
+//!      at the start of the output;
 //!   6. a second incremental update, written with lopdf, adds what PDFium's API
 //!      cannot express: internal GoTo links carrying a /Dest, and Caret
 //!      annotations. If that pass fails the export still succeeds, without
@@ -24,12 +25,12 @@
 //! origin fixed, so the original content does not move.
 
 use crate::engine::render;
-use crate::engine::save::{verified_atomic_replace, PageSpace};
+use crate::engine::save::{save_incremental, verified_atomic_replace, PageSpace};
 use crate::engine::types::RectDto;
 use crate::errors::{AppError, AppResult};
 use pdfium_render::prelude::{
-    PdfiumLibraryBindings, FPDF_ANNOTATION, FPDF_DOCUMENT, FPDF_FILEWRITE, FPDF_PAGE,
-    FS_QUADPOINTSF, FS_RECTF,
+    Pdfium, PdfiumError, PdfiumInternalError, PdfiumLibraryBindings, FPDF_ANNOTATION,
+    FPDF_DOCUMENT, FPDF_PAGE, FS_QUADPOINTSF, FS_RECTF,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -46,7 +47,6 @@ const MAX_LINKS: usize = 50_000;
 const MAX_HTML_BYTES: usize = 64 << 20;
 const MAX_CONTENTS_CHARS: usize = 20_000;
 
-const FPDF_INCREMENTAL: u32 = 1;
 const ANNOT_TEXT: c_int = 1;
 const ANNOT_SQUARE: c_int = 5;
 const ANNOT_HIGHLIGHT: c_int = 9;
@@ -355,7 +355,12 @@ pub(crate) fn widen_display_right(b: Bounds, rot: u16, m: f32) -> Bounds {
 }
 
 pub(crate) fn union(a: Bounds, b: Bounds) -> Bounds {
-    [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])]
+    [
+        a[0].min(b[0]),
+        a[1].min(b[1]),
+        a[2].max(b[2]),
+        a[3].max(b[3]),
+    ]
 }
 
 /// Displayed (width, height) of a crop box under a rotation.
@@ -395,6 +400,7 @@ impl Affine {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn apply(&self, x: f32, y: f32) -> (f32, f32) {
         (
             self.a * x + self.c * y + self.e,
@@ -506,6 +512,9 @@ impl Drop for DocGuard<'_> {
     }
 }
 
+/// A borrowed document handle, closed by its owner.
+struct RawDoc(FPDF_DOCUMENT);
+
 struct PageGuard<'b> {
     b: &'b dyn PdfiumLibraryBindings,
     page: FPDF_PAGE,
@@ -535,7 +544,10 @@ fn load_page<'b>(
 ) -> AppResult<PageGuard<'b>> {
     let page = b.FPDF_LoadPage(doc, index as c_int);
     if page.is_null() {
-        return Err(AppError::Malformed(format!("cannot load page {}", index + 1)));
+        return Err(AppError::Malformed(format!(
+            "cannot load page {}",
+            index + 1
+        )));
     }
     Ok(PageGuard { b, page })
 }
@@ -558,11 +570,15 @@ fn read_box(b: &dyn PdfiumLibraryBindings, page: FPDF_PAGE, get: BoxGetter) -> O
 }
 
 fn media_box(b: &dyn PdfiumLibraryBindings, page: FPDF_PAGE) -> Option<Bounds> {
-    read_box(b, page, |b, p, l, bo, r, t| b.FPDFPage_GetMediaBox(p, l, bo, r, t))
+    read_box(b, page, |b, p, l, bo, r, t| {
+        b.FPDFPage_GetMediaBox(p, l, bo, r, t)
+    })
 }
 
 fn crop_box(b: &dyn PdfiumLibraryBindings, page: FPDF_PAGE) -> Option<Bounds> {
-    read_box(b, page, |b, p, l, bo, r, t| b.FPDFPage_GetCropBox(p, l, bo, r, t))
+    read_box(b, page, |b, p, l, bo, r, t| {
+        b.FPDFPage_GetCropBox(p, l, bo, r, t)
+    })
 }
 
 /// PDFium's effective page box: inherited boxes resolved.
@@ -617,7 +633,10 @@ fn widen_page(b: &dyn PdfiumLibraryBindings, page: FPDF_PAGE, m: f32) -> AppResu
     let new_media = union(media, new_crop);
     b.FPDFPage_SetMediaBox(page, new_media[0], new_media[1], new_media[2], new_media[3]);
     b.FPDFPage_SetCropBox(page, new_crop[0], new_crop[1], new_crop[2], new_crop[3]);
-    let boxes: [(BoxGetter, fn(&dyn PdfiumLibraryBindings, FPDF_PAGE, f32, f32, f32, f32)); 3] = [
+    let boxes: [(
+        BoxGetter,
+        fn(&dyn PdfiumLibraryBindings, FPDF_PAGE, f32, f32, f32, f32),
+    ); 3] = [
         (
             |b, p, l, bo, r, t| b.FPDFPage_GetTrimBox(p, l, bo, r, t),
             |b, p, l, bo, r, t| b.FPDFPage_SetTrimBox(p, l, bo, r, t),
@@ -766,11 +785,7 @@ fn mark_display_box(mark: &MarkupMark) -> Option<Bounds> {
         .as_ref()
         .filter(|q| !q.is_empty())
         .map(|qs| qs.iter().map(MarkupQuad::bounds).reduce(union).unwrap());
-    from_quads.or_else(|| {
-        mark.rect
-            .as_ref()
-            .map(|r| [r.x, r.y, r.x + r.w, r.y + r.h])
-    })
+    from_quads.or_else(|| mark.rect.as_ref().map(|r| [r.x, r.y, r.x + r.w, r.y + r.h]))
 }
 
 fn add_mark(
@@ -811,7 +826,11 @@ fn add_mark(
         MarkKind::Caret => {
             let a = create_annot(b, page, ANNOT_TEXT)?;
             let tip = caret_box(display);
-            set_rect(b, a.annot, to_user([tip[0], tip[3] - 18.0, tip[0] + 18.0, tip[3]]));
+            set_rect(
+                b,
+                a.annot,
+                to_user([tip[0], tip[3] - 18.0, tip[0] + 18.0, tip[3]]),
+            );
             a
         }
         MarkKind::Square => {
@@ -863,73 +882,31 @@ fn caret_box(display: Bounds) -> Bounds {
     let h = (display[3] - display[1]).clamp(4.0, 14.0);
     let w = h * 0.7;
     let x = display[2];
-    [x - w / 2.0, display[1] - h * 0.35, x + w / 2.0, display[1] + h * 0.65]
+    [
+        x - w / 2.0,
+        display[1] - h * 0.35,
+        x + w / 2.0,
+        display[1] + h * 0.65,
+    ]
 }
 
-#[repr(C)]
-struct VecWrite {
-    base: FPDF_FILEWRITE,
-    out: Vec<u8>,
-}
-
-unsafe extern "C" fn write_block(
-    this: *mut FPDF_FILEWRITE,
-    data: *const c_void,
-    size: c_ulong,
-) -> c_int {
-    if this.is_null() {
-        return 0;
-    }
-    // SAFETY: `this` is the `base` field of a live, #[repr(C)] VecWrite (its
-    // first field), handed to PDFium only for the duration of the save.
-    let writer = unsafe { &mut *(this as *mut VecWrite) };
-    if size == 0 {
-        return 1;
-    }
-    if data.is_null() {
-        return 0;
-    }
-    // SAFETY: PDFium guarantees `data` points at `size` readable bytes.
-    let bytes = unsafe { std::slice::from_raw_parts(data as *const u8, size as usize) };
-    writer.out.extend_from_slice(bytes);
-    1
-}
-
-/// Save `doc` as an incremental update: the original file's bytes, verbatim,
-/// followed by the changed and new objects and a new xref section.
-pub(crate) fn save_incremental(
-    b: &dyn PdfiumLibraryBindings,
-    doc: FPDF_DOCUMENT,
-) -> AppResult<Vec<u8>> {
-    let mut writer = VecWrite {
-        base: FPDF_FILEWRITE {
-            version: 1,
-            WriteBlock: Some(write_block),
-        },
-        out: Vec::new(),
-    };
-    let ok = b.FPDF_SaveAsCopy(doc, &mut writer.base, FPDF_INCREMENTAL as _);
-    if ok == 0 || writer.out.is_empty() {
-        return Err(AppError::Internal("PDFium could not save the document".into()));
-    }
-    Ok(writer.out)
-}
-
-/// What the PDFium pass produced: the file so far, plus the work left for the
-/// lopdf pass.
+/// What the PDFium pass wrote, plus the work left for the lopdf pass.
 struct PdfiumPass {
-    bytes: Vec<u8>,
     pages: u32,
     links: Vec<PendingLink>,
     carets: Vec<PendingCaret>,
 }
 
+/// Edit the source in memory and save it to `out` as an incremental update
+/// (`save::save_incremental`).
 fn pdfium_pass(
-    b: &dyn PdfiumLibraryBindings,
+    pdfium: &Pdfium,
     req: &MarkupExportRequest,
     sheet_pdfs: &[Vec<u8>],
     carets_as_notes: bool,
+    out: &Path,
 ) -> AppResult<PdfiumPass> {
+    let b = pdfium.bindings();
     if sheet_pdfs.len() != req.sheets.len() {
         return Err(AppError::Internal(format!(
             "{} sheets captured for {} requested",
@@ -937,11 +914,18 @@ fn pdfium_pass(
             req.sheets.len()
         )));
     }
-    let doc = DocGuard {
-        b,
-        doc: render::open_document(b, &req.source, None)?,
-    };
-    let page_count = b.FPDF_GetPageCount(doc.doc).max(0) as usize;
+    let document = pdfium
+        .load_pdf_from_file(&req.source, None)
+        .map_err(|e| match e {
+            PdfiumError::PdfiumLibraryInternalError(PdfiumInternalError::PasswordError) => {
+                AppError::PasswordRequired
+            }
+            other => AppError::Malformed(format!("cannot open the source: {other:?}")),
+        })?;
+    // Raw handle for the calls the wrapper has no API for. `document` owns it
+    // and closes it; nothing here does.
+    let doc = RawDoc(b.get_handle_from_document(&document));
+    let page_count = b.FPDF_GetPageCount(doc.0).max(0) as usize;
     if page_count == 0 {
         return Err(AppError::Malformed("the document has no pages".into()));
     }
@@ -988,10 +972,10 @@ fn pdfium_pass(
     let mut geos: Vec<PageGeo> = Vec::with_capacity(page_count);
     let mut carets = Vec::new();
     for index in 0..page_count {
-        let page = load_page(b, doc.doc, index)?;
+        let page = load_page(b, doc.0, index)?;
         let geo = widen_page(b, page.page, req.margin_pt)?;
         let sheet = margin_for.get(&index).map(|&s| sheet_docs[s].doc);
-        decorate_page(b, doc.doc, page.page, &geo, req.margin_pt, sheet)?;
+        decorate_page(b, doc.0, page.page, &geo, req.margin_pt, sheet)?;
         for mark in marks_for.get(&index).into_iter().flatten() {
             add_mark(
                 b,
@@ -1021,11 +1005,11 @@ fn pdfium_pass(
         if sheet.kind != SheetKind::Feedback {
             continue;
         }
-        let at = b.FPDF_GetPageCount(doc.doc).max(0);
-        if b.FPDF_ImportPages(doc.doc, sheet_docs[i].doc, "1", at) == 0 {
+        let at = b.FPDF_GetPageCount(doc.0).max(0);
+        if b.FPDF_ImportPages(doc.0, sheet_docs[i].doc, "1", at) == 0 {
             return Err(AppError::Internal("cannot append a feedback sheet".into()));
         }
-        let page = load_page(b, doc.doc, at as usize)?;
+        let page = load_page(b, doc.0, at as usize)?;
         geos.push(page_geo(b, page.page)?);
         out_page_of_sheet.insert(i, at as usize);
     }
@@ -1062,10 +1046,9 @@ fn pdfium_pass(
         }
     }
 
-    let pages = b.FPDF_GetPageCount(doc.doc).max(0) as u32;
-    let bytes = save_incremental(b, doc.doc)?;
+    let pages = b.FPDF_GetPageCount(doc.0).max(0) as u32;
+    save_incremental(&document, out)?;
     Ok(PdfiumPass {
-        bytes,
         pages,
         links,
         carets,
@@ -1155,7 +1138,8 @@ fn lopdf_pass(
 
     for (page, ids) in added {
         let pid = page_id(page)?;
-        inc.opt_clone_object_to_new_document(pid).map_err(lopdf_err)?;
+        inc.opt_clone_object_to_new_document(pid)
+            .map_err(lopdf_err)?;
         let existing = inc
             .new_document
             .get_object(pid)
@@ -1205,22 +1189,28 @@ fn set_annots(
 // Entry point
 // ---------------------------------------------------------------------------
 
-/// The finished file's bytes and how many links it carries.
+/// Write the finished file to `out`; answers (pages, links written).
 fn build(
-    b: &dyn PdfiumLibraryBindings,
+    pdfium: &Pdfium,
     req: &MarkupExportRequest,
     sheet_pdfs: &[Vec<u8>],
-) -> AppResult<(Vec<u8>, u32, u32)> {
-    let pass = pdfium_pass(b, req, sheet_pdfs, false)?;
+    out: &Path,
+) -> AppResult<(u32, u32)> {
+    let pass = pdfium_pass(pdfium, req, sheet_pdfs, false, out)?;
     if pass.links.is_empty() && pass.carets.is_empty() {
-        return Ok((pass.bytes, pass.pages, 0));
+        return Ok((pass.pages, 0));
     }
-    match lopdf_pass(&pass.bytes, &pass.links, &pass.carets) {
-        Ok(bytes) => Ok((bytes, pass.pages, pass.links.len() as u32)),
+    let bytes = std::fs::read(out)?;
+    match lopdf_pass(&bytes, &pass.links, &pass.carets) {
+        Ok(bytes) => {
+            std::fs::write(out, &bytes)
+                .map_err(|e| AppError::Io(format!("cannot write the export: {e}")))?;
+            Ok((pass.pages, pass.links.len() as u32))
+        }
         Err(e) => {
             log::warn!("markup export: link pass skipped: {e}");
-            let fallback = pdfium_pass(b, req, sheet_pdfs, true)?;
-            Ok((fallback.bytes, fallback.pages, 0))
+            let fallback = pdfium_pass(pdfium, req, sheet_pdfs, true, out)?;
+            Ok((fallback.pages, 0))
         }
     }
 }
@@ -1228,20 +1218,18 @@ fn build(
 /// Export `req` (with its sheets already captured, one PDF per sheet in
 /// request order) to `req.dest`.
 pub fn export(
-    b: &dyn PdfiumLibraryBindings,
+    pdfium: &Pdfium,
     req: &MarkupExportRequest,
     sheet_pdfs: &[Vec<u8>],
 ) -> AppResult<MarkupExportResult> {
     validate(req)?;
+    let b = pdfium.bindings();
     let dest = Path::new(&req.dest);
     let summary = std::cell::Cell::new((0u32, 0u32));
     verified_atomic_replace(
         dest,
         |temp| {
-            let (bytes, pages, links) = build(b, req, sheet_pdfs)?;
-            std::fs::write(temp, &bytes)
-                .map_err(|e| AppError::Io(format!("cannot write the export: {e}")))?;
-            summary.set((pages, links));
+            summary.set(build(pdfium, req, sheet_pdfs, temp)?);
             Ok(())
         },
         |temp| {

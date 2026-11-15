@@ -31,7 +31,12 @@ fn source_fixture(path: &Path) {
     };
     let specs: [(&str, i64, Option<[i64; 4]>, Option<[i64; 4]>); 4] = [
         ("PAGE-A", 0, Some([0, 0, 300, 400]), None),
-        ("PAGE-B", 90, Some([0, 0, 400, 300]), Some([10, 20, 390, 290])),
+        (
+            "PAGE-B",
+            90,
+            Some([0, 0, 400, 300]),
+            Some([10, 20, 390, 290]),
+        ),
         ("PAGE-C", 180, Some([0, 0, 320, 420]), None),
         ("PAGE-D", 270, None, None),
     ];
@@ -46,10 +51,16 @@ fn source_fixture(path: &Path) {
             "Rotate" => rotate,
         };
         if let Some(m) = media {
-            page.set("MediaBox", m.iter().map(|&v| v.into()).collect::<Vec<Object>>());
+            page.set(
+                "MediaBox",
+                m.iter().map(|&v| v.into()).collect::<Vec<Object>>(),
+            );
         }
         if let Some(c) = crop {
-            page.set("CropBox", c.iter().map(|&v| v.into()).collect::<Vec<Object>>());
+            page.set(
+                "CropBox",
+                c.iter().map(|&v| v.into()).collect::<Vec<Object>>(),
+            );
         }
         kids.push(doc.add_object(page));
     }
@@ -130,7 +141,10 @@ fn sheet_pdf(pdfium: &Pdfium, w: f32, h: f32, label: &str) -> Vec<u8> {
     let font = document.fonts_mut().helvetica();
     let mut page = document
         .pages_mut()
-        .create_page_at_end(PdfPagePaperSize::Custom(PdfPoints::new(w), PdfPoints::new(h)))
+        .create_page_at_end(PdfPagePaperSize::Custom(
+            PdfPoints::new(w),
+            PdfPoints::new(h),
+        ))
         .expect("sheet page");
     let mut text =
         PdfPageTextObject::new(&document, label, font, PdfPoints::new(10.0)).expect("text");
@@ -174,9 +188,18 @@ fn rect(x: f32, y: f32, w: f32, h: f32) -> RectDto {
 fn widening_targets_the_displayed_right_edge() {
     let b = [10.0, 20.0, 390.0, 290.0];
     assert_eq!(widen_display_right(b, 0, 100.0), [10.0, 20.0, 490.0, 290.0]);
-    assert_eq!(widen_display_right(b, 90, 100.0), [10.0, 20.0, 390.0, 390.0]);
-    assert_eq!(widen_display_right(b, 180, 100.0), [-90.0, 20.0, 390.0, 290.0]);
-    assert_eq!(widen_display_right(b, 270, 100.0), [10.0, -80.0, 390.0, 290.0]);
+    assert_eq!(
+        widen_display_right(b, 90, 100.0),
+        [10.0, 20.0, 390.0, 390.0]
+    );
+    assert_eq!(
+        widen_display_right(b, 180, 100.0),
+        [-90.0, 20.0, 390.0, 290.0]
+    );
+    assert_eq!(
+        widen_display_right(b, 270, 100.0),
+        [10.0, -80.0, 390.0, 290.0]
+    );
 }
 
 #[test]
@@ -218,9 +241,13 @@ fn sheet_matrix_puts_the_sheet_upright_in_the_strip() {
         // page's bottom-right, in display space.
         let tl = m.apply(0.0, h);
         let br = m.apply(180.0, 0.0);
-        let close = |a: (f32, f32), b: (f32, f32)| (a.0 - b.0).abs() < 1e-3 && (a.1 - b.1).abs() < 1e-3;
+        let close =
+            |a: (f32, f32), b: (f32, f32)| (a.0 - b.0).abs() < 1e-3 && (a.1 - b.1).abs() < 1e-3;
         assert!(close(space.user_to_disp(tl.0, tl.1), (w0, h)), "rot {rot}");
-        assert!(close(space.user_to_disp(br.0, br.1), (w0 + 180.0, 0.0)), "rot {rot}");
+        assert!(
+            close(space.user_to_disp(br.0, br.1), (w0 + 180.0, 0.0)),
+            "rot {rot}"
+        );
     }
 }
 
@@ -259,8 +286,10 @@ fn validation_refuses_bad_requests() {
     assert!(validate(&r).is_err(), "margin sheet without a page");
 
     let mut r = request(&src, &dest);
-    r.sheets.push(sheet(SheetKind::Margin, Some(0), 180.0, 400.0));
-    r.sheets.push(sheet(SheetKind::Margin, Some(0), 180.0, 400.0));
+    r.sheets
+        .push(sheet(SheetKind::Margin, Some(0), 180.0, 400.0));
+    r.sheets
+        .push(sheet(SheetKind::Margin, Some(0), 180.0, 400.0));
     assert!(validate(&r).is_err(), "two margin sheets for one page");
 
     let mut r = request(&src, &dest);
@@ -395,7 +424,7 @@ fn export_fixture(pdfium: &Pdfium) -> Exported {
         sheet_pdf(pdfium, 180.0, 380.0, "MARGIN-TWO"),
         sheet_pdf(pdfium, 480.0, 400.0, "FEEDBACK"),
     ];
-    let result = export(pdfium.bindings(), &req, &sheets).expect("export");
+    let result = export(&pdfium, &req, &sheets).expect("export");
     Exported {
         _dir: dir,
         src,
@@ -451,11 +480,7 @@ fn export_widens_annotates_appends_and_keeps_the_original() {
             .map(|t| t.value().to_string()),
         Some("Fixture Paper".into())
     );
-    let titles: Vec<String> = doc
-        .bookmarks()
-        .iter()
-        .filter_map(|b| b.title())
-        .collect();
+    let titles: Vec<String> = doc.bookmarks().iter().filter_map(|b| b.title()).collect();
     assert_eq!(titles, vec!["Introduction", "Results"]);
 
     // Marks became real annotations.
@@ -466,7 +491,10 @@ fn export_widens_annotates_appends_and_keeps_the_original() {
         .iter()
         .find(|a| a.annotation_type() == PdfPageAnnotationType::Highlight)
         .unwrap();
-    assert_eq!(highlight.contents().as_deref(), Some("1. Justify this step"));
+    assert_eq!(
+        highlight.contents().as_deref(),
+        Some("1. Justify this step")
+    );
     assert!(subtypes(&pages.get(1).unwrap()).contains(&PdfPageAnnotationType::Strikeout));
     let p2 = pages.get(2).unwrap();
     let caret = p2
@@ -508,7 +536,10 @@ fn export_keeps_old_links_and_adds_internal_ones() {
     assert_eq!(link_dest_at(&pdfium, &out.dest, 0, 330.0, 383.0), Some(4));
     assert_eq!(link_dest_at(&pdfium, &out.dest, 0, 330.0, 353.0), Some(2));
     // Feedback page link back to page 0's margin.
-    assert_eq!(link_dest_at(&pdfium, &out.dest, 4, 50.0, 400.0 - 36.0), Some(0));
+    assert_eq!(
+        link_dest_at(&pdfium, &out.dest, 4, 50.0, 400.0 - 36.0),
+        Some(0)
+    );
 }
 
 #[test]
@@ -576,7 +607,7 @@ fn export_refuses_to_overwrite_the_source() {
     source_fixture(&src);
     let before = std::fs::read(&src).unwrap();
     let req = request(&src, &src);
-    assert!(export(pdfium.bindings(), &req, &[]).is_err());
+    assert!(export(&pdfium, &req, &[]).is_err());
     assert_eq!(std::fs::read(&src).unwrap(), before);
 }
 
@@ -591,12 +622,16 @@ fn export_rejects_out_of_range_pages_and_leaves_no_file() {
     let mut req = request(&src, &dest);
     req.sheets = vec![sheet(SheetKind::Margin, Some(9), 180.0, 400.0)];
     let sheets = vec![sheet_pdf(&pdfium, 180.0, 400.0, "X")];
-    assert!(export(pdfium.bindings(), &req, &sheets).is_err());
+    assert!(export(&pdfium, &req, &sheets).is_err());
     assert!(!dest.exists());
     let leftovers: Vec<_> = std::fs::read_dir(dir.path())
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with(".speedyf-save-"))
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with(".speedyf-save-")
+        })
         .collect();
     assert!(leftovers.is_empty());
 }
@@ -611,7 +646,7 @@ fn export_without_sheets_or_marks_still_widens() {
     source_fixture(&src);
     let mut req = request(&src, &dest);
     req.margin_pt = 120.0;
-    let result = export(pdfium.bindings(), &req, &[]).unwrap();
+    let result = export(&pdfium, &req, &[]).unwrap();
     assert_eq!(result.pages, 4);
     assert_eq!(result.links, 0);
     let doc = pdfium.load_pdf_from_file(&dest, None).unwrap();
@@ -657,7 +692,12 @@ fn markup_export_real_paper() {
             .metadata()
             .get(PdfDocumentMetadataTagType::Title)
             .map(|t| t.value().to_string());
-        (doc.pages().len(), links, doc.bookmarks().iter().count(), title)
+        (
+            doc.pages().len(),
+            links,
+            doc.bookmarks().iter().count(),
+            title,
+        )
     };
     let sizes: Vec<(f32, f32)> = {
         let doc = pdfium.load_pdf_from_file(&src, None).unwrap();
@@ -681,7 +721,12 @@ fn markup_export_real_paper() {
             },
         });
         req.sheets.push(s);
-        sheets.push(sheet_pdf(&pdfium, m, *h, &format!("COMMENT ON PAGE {}", i + 1)));
+        sheets.push(sheet_pdf(
+            &pdfium,
+            m,
+            *h,
+            &format!("COMMENT ON PAGE {}", i + 1),
+        ));
         req.marks.push(MarkupMark {
             page: i as u32,
             kind: [MarkKind::Highlight, MarkKind::Strikeout, MarkKind::Caret][i % 3],
@@ -704,7 +749,7 @@ fn markup_export_real_paper() {
     sheets.push(sheet_pdf(&pdfium, w0 + m, h0, "FEEDBACK SUMMARY"));
 
     let started = std::time::Instant::now();
-    let result = export(b, &req, &sheets).expect("export");
+    let result = export(&pdfium, &req, &sheets).expect("export");
     eprintln!(
         "exported {} pages, {} links in {:?} -> {}",
         result.pages,
