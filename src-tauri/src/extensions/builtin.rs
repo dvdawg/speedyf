@@ -352,6 +352,7 @@ mod tests {
         assert_eq!(
             ids(&checked_out),
             vec![
+                "dev.speedyf.markup".to_string(),
                 "dev.speedyf.mathlatex".to_string(),
                 "dev.speedyf.notation".to_string(),
                 "dev.speedyf.notepad".to_string(),

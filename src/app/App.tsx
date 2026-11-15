@@ -27,6 +27,7 @@ import MathPopover from '../features/extensions/MathPopover';
 import SelectionActions from '../features/extensions/SelectionActions';
 import RegionCaptureLayer from '../features/extensions/RegionCaptureLayer';
 import { ProjectQuestion, ReaderPaneDrawer } from '../features/extensions/ReaderPane';
+import MarkupDrawer from '../features/markup/MarkupDrawer';
 import { trackReader } from '../features/extensions/readerContext';
 import HomeScreen from '../features/home/HomeScreen';
 import ProjectsScreen from '../features/projects/ProjectsScreen';
@@ -244,6 +245,7 @@ export default function App() {
                           </Show>
                           <Show when={visible()}>
                             <ReaderPaneDrawer />
+                            <MarkupDrawer />
                           </Show>
                         </div>
                       </div>
