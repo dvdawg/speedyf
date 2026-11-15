@@ -1,15 +1,12 @@
 /** The colour of each kind of comment, from the app's own tokens (their
- * light-theme values, since an exported page is white paper): proofs
- * --danger, exposition --accent, questions --text, literature --warn,
- * typos --text-dim. On
- * screen the marks use the tokens themselves (global.css, `.mk-mark`). */
+ * light-theme values, since an exported page is white paper): comments
+ * --accent, questions --warn, typos --text-dim. On screen the marks use
+ * the tokens themselves (global.css, `.mk-mark`). */
 import type { CommentKind } from './types';
 
 export const KIND_INK: Record<CommentKind, string> = {
-  proof: '#c62828',
-  exposition: '#694fe3',
-  question: '#1c2127',
-  literature: '#a15c00',
+  comment: '#694fe3',
+  question: '#a15c00',
   typo: '#5c6570',
 };
 

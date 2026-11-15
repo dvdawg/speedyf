@@ -48,7 +48,7 @@ const PATH = '/papers/draft.pdf';
 function comment(id: string, page: number, top: number, over: Partial<MarkupComment> = {}) {
   return {
     id,
-    kind: 'exposition',
+    kind: 'comment',
     anchor: {
       page,
       quads: quadsFromRects([[72, top, 100, 10]], 792),
@@ -122,7 +122,7 @@ describe('MarkupDrawer', () => {
       version: 1,
       summary: '',
       comments: [
-        comment('b', 1, 300, { kind: 'proof' }),
+        comment('b', 1, 300, { kind: 'question' }),
         comment('a', 0, 100),
         comment('c', 2, 50, { kind: 'typo', replacement: 'the' }),
       ],
@@ -138,7 +138,7 @@ describe('MarkupDrawer', () => {
     ).toBe('the');
 
     const filter = screen.getByRole('group', { name: 'Show comments of kind' });
-    fireEvent.click(within(filter).getByRole('button', { name: /Proof/ }));
+    fireEvent.click(within(filter).getByRole('button', { name: /Question/ }));
     expect(cards()).toEqual(['Comment 2']);
     fireEvent.click(within(filter).getByRole('button', { name: /All/ }));
     expect(cards()).toHaveLength(3);
@@ -156,11 +156,11 @@ describe('MarkupDrawer', () => {
     stored = JSON.stringify({
       version: 1,
       summary: '',
-      comments: [comment('a', 0, 100, { kind: 'proof' })],
+      comments: [comment('a', 0, 100, { kind: 'comment' })],
     });
     await open();
     fireEvent.click(screen.getByRole('button', { name: 'Start from an outline' }));
-    expect(store.reviewFor(PATH)?.doc.summary).toContain('1 comment follows: 1 on a proof.');
+    expect(store.reviewFor(PATH)?.doc.summary).toContain('1 note: 1 comment.');
   });
 
   it('exports and copies from its foot', async () => {

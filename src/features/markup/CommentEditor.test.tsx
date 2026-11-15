@@ -45,7 +45,7 @@ function mount(mode: 'comment' | 'typo' = 'comment') {
       quote="teh"
       initial={{
         body: '',
-        kind: 'exposition',
+        kind: 'comment',
         quickmark: null,
         replacement: mode === 'typo' ? '' : null,
       }}
@@ -72,7 +72,7 @@ describe('CommentEditor', () => {
     fireEvent.keyDown(field, { key: 'Enter' });
     expect(onSave).toHaveBeenCalledWith({
       body: 'Needs a reference.',
-      kind: 'exposition',
+      kind: 'comment',
       quickmark: null,
       replacement: null,
     });
@@ -98,7 +98,7 @@ describe('CommentEditor', () => {
     expect(document.querySelector('.mk-preview')?.innerHTML).toContain('<i class="tex">n=1</i>');
     fireEvent.keyDown(field, { key: 'Enter' });
     expect(onSave).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'proof', quickmark: 'gap' })
+      expect.objectContaining({ kind: 'comment', quickmark: 'gap' })
     );
   });
 
@@ -121,7 +121,7 @@ describe('CommentEditor', () => {
     fireEvent.keyDown(fix, { key: 'Enter' });
     expect(onSave).toHaveBeenCalledWith({
       body: '',
-      kind: 'exposition',
+      kind: 'comment',
       quickmark: 'typo',
       replacement: 'the',
     });

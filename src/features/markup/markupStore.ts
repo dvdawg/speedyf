@@ -303,7 +303,7 @@ export function beginComment(mode: DraftMode): boolean {
       path,
       mode,
       anchor,
-      kind: mode === 'typo' ? 'typo' : 'exposition',
+      kind: mode === 'typo' ? 'typo' : 'comment',
       quickmark: mode === 'typo' ? 'typo' : null,
     });
   });
@@ -344,7 +344,7 @@ export function beginEquationComment(target: {
   };
   batch(() => {
     setEditing(null);
-    setDraft({ path, mode: 'comment', anchor, kind: 'exposition', quickmark: null });
+    setDraft({ path, mode: 'comment', anchor, kind: 'comment', quickmark: null });
   });
   const ref = { docId: doc.docId, page: target.page, bbox: target.bbox, number: target.number };
   const token = equationToken(ref);
@@ -418,7 +418,7 @@ export async function beginRegion(): Promise<boolean> {
         rect: rectFromBox(picked.box, page.heightPt),
         quote: '',
       },
-      kind: 'exposition',
+      kind: 'comment',
       quickmark: null,
     });
   });

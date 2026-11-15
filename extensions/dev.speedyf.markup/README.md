@@ -37,9 +37,8 @@ In a comment:
 
 ## Kinds
 
-Every comment has one of four kinds, shown as a small chip on its card and
-as its colour: **Proof**, **Exposition** (the default), **Literature** and
-**Typo**. A QuickMark sets it; click the chip to change it. There is no
+Every comment has one of three kinds, shown as a small chip on its card and
+as its colour: **Comment** (the default), **Question** and **Typo**. A QuickMark sets it; click the chip to change it. There is no
 severity: the Overall paragraph is where you say what matters most.
 
 ## Labels and numbers
@@ -69,7 +68,7 @@ Nothing here is stored; it is worked out as you go:
 - **Papers you may have missed**, folded away at the end: items of your
   library that the citation graph ties to this paper (shared references,
   cited together) and that it does not cite. **Suggest** turns one into a
-  literature comment citing it, at the paper's reference list. It needs the
+  comment citing it, at the paper's reference list. It needs the
   paper to be an item of your library, since the graph is the library's.
 
 The review is saved as you go, per PDF (kept by the file's own identifier,

@@ -33,7 +33,7 @@ function comment(over: Partial<MarkupComment> & { anchor: Anchor }): MarkupComme
   n += 1;
   return {
     id: `c${n}`,
-    kind: 'exposition',
+    kind: 'comment',
     body: '',
     replacement: null,
     quickmark: null,
@@ -66,7 +66,7 @@ describe('storage', () => {
     const doc = {
       version: 1,
       summary: 'Good.',
-      comments: [comment({ anchor: anchor(0, 100), body: 'Hi', kind: 'proof' })],
+      comments: [comment({ anchor: anchor(0, 100), body: 'Hi', kind: 'comment' })],
     };
     expect(parseMarkup(serializeMarkup(doc))).toEqual(doc);
   });
@@ -90,7 +90,7 @@ describe('storage', () => {
     expect(parsed.comments).toHaveLength(1);
     expect(parsed.comments[0]).toMatchObject({
       id: 'a',
-      kind: 'exposition',
+      kind: 'comment',
       body: '',
       quickmark: null,
     });
@@ -99,9 +99,9 @@ describe('storage', () => {
 
 describe('entries and groups', () => {
   const list = [
-    comment({ anchor: anchor(3, 100), kind: 'proof' }),
+    comment({ anchor: anchor(3, 100), kind: 'comment' }),
     comment({ anchor: anchor(0, 300) }),
-    comment({ anchor: anchor(1, 100), kind: 'literature' }),
+    comment({ anchor: anchor(1, 100), kind: 'comment' }),
     comment({ anchor: anchor(2, 100), kind: 'typo', replacement: 'the' }),
   ];
   const entries = buildEntries(list, label);
@@ -118,10 +118,8 @@ describe('entries and groups', () => {
 
   it('counts each kind', () => {
     expect(kindCounts(list)).toEqual({
-      proof: 1,
-      exposition: 1,
+      comment: 3,
       question: 0,
-      literature: 1,
       typo: 1,
     });
   });
@@ -186,14 +184,14 @@ describe('text', () => {
 
   it('starts the Overall paragraph from the counts', () => {
     const skeleton = summarySkeleton([
-      comment({ anchor: anchor(0, 1), kind: 'proof' }),
-      comment({ anchor: anchor(0, 2), kind: 'proof' }),
+      comment({ anchor: anchor(0, 1), kind: 'comment' }),
+      comment({ anchor: anchor(0, 2), kind: 'comment' }),
       comment({ anchor: anchor(0, 3), kind: 'typo' }),
     ]);
     expect(skeleton).toContain('Summary: ');
     expect(skeleton).toContain('Main concerns:');
-    expect(skeleton).toContain('3 comments follow: 2 on proofs and 1 typo.');
-    expect(summarySkeleton([])).not.toContain('follow');
+    expect(skeleton).toContain('3 notes: 2 comments and 1 typo.');
+    expect(summarySkeleton([])).not.toContain('notes:');
   });
 
   it('says what a typo should read', () => {
@@ -213,7 +211,7 @@ describe('text', () => {
 });
 
 describe('plainLetter', () => {
-  const kinds: CommentKind[] = ['proof', 'exposition'];
+  const kinds: CommentKind[] = ['comment', 'comment'];
   const list = [
     comment({
       anchor: anchor(0, 100, 'We consider'),
@@ -222,14 +220,14 @@ describe('plainLetter', () => {
     }),
     comment({
       anchor: anchor(3, 100, 'by compactness'),
-      kind: 'proof',
+      kind: 'comment',
       quickmark: 'justify',
       body: 'Justify this step. Compare [@jar97].',
     }),
     comment({ anchor: anchor(3, 200, 'teh'), kind: 'typo', replacement: 'the', quickmark: 'typo' }),
     comment({
       anchor: anchor(5, 200, 'by compactness'),
-      kind: 'proof',
+      kind: 'comment',
       quickmark: 'justify',
       body: 'Justify this step. Compare [@jar97].',
     }),
@@ -257,13 +255,13 @@ describe('plainLetter', () => {
         '',
         'Front matter',
         '',
-        '  1. p. 1 [Exposition]',
+        '  1. p. 1 [Comment]',
         '     "We consider"',
         '     Add motivation here.',
         '',
         '2 Method',
         '',
-        '  2. p. 4 - Lemma 2.3 [Proof] (also p. 6)',
+        '  2. p. 4 - Lemma 2.3 [Comment] (also p. 6)',
         '     "by compactness"',
         '     Justify this step. Compare [Jar97].',
         '',
@@ -292,7 +290,7 @@ describe('quotes with their math as LaTeX', () => {
       JSON.stringify({
         version: 1,
         summary: '',
-        comments: [{ id: 'c_1', kind: 'proof', anchor, body: '', created: 1 }],
+        comments: [{ id: 'c_1', kind: 'comment', anchor, body: '', created: 1 }],
       });
     const withTex = parseMarkup(json({ page: 0, quads: [quad], quote: 'a', quoteTex: '$a$' }));
     expect(withTex.comments[0]!.anchor.quoteTex).toBe('$a$');

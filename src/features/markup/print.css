@@ -142,19 +142,11 @@ body {
   text-transform: uppercase;
 }
 
-.mk-sheet .mk-k-proof {
-  color: #c62828;
-}
-
-.mk-sheet .mk-k-exposition {
+.mk-sheet .mk-k-comment {
   color: #694fe3;
 }
 
 .mk-sheet .mk-k-question {
-  color: #1c2127;
-}
-
-.mk-sheet .mk-k-literature {
   color: #a15c00;
 }
 
@@ -203,19 +195,11 @@ body {
 
 /* The number is white on the kind's colour, the same as its marker on the
  * page. */
-.mk-sheet .mk-badge.mk-k-proof {
-  background: #c62828;
-}
-
-.mk-sheet .mk-badge.mk-k-exposition {
+.mk-sheet .mk-badge.mk-k-comment {
   background: #694fe3;
 }
 
 .mk-sheet .mk-badge.mk-k-question {
-  background: #1c2127;
-}
-
-.mk-sheet .mk-badge.mk-k-literature {
   background: #a15c00;
 }
 

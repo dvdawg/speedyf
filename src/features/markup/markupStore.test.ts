@@ -157,14 +157,14 @@ describe('writing comments', () => {
     expect(d.anchor.quads![0]).toMatchObject({ x1: 72, y1: 692, x2: 192, y3: 682 });
     const id = store.commitDraft({
       body: ' Justify this step. ',
-      kind: 'proof',
+      kind: 'comment',
       quickmark: 'justify',
       replacement: null,
     });
     expect(id).toMatch(/^c_/);
     expect(store.draft()).toBeNull();
     const c = store.reviewFor(PATH)!.doc.comments[0]!;
-    expect(c).toMatchObject({ kind: 'proof', body: 'Justify this step.', quickmark: 'justify' });
+    expect(c).toMatchObject({ kind: 'comment', body: 'Justify this step.', quickmark: 'justify' });
     await vi.advanceTimersByTimeAsync(600);
     expect(JSON.parse(saved.at(-1)!).comments).toHaveLength(1);
   });
@@ -175,7 +175,7 @@ describe('writing comments', () => {
     store.beginComment('comment');
     await vi.advanceTimersByTimeAsync(0);
     expect(store.draft()!.anchor.quoteTex).toBe('by $\\mathcal{K}$');
-    store.commitDraft({ body: 'Why?', kind: 'proof', quickmark: null, replacement: null });
+    store.commitDraft({ body: 'Why?', kind: 'comment', quickmark: null, replacement: null });
     resolveExact.splice(0).forEach((resolve) => resolve());
     await vi.advanceTimersByTimeAsync(600);
     expect(store.reviewFor(PATH)!.doc.comments[0]!.anchor.quoteTex).toBe('by $\\mathcal{C}$');
@@ -213,7 +213,7 @@ describe('writing comments', () => {
     await loaded();
     store.beginComment('comment');
     expect(
-      store.commitDraft({ body: '  ', kind: 'exposition', quickmark: null, replacement: null })
+      store.commitDraft({ body: '  ', kind: 'comment', quickmark: null, replacement: null })
     ).toBeNull();
     store.beginComment('typo');
     expect(store.draft()?.kind).toBe('typo');
@@ -236,7 +236,7 @@ describe('writing comments', () => {
     store.beginComment('comment');
     const id = store.commitDraft({
       body: 'x',
-      kind: 'exposition',
+      kind: 'comment',
       quickmark: null,
       replacement: null,
     })!;

@@ -373,7 +373,7 @@ function Suggestions(props: { path: string }) {
     const anchor = await referencesAnchor(tab);
     if (!anchor) return;
     beginCommentAt(props.path, anchor, {
-      kind: 'literature',
+      kind: 'comment',
       body: `Related work to consider: [@${s.key}]. `,
       quickmark: 'related',
     });
@@ -425,7 +425,7 @@ function Suggestions(props: { path: string }) {
                       <button
                         type="button"
                         class="mk-text-btn"
-                        title="Add a literature comment citing it"
+                        title="Add a comment citing it"
                         onClick={() => void suggest(s)}
                       >
                         Suggest

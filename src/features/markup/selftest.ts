@@ -59,7 +59,7 @@ export function syntheticReview(size: (page: number) => { w: number; h: number }
   const p1 = size(Math.min(1, 1));
   add(
     {
-      kind: 'proof',
+      kind: 'comment',
       anchor: {
         page: 0,
         quads: [line(p0.h, 150, 90, 200)],
@@ -73,7 +73,7 @@ export function syntheticReview(size: (page: number) => { w: number; h: number }
   );
   add(
     {
-      kind: 'exposition',
+      kind: 'comment',
       anchor: {
         page: 0,
         quads: [line(p0.h, 420, 90, 300), line(p0.h, 432, 90, 120)],
@@ -98,7 +98,7 @@ export function syntheticReview(size: (page: number) => { w: number; h: number }
   );
   add(
     {
-      kind: 'literature',
+      kind: 'question',
       anchor: { page: 1, quads: [line(p1.h, 200, 90, 220)], rect: null, quote: 'as shown before' },
       body: 'Cite the original source here, e.g. [@selftest2020]; the bound $O(\\log n)$ is older.',
       replacement: null,
@@ -107,7 +107,7 @@ export function syntheticReview(size: (page: number) => { w: number; h: number }
   );
   add(
     {
-      kind: 'exposition',
+      kind: 'comment',
       anchor: { page: 1, quads: null, rect: { x: 80, y: p1.h - 560, w: 300, h: 160 }, quote: '' },
       body: 'This figure needs axis labels.',
       replacement: null,

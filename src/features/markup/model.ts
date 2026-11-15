@@ -77,10 +77,12 @@ function readComment(v: unknown): MarkupComment | null {
   const o = v as Record<string, unknown>;
   const anchor = readAnchor(o.anchor);
   if (!anchor) return null;
+  // Reviews from before the three kinds said proof, exposition or
+  // literature: all of those are plain comments now.
   const kind = COMMENT_KINDS.includes(o.kind as CommentKind) ? (o.kind as CommentKind) : null;
   return {
     id: str(o.id) || newCommentId(),
-    kind: kind ?? 'exposition',
+    kind: kind ?? 'comment',
     anchor,
     body: str(o.body),
     replacement: typeof o.replacement === 'string' ? o.replacement : null,
@@ -158,10 +160,8 @@ export function groupBySection(entries: readonly Entry[]): Group[] {
 /** How many comments of each kind. */
 export function kindCounts(comments: readonly MarkupComment[]): Record<CommentKind, number> {
   const out: Record<CommentKind, number> = {
-    proof: 0,
-    exposition: 0,
+    comment: 0,
     question: 0,
-    literature: 0,
     typo: 0,
   };
   for (const c of comments) out[c.kind] += 1;
@@ -292,16 +292,14 @@ export function summarySkeleton(comments: readonly MarkupComment[]): string {
   const say = (n: number, one: string, many: string) => {
     if (n > 0) parts.push(`${n} ${n === 1 ? one : many}`);
   };
-  say(counts.proof, 'on a proof', 'on proofs');
-  say(counts.exposition, 'on exposition', 'on exposition');
+  say(counts.comment, 'comment', 'comments');
   say(counts.question, 'question', 'questions');
-  say(counts.literature, 'on the literature', 'on the literature');
   say(counts.typo, 'typo', 'typos');
   const total = comments.length;
   const tally =
     total === 0
       ? ''
-      : `${total} ${total === 1 ? 'comment' : 'comments'} follow${total === 1 ? 's' : ''}: ${joinList(parts)}.`;
+      : `${total} ${total === 1 ? 'note' : 'notes'}: ${joinList(parts)}.`;
   return ['Summary: ', '', 'Main concerns:', '- ', '', tally].join('\n').trimEnd() + '\n';
 }
 

@@ -22,9 +22,9 @@ describe('QuickMarks', () => {
       'motivate',
       'typo',
     ]);
-    expect(quickmarkById('gap')).toMatchObject({ text: 'Gap in the argument', kind: 'proof' });
-    expect(quickmarkById('cite')?.kind).toBe('literature');
-    expect(quickmarkById('define')?.kind).toBe('exposition');
+    expect(quickmarkById('gap')).toMatchObject({ text: 'Gap in the argument', kind: 'comment' });
+    expect(quickmarkById('cite')?.kind).toBe('comment');
+    expect(quickmarkById('define')?.kind).toBe('comment');
     expect(quickmarkById('nope')).toBeNull();
   });
 

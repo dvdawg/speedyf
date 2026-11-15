@@ -24,7 +24,7 @@ function comment(over: Partial<MarkupComment> & { anchor: Anchor }): MarkupComme
   n += 1;
   return {
     id: `c${n}`,
-    kind: 'exposition',
+    kind: 'comment',
     body: '',
     replacement: null,
     quickmark: null,
@@ -85,7 +85,7 @@ const topsOf = (html: string) => [...html.matchAll(/top:([\d.]+)px/g)].map((m) =
 describe('marks', () => {
   it('highlights comments, strikes typo fixes with a caret, and boxes regions', async () => {
     const list = [
-      comment({ anchor: anchor(0, 100, 'the claim'), kind: 'proof', body: 'Justify this step.' }),
+      comment({ anchor: anchor(0, 100, 'the claim'), kind: 'comment', body: 'Justify this step.' }),
       comment({
         anchor: anchor(0, 200, 'teh'),
         kind: 'typo',
@@ -103,7 +103,7 @@ describe('marks', () => {
     const labels = request.marks.filter((m) => m.kind === 'label');
     // Each phrase also carries its number, in its note's full colour.
     expect(labels.map((m) => [m.page, m.contents, m.color])).toEqual([
-      [0, '1', '#c62828'],
+      [0, '1', '#694fe3'],
       [0, '2', '#5c6570'],
       [0, '3', '#5c6570'],
       [1, '4', '#694fe3'],
@@ -126,7 +126,7 @@ describe('marks', () => {
       '4. Label the axes.',
     ]);
     expect(native[0]!.color).toMatch(/^#[0-9a-f]{6}$/);
-    expect(native[0]!.color).not.toBe('#c62828');
+    expect(native[0]!.color).not.toBe('#694fe3');
     expect(request.marginPt).toBe(180);
   });
 
@@ -148,7 +148,7 @@ describe('the margin', () => {
       ['margin', 1, 180, 792],
     ]);
     const all = request.sheets.map((s) => s.html).join('');
-    expect(all).toContain('<span class="mk-badge mk-k-exposition">1</span>');
+    expect(all).toContain('<span class="mk-badge mk-k-comment">1</span>');
     expect(all).toContain('Add motivation here. See <span class="mk-cite">[Jar97]</span>.');
     expect(all).toContain('<span class="mk-del">teh</span> <span class="mk-ins">the</span>');
     // No letter, labels, pointers or kind tags.

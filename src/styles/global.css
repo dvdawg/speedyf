@@ -8053,8 +8053,8 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 
 /* ---------- Markup: reviewing a paper ----------
    The marks on the page, the review drawer and its cards. Each kind of
-   comment wears one token: proofs --danger, exposition --accent,
-   questions --text, literature --warn, typos --text-dim. */
+   comment wears one token: comments --accent, questions --warn, typos
+   --text-dim. */
 
 .mk-layer {
   position: absolute;
@@ -8076,23 +8076,13 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   mix-blend-mode: screen;
 }
 
-.mk-mark.is-proof,
-.mk-pin.is-proof,
-.mk-card.is-proof,
-.mk-num-badge.is-proof,
-.mk-kind-chip.is-proof,
-.mk-filter-chip.is-proof,
-.mk-menu-kind.is-proof {
-  --mk-ink: var(--danger);
-}
-
-.mk-mark.is-exposition,
-.mk-pin.is-exposition,
-.mk-card.is-exposition,
-.mk-num-badge.is-exposition,
-.mk-kind-chip.is-exposition,
-.mk-filter-chip.is-exposition,
-.mk-menu-kind.is-exposition {
+.mk-mark.is-comment,
+.mk-pin.is-comment,
+.mk-card.is-comment,
+.mk-num-badge.is-comment,
+.mk-kind-chip.is-comment,
+.mk-filter-chip.is-comment,
+.mk-menu-kind.is-comment {
   --mk-ink: var(--accent);
 }
 
@@ -8103,16 +8093,6 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .mk-kind-chip.is-question,
 .mk-filter-chip.is-question,
 .mk-menu-kind.is-question {
-  --mk-ink: var(--text);
-}
-
-.mk-mark.is-literature,
-.mk-pin.is-literature,
-.mk-card.is-literature,
-.mk-num-badge.is-literature,
-.mk-kind-chip.is-literature,
-.mk-filter-chip.is-literature,
-.mk-menu-kind.is-literature {
   --mk-ink: var(--warn);
 }
 

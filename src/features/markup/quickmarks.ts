@@ -10,16 +10,16 @@ export interface QuickMark {
 }
 
 export const QUICKMARKS: readonly QuickMark[] = [
-  { id: 'gap', text: 'Gap in the argument', kind: 'proof' },
-  { id: 'justify', text: 'Justify this step', kind: 'proof' },
+  { id: 'gap', text: 'Gap in the argument', kind: 'comment' },
+  { id: 'justify', text: 'Justify this step', kind: 'comment' },
   { id: 'hypothesis', text: 'Which hypothesis is used here?', kind: 'question' },
   { id: 'why', text: 'Why does this hold?', kind: 'question' },
-  { id: 'cite', text: 'Citation needed', kind: 'literature' },
-  { id: 'related', text: 'Related work to consider', kind: 'literature' },
-  { id: 'define', text: 'Define this notation before use', kind: 'exposition' },
-  { id: 'unclear', text: 'Unclear; please rephrase', kind: 'exposition' },
-  { id: 'reorder', text: 'Consider moving this earlier/later', kind: 'exposition' },
-  { id: 'motivate', text: 'Add motivation here', kind: 'exposition' },
+  { id: 'cite', text: 'Citation needed', kind: 'comment' },
+  { id: 'related', text: 'Related work to consider', kind: 'comment' },
+  { id: 'define', text: 'Define this notation before use', kind: 'comment' },
+  { id: 'unclear', text: 'Unclear; please rephrase', kind: 'comment' },
+  { id: 'reorder', text: 'Consider moving this earlier/later', kind: 'comment' },
+  { id: 'motivate', text: 'Add motivation here', kind: 'comment' },
   { id: 'typo', text: 'Typo', kind: 'typo' },
 ];
 

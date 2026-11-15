@@ -20,7 +20,7 @@ function textAnchor(page: number, x: number, top: number, w = 40, h = 10): Ancho
 function comment(id: string, anchor: Anchor, created = 0): MarkupComment {
   return {
     id,
-    kind: 'exposition',
+    kind: 'comment',
     anchor,
     body: '',
     replacement: null,

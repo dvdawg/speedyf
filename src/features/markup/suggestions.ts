@@ -3,7 +3,7 @@
  * that the paper does not cite. Offline - the library's own graph, read
  * from the references SpeedyF has parsed for its items - so it needs the
  * paper to be an item of the library. One click turns a suggestion into a
- * literature comment citing it, anchored at the paper's reference list. */
+ * comment citing it, anchored at the paper's reference list. */
 import { engine } from '../../lib/transport/engine';
 import type { TabRecord } from '../../stores/tabsStore';
 import type { RelatedItem } from '../../types/engine';
