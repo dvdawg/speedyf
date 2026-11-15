@@ -190,7 +190,8 @@ describe('sheets', () => {
     const request = await buildExportRequest(input(list));
     const margin = request.sheets[2]!;
     expect(margin.links!).toHaveLength(3);
-    for (const link of margin.links!) expect(link.target).toMatchObject({ kind: 'sheet', sheet: 0 });
+    for (const link of margin.links!)
+      expect(link.target).toMatchObject({ kind: 'sheet', sheet: 0 });
     const ys = margin.links!.map((l) => (l.target as { y: number }).y);
     expect(ys[0]).toBe(ys[2]);
     expect(margin.html).toContain('mk-margin');
