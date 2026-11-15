@@ -190,3 +190,66 @@ describe('a very long note', () => {
     expect(elapsed).toBeLessThan(1_500);
   });
 });
+
+describe('statements, cross-references and quoted references', () => {
+  it('reads a statement citation with its hidden page and box', async () => {
+    const [span] = inlineSpans('[@rz26, Prop. 2.2]{box=72,100,468,80 page=2}');
+    expect(span).toMatchObject({
+      kind: 'cite',
+      cite: { key: 'rz26', locator: 'Prop. 2.2', page: 1, box: [72, 100, 468, 80] },
+    });
+    // A "p." locator still wins.
+    const [pinned] = inlineSpans('[@rz26, p. 5]{box=1,2,3,4 page=2}');
+    expect(pinned).toMatchObject({ cite: { page: 4 } });
+  });
+
+  it('reads a cross-reference into a paper as its words', () => {
+    const spans = inlineSpans(
+      'By [Theorem 2.1](@rz26#p3){box=72,300,400,60} and [Eq. (3)](@rz26).'
+    );
+    expect(spans[1]).toEqual({
+      kind: 'xref',
+      text: 'Theorem 2.1',
+      key: 'rz26',
+      page: 2,
+      box: [72, 300, 400, 60],
+      raw: '[Theorem 2.1](@rz26#p3){box=72,300,400,60}',
+    });
+    expect(spans[3]).toMatchObject({ kind: 'xref', text: 'Eq. (3)', key: 'rz26', page: null });
+    // An ordinary link is still a link.
+    expect(inlineSpans('[site](https://x.org)')[0]).toMatchObject({ kind: 'link' });
+  });
+
+  it('reads a quoted reference and its entry line', async () => {
+    const { footnotesIn, noterefLabel, noterefText } = await import('./markdown');
+    expect(inlineSpans('as in [^Sim15].')[1]).toEqual({
+      kind: 'noteref',
+      id: 'Sim15',
+      raw: '[^Sim15]',
+    });
+    const entry = '[^rz26-12]: [12] B. Simon, Spectral theory (2015).';
+    expect(lineShape(entry)).toEqual({
+      kind: 'footnote',
+      id: 'rz26-12',
+      body: '[12] B. Simon, Spectral theory (2015).',
+    });
+    const notes = footnotesIn(`Text\n\n${entry}`);
+    expect(noterefLabel('rz26-12', notes.get('rz26-12'))).toBe('[12]');
+    expect(noterefLabel('Sim15', undefined)).toBe('[Sim15]');
+    expect(noterefText(notes.get('rz26-12')!)).toBe('B. Simon, Spectral theory (2015).');
+  });
+
+  it("knows a statement block by its quote's bold label", async () => {
+    const { statementHead } = await import('./markdown');
+    expect(statementHead('**Definition 1.3** (Overlap). An overlap is')).toMatchObject({
+      kind: 'definition',
+      number: '1.3',
+      title: 'Overlap',
+      italic: false,
+      rest: 'An overlap is',
+    });
+    expect(statementHead('**Theorem**. Every')).toMatchObject({ number: null, title: null });
+    expect(statementHead('**Bold** words')).toBeNull();
+    expect(statementHead('Theorem 2. Plain')).toBeNull();
+  });
+});

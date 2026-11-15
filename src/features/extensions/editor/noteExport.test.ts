@@ -130,3 +130,44 @@ describe('copy as LaTeX', () => {
     );
   });
 });
+
+describe('statements, cross-references and quoted references on export', () => {
+  const QUOTED = [
+    '> **Proposition 2.2** (Moments). Let $P$ be as in [^Sim15] and [@han2016].',
+    '>',
+    '> [@rz26, p. 2]{box=72,100,468,80}',
+    '',
+    'By [Theorem 2.1](@rz26#p1){box=72,300,400,60}, and [@rz26, Prop. 2.2]{box=72,100,468,80 page=2}.',
+    '',
+    '[^Sim15]: [Sim15] B. Simon, Spectral_theory (2015).',
+  ].join('\n');
+
+  it('keeps Pandoc in Markdown: citations and footnotes, cross-references as words', () => {
+    expect(exportMarkdown(QUOTED, 'n-assets').text).toBe(
+      [
+        '> **Proposition 2.2** (Moments). Let $P$ be as in [^Sim15] and [@han2016].',
+        '>',
+        '> [@rz26, p. 2]',
+        '',
+        'By Theorem 2.1, and [@rz26, Prop. 2.2].',
+        '',
+        '[^Sim15]: [Sim15] B. Simon, Spectral_theory (2015).',
+      ].join('\n')
+    );
+  });
+
+  it('writes LaTeX: the statement set as amsthm does, its citation with a locator', () => {
+    expect(noteToLatex(QUOTED)).toBe(
+      [
+        '\\begin{quote}',
+        '\\textbf{Proposition 2.2} (Moments). {\\itshape Let $P$ be as in [Sim15]\\footnote{B. Simon, Spectral\\_theory (2015).} and \\cite{han2016}.}',
+        '',
+        '\\cite[p.~2]{rz26}',
+        '\\end{quote}',
+        '',
+        'By Theorem 2.1, and \\cite[Prop.~2.2]{rz26}.',
+        '',
+      ].join('\n')
+    );
+  });
+});

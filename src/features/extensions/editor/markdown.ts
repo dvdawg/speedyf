@@ -88,6 +88,7 @@ export type LineShape =
   | { kind: 'bullet'; indent: number; body: string; marker: string }
   | { kind: 'ordered'; indent: number; body: string; marker: string }
   | { kind: 'quote'; depth: number; body: string }
+  | { kind: 'footnote'; id: string; body: string }
   | { kind: 'rule' }
   | { kind: 'para'; body: string };
 
@@ -102,6 +103,8 @@ export function lineShape(raw: string): LineShape {
     const depth = (m[0].match(/>/g) ?? []).length;
     return { kind: 'quote', depth, body: raw.slice(m[0].length) };
   }
+  m = /^\[\^([A-Za-z0-9_.:+-]{1,80})\]:\s*(.*)$/.exec(raw);
+  if (m) return { kind: 'footnote', id: m[1]!, body: m[2]! };
   m = /^(\s*)([-*+])\s+(.*)$/.exec(raw);
   if (m) return { kind: 'bullet', indent: m[1]!.length, marker: m[2]!, body: m[3]! };
   m = /^(\s*)(\d{1,9}[.)])\s+(.*)$/.exec(raw);
@@ -109,16 +112,20 @@ export function lineShape(raw: string): LineShape {
   return { kind: 'para', body: raw };
 }
 
-/** A citation as written: `@key`, or `[@key, p. 12]{box=x,y,w,h}`. */
+/** A citation as written: `@key`, `[@key, p. 12]{box=x,y,w,h}`, or a
+ * statement `[@key, Prop. 2.2]{box=x,y,w,h page=3}`. */
 export interface Citation {
   key: string;
-  /** The locator after the key ("p. 12"), when bracketed with one. */
+  /** The locator after the key ("p. 12", "Prop. 2.2"), when bracketed
+   * with one. */
   locator: string | null;
-  /** Zero-based page, read from a "p." locator. */
+  /** Zero-based page, read from a "p." locator, else from `page=`. */
   page: number | null;
   /** Where on the page, top-left page points: from `{box=...}`. */
   box: [number, number, number, number] | null;
 }
+
+type Box = [number, number, number, number];
 
 export type Span =
   | { kind: 'text'; text: string }
@@ -128,14 +135,129 @@ export type Span =
   | { kind: 'math'; tex: string }
   | { kind: 'link'; href: string; children: Span[] }
   | { kind: 'image'; src: string; alt: string }
-  | { kind: 'cite'; cite: Citation; raw: string };
+  | { kind: 'cite'; cite: Citation; raw: string }
+  /** A cross-reference into a paper, `[Theorem 2.1](@key#p3){box=...}`:
+   * the words as printed, the paper, the zero-based page and the target's
+   * box (top-left page points). */
+  | { kind: 'xref'; text: string; key: string; page: number | null; box: Box | null; raw: string }
+  /** A reference a quoted paper printed that no item is: `[^Sim15]`, its
+   * entry in the note's `[^Sim15]: ...` line. */
+  | { kind: 'noteref'; id: string; raw: string };
 
 /** Characters a cite key is made of: Pandoc's, less what ends a sentence. */
 const KEY = String.raw`[A-Za-z0-9_][A-Za-z0-9_:.#$%&+?<>~/-]*[A-Za-z0-9_]|[A-Za-z0-9_]`;
-const BRACKET_CITE = new RegExp(
-  String.raw`^\[@(${KEY})(?:\s*,\s*([^\]]*))?\](?:\{box=(-?[\d.]+),(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)\})?`
-);
+const NUM = String.raw`(-?[\d.]+)`;
+const BOX = String.raw`\{box=${NUM},${NUM},${NUM},${NUM}(?:\s+page=(\d{1,6}))?\}`;
+const BRACKET_CITE = new RegExp(String.raw`^\[@(${KEY})(?:\s*,\s*([^\]]*))?\](?:${BOX})?`);
 const BARE_CITE = new RegExp(String.raw`^@(${KEY})`);
+const XREF = new RegExp(String.raw`^\[([^\]\n]+)\]\(@([^)\s]+?)(?:#p(\d{1,6}))?\)(?:${BOX})?`);
+const NOTEREF = /^\[\^([A-Za-z0-9_.:+-]{1,80})\](?!:)/;
+
+function boxOf(m: RegExpExecArray, at: number): Box | null {
+  return m[at] !== undefined
+    ? [Number(m[at]), Number(m[at + 1]), Number(m[at + 2]), Number(m[at + 3])]
+    : null;
+}
+
+/** The words a statement block opens with, as amsthm prints them. */
+export const STATEMENT_WORDS = [
+  'Theorem',
+  'Lemma',
+  'Proposition',
+  'Corollary',
+  'Claim',
+  'Conjecture',
+  'Definition',
+  'Remark',
+  'Example',
+  'Assumption',
+  'Hypothesis',
+  'Fact',
+  'Observation',
+  'Problem',
+  'Question',
+  'Notation',
+  'Exercise',
+];
+
+/** Kinds set in italic, as amsthm's `plain` style sets them; the rest
+ * (definition, remark, example...) are upright. */
+const ITALIC_KINDS = new Set([
+  'theorem',
+  'lemma',
+  'proposition',
+  'corollary',
+  'claim',
+  'conjecture',
+  'hypothesis',
+  'fact',
+  'observation',
+]);
+
+/** A statement's header: `**Proposition 2.2** (Title).` */
+const STATEMENT_HEAD = new RegExp(
+  String.raw`^\*\*(${STATEMENT_WORDS.join('|')})(?:\s+([^*\s]{1,20}))?\*\*(?:\s*\(((?:[^()]|\([^()]*\))*)\))?\.?\s*`
+);
+
+/** A statement block as written: the header of its first line, and that
+ * line's rest. */
+export interface StatementHead {
+  /** "proposition" */
+  kind: string;
+  /** "Proposition" */
+  word: string;
+  number: string | null;
+  title: string | null;
+  /** Set in italic (theorem-like) or upright (definition-like). */
+  italic: boolean;
+  /** What follows the header on its line. */
+  rest: string;
+}
+
+/** The statement a quote's first line opens: a block quote whose first
+ * line starts `**Proposition 2.2** (Title).` is a statement (Notepad's
+ * statement blocks; any Markdown reader shows it as the bold-labelled
+ * quote it is). Null for any other line. */
+export function statementHead(body: string): StatementHead | null {
+  const m = STATEMENT_HEAD.exec(body);
+  if (!m) return null;
+  const kind = m[1]!.toLowerCase();
+  return {
+    kind,
+    word: m[1]!,
+    number: m[2] ?? null,
+    title: m[3]?.trim() || null,
+    italic: ITALIC_KINDS.has(kind),
+    rest: body.slice(m[0].length),
+  };
+}
+
+/** A quote line that is nothing but a page link (a statement's last). */
+export function onlyPageLink(body: string): boolean {
+  const m = BRACKET_CITE.exec(body.trim());
+  return !!m && m[0].length === body.trim().length;
+}
+
+/** The note's reference entries, `[^id]: text`, by id (the first of each). */
+export function footnotesIn(text: string): Map<string, string> {
+  const out = new Map<string, string>();
+  const re = /^\[\^([A-Za-z0-9_.:+-]{1,80})\]:\s*(.*)$/gm;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) if (!out.has(m[1]!)) out.set(m[1]!, m[2]!);
+  return out;
+}
+
+/** How a `[^id]` reads: the printed label its entry opens with
+ * ("[Sim15] B. Simon, ..."), else the id in brackets. */
+export function noterefLabel(id: string, entry: string | undefined): string {
+  const m = entry ? /^\[([^\]\n]{1,40})\]/.exec(entry.trim()) : null;
+  return m ? `[${m[1]}]` : `[${id}]`;
+}
+
+/** An entry's text without the printed label it opens with. */
+export function noterefText(entry: string): string {
+  return entry.trim().replace(/^\[[^\]\n]{1,40}\]\s*/, '');
+}
 
 /** Read "p. 12", "pp. 12-14", "page 3" into a zero-based page. */
 export function locatorPage(locator: string | null): number | null {
@@ -227,19 +349,16 @@ export function inlineSpans(text: string): Span[] {
       if (m) {
         flush();
         const locator = m[2]?.trim() || null;
-        const box =
-          m[3] !== undefined
-            ? ([Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6])] as [
-                number,
-                number,
-                number,
-                number,
-              ])
-            : null;
+        const attrPage = m[7] !== undefined ? Number(m[7]) - 1 : null;
         out.push({
           kind: 'cite',
           raw: m[0],
-          cite: { key: m[1]!, locator, page: locatorPage(locator), box },
+          cite: {
+            key: m[1]!,
+            locator,
+            page: locatorPage(locator) ?? (attrPage !== null && attrPage >= 0 ? attrPage : null),
+            box: boxOf(m, 3),
+          },
         });
         i += m[0].length;
         continue;
@@ -267,7 +386,31 @@ export function inlineSpans(text: string): Span[] {
         continue;
       }
     }
+    if (c === '[' && text[i + 1] === '^') {
+      const m = NOTEREF.exec(rest);
+      if (m) {
+        flush();
+        out.push({ kind: 'noteref', id: m[1]!, raw: m[0] });
+        i += m[0].length;
+        continue;
+      }
+    }
     if (c === '[') {
+      const x = XREF.exec(rest);
+      if (x) {
+        flush();
+        const page = x[3] !== undefined ? Number(x[3]) - 1 : null;
+        out.push({
+          kind: 'xref',
+          text: x[1]!,
+          key: x[2]!,
+          page: page !== null && page >= 0 ? page : null,
+          box: boxOf(x, 4),
+          raw: x[0],
+        });
+        i += x[0].length;
+        continue;
+      }
       const m = /^\[([^\]]+)\]\(([^)\s]+)\)/.exec(rest);
       if (m) {
         flush();

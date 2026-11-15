@@ -22,6 +22,7 @@
 import {
   createEffect,
   createMemo,
+  createResource,
   createSignal,
   For,
   Match,
@@ -49,13 +50,26 @@ import { runEditorEvent, type ExtensionEditor } from '../extensionStore';
 import { applyOp, diffOp, mapPos, type Op } from './ops';
 import {
   codeSource,
+  footnotesIn,
   inlineSpans,
   lineShape,
   mathSource,
+  noterefLabel,
+  noterefText,
+  onlyPageLink,
   sourceOffset,
+  statementHead,
   type Citation,
   type Span,
 } from './markdown';
+import NotePreview, { previewLeave, previewSoon, type PreviewContent } from './NotePreview';
+import StatementPicker, {
+  matchStatements,
+  statementCite,
+  statementQuery,
+  type StatementPick,
+} from './StatementPicker';
+import { statementPlaces, type StatementPlace } from '../paperDocs';
 import type {
   Decoration,
   MarkDecoration,
@@ -233,6 +247,10 @@ function EditorBody(props: BodyProps) {
   const [picker, setPicker] = createSignal<{ at: number; query: string; index: number } | null>(
     null
   );
+  /** The picker's second step: a cited paper's statements. */
+  const [stmt, setStmt] = createSignal<StatementPick | null>(null);
+  /** The note's reference entries (`[^id]: ...`), by id. */
+  const notes = createMemo(() => footnotesIn(s.text()));
   /** Absolute caret while a block is being edited. */
   let caret = 0;
   /** Where the active block starts, and its text as last committed. */
@@ -270,6 +288,7 @@ function EditorBody(props: BodyProps) {
     setActiveRaw(block.raw);
     caret = Math.min(Math.max(offset, activeStart), activeStart + block.raw.length);
     setPicker(null);
+    setStmt(null);
     if (active() === block && field) {
       field.value = block.raw;
       placeCaret(select);
@@ -375,6 +394,7 @@ function EditorBody(props: BodyProps) {
   };
 
   const updatePicker = (value: string, localCaret: number) => {
+    updateStatements(value, localCaret);
     const found = citeQuery(value, localCaret);
     if (!found || props.index.entries.every((e) => !e.pick)) {
       setPicker(null);
@@ -399,6 +419,58 @@ function EditorBody(props: BodyProps) {
     field.value = activeRaw;
     commit(op, caret, after, false);
     setPicker(null);
+    placeCaret();
+    // Then the paper's statements, nothing chosen yet.
+    if (entry.item) setStmt({ at: p.at, key: entry.key, item: entry.item, query: '', index: -1 });
+  };
+
+  /* ---- citing a statement: `@key,` then the paper's statements ---- */
+
+  const updateStatements = (value: string, localCaret: number) => {
+    const found = statementQuery(value, localCaret);
+    const prev = stmt();
+    if (found) {
+      const item = props.index.byKey.get(found.key)?.item;
+      if (!item) return setStmt(null);
+      const at = activeStart + found.at;
+      setStmt({
+        at,
+        key: found.key,
+        item,
+        query: found.query,
+        index: Math.max(0, prev?.index ?? 0),
+      });
+      return;
+    }
+    // Just after a picked `@key`, the step stays offered until typing
+    // moves on.
+    const still =
+      prev &&
+      prev.query === '' &&
+      value.slice(prev.at - activeStart, localCaret) === `@${prev.key}`;
+    if (!still) setStmt(null);
+  };
+
+  const [statementRows] = createResource(
+    () => stmt()?.item,
+    (item) => statementPlaces(item)
+  );
+  const statementMatches = createMemo(() => {
+    const p = stmt();
+    const rows = statementRows();
+    return p && rows ? matchStatements(rows, p.query) : [];
+  });
+
+  const pickStatement = (place: StatementPlace) => {
+    const p = stmt();
+    if (!p || !field) return;
+    const insert = statementCite(p.key, place);
+    const op: Op = { from: p.at, to: caret, insert };
+    const after = p.at + insert.length;
+    setActiveRaw(applyOp(activeRaw, { from: p.at - activeStart, to: caret - activeStart, insert }));
+    field.value = activeRaw;
+    commit(op, caret, after, false);
+    setStmt(null);
     placeCaret();
   };
 
@@ -465,6 +537,29 @@ function EditorBody(props: BodyProps) {
   const onKeyDown = (e: KeyboardEvent & { currentTarget: HTMLTextAreaElement }) => {
     const ta = e.currentTarget;
     const mod = /mac/i.test(navigator.userAgent) ? e.metaKey : e.ctrlKey;
+    const st = stmt();
+    if (st && !picker()) {
+      const n = statementMatches().length;
+      if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && n > 0) {
+        e.preventDefault();
+        const from = st.index < 0 ? (e.key === 'ArrowDown' ? -1 : 0) : st.index;
+        setStmt({ ...st, index: (from + (e.key === 'ArrowDown' ? 1 : n - 1) + n) % n });
+        return;
+      }
+      if ((e.key === 'Enter' || e.key === 'Tab') && !e.isComposing && st.index >= 0 && n > 0) {
+        e.preventDefault();
+        const place = statementMatches()[Math.min(st.index, n - 1)];
+        if (place) pickStatement(place);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        setStmt(null);
+        return;
+      }
+      if (e.key === 'Enter') setStmt(null);
+    }
     const p = picker();
     if (p && matches().length > 0) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -899,6 +994,7 @@ function EditorBody(props: BodyProps) {
         </button>
         {props.end}
       </div>
+      <NotePreview />
       <div class="note-editor-scroll" ref={scroller} onCopy={onCopy} onClick={onPageClick}>
         <Show
           when={!source()}
@@ -936,6 +1032,7 @@ function EditorBody(props: BodyProps) {
                           {drawBlock({
                             block,
                             index: () => props.index,
+                            notes,
                             noteKey: props.noteKey,
                             onCite: activateCitation,
                           })}
@@ -984,11 +1081,26 @@ function EditorBody(props: BodyProps) {
                             {drawBlock({
                               block: { ...block, kind: kind(), raw: liveRaw() },
                               index: () => props.index,
+                              notes,
                               noteKey: props.noteKey,
                               onCite: () => {},
                             })}
                           </div>
                         )}
+                      </Show>
+                      <Show
+                        when={
+                          !picker() &&
+                          stmt() &&
+                          (statementRows.loading || statementMatches().length > 0)
+                        }
+                      >
+                        <StatementPicker
+                          rows={statementMatches()}
+                          loading={statementRows.loading}
+                          index={stmt()?.index ?? -1}
+                          onPick={pickStatement}
+                        />
                       </Show>
                       <Show when={picker() && matches().length > 0}>
                         <div class="note-picker" role="listbox" aria-label="Cite an item">
@@ -1250,6 +1362,27 @@ function NoteImage(props: { src: string; alt: string; noteKey: NoteKey }) {
   );
 }
 
+/** Pointer and focus handlers that show a token's preview. */
+function previewHandlers(content: () => PreviewContent | null) {
+  const show = (e: { currentTarget: HTMLElement }) => {
+    const c = content();
+    if (c) previewSoon(e.currentTarget, c);
+  };
+  return {
+    onPointerEnter: show,
+    onFocus: show,
+    onPointerLeave: previewLeave,
+    onBlur: previewLeave,
+  };
+}
+
+/** How a citation reads: its item's label, a locator inside its brackets
+ * ("[ZD24a, p. 12]", "[RZ26, Prop. 2.2]"). */
+export function citeText(label: string, locator: string | null): string {
+  if (!locator) return label;
+  return /^\[.*\]$/.test(label) ? `${label.slice(0, -1)}, ${locator}]` : `${label}, ${locator}`;
+}
+
 function CiteToken(props: {
   cite: Citation;
   raw: string;
@@ -1259,36 +1392,116 @@ function CiteToken(props: {
   const entry = () => props.index.byKey.get(props.cite.key);
   const text = () => {
     const e = entry();
-    if (!e) return props.raw;
-    const locator = props.cite.locator;
-    if (!locator) return e.label;
-    // A bracketed label takes the locator inside: "[ZD24a, p. 12]".
-    return /^\[.*\]$/.test(e.label)
-      ? `${e.label.slice(0, -1)}, ${locator}]`
-      : `${e.label}, ${locator}`;
+    return e ? citeText(e.label, props.cite.locator) : props.raw;
+  };
+  const preview = (): PreviewContent | null => {
+    const e = entry();
+    if (!e) return null;
+    const page = props.cite.page;
+    if (page !== null && props.cite.box && e.item) {
+      return {
+        kind: 'place',
+        itemId: e.item,
+        page,
+        box: props.cite.box,
+        title: e.title,
+        detail: [props.cite.locator, `p. ${page + 1}`].filter(Boolean).join(' - '),
+      };
+    }
+    return {
+      kind: 'item',
+      title: e.title,
+      detail: [e.detail, page !== null ? `p. ${page + 1}` : null].filter(Boolean).join(' - '),
+    };
   };
   return (
     <button
       type="button"
       class="np-cite"
       classList={{ 'is-unresolved': !entry() }}
-      title={
-        entry()
-          ? `${entry()!.title}${props.cite.page !== null ? ` - p. ${props.cite.page + 1}` : ''}`
-          : `No item has the key ${props.cite.key}`
-      }
+      aria-label={entry() ? undefined : `${props.raw} (no item has the key ${props.cite.key})`}
       onClick={() => props.onCite(props.cite)}
+      {...previewHandlers(preview)}
     >
       {text()}
     </button>
   );
 }
 
+/** A cross-reference into a paper: its words, as hyperref's read. */
+function XrefToken(props: {
+  span: Extract<Span, { kind: 'xref' }>;
+  index: CitationIndex;
+  onCite: (c: Citation) => void;
+}) {
+  const entry = () => props.index.byKey.get(props.span.key);
+  const preview = (): PreviewContent | null => {
+    const e = entry();
+    if (!e) return null;
+    return {
+      kind: 'place',
+      itemId: e.item ?? null,
+      page: props.span.page,
+      box: props.span.box,
+      title: props.span.text,
+      detail: [e.label, props.span.page !== null ? `p. ${props.span.page + 1}` : null]
+        .filter(Boolean)
+        .join(', '),
+      previewKind: /^eq/i.test(props.span.text) ? 'equation' : 'theorem',
+    };
+  };
+  return (
+    <button
+      type="button"
+      class="np-xref"
+      classList={{ 'is-unresolved': !entry() }}
+      onClick={() =>
+        props.onCite({
+          key: props.span.key,
+          locator: null,
+          page: props.span.page,
+          box: props.span.box,
+        })
+      }
+      {...previewHandlers(preview)}
+    >
+      {props.span.text}
+    </button>
+  );
+}
+
+/** A reference the quoted paper printed that no item is: its printed
+ * label, dim, its entry on hover. */
+function NoterefToken(props: { id: string; notes: () => Map<string, string> }) {
+  const entry = () => props.notes().get(props.id);
+  const label = () => noterefLabel(props.id, entry());
+  const preview = (): PreviewContent | null => {
+    const e = entry();
+    return e ? { kind: 'reference', label: label(), text: noterefText(e) } : null;
+  };
+  return (
+    <button
+      type="button"
+      class="np-cite is-reference"
+      onClick={(e) => {
+        const c = preview();
+        if (c) previewSoon(e.currentTarget, c);
+      }}
+      {...previewHandlers(preview)}
+    >
+      {label()}
+    </button>
+  );
+}
+
+const NO_NOTES = new Map<string, string>();
+
 function Spans(props: {
   spans: Span[];
   index: CitationIndex;
   noteKey: NoteKey;
   onCite: (c: Citation) => void;
+  notes?: () => Map<string, string>;
 }) {
   return (
     <For each={props.spans}>
@@ -1336,6 +1549,10 @@ function Spans(props: {
                 onCite={props.onCite}
               />
             );
+          case 'xref':
+            return <XrefToken span={span} index={props.index} onCite={props.onCite} />;
+          case 'noteref':
+            return <NoterefToken id={span.id} notes={props.notes ?? (() => NO_NOTES)} />;
         }
       }}
     </For>
@@ -1353,6 +1570,7 @@ export function quotedDisplay(body: string): string | null {
 function drawBlock(args: {
   block: Block;
   index: () => CitationIndex;
+  notes: () => Map<string, string>;
   noteKey: NoteKey;
   onCite: (c: Citation) => void;
 }): JSX.Element {
@@ -1369,9 +1587,14 @@ function drawBlock(args: {
       index={args.index()}
       noteKey={args.noteKey}
       onCite={args.onCite}
+      notes={args.notes}
     />
   );
   if (block.kind === 'quote') {
+    const lines = block.raw.split('\n').map(lineShape);
+    const first = lines[0];
+    const head = first?.kind === 'quote' && first.depth === 1 ? statementHead(first.body) : null;
+    if (head) return drawStatement(head, lines.slice(1), inlineSpansOf);
     // One border for the whole run; a bare `>` is the gap between its
     // paragraphs.
     return (
@@ -1433,7 +1656,68 @@ function drawBlock(args: {
           {inline(shape.body)}
         </div>
       );
+    case 'footnote':
+      return (
+        <div class="np-ref-entry">
+          <span class="np-ref-label">{noterefLabel(shape.id, shape.body)}</span>{' '}
+          {inline(noterefText(shape.body))}
+        </div>
+      );
     case 'para':
       return <div class="np-p">{inline(shape.body)}</div>;
   }
+}
+
+/** A statement block, drawn as the paper's theorem environment: the label
+ * bold, its name in parentheses upright, the body italic for a
+ * theorem-like kind and upright for a definition-like one, displays
+ * typeset, and the page link last, small and dim. No rule beside it: it is
+ * the paper's statement, not a quotation of prose. */
+function drawStatement(
+  head: NonNullable<ReturnType<typeof statementHead>>,
+  rest: ReturnType<typeof lineShape>[],
+  inline: (text: string) => JSX.Element
+): JSX.Element {
+  const label = head.number ? `${head.word} ${head.number}` : head.word;
+  return (
+    <div
+      class="np-statement"
+      classList={{ 'is-italic': head.italic }}
+      data-kind={head.kind}
+      role="group"
+      aria-label={label}
+    >
+      <div class="np-statement-line">
+        <strong class="np-statement-label">{label}</strong>
+        <Show when={head.title}>
+          <span class="np-statement-title"> ({head.title})</span>
+        </Show>
+        <strong class="np-statement-label">.</strong>{' '}
+        <span class="np-statement-body">{inline(head.rest)}</span>
+      </div>
+      <For each={rest}>
+        {(shape) => {
+          if (shape.kind !== 'quote' || shape.body.trim() === '') {
+            return <div class="np-quote-gap" />;
+          }
+          const display = quotedDisplay(shape.body);
+          if (display !== null) {
+            return (
+              <div class="np-statement-line">
+                <LazyMath tex={display} display={true} />
+              </div>
+            );
+          }
+          if (onlyPageLink(shape.body)) {
+            return <div class="np-statement-source">{inline(shape.body)}</div>;
+          }
+          return (
+            <div class="np-statement-line">
+              <span class="np-statement-body">{inline(shape.body)}</span>
+            </div>
+          );
+        }}
+      </For>
+    </div>
+  );
 }

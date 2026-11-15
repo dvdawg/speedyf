@@ -5,10 +5,14 @@
  * display math are left exactly as written, and only prose is changed. */
 import {
   codeSource,
+  footnotesIn,
   inlineSpans,
   lineShape,
   mathSource,
+  noterefLabel,
+  noterefText,
   splitBlocks,
+  statementHead,
   type Citation,
   type Span,
 } from './markdown';
@@ -43,10 +47,12 @@ function outsideCode(line: string, change: (part: string) => string): string {
 }
 
 /** The note as an exported Markdown file: pictures from its folder linked
- * into `folder` beside it (spaces and the like percent-encoded), and the
- * `{box=...}` a page link carries for SpeedyF dropped, so `[@key, p. 12]`
- * is plain Pandoc. `assets` lists the pictures to copy, as the note names
- * them. */
+ * into `folder` beside it (spaces and the like percent-encoded), the
+ * `{box=...}` a page link or a statement citation carries for SpeedyF
+ * dropped, so `[@key, p. 12]` and `[@key, Prop. 2.2]` are plain Pandoc,
+ * and a cross-reference into a paper (`[Theorem 2.1](@key#p3){box=...}`)
+ * its words. Reference entries (`[^Sim15]: ...`) are Pandoc footnotes
+ * already. `assets` lists the pictures to copy, as the note names them. */
 export function exportMarkdown(text: string, folder: string): { text: string; assets: string[] } {
   const assets: string[] = [];
   const blocks = splitBlocks(text).map((block) => {
@@ -57,6 +63,7 @@ export function exportMarkdown(text: string, folder: string): { text: string; as
         outsideCode(line, (part) =>
           part
             .replace(/(\[@[^\]\n]*\])\{box=[^}\n]*\}/g, '$1')
+            .replace(/\[([^\]\n]+)\]\(@[^)\s]+\)(?:\{box=[^}\n]*\})?/g, '$1')
             .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (whole, alt: string, src: string) => {
               if (!isNoteAsset(src)) return whole;
               if (!assets.includes(src)) assets.push(src);
@@ -90,9 +97,9 @@ export function escapeLatex(text: string): string {
 }
 
 /** A locator as LaTeX writes one: `p. 12` -> `p.~12`, `pp. 3-5` ->
- * `pp.~3--5`. */
+ * `pp.~3--5`, `Prop. 2.2` -> `Prop.~2.2`. */
 function latexLocator(locator: string): string {
-  const m = /^(pp?\.|pages?|ch\.|sec\.|fig\.|eq\.)\s*(.*)$/i.exec(locator.trim());
+  const m = /^(pp?\.|pages?|[A-Za-z]{2,8}\.?)\s+(.*)$/.exec(locator.trim());
   const range = (s: string) => escapeLatex(s).replace(/(\d)\s*[-\u2013]\s*(\d)/g, '$1--$2');
   return m ? `${m[1]}~${range(m[2]!)}` : range(locator.trim());
 }
@@ -101,6 +108,8 @@ export interface LatexOptions {
   /** The key to write for a cited key (a key the item had before, say,
    * read as the one it has now). The key as written by default. */
   key?: (key: string) => string;
+  /** The note's reference entries (`[^id]: ...`), by id. */
+  notes?: Map<string, string>;
 }
 
 /** Inline spans as LaTeX: emphasis, code, math kept as written, links, and
@@ -168,6 +177,15 @@ function inlineLatex(spans: Span[], opts: LatexOptions): string {
         line += `\\href{${href}}{${inlineLatex(span.children, opts)}}`;
         break;
       }
+      case 'xref':
+        line += escapeLatex(span.text);
+        break;
+      case 'noteref': {
+        const entry = opts.notes?.get(span.id);
+        line += escapeLatex(noterefLabel(span.id, entry));
+        if (entry) line += `\\footnote{${escapeLatex(noterefText(entry))}}`;
+        break;
+      }
       case 'image': {
         // A comment ends its line: the picture is noted on a line of its own.
         const alt = span.alt ? ` (${span.alt.replace(/\s+/g, ' ')})` : '';
@@ -189,7 +207,8 @@ function displayIn(body: string): string | null {
 }
 
 /** The note as LaTeX, for pasting into a paper. */
-export function noteToLatex(text: string, opts: LatexOptions = {}): string {
+export function noteToLatex(text: string, options: LatexOptions = {}): string {
+  const opts: LatexOptions = { notes: footnotesIn(text), ...options };
   const blocks = splitBlocks(text);
   const levels = blocks
     .filter((b) => b.kind === 'line')
@@ -230,9 +249,23 @@ export function noteToLatex(text: string, opts: LatexOptions = {}): string {
       paragraphBreak();
       out.push('\\begin{quote}');
       let gap = false;
-      for (const line of block.raw.split('\n')) {
+      // A statement: its label bold, its name upright, its body in the
+      // kind's own shape (italic for a theorem), as amsthm sets it.
+      const lines = block.raw.split('\n');
+      const firstShape = lineShape(lines[0] ?? '');
+      const head = firstShape.kind === 'quote' ? statementHead(firstShape.body) : null;
+      const shaped = (latex: string) =>
+        head?.italic && latex && !/^\\cite/.test(latex) ? `{\\itshape ${latex}}` : latex;
+      for (const [n, line] of lines.entries()) {
         const shape = lineShape(line);
-        const body = shape.kind === 'quote' ? shape.body : line;
+        let body = shape.kind === 'quote' ? shape.body : line;
+        if (n === 0 && head) {
+          const label = head.number ? `${head.word} ${head.number}` : head.word;
+          const title = head.title ? ` (${inline(head.title)})` : '';
+          const rest = inline(head.rest);
+          out.push(`\\textbf{${escapeLatex(label)}}${title}. ${shaped(rest)}`.trimEnd());
+          continue;
+        }
         if (body.trim() === '') {
           gap = true;
           continue;
@@ -240,7 +273,8 @@ export function noteToLatex(text: string, opts: LatexOptions = {}): string {
         if (gap) out.push('');
         gap = false;
         const display = displayIn(body);
-        out.push(display !== null ? `\\[ ${display} \\]` : inline(body));
+        body = display !== null ? `\\[ ${display} \\]` : shaped(inline(body));
+        out.push(body);
       }
       out.push('\\end{quote}');
       paragraphBreak();
@@ -281,6 +315,9 @@ export function noteToLatex(text: string, opts: LatexOptions = {}): string {
       case 'quote':
         // Unreachable: quote lines are quote blocks.
         out.push(inline(shape.body));
+        break;
+      case 'footnote':
+        // A reference entry: written as the footnote of its mention.
         break;
       case 'para':
         out.push(inline(shape.body));

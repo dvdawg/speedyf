@@ -6814,6 +6814,23 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   pointer-events: auto;
 }
 
+/* ---------- formal statements (statementActions) ---------- */
+.statement-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.statement-actions {
+  position: absolute;
+  display: flex;
+  gap: 4px;
+  transform: translateY(-100%);
+  padding-bottom: 3px;
+  pointer-events: auto;
+}
+
 /* The button by a page selection (SelectionActions.tsx): the same quiet
    small button as an equation's. */
 .selection-actions {
@@ -7443,24 +7460,111 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   text-underline-offset: 2px;
 }
 
-.np-cite {
+/* Citations and cross-references read as hyperref's links do in the
+   paper: words in the link colour, underlined only on hover or focus. */
+.np-cite,
+.np-xref {
   display: inline;
-  padding: 0 2px;
+  padding: 0;
   border: none;
-  border-radius: 3px;
-  background: var(--accent-soft);
-  color: var(--text);
+  border-radius: 2px;
+  background: none;
+  color: var(--accent);
   font: inherit;
+  text-align: inherit;
   cursor: pointer;
 }
 
-.np-cite:hover {
+.np-cite:hover,
+.np-xref:hover,
+.np-cite:focus-visible,
+.np-xref:focus-visible {
   text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
-/* A key no item has: shown as written, quiet, never rewritten. */
-.np-cite.is-unresolved {
-  background: transparent;
+.np-cite:focus-visible,
+.np-xref:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* A key no item has: shown as written, quiet, never rewritten. A label a
+   quoted paper printed for a work not in the library reads the same way,
+   its entry on hover. */
+.np-cite.is-unresolved,
+.np-cite.is-reference,
+.np-xref.is-unresolved {
+  color: var(--text-dim);
+}
+
+.np-cite.is-unresolved,
+.np-xref.is-unresolved {
+  cursor: default;
+}
+
+/* A statement, set as the paper sets its theorem environment: no rule
+   beside it, a little space around it. */
+.np-statement {
+  margin: 0.45em 0;
+  color: var(--text);
+}
+
+.np-statement-label {
+  font-weight: 600;
+}
+
+.np-statement-title {
+  font-style: normal;
+}
+
+.np-statement.is-italic .np-statement-body {
+  font-style: italic;
+}
+
+.np-statement-source {
+  margin-top: 0.2em;
+  color: var(--text-dim);
+  font-size: 0.82em;
+}
+
+/* A quoted paper's reference entry, `[^id]: ...`: small and quiet. */
+.np-ref-entry {
+  color: var(--text-dim);
+  font-size: 0.85em;
+}
+
+.np-ref-label {
+  color: var(--text-dim);
+}
+
+.note-preview-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  padding: 12px 14px;
+  border-radius: 7px;
+  white-space: normal;
+}
+
+.citation-preview-action.is-note-preview {
+  cursor: default;
+}
+
+.note-preview-image {
+  display: block;
+  max-width: 100%;
+  margin: 8px auto 0;
+}
+
+.note-preview-label,
+.note-preview-note {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.note-picker-row.is-status {
   color: var(--text-dim);
   cursor: default;
 }
