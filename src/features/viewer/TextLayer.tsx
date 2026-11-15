@@ -1,11 +1,26 @@
 /** Transparent text-selection layer: one positioned span per extracted run,
  * horizontally scaled to match the rendered glyph widths (pdf.js technique).
  * Runs arrive in unrotated PDF page space; the parent container handles
- * rotation, so this layer only flips y. */
-import { For } from 'solid-js';
+ * rotation, so this layer only flips y.
+ *
+ * The spans carry the DOM selection, but neither choose it nor show it: a
+ * press is hit-tested against the page's lines (`textSelection`), and the
+ * selection is painted here as one band per line, under the spans, with
+ * the browser's own per-span highlight switched off. */
+import { createMemo, createSignal, For, Index, onCleanup, onMount } from 'solid-js';
 import type { TextRunDto } from '../../types/engine';
+import type { Rotation } from '../../types/model';
 import { registerCopyRun } from '../../lib/text/copySelection';
-import { paragraphRunRange } from '../../lib/text/paragraph';
+import { buildTextModel, selectionRects } from '../../lib/text/textHit';
+import { toolState } from '../annotations/toolStore';
+import {
+  pressTextLayer,
+  registerTextLayer,
+  selectedPieces,
+  type LayerEntry,
+} from './textSelection';
+
+export { selectParagraphAt } from './textSelection';
 
 const measureCache = new Map<string, number>();
 let measureCtx: CanvasRenderingContext2D | null = null;
@@ -26,95 +41,97 @@ function measureAt100px(text: string): number {
 
 interface Props {
   runs: TextRunDto[];
+  pageWidthPt: number;
   pageHeightPt: number;
+  /** total displayed rotation, which the parent applies */
+  rotation: Rotation;
   zoom: number;
   /** position in the document, so a selection spanning pages can be ordered */
   page: number;
 }
 
-/** Select the paragraph holding `span`, a run of `layer`, the way a drag
- * across it would: one DOM range from its first run to its last, so copy,
- * the Quote button and everything else that reads the selection see it. */
-export function selectParagraphAt(
-  layer: HTMLElement,
-  span: Element,
-  runs: readonly TextRunDto[]
-): boolean {
-  const spans = layer.children;
-  const index = Array.prototype.indexOf.call(spans, span) as number;
-  const range = paragraphRunRange(runs, index);
-  const selection = document.getSelection();
-  if (!range || !selection) return false;
-  const first = spans[range[0]];
-  const last = spans[range[1]];
-  if (!first || !last) return false;
-  const dom = document.createRange();
-  dom.setStart(first.firstChild ?? first, 0);
-  const end = last.lastChild ?? last;
-  dom.setEnd(end, end.nodeType === Node.TEXT_NODE ? (end.textContent ?? '').length : 0);
-  selection.removeAllRanges();
-  selection.addRange(dom);
-  return true;
-}
-
-/** Pointer distance, in pixels, within which a click between words still
- * lands on the nearest run. */
-const NEAR_PX = 24;
-
-/** The run closest to a click that landed in the gaps between runs. */
-function nearestSpan(layer: HTMLElement, x: number, y: number): Element | null {
-  let best: Element | null = null;
-  let bestDistance = NEAR_PX;
-  for (const span of layer.children) {
-    const r = span.getBoundingClientRect();
-    const dx = Math.max(r.left - x, 0, x - r.right);
-    const dy = Math.max(r.top - y, 0, y - r.bottom);
-    const distance = Math.hypot(dx, dy);
-    if (distance < bestDistance) {
-      best = span;
-      bestDistance = distance;
-    }
-  }
-  return best;
-}
+const measureChar = (text: string) => measureAt100px(text);
 
 export default function TextLayer(props: Props) {
+  let layer!: HTMLDivElement;
+  const model = createMemo(() => buildTextModel(props.runs, measureChar));
+  const [painted, setPainted] = createSignal<[number, number, number, number][]>([]);
+
+  const repaint = () => {
+    const pieces = selectedPieces(document.getSelection(), layer);
+    if (pieces.length === 0 && painted().length === 0) return;
+    setPainted(selectionRects(model(), pieces));
+  };
+
+  let entry: LayerEntry | undefined;
+  onMount(() => {
+    entry = {
+      layer,
+      page: props.page,
+      model,
+      geom: () => ({
+        widthPt: props.pageWidthPt,
+        heightPt: props.pageHeightPt,
+        rotation: props.rotation,
+      }),
+      zoom: () => props.zoom,
+    };
+    const unregister = registerTextLayer(entry);
+    document.addEventListener('selectionchange', repaint);
+    repaint();
+    onCleanup(() => {
+      unregister();
+      document.removeEventListener('selectionchange', repaint);
+    });
+  });
+
   return (
-    <div
-      class="text-layer"
-      // A triple-click selects the paragraph, not the whole page the
-      // browser would take for one block of absolutely placed spans.
-      onMouseDown={(e) => {
-        if (e.button !== 0 || e.detail !== 3) return;
-        const layer = e.currentTarget;
-        const hit = e.target instanceof Element ? e.target.closest('span') : null;
-        const span = hit?.parentElement === layer ? hit : nearestSpan(layer, e.clientX, e.clientY);
-        if (span && selectParagraphAt(layer, span, props.runs)) e.preventDefault();
-      }}
-    >
-      <For each={props.runs}>
-        {(run) => {
-          const fontPx = () => Math.max(1, run.h * props.zoom * 0.88);
-          const scaleX = () => {
-            const natural = (measureAt100px(run.text) * fontPx()) / 100;
-            return natural > 0 ? (run.w * props.zoom) / natural : 1;
-          };
-          return (
-            <span
-              ref={(el) => registerCopyRun(el, { ...run, page: props.page })}
+    <>
+      <div class="text-selection" aria-hidden="true">
+        <Index each={painted()}>
+          {(rect) => (
+            <div
               style={{
-                left: `${run.x * props.zoom}px`,
-                top: `${(props.pageHeightPt - run.y - run.h) * props.zoom}px`,
-                'font-size': `${fontPx()}px`,
-                'line-height': `${run.h * props.zoom}px`,
-                transform: `scaleX(${scaleX()})`,
+                left: `${rect()[0] * props.zoom}px`,
+                top: `${(props.pageHeightPt - rect()[1] - rect()[3]) * props.zoom}px`,
+                width: `${rect()[2] * props.zoom}px`,
+                height: `${rect()[3] * props.zoom}px`,
               }}
-            >
-              {run.text}
-            </span>
-          );
+            />
+          )}
+        </Index>
+      </div>
+      <div
+        ref={layer}
+        class="text-layer"
+        onMouseDown={(e) => {
+          if (entry && toolState.active === 'select') pressTextLayer(entry, e);
         }}
-      </For>
-    </div>
+      >
+        <For each={props.runs}>
+          {(run) => {
+            const fontPx = () => Math.max(1, run.h * props.zoom * 0.88);
+            const scaleX = () => {
+              const natural = (measureAt100px(run.text) * fontPx()) / 100;
+              return natural > 0 ? (run.w * props.zoom) / natural : 1;
+            };
+            return (
+              <span
+                ref={(el) => registerCopyRun(el, { ...run, page: props.page })}
+                style={{
+                  left: `${run.x * props.zoom}px`,
+                  top: `${(props.pageHeightPt - run.y - run.h) * props.zoom}px`,
+                  'font-size': `${fontPx()}px`,
+                  'line-height': `${run.h * props.zoom}px`,
+                  transform: `scaleX(${scaleX()})`,
+                }}
+              >
+                {run.text}
+              </span>
+            );
+          }}
+        </For>
+      </div>
+    </>
   );
 }

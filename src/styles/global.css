@@ -1511,11 +1511,28 @@ html.is-dragging-tab * {
 .text-layer span {
   position: absolute;
   color: transparent;
+  /* The face TextLayer measures with, so scaleX lands each span on its run. */
+  font-family: Helvetica, Arial, sans-serif;
   white-space: pre;
   transform-origin: 0 0;
 }
 
+/* The selection is painted by .text-selection, one band per line; the
+   browser's own paint is one box per span, each its own height. */
+.text-layer::selection,
 .text-layer span::selection {
+  background: transparent;
+}
+
+.text-selection {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.text-selection div {
+  position: absolute;
+  border-radius: 1px;
   background: color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
