@@ -3,6 +3,7 @@ import {
   anchorBounds,
   anchorTopFromTop,
   compareReading,
+  markerRects,
   numberComments,
   quadsFromRects,
   rectFromBox,
@@ -116,5 +117,42 @@ describe('reading order', () => {
     const list = [comment('second', a, 20), comment('first', a, 10)];
     expect(numberComments(list).map((e) => e.comment.id)).toEqual(['first', 'second']);
     expect(compareReading(a, a)).toBe(0);
+  });
+});
+
+describe('markerRects', () => {
+  it('puts a number just after the phrase, riding on its top edge', () => {
+    const a = textAnchor(0, 72, 100, 40, 10);
+    const r = markerRects([{ number: 3, anchor: a }]).get(3)!;
+    expect(r.x).toBeCloseTo(112.6, 5);
+    // Mostly above the line's top (y 700), a little into it.
+    expect(r.y).toBeLessThan(700);
+    expect(r.y + r.h).toBeGreaterThan(700 + r.h / 2);
+    expect(r.w).toBeLessThan(r.h + 0.01);
+  });
+
+  it('widens for longer numbers and moves a marker off one it would touch', () => {
+    const a = textAnchor(0, 72, 100, 40, 10);
+    const rects = markerRects([
+      { number: 9, anchor: a },
+      { number: 12, anchor: a },
+    ]);
+    const first = rects.get(9)!;
+    const second = rects.get(12)!;
+    expect(second.w).toBeGreaterThan(first.w);
+    expect(second.x).toBeGreaterThanOrEqual(first.x + first.w);
+  });
+
+  it('marks a region at its top-right corner', () => {
+    const region: Anchor = {
+      page: 0,
+      quads: null,
+      rect: { x: 100, y: 300, w: 200, h: 100 },
+      quote: '',
+    };
+    const r = markerRects([{ number: 1, anchor: region }]).get(1)!;
+    expect(r.x + r.w).toBeGreaterThan(300);
+    expect(r.y + r.h).toBeGreaterThan(400);
+    expect(r.x).toBeLessThan(300);
   });
 });

@@ -1,14 +1,15 @@
 /** A page's review marks while reviewing: a soft wash under each commented
  * passage in its kind's colour, a strike through words a typo fix
- * replaces, a thin box round a region, and the comment's number in the
- * page's right margin, level with it. The wash lets text selection
- * through; the number opens the comment in the drawer.
+ * replaces, a thin box round a region, and the comment's number just after
+ * its phrase (at a region's top-right corner) - where the export draws it.
+ * The wash lets text selection through; the number opens the comment in
+ * the drawer.
  *
  * Lives in the page's unrotated page space, like the annotation layer, so
  * it follows zoom and rotation without arithmetic of its own. */
 import { createMemo, For, Show, useContext } from 'solid-js';
 import { TabContext } from '../../app/TabContext';
-import { anchorTopFromTop, numberComments, quadRect } from './geometry';
+import { markerRects, numberComments, quadRect } from './geometry';
 import { draft, editComment, flashCard, reviewFor, reviewing } from './markupStore';
 import type { Anchor, CommentKind } from './types';
 
@@ -28,9 +29,6 @@ interface Mark {
   strike: boolean;
   pending: boolean;
 }
-
-/** Badges closer than this (points) are moved apart. */
-const BADGE_STEP = 11;
 
 export default function MarkupLayer(props: Props) {
   return (
@@ -74,18 +72,14 @@ function Marks(props: Props) {
     return out;
   });
 
-  /** The margin numbers, nudged apart where they would touch. */
+  /** The numbers by the phrases, where the export draws them. */
   const badges = createMemo(() => {
-    let last = -Infinity;
-    return marks()
-      .filter((m) => m.number !== null)
-      .map((m) => ({ mark: m, top: anchorTopFromTop(m.anchor, props.heightPt) }))
-      .sort((a, b) => a.top - b.top)
-      .map((b) => {
-        const top = Math.max(b.top, last + BADGE_STEP);
-        last = top;
-        return { ...b, top };
-      });
+    const numbered = marks().filter((m) => m.number !== null);
+    const rects = markerRects(numbered.map((m) => ({ number: m.number!, anchor: m.anchor })));
+    return numbered.flatMap((mark) => {
+      const rect = rects.get(mark.number!);
+      return rect ? [{ mark, rect }] : [];
+    });
   });
 
   const z = () => props.zoom;
@@ -139,9 +133,11 @@ function Marks(props: Props) {
             type="button"
             class={`mk-pin is-${b.mark.kind}`}
             style={{
-              left: `${(props.widthPt - 20) * z()}px`,
-              top: `${b.top * z()}px`,
-              'font-size': `${Math.max(8, Math.min(11, 7.5 * z()))}px`,
+              left: `${b.rect.x * z()}px`,
+              top: `${(props.heightPt - b.rect.y - b.rect.h) * z()}px`,
+              width: `${b.rect.w * z()}px`,
+              height: `${b.rect.h * z()}px`,
+              'font-size': `${b.rect.h * 0.78 * z()}px`,
             }}
             title={`Comment ${b.mark.number}`}
             aria-label={`Comment ${b.mark.number}`}

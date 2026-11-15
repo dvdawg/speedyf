@@ -8134,21 +8134,21 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .mk-pin {
   --mk-ink: var(--accent);
   position: absolute;
-  min-width: 1.6em;
-  height: 1.45em;
-  padding: 0 0.35em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   border: none;
-  border-radius: 0.75em;
+  border-radius: 999px;
   background: var(--mk-ink);
   color: #ffffff;
-  font-family: inherit;
-  font-weight: 600;
-  line-height: 1.45em;
-  text-align: center;
+  font-family: Helvetica, Arial, sans-serif;
+  font-weight: 700;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
   pointer-events: auto;
   cursor: pointer;
-  opacity: 0.85;
+  opacity: 0.9;
 }
 
 .mk-pin:hover {

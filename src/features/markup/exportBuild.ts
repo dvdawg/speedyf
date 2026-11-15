@@ -3,7 +3,9 @@
  * annotations. Nothing else - no title page, no letter.
  *
  * - **Marks**: a soft highlight per comment, a strikeout and caret per typo
- *   fix, a square per region, each carrying its numbered comment.
+ *   fix, a square per region, each carrying its numbered comment; and the
+ *   comment's number just after its phrase (`label`), drawn into the page
+ *   in the colour of its note's badge, so the two can be matched.
  * - **Margin sheets**: each note is its number and its words, level with
  *   what it is about. Notes that collide are moved up as well as down, as
  *   little as possible in all, keeping their order (`placeNotes`), over the
@@ -18,8 +20,8 @@
  * (print.css, CSS px == pt) before it is placed. Measuring is handed in, so
  * this is tested without a browser. */
 import { escapeHtml, inlineHtml, renderBody } from './bodyHtml';
-import { anchorTopFromTop } from './geometry';
-import { markColor } from './kindColors';
+import { anchorTopFromTop, markerRects } from './geometry';
+import { KIND_INK, markColor } from './kindColors';
 import { citationsAsText, shortQuote, typoSuggestion, type Entry } from './model';
 import { MARGIN, paginate, placeNotes } from './layout';
 import type {
@@ -185,6 +187,20 @@ export function buildMarks(entries: readonly Entry[], opts: BuildInput): ExportM
       continue;
     }
     marks.push({ page: a.page, kind: 'highlight', quads: a.quads, rect: null, color, contents });
+  }
+  // The number by each phrase, matching its note's badge.
+  const markers = markerRects(entries.map((e) => ({ number: e.number, anchor: e.comment.anchor })));
+  for (const { comment, number } of entries) {
+    const rect = markers.get(number);
+    if (!rect) continue;
+    marks.push({
+      page: comment.anchor.page,
+      kind: 'label',
+      quads: null,
+      rect,
+      color: KIND_INK[comment.kind],
+      contents: String(number),
+    });
   }
   return marks;
 }

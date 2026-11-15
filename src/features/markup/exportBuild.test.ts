@@ -99,22 +99,34 @@ describe('marks', () => {
       }),
     ];
     const request = await buildExportRequest(input(list));
-    expect(request.marks.map((m) => [m.page, m.kind])).toEqual([
+    const native = request.marks.filter((m) => m.kind !== 'label');
+    const labels = request.marks.filter((m) => m.kind === 'label');
+    // Each phrase also carries its number, in its note's full colour.
+    expect(labels.map((m) => [m.page, m.contents, m.color])).toEqual([
+      [0, '1', '#c62828'],
+      [0, '2', '#5c6570'],
+      [0, '3', '#5c6570'],
+      [1, '4', '#694fe3'],
+    ]);
+    // Just after the last word of "the claim" (x 72..192, top 100 from the top).
+    expect(labels[0]!.rect!.x).toBeGreaterThan(192);
+    expect(labels[0]!.rect!.x).toBeLessThan(194);
+    expect(native.map((m) => [m.page, m.kind])).toEqual([
       [0, 'highlight'],
       [0, 'strikeout'],
       [0, 'caret'],
       [0, 'strikeout'],
       [1, 'square'],
     ]);
-    expect(request.marks.map((m) => m.contents)).toEqual([
+    expect(native.map((m) => m.contents)).toEqual([
       '1. Justify this step.',
       '2. Replace "teh" with "the"',
       '2. Insert "the"',
       '3. Delete "the the"',
       '4. Label the axes.',
     ]);
-    expect(request.marks[0]!.color).toMatch(/^#[0-9a-f]{6}$/);
-    expect(request.marks[0]!.color).not.toBe('#c62828');
+    expect(native[0]!.color).toMatch(/^#[0-9a-f]{6}$/);
+    expect(native[0]!.color).not.toBe('#c62828');
     expect(request.marginPt).toBe(180);
   });
 
