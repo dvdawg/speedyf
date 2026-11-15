@@ -19,7 +19,8 @@ import {
   type NoteTransport,
   type PendingShape,
 } from './editor/noteSession';
-import type { Op } from './editor/ops';
+import { diffOp, type Op } from './editor/ops';
+import { addReferences, bodyEnd, type Work } from './editor/references';
 import { identifierKey, normalizeArxiv, normalizeDoi, type Identifier } from './editor/identifiers';
 
 /** The event a window's placeholders and marks travel by to the others. */
@@ -148,20 +149,29 @@ const [citationStore, setCitationStore] = createStore<Record<string, CitationEnt
 
 const scope = (extensionId: string, projectId: string) => `${extensionId}\u0000${projectId}`;
 
+/** Bumped on every `setCitations`: `reconcile` keeps the stored array, so
+ * its identity does not say the entries changed. */
+const [citationsVersion, setCitationsVersion] = createSignal(0);
+
 export function setCitations(extensionId: string, projectId: string, entries: CitationEntry[]) {
   setCitationStore(scope(extensionId, projectId), reconcile(entries));
+  setCitationsVersion((v) => v + 1);
 }
 
-const indexCache = new Map<string, { entries: CitationEntry[]; index: CitationIndex }>();
+const indexCache = new Map<
+  string,
+  { entries: CitationEntry[]; version: number; index: CitationIndex }
+>();
 
 /** The index an editor resolves `@key` with: a key first, then any alias,
  * the first entry holding it winning. */
 export function citationIndex(extensionId: string, projectId: string): CitationIndex {
   const id = scope(extensionId, projectId);
+  const version = citationsVersion();
   const entries = citationStore[id];
   if (!entries) return EMPTY;
   const cached = indexCache.get(id);
-  if (cached && cached.entries === entries) return cached.index;
+  if (cached && cached.entries === entries && cached.version === version) return cached.index;
   const byKey = new Map<string, CitationEntry>();
   for (const entry of entries) if (!byKey.has(entry.key)) byKey.set(entry.key, entry);
   for (const entry of entries) {
@@ -180,7 +190,7 @@ export function citationIndex(extensionId: string, projectId: string): CitationI
     }
   }
   const index = { entries: [...entries], byKey, byId };
-  indexCache.set(id, { entries, index });
+  indexCache.set(id, { entries, version, index });
   return index;
 }
 
@@ -393,8 +403,10 @@ export async function insertIntoNote(
   }
   if (start === null) {
     const text = session.text();
-    const op = blockInsertOp(text, text.length, insert);
-    session.edit(op, text.length, op.from + op.insert.length, OUTSIDE);
+    // The end of the note's own text: its references section stays last.
+    const end = bodyEnd(text);
+    const op = blockInsertOp(text, end, insert);
+    session.edit(op, end, op.from + op.insert.length, OUTSIDE);
     start = op.from + op.insert.indexOf(body);
   }
   const handle = track(session, key, owner, start, start + body.length);
@@ -414,7 +426,7 @@ export async function insertPending(
   owner: string
 ): Promise<{ offset: number; handle: string }> {
   const session = await hold(key);
-  let anchor = session.text().length;
+  let anchor = bodyEnd(session.text());
   if (at === 'cursor') {
     for (const handle of editors.get(keyString(key)) ?? []) {
       const end = handle.caretBlockEnd();
@@ -459,7 +471,9 @@ export async function resolvePending(
     return null;
   }
   const now = session.text();
-  const op = blockInsertOp(now, Math.min(d.at, now.length), text);
+  // Never inside a references section that closes the note (entries added
+  // there while this was on its way).
+  const op = blockInsertOp(now, Math.min(d.at, bodyEnd(now)), text);
   const body = text.replace(/\n+$/, '');
   const start = op.from + op.insert.indexOf(body);
   session.edit(op, op.from, op.from + op.insert.length, OUTSIDE);
@@ -607,6 +621,31 @@ export async function replaceInNote(key: NoteKey, find: string, replace: string)
     );
     await confirmed(session);
     return true;
+  } finally {
+    all.release(session);
+  }
+}
+
+/** Add works to a note's references section (`editor/references.ts`):
+ * each one an entry already names reuses its id, the rest get an entry
+ * under a new id; definitions elsewhere in the note move into the section.
+ * One undoable edit through the note's session. The id for each work. */
+export async function addNoteReferences(key: NoteKey, works: Work[]): Promise<string[]> {
+  await eventsHeard();
+  const all = noteSessions();
+  const session: NoteSession = all.acquire(key);
+  try {
+    await session.ready;
+    if (session.status() !== 'ready') throw new Error(session.reason() ?? 'the note is not open');
+    const text = session.text();
+    const next = addReferences(text, works);
+    const op = diffOp(text, next.text);
+    if (op) {
+      session.edit(op, op.to, op.from + op.insert.length, OUTSIDE);
+      broadcast(session);
+      await confirmed(session);
+    }
+    return next.ids;
   } finally {
     all.release(session);
   }

@@ -214,3 +214,39 @@ describe('marks', () => {
     other.release(elsewhere);
   });
 });
+
+describe('a note whose references close it', () => {
+  it('puts a quote before the references, even when entries were added meanwhile', async () => {
+    const { state, here } = core('intro\n');
+    const view = here.acquire(KEY);
+    await view.ready;
+    const { handle } = await host.insertPending(KEY, EQUATION, 'end', OWNER);
+    // The send's references go in first: the section is made at the end.
+    const ids = await host.addNoteReferences(KEY, [
+      {
+        text: 'L. Larsen, Blocks of random matrices (2023).',
+        author: 'Larsen',
+        year: 2023,
+        title: 'Blocks of random matrices',
+      },
+    ]);
+    expect(ids).toEqual(['larsen2023blocks']);
+    await settle();
+    await host.resolvePending(OWNER, handle, '> As in [^larsen2023blocks]{label=Lar23}.');
+    expect(state.text).toBe(
+      [
+        'intro',
+        '',
+        '> As in [^larsen2023blocks]{label=Lar23}.',
+        '',
+        '## References',
+        '',
+        '[^larsen2023blocks]: L. Larsen, Blocks of random matrices (2023).',
+        '',
+      ].join('\n')
+    );
+    // The next quote at the end goes before them too.
+    await host.insertIntoNote(KEY, '> Next.', 'end', OWNER);
+    expect(state.text).toContain('{label=Lar23}.\n\n> Next.\n\n## References');
+  });
+});

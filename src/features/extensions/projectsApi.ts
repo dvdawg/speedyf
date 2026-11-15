@@ -19,6 +19,7 @@ import {
   noteShown,
   readCitationEntries,
   replaceInNote,
+  addNoteReferences,
   replaceMarked,
   resolvePending,
   revealInEditor,
@@ -26,6 +27,7 @@ import {
   setItemLine,
 } from './editorHost';
 import type { NoteKey, PendingShape } from './editor/noteSession';
+import type { Work } from './editor/references';
 import type {
   ConvertMode,
   ConvertedEquation,
@@ -341,6 +343,13 @@ export async function projectsApi(
       );
       return { replaced };
     }
+    case 'editor.references': {
+      const projectId = readProjectIdArg(args);
+      const file = editorFile(extension, args);
+      const works = readWorks(record.add);
+      const ids = await addNoteReferences({ extensionId: extension.id, projectId, file }, works);
+      return { ids };
+    }
     case 'editor.reveal': {
       if (record.handle !== undefined) {
         const place = handlePlace(extension.id, record.handle);
@@ -458,3 +467,25 @@ export async function openApi(
 }
 
 export type { ExtensionEditor };
+
+/** `editor.references` works: `[{ text, ids?, title?, author?, year? }]`. */
+function readWorks(raw: unknown): Work[] {
+  if (!Array.isArray(raw)) throw new Error('editor.references needs an "add" array');
+  if (raw.length > 500) throw new Error('editor.references takes at most 500 works at a time');
+  return raw.map((value, i) => {
+    const r = (value ?? {}) as Record<string, unknown>;
+    if (typeof r.text !== 'string' || !r.text.trim() || r.text.length > 4000) {
+      throw new Error(`editor.references: work ${i} needs a "text" of at most 4000 characters`);
+    }
+    const str = (v: unknown) => (typeof v === 'string' && v.length <= 1000 ? v : null);
+    return {
+      text: r.text,
+      ids: Array.isArray(r.ids)
+        ? r.ids.filter((id): id is string => typeof id === 'string' && id.length <= 300)
+        : [],
+      title: str(r.title),
+      author: str(r.author),
+      year: typeof r.year === 'number' && Number.isInteger(r.year) ? r.year : null,
+    };
+  });
+}

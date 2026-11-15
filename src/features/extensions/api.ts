@@ -651,6 +651,7 @@ export const API_PERMISSIONS: Readonly<Record<string, string>> = {
   'editor.citations': 'projects:files',
   'editor.insert': 'projects:files',
   'editor.replace': 'projects:files',
+  'editor.references': 'projects:files',
   'editor.reveal': 'projects:files',
   // A placeholder while a send is on its way, and a status line while it
   // is checked: shown in the note's views, never written to the file.
