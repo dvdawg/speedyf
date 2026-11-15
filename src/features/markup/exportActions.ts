@@ -1,7 +1,7 @@
 /** Sending the review back: "Export PDF..." writes one PDF - the paper with
- * its comments marked and a margin of notes beside every page, and the
- * letter at the end - and "Copy as text" puts the letter on the clipboard
- * for an email. */
+ * its comments marked and a margin of notes beside every page - and "Copy
+ * as text" puts the review on the clipboard as a plain letter, for an
+ * email. */
 import { save } from '@tauri-apps/plugin-dialog';
 import { engine } from '../../lib/transport/engine';
 import { activeTab } from '../../stores/tabsStore';
@@ -104,6 +104,13 @@ async function settlePageSizes(): Promise<void> {
   }
 }
 
+/** Pages in the file the export reads: the highest page of the file the
+ * reader shows, plus one. (The search index's count is not it: it follows
+ * indexing, not the file.) */
+export function sourcePageCount(pages: readonly { srcIndex: number | null }[]): number {
+  return pages.reduce((n, p) => (p.srcIndex === null ? n : Math.max(n, p.srcIndex + 1)), 0);
+}
+
 let exporting = false;
 
 /** Lay out `review` of the active document and write it to `dest`. */
@@ -118,16 +125,13 @@ export async function exportReview(
   const request = await buildExportRequest({
     source,
     dest,
-    title: paperTitle(),
-    date: longDate(new Date()),
     summary: review.summary,
     entries: entriesOf(review),
-    sourcePages: doc.searchIndex.total || doc.pages.length,
+    sourcePages: sourcePageCount(doc.pages),
     pageSize,
     marginPt: DEFAULT_MARGIN_PT,
     math: mathRenderer(),
     cite: label,
-    reference,
     measure,
   });
   return transport.exportPdf(request);

@@ -274,10 +274,20 @@ function Drawer(props: { path: string }) {
       </div>
 
       <footer class="mk-foot">
-        <button type="button" class="primary-btn" onClick={() => void exportMarkupPdf()}>
+        <button
+          type="button"
+          class="primary-btn"
+          title="The paper with your comments marked and their notes in a margin beside each page"
+          onClick={() => void exportMarkupPdf()}
+        >
           Export PDF...
         </button>
-        <button type="button" class="secondary-btn" onClick={() => void copyMarkupText()}>
+        <button
+          type="button"
+          class="secondary-btn"
+          title="The review as a plain letter, grouped by section, for an email"
+          onClick={() => void copyMarkupText()}
+        >
           Copy as text
         </button>
       </footer>

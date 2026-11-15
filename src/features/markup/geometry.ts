@@ -126,3 +126,59 @@ export function revealRects(anchor: Anchor): [number, number, number, number][] 
     return [r.x, r.y, r.w, r.h];
   });
 }
+
+/* ---- the number by a phrase ---- */
+
+/** The marker's size, in points: a pill this tall, its number at
+ * `LABEL_TEXT_SHARE` (0.78) of it in Helvetica Bold, whose digits are
+ * 0.556 em wide. */
+export const MARKER = { h: 6.2, digit: 0.78 * 6.2 * 0.556, pad: 2.6 };
+
+function markerWidth(number: number): number {
+  return Math.max(MARKER.h, String(number).length * MARKER.digit + MARKER.pad);
+}
+
+const overlap = (a: Rect, b: Rect) =>
+  a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+/** Where each comment's number goes on its page (y-up rects): just after
+ * the last word of its phrase, riding on the line's top edge so it sits
+ * mostly in the gap above the line rather than over the next word; at the
+ * top-right corner of a region. Markers that would touch are moved right,
+ * past the one before. Keyed by comment number. */
+export function markerRects(
+  items: readonly { number: number; anchor: Anchor }[]
+): Map<number, Rect> {
+  const out = new Map<number, Rect>();
+  const placed = new Map<number, Rect[]>();
+  for (const { number, anchor } of items) {
+    const w = markerWidth(number);
+    const h = MARKER.h;
+    let r: Rect;
+    if (anchor.rect) {
+      const b = anchor.rect;
+      r = { x: b.x + b.w - w * 0.6, y: b.y + b.h - h * 0.6, w, h };
+    } else {
+      const last = anchor.quads?.at(-1);
+      if (!last) continue;
+      const q = quadRect(last);
+      r = { x: q.x + q.w + 0.6, y: q.y + q.h - h * 0.35, w, h };
+    }
+    const others = placed.get(anchor.page) ?? [];
+    for (let guard = 0; guard < others.length + 1; guard++) {
+      const hit = others.find((o) => overlap(o, r));
+      if (!hit) break;
+      r = { ...r, x: hit.x + hit.w + 0.8 };
+    }
+    r = {
+      x: Math.round(r.x * 100) / 100,
+      y: Math.round(r.y * 100) / 100,
+      w: Math.round(r.w * 100) / 100,
+      h,
+    };
+    others.push(r);
+    placed.set(anchor.page, others);
+    out.set(number, r);
+  }
+  return out;
+}

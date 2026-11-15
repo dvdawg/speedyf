@@ -6,8 +6,12 @@
 //!   1. every page is widened on the right by `margin_pt`, in display space;
 //!   2. each margin sheet (a one-page PDF captured from HTML, see
 //!      `markup_capture`) is placed into its page's new strip as a form XObject;
-//!   3. comment marks become real annotations (highlight, strikeout, square);
-//!   4. feedback sheets are appended as pages;
+//!   3. comment marks become real annotations (highlight, strikeout, square),
+//!      and each comment's number is drawn into the page by its phrase
+//!      (`MarkKind::Label`: a filled pill and the number, page content, so it
+//!      prints and matches its note's badge in the margin);
+//!   4. feedback sheets (the frontend sends them only as a last resort, for
+//!      notes a margin cannot hold) are appended as pages;
 //!   5. PDFium saves all of that as an incremental update
 //!      (`save::save_incremental`), so the original bytes are kept verbatim
 //!      at the start of the output;
@@ -46,6 +50,12 @@ const MAX_MARKS: usize = 50_000;
 const MAX_LINKS: usize = 50_000;
 const MAX_HTML_BYTES: usize = 64 << 20;
 const MAX_CONTENTS_CHARS: usize = 20_000;
+/// A label is a comment number: a few characters at most.
+const MAX_LABEL_CHARS: usize = 6;
+/// A label's number, as a share of its pill's height.
+const LABEL_TEXT_SHARE: f32 = 0.78;
+/// Helvetica's cap (and digit) height, as a share of the font size.
+const HELVETICA_CAP: f32 = 0.718;
 
 const ANNOT_TEXT: c_int = 1;
 const ANNOT_SQUARE: c_int = 5;
@@ -120,6 +130,11 @@ pub enum MarkKind {
     Strikeout,
     Caret,
     Square,
+    /// A comment's number by its phrase: a small filled pill in the mark's
+    /// colour with the number (`contents`) in white, drawn into the page's
+    /// content so it prints and needs no annotation support. `rect` is the
+    /// pill, display space.
+    Label,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -322,6 +337,14 @@ pub fn validate(req: &MarkupExportRequest) -> AppResult<()> {
         }
         if !quads_ok && !rect_given {
             return bad("a mark needs quads or a rect");
+        }
+        if mark.kind == MarkKind::Label
+            && (!rect_given
+                || mark.contents.is_empty()
+                || mark.contents.chars().count() > MAX_LABEL_CHARS
+                || !mark.contents.chars().all(|c| c.is_ascii_graphic()))
+        {
+            return bad("a label needs a rect and a short ASCII text");
         }
     }
     Ok(())
@@ -857,8 +880,10 @@ fn mark_display_box(mark: &MarkupMark) -> Option<Bounds> {
     from_quads.or_else(|| mark.rect.as_ref().map(|r| [r.x, r.y, r.x + r.w, r.y + r.h]))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn add_mark(
     b: &dyn PdfiumLibraryBindings,
+    doc: FPDF_DOCUMENT,
     page: FPDF_PAGE,
     page_index: usize,
     geo: &PageGeo,
@@ -880,6 +905,12 @@ fn add_mark(
         })
     };
     let annot = match mark.kind {
+        MarkKind::Label => {
+            let Some(r) = mark.rect.as_ref() else {
+                return Ok(());
+            };
+            return draw_label(b, doc, page, geo, r, rgb, &mark.contents);
+        }
         MarkKind::Caret if !carets_as_notes => {
             // A caret marks a point, not a span: a small box at the end of
             // the marked text, as Acrobat draws one.
@@ -942,6 +973,80 @@ fn add_mark(
         b.FPDFAnnot_SetStringValue_str(annot.annot, "Contents", &mark.contents);
     }
     b.FPDFAnnot_SetFlags(annot.annot, ANNOT_FLAG_PRINT);
+    Ok(())
+}
+
+/// A number by a phrase (`MarkKind::Label`): a pill filled with `rgb`, its
+/// ends round, and `text` centred on it in white Helvetica Bold. Both are
+/// built in display space and mapped to user space with the page's own
+/// display-to-user matrix, so they sit upright on screen on a rotated page.
+pub(crate) fn draw_label(
+    b: &dyn PdfiumLibraryBindings,
+    doc: FPDF_DOCUMENT,
+    page: FPDF_PAGE,
+    geo: &PageGeo,
+    r: &RectDto,
+    rgb: [u8; 3],
+    text: &str,
+) -> AppResult<()> {
+    let space = geo.space();
+    let to_user = Affine::sample(|x, y| space.disp_to_user(x, y));
+    let transform = |obj, m: &Affine| {
+        b.FPDFPageObj_Transform(
+            obj, m.a as f64, m.b as f64, m.c as f64, m.d as f64, m.e as f64, m.f as f64,
+        );
+    };
+    let (x0, y0, x1, y1) = (r.x, r.y, r.x + r.w, r.y + r.h);
+    let rad = (r.h / 2.0).min(r.w / 2.0);
+    // Bezier handle for a quarter circle.
+    let k = rad * 0.552_284_8;
+    let path = b.FPDFPageObj_CreateNewPath(x0 + rad, y0);
+    if path.is_null() {
+        return Err(AppError::Internal("cannot create a label".into()));
+    }
+    b.FPDFPath_LineTo(path, x1 - rad, y0);
+    b.FPDFPath_BezierTo(path, x1 - rad + k, y0, x1, y0 + rad - k, x1, y0 + rad);
+    b.FPDFPath_LineTo(path, x1, y1 - rad);
+    b.FPDFPath_BezierTo(path, x1, y1 - rad + k, x1 - rad + k, y1, x1 - rad, y1);
+    b.FPDFPath_LineTo(path, x0 + rad, y1);
+    b.FPDFPath_BezierTo(path, x0 + rad - k, y1, x0, y1 - rad + k, x0, y1 - rad);
+    b.FPDFPath_LineTo(path, x0, y0 + rad);
+    b.FPDFPath_BezierTo(path, x0, y0 + rad - k, x0 + rad - k, y0, x0 + rad, y0);
+    b.FPDFPath_Close(path);
+    b.FPDFPageObj_SetFillColor(path, rgb[0] as u32, rgb[1] as u32, rgb[2] as u32, 255);
+    b.FPDFPath_SetDrawMode(path, FILL_ALTERNATE, 0);
+    transform(path, &to_user);
+    b.FPDFPage_InsertObject(page, path);
+
+    let size = r.h * LABEL_TEXT_SHARE;
+    let obj = b.FPDFPageObj_NewTextObj(doc, "Helvetica-Bold", size);
+    if obj.is_null() {
+        return Err(AppError::Internal("cannot create a label's text".into()));
+    }
+    b.FPDFText_SetText_str(obj, text);
+    b.FPDFPageObj_SetFillColor(obj, 255, 255, 255, 255);
+    let (mut l, mut bo, mut ri, mut t) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+    let width = if b.FPDFPageObj_GetBounds(obj, &mut l, &mut bo, &mut ri, &mut t) != 0 {
+        ri - l
+    } else {
+        l = 0.0;
+        size * 0.556 * text.chars().count() as f32
+    };
+    let tx = x0 + (r.w - width) / 2.0 - l;
+    let ty = y0 + (r.h - size * HELVETICA_CAP) / 2.0;
+    transform(
+        obj,
+        &Affine {
+            a: 1.0,
+            b: 0.0,
+            c: 0.0,
+            d: 1.0,
+            e: tx,
+            f: ty,
+        },
+    );
+    transform(obj, &to_user);
+    b.FPDFPage_InsertObject(page, obj);
     Ok(())
 }
 
@@ -1048,6 +1153,7 @@ fn pdfium_pass(
         for mark in marks_for.get(&index).into_iter().flatten() {
             add_mark(
                 b,
+                doc.0,
                 page.page,
                 index,
                 &geo,

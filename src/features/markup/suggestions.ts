@@ -56,7 +56,7 @@ export async function referencesAnchor(tab: TabRecord): Promise<Anchor | null> {
   const fromOutline = flattenOutline(tab.structureStore.state.outline).find(
     ({ node }) => node.page !== null && HEADING.test(node.title)
   )?.node.page;
-  const last = Math.max(0, (doc.searchIndex.total || doc.pages.length) - 1);
+  const last = Math.max(0, ...doc.pages.map((p) => p.srcIndex ?? 0));
   const candidates =
     fromOutline !== undefined && fromOutline !== null
       ? [fromOutline]

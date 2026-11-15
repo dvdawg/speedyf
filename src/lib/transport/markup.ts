@@ -27,7 +27,9 @@ export interface MarkupQuad {
   y4: number;
 }
 
-export type MarkupMarkKind = 'highlight' | 'strikeout' | 'caret' | 'square';
+/** `label`: a comment's number by its phrase, drawn into the page (`rect` is
+ * its pill, `contents` the number). */
+export type MarkupMarkKind = 'highlight' | 'strikeout' | 'caret' | 'square' | 'label';
 
 /** A native PDF annotation written on a source page. */
 export interface MarkupMark {

@@ -1,36 +1,29 @@
-/** The `markup_export` request: everything the backend needs to write the
- * annotated copy, laid out here.
+/** The `markup_export` request: the paper, each page widened by a margin
+ * strip holding its notes, with the commented words marked by native PDF
+ * annotations. Nothing else - no title page, no letter.
  *
- * - **Marks**: native PDF annotations on the original pages (a soft
- *   highlight per comment, a strikeout and caret per typo fix, a square per
- *   region), each carrying its numbered comment as its contents.
- * - **Margin sheets**: the strip added to the right of each page with
- *   comments, the notes level with what they are about, stacked without
- *   overlap and shortened when a page has more to say than room.
- * - **Feedback sheets**: the letter at the end, set like a careful referee
- *   report - title and date, the Overall paragraph, the comments by section
- *   in paper order, a table of typos, the library items cited.
+ * - **Marks**: a soft highlight per comment, a strikeout and caret per typo
+ *   fix, a square per region, each carrying its numbered comment; and the
+ *   comment's number just after its phrase (`label`), drawn into the page
+ *   in the colour of its note's badge, so the two can be matched.
+ * - **Margin sheets**: each note is its number and its words, level with
+ *   what it is about. Notes that collide are moved up as well as down, as
+ *   little as possible in all, keeping their order (`placeNotes`), over the
+ *   whole height of the page. The Overall summary, when there is one, heads
+ *   page 1's margin. A crowded page is set a little smaller.
+ * - **Continuation pages**, only as a last resort: when a page's notes
+ *   still do not fit at the smallest size, the longest keep their first
+ *   line and "(cont. p. N)" in the margin, and their full text goes on one
+ *   page added at the end for that page. A normal review adds none.
  *
- * Every block is measured in the same stylesheet the print window uses
- * (print.css, CSS px == pt) before it is placed, so pages break where they
- * will print. Numbers link both ways: a margin note to its entry, an entry
- * to its place on the page. Measuring is handed in, so this is tested
- * without a browser. */
+ * Every note is measured in the stylesheet the print window uses
+ * (print.css, CSS px == pt) before it is placed. Measuring is handed in, so
+ * this is tested without a browser. */
 import { escapeHtml, inlineHtml, renderBody } from './bodyHtml';
-import { anchorTopFromTop } from './geometry';
-import { markColor } from './kindColors';
-import { labelParts } from './labels';
-import {
-  citedKeys,
-  citationsAsText,
-  groupBySection,
-  isTypoEntry,
-  mergeRepeats,
-  shortQuote,
-  typoSuggestion,
-  type Entry,
-} from './model';
-import { layoutMargin, MARGIN, paginate, type FlowBlock } from './layout';
+import { anchorTopFromTop, markerRects } from './geometry';
+import { KIND_INK, markColor } from './kindColors';
+import { citationsAsText, shortQuote, typoSuggestion, type Entry } from './model';
+import { MARGIN, paginate, placeNotes } from './layout';
 import type {
   MarkupExportRequest,
   MarkupLinkTarget as LinkTarget,
@@ -42,16 +35,12 @@ import { KIND_LABEL, type MarkupComment } from './types';
 
 export const DEFAULT_MARGIN_PT = 180;
 
-/** The feedback pages' frame, in points. */
-export const FEEDBACK = {
-  top: 64,
-  bottom: 64,
-  /** The text column: never wider than this, centred, at least `side` in. */
-  column: 468,
-  side: 64,
-  /** The folio's baseline band at the foot. */
-  folio: 30,
-};
+/** Margin type sizes, px == pt, tried in turn on a crowded page. The
+ * stylesheet's own size is the first; never below the last. */
+export const NOTE_SIZES = [7.4, 7, 6.6] as const;
+
+/** A continuation page's frame, in points. */
+export const CONTINUATION = { top: 56, bottom: 56, column: 420, side: 56, size: 9.5 };
 
 export interface MeasureItem {
   html: string;
@@ -80,13 +69,11 @@ export type MeasureFn = (items: MeasureItem[]) => Promise<Measured[]>;
 export interface BuildInput {
   source: string;
   dest: string;
-  /** The paper's title as the letter names it. */
-  title: string;
-  date: string;
+  /** The Overall paragraph; heads page 1's margin when not empty. */
   summary: string;
-  /** Every comment, numbered and labelled (`buildEntries`). */
+  /** Every comment, numbered (`buildEntries`). */
   entries: readonly Entry[];
-  /** Pages in the file: feedback page k prints as page `sourcePages + k + 1`. */
+  /** Pages in the file: an added page k prints as page `sourcePages + k + 1`. */
   sourcePages: number;
   /** A source page's size as displayed, points. */
   pageSize: (page: number) => { w: number; h: number } | null;
@@ -94,30 +81,63 @@ export interface BuildInput {
   math: ((tex: string, display: boolean) => string) | null;
   /** Cite key -> label without brackets, null when no item has it. */
   cite: (key: string) => string | null;
-  /** Cite key -> the reference line (plain text, may hold $math$). */
-  reference: (key: string) => string | null;
   measure: MeasureFn;
 }
 
-/* ---- small pieces of markup ---- */
+/* ---- the words of a note ---- */
 
-const sep = '<span class="mk-sep" aria-hidden="true"></span>';
-
-function labelHtml(entry: Entry): string {
-  return labelParts(entry.label, false).map(escapeHtml).join(sep);
-}
-
-function kindTag(comment: MarkupComment): string {
-  return `<span class="mk-kind mk-k-${comment.kind}">${KIND_LABEL[comment.kind]}</span>`;
-}
-
-/** The typo fix as struck words and their replacement. */
+/** A typo fix: the struck words and what goes in their place. */
 function fixHtml(comment: MarkupComment, opts: BuildInput): string {
   const fix = typoSuggestion(comment);
   const original = `<span class="mk-del">${escapeHtml(shortQuote(comment.anchor.quote, 60))}</span>`;
+  if (comment.replacement === '') return `${original} <span class="mk-dim">(delete)</span>`;
   return fix
     ? `${original} <span class="mk-ins">${inlineHtml(fix, { math: opts.math })}</span>`
     : original;
+}
+
+/** What a note says: the fix for a typo (and its remark), else the body. */
+function noteText(comment: MarkupComment, opts: BuildInput): string {
+  const body = comment.body.trim();
+  if (comment.kind === 'typo' && comment.replacement !== null) {
+    const note = body
+      ? ` <span class="mk-dim">${inlineHtml(body, { math: opts.math, cite: opts.cite })}</span>`
+      : '';
+    return `<p>${fixHtml(comment, opts)}${note}</p>`;
+  }
+  if (body) return renderBody(body, { math: opts.math, cite: opts.cite });
+  return `<p class="mk-dim">${KIND_LABEL[comment.kind]}</p>`;
+}
+
+/** The note's number in its kind's colour; a link when `link` names one. */
+const badge = (c: MarkupComment, n: number, link?: string) =>
+  link
+    ? `<a class="mk-badge mk-k-${c.kind}" data-link="${link}">${n}</a>`
+    : `<span class="mk-badge mk-k-${c.kind}">${n}</span>`;
+
+function noteHtml(entry: Entry, opts: BuildInput, size: number, link?: string): string {
+  const c = entry.comment;
+  return (
+    `<div class="mk-note" style="font-size:${size}px">${badge(c, entry.number, link)}` +
+    `<div class="mk-note-text">${noteText(c, opts)}</div></div>`
+  );
+}
+
+/** A note cut to its first line, pointing to its full text on page `to`. */
+function stubHtml(entry: Entry, opts: BuildInput, size: number, to: string): string {
+  const c = entry.comment;
+  return (
+    `<div class="mk-note is-stub" style="font-size:${size}px">${badge(c, entry.number)}` +
+    `<div class="mk-note-text">${noteText(c, opts)}</div>` +
+    `<a class="mk-cont" data-link="cont">(cont. p. ${to})</a></div>`
+  );
+}
+
+function summaryHtml(opts: BuildInput, size: number): string {
+  return (
+    `<div class="mk-summary" style="font-size:${size}px">` +
+    `${renderBody(opts.summary, { math: opts.math, cite: opts.cite })}</div>`
+  );
 }
 
 /** A comment's words for a native annotation's contents: plain text. */
@@ -125,9 +145,13 @@ export function plainContents(number: number, comment: MarkupComment, opts: Buil
   const body = citationsAsText(comment.body.trim(), opts.cite).replace(/\s+/g, ' ');
   if (comment.kind === 'typo') {
     const fix = typoSuggestion(comment);
-    const head = fix
-      ? `${number}. Replace "${shortQuote(comment.anchor.quote, 60)}" with "${fix}"`
-      : `${number}. Typo`;
+    const quote = shortQuote(comment.anchor.quote, 60);
+    const head =
+      comment.replacement === ''
+        ? `${number}. Delete "${quote}"`
+        : fix
+          ? `${number}. Replace "${quote}" with "${fix}"`
+          : `${number}. Typo`;
     return comment.replacement !== null && body ? `${head}: ${body}` : head;
   }
   return body ? `${number}. ${body}` : `${number}. ${KIND_LABEL[comment.kind]}`;
@@ -148,324 +172,263 @@ export function buildMarks(entries: readonly Entry[], opts: BuildInput): ExportM
     if (!a.quads || a.quads.length === 0) continue;
     if (comment.kind === 'typo' && comment.replacement !== null) {
       marks.push({ page: a.page, kind: 'strikeout', quads: a.quads, rect: null, color, contents });
-      const last = a.quads.at(-1)!;
-      const h = Math.max(4, Math.min(8, (last.y1 - last.y3) * 0.6));
-      marks.push({
-        page: a.page,
-        kind: 'caret',
-        quads: null,
-        rect: { x: last.x2 - h / 2, y: last.y3 - h * 0.35, w: h, h },
-        color,
-        contents: `${number}. Insert "${comment.replacement}"`,
-      });
+      if (comment.replacement !== '') {
+        const last = a.quads.at(-1)!;
+        const h = Math.max(4, Math.min(8, (last.y1 - last.y3) * 0.6));
+        marks.push({
+          page: a.page,
+          kind: 'caret',
+          quads: null,
+          rect: { x: last.x2 - h / 2, y: last.y3 - h * 0.35, w: h, h },
+          color,
+          contents: `${number}. Insert "${comment.replacement}"`,
+        });
+      }
       continue;
     }
     marks.push({ page: a.page, kind: 'highlight', quads: a.quads, rect: null, color, contents });
   }
+  // The number by each phrase, matching its note's badge.
+  const markers = markerRects(entries.map((e) => ({ number: e.number, anchor: e.comment.anchor })));
+  for (const { comment, number } of entries) {
+    const rect = markers.get(number);
+    if (!rect) continue;
+    marks.push({
+      page: comment.anchor.page,
+      kind: 'label',
+      quads: null,
+      rect,
+      color: KIND_INK[comment.kind],
+      contents: String(number),
+    });
+  }
   return marks;
 }
 
-/* ---- feedback blocks ---- */
+/* ---- the margin of one page ---- */
 
-interface FeedbackBlock extends FlowBlock {
-  html: string;
-  /** What each `data-link` key inside points at. */
-  targets: Map<string, LinkTarget>;
-  /** Entry numbers this block stands for, for links into it. */
-  numbers: number[];
-}
-
-/** Where a comment's place on its page is, for a link. */
-function pageTarget(comment: MarkupComment, opts: BuildInput): LinkTarget {
-  const size = opts.pageSize(comment.anchor.page);
-  const top = size ? anchorTopFromTop(comment.anchor, size.h) : 0;
-  return { kind: 'page', page: comment.anchor.page, y: Math.max(0, Math.round(top - 24)) };
-}
-
-function feedbackBlocks(opts: BuildInput): FeedbackBlock[] {
-  const blocks: FeedbackBlock[] = [];
-  const add = (html: string, extra: Partial<FeedbackBlock> = {}) =>
-    blocks.push({ height: 0, html, targets: new Map(), numbers: [], ...extra });
-
-  add(
-    `<div class="mk-block mk-title"><div class="mk-eyebrow">Referee comments</div>` +
-      `<h1>Comments on ${inlineHtml(opts.title, { math: opts.math })}</h1>` +
-      `<div class="mk-date">${escapeHtml(opts.date)}</div></div>`
-  );
-  if (opts.summary.trim()) {
-    add(
-      `<div class="mk-block mk-overall"><h2>Overall</h2>` +
-        `<div class="mk-body">${renderBody(opts.summary, { math: opts.math, cite: opts.cite })}</div></div>`
-    );
-  }
-
-  const prose = opts.entries.filter((e) => !isTypoEntry(e.comment));
-  const merged = mergeRepeats(prose);
-  const groups = groupBySection(merged.map((m) => m.entry));
-  if (groups.length > 0) {
-    add('<div class="mk-block mk-part"><h2>Comments</h2></div>', { keepWithNext: true });
-  }
-  for (const group of groups) {
-    add(
-      `<div class="mk-block mk-section"><h3>${inlineHtml(group.title, { math: opts.math })}</h3></div>`,
-      {
-        keepWithNext: true,
-      }
-    );
-    for (const entry of group.entries) {
-      const m = merged.find((x) => x.entry === entry)!;
-      const c = entry.comment;
-      const targets = new Map<string, LinkTarget>([['num', pageTarget(c, opts)]]);
-      const quote = c.anchor.quote.trim()
-        ? `<div class="mk-quote">${escapeHtml(shortQuote(c.anchor.quote, 220))}</div>`
-        : c.anchor.rect
-          ? '<div class="mk-quote is-region">The marked region</div>'
-          : '';
-      const body = c.body.trim()
-        ? `<div class="mk-body">${renderBody(c.body, { math: opts.math, cite: opts.cite })}</div>`
-        : '';
-      let also = '';
-      if (m.also.length > 0) {
-        also =
-          '<div class="mk-also">Also ' +
-          m.also
-            .map((e, i) => {
-              targets.set(`also${i}`, pageTarget(e.comment, opts));
-              return `<a class="mk-link" data-link="also${i}">p. ${e.label.page}</a>`;
-            })
-            .join(', ') +
-          '.</div>';
-      }
-      add(
-        `<div class="mk-block mk-entry">` +
-          `<a class="mk-num" data-link="num">${entry.number}</a>` +
-          `<div class="mk-entry-main"><div class="mk-entry-head">` +
-          `<span class="mk-label">${labelHtml(entry)}</span>${kindTag(c)}</div>` +
-          `${quote}${body}${also}</div></div>`,
-        { targets, numbers: [entry.number, ...m.also.map((e) => e.number)] }
-      );
-    }
-  }
-
-  const typos = opts.entries.filter((e) => isTypoEntry(e.comment));
-  if (typos.length > 0) {
-    add('<div class="mk-block mk-section mk-typos-title"><h2>Typos and wording</h2></div>', {
-      keepWithNext: true,
-    });
-    const head =
-      '<div class="mk-block mk-trow mk-thead"><span>No.</span><span>Page</span>' +
-      '<span>Original</span><span>Suggested</span></div>';
-    add(head, { keepWithNext: true });
-    for (const e of typos) {
-      const c = e.comment;
-      const fix = typoSuggestion(c);
-      const note =
-        c.replacement !== null && c.body.trim()
-          ? `<div class="mk-tnote">${inlineHtml(c.body.trim(), { math: opts.math, cite: opts.cite })}</div>`
-          : '';
-      add(
-        `<div class="mk-block mk-trow">` +
-          `<a class="mk-tnum" data-link="num">${e.number}</a>` +
-          `<span>${e.label.page}</span>` +
-          `<span class="mk-del">${escapeHtml(shortQuote(c.anchor.quote, 90))}</span>` +
-          `<span>${fix ? `<span class="mk-ins">${inlineHtml(fix, { math: opts.math })}</span>` : '<span class="mk-dim">see note</span>'}${note}</span>` +
-          `</div>`,
-        {
-          targets: new Map([['num', pageTarget(c, opts)]]),
-          numbers: [e.number],
-          headerHeight: 0,
-        }
-      );
-    }
-  }
-
-  const keys = [
-    ...new Set([opts.summary, ...opts.entries.map((e) => e.comment.body)].flatMap(citedKeys)),
-  ];
-  const refs = keys
-    .map((key) => ({ label: opts.cite(key), line: opts.reference(key) }))
-    .filter((r): r is { label: string; line: string } => !!r.label && !!r.line);
-  if (refs.length > 0) {
-    add('<div class="mk-block mk-section"><h2>References</h2></div>', { keepWithNext: true });
-    for (const r of refs) {
-      add(
-        `<div class="mk-block mk-ref"><span class="mk-ref-label">[${escapeHtml(r.label)}]</span>` +
-          `<span class="mk-ref-text">${inlineHtml(r.line, { math: opts.math })}</span></div>`
-      );
-    }
-  }
-  return blocks;
-}
-
-/** The text column of a feedback sheet `width` wide. */
-export function feedbackColumn(width: number): { left: number; width: number } {
-  const column = Math.min(FEEDBACK.column, width - 2 * FEEDBACK.side);
-  return { left: Math.round((width - column) / 2), width: Math.round(column) };
-}
-
-function sheetHtml(kind: 'margin' | 'feedback', width: number, height: number, inner: string) {
-  return (
-    `<div class="mk-sheet mk-${kind}" style="width:${width}px;height:${height}px">` +
-    `${inner}</div>`
-  );
+interface PagePlan {
+  page: number;
+  size: { w: number; h: number };
+  noteSize: number;
+  /** The summary's block on this page (page 1 only). */
+  summary: { html: string; height: number } | null;
+  notes: {
+    entry: Entry;
+    top: number;
+    /** Cut to its first line, its full text on a continuation page. */
+    stub: boolean;
+    full: Measured;
+    stubbed: Measured;
+  }[];
 }
 
 const px = (v: number) => `${Math.round(v * 100) / 100}px`;
+
+/** Lay out one page's margin: at each type size in turn, the notes as they
+ * are; failing that, at the smallest, the longest cut to a line until the
+ * rest fit. */
+async function planPage(
+  page: number,
+  size: { w: number; h: number },
+  entries: Entry[],
+  opts: BuildInput,
+  width: number
+): Promise<PagePlan> {
+  const withSummary = page === 0 && opts.summary.trim() !== '';
+  const items: MeasureItem[] = [];
+  for (const s of NOTE_SIZES) {
+    if (withSummary) items.push({ html: summaryHtml(opts, s), sheet: 'margin', width });
+    for (const e of entries) {
+      items.push({ html: noteHtml(e, opts, s), sheet: 'margin', width });
+      items.push({ html: stubHtml(e, opts, s, '999'), sheet: 'margin', width });
+    }
+  }
+  const measured = await opts.measure(items);
+  const per = entries.length * 2 + (withSummary ? 1 : 0);
+
+  let plan: PagePlan | null = null;
+  NOTE_SIZES.forEach((noteSize, level) => {
+    if (plan && plan.notes.every((n) => !n.stub)) return;
+    const base = level * per;
+    const summary = withSummary
+      ? { html: summaryHtml(opts, noteSize), height: measured[base]!.height }
+      : null;
+    const at = base + (withSummary ? 1 : 0);
+    const full = entries.map((_, i) => measured[at + i * 2]!);
+    const stubbed = entries.map((_, i) => measured[at + i * 2 + 1]!);
+    const top = MARGIN.top + (summary ? summary.height + MARGIN.gap * 2 : 0);
+    const bottom = size.h - MARGIN.bottom;
+    const desired = entries.map((e) => anchorTopFromTop(e.comment.anchor, size.h) - 1);
+    const stub = entries.map(() => false);
+    const heights = () => full.map((m, i) => (stub[i] ? stubbed[i]!.height : m.height));
+    const fits = () =>
+      heights().reduce((s, h) => s + h, 0) + MARGIN.gap * Math.max(0, entries.length - 1) <=
+      bottom - top;
+    // Only the last size cuts notes; before that, a smaller size is tried.
+    if (!fits() && level < NOTE_SIZES.length - 1) return;
+    while (!fits()) {
+      let pick = -1;
+      let saving = 0;
+      full.forEach((m, i) => {
+        const s = m.height - stubbed[i]!.height;
+        if (!stub[i] && s > saving) {
+          saving = s;
+          pick = i;
+        }
+      });
+      if (pick < 0) break;
+      stub[pick] = true;
+    }
+    const tops = placeNotes(desired, heights(), { top, bottom, gap: MARGIN.gap });
+    plan = {
+      page,
+      size,
+      noteSize,
+      summary,
+      notes: entries.map((entry, i) => ({
+        entry,
+        top: tops[i]!,
+        stub: stub[i]!,
+        full: full[i]!,
+        stubbed: stubbed[i]!,
+      })),
+    };
+  });
+  return plan!;
+}
 
 /* ---- the whole request ---- */
 
 export async function buildExportRequest(opts: BuildInput): Promise<MarkupExportRequest> {
   const marginPt = opts.marginPt ?? DEFAULT_MARGIN_PT;
-  const first = opts.pageSize(0) ?? { w: 612, h: 792 };
-  const sheetW = first.w + marginPt;
-  const sheetH = first.h;
-  const column = feedbackColumn(sheetW);
+  const noteWidth = marginPt - MARGIN.left - MARGIN.right;
 
-  // The letter first: the margin notes say which of its pages to see.
-  const blocks = feedbackBlocks(opts);
-  const thead = blocks.findIndex((b) => b.html.includes('mk-thead'));
-  const measured = await opts.measure(
-    blocks.map((b) => ({ html: b.html, sheet: 'feedback', width: column.width }))
-  );
-  blocks.forEach((b, i) => {
-    b.height = measured[i]!.height;
-    if (b.headerHeight !== undefined && thead >= 0) b.headerHeight = measured[thead]!.height;
-  });
-  const room = sheetH - FEEDBACK.top - FEEDBACK.bottom;
-  const pages = paginate(blocks, room);
-
-  const sheets: ExportSheet[] = [];
-  /** Entry number -> where it is in the letter. */
-  const located = new Map<number, { sheet: number; y: number; page: number }>();
-  pages.forEach((page, k) => {
-    const links: SheetLink[] = [];
-    let y = FEEDBACK.top;
-    let inner = '';
-    if (page.repeatHeader && thead >= 0) {
-      inner += `<div class="mk-flow" style="top:${px(y)};left:${px(column.left)};width:${px(column.width)}">${blocks[thead]!.html.replace('mk-thead', 'mk-thead is-continued')}</div>`;
-      y += blocks[thead]!.height;
-    }
-    for (const i of page.blocks) {
-      const b = blocks[i]!;
-      inner += `<div class="mk-flow" style="top:${px(y)};left:${px(column.left)};width:${px(column.width)}">${b.html}</div>`;
-      for (const link of measured[i]!.links) {
-        const target = b.targets.get(link.key);
-        if (target) {
-          links.push({
-            rect: { x: column.left + link.x, y: y + link.y, w: link.w, h: link.h },
-            target,
-          });
-        }
-      }
-      for (const n of b.numbers) {
-        located.set(n, {
-          sheet: k,
-          y: Math.max(0, Math.round(y - 6)),
-          page: opts.sourcePages + k + 1,
-        });
-      }
-      y += b.height;
-    }
-    inner += `<div class="mk-folio">${k + 1} of ${pages.length}</div>`;
-    sheets.push({
-      kind: 'feedback',
-      widthPt: sheetW,
-      heightPt: sheetH,
-      html: sheetHtml('feedback', sheetW, sheetH, inner),
-      links,
-    });
-  });
-
-  // Then the margins, page by page.
   const byPage = new Map<number, Entry[]>();
   for (const entry of opts.entries) {
     const list = byPage.get(entry.comment.anchor.page);
     if (list) list.push(entry);
     else byPage.set(entry.comment.anchor.page, [entry]);
   }
-  const noteWidth = marginPt - MARGIN.left - MARGIN.right;
+  if (opts.summary.trim() && !byPage.has(0)) byPage.set(0, []);
+
+  const plans: PagePlan[] = [];
   for (const [page, entries] of [...byPage.entries()].sort((a, b) => a[0] - b[0])) {
     const size = opts.pageSize(page);
     if (!size) continue;
-    const notes = entries.map((entry) => {
-      const where = located.get(entry.number);
-      const see = where ? `see ${entry.number} on p. ${where.page}` : '';
-      return {
-        entry,
-        forms: noteForms(entry, see, opts),
-        desiredTop: anchorTopFromTop(entry.comment.anchor, size.h) - 1,
-      };
-    });
-    const flat = notes.flatMap((n) => [n.forms.full, n.forms.short, n.forms.tiny]);
+    const sorted = [...entries].sort((a, b) => a.number - b.number);
+    plans.push(await planPage(page, size, sorted, opts, noteWidth));
+  }
+
+  // The last resort: one page (or more, for a lot) at the end per page whose
+  // notes did not fit, with their full text.
+  const first = opts.pageSize(0) ?? { w: 612, h: 792 };
+  const contW = first.w + marginPt;
+  const contH = first.h;
+  const column = Math.min(CONTINUATION.column, contW - 2 * CONTINUATION.side);
+  const left = Math.round((contW - column) / 2);
+  const continued: ExportSheet[] = [];
+  /** Entry number -> where its full text is. */
+  const contAt = new Map<number, { sheet: number; y: number; page: number }>();
+  for (const plan of plans) {
+    const cut = plan.notes.filter((n) => n.stub);
+    if (cut.length === 0) continue;
+    const blocks = [
+      `<div class="mk-block mk-cont-head">Notes continued from p. ${plan.page + 1}</div>`,
+      ...cut.map(
+        (n) =>
+          `<div class="mk-block mk-cont-note">${noteHtml(n.entry, opts, CONTINUATION.size, 'back')}</div>`
+      ),
+    ];
     const sizes = await opts.measure(
-      flat.map((html) => ({ html, sheet: 'margin', width: noteWidth }))
+      blocks.map((html) => ({ html, sheet: 'feedback', width: column }))
     );
-    const placed = layoutMargin(
-      notes.map((n, i) => ({
-        id: String(n.entry.number),
-        desiredTop: n.desiredTop,
-        full: sizes[i * 3]!.height,
-        short: sizes[i * 3 + 1]!.height,
-        tiny: sizes[i * 3 + 2]!.height,
-      })),
-      size.h
+    const pages = paginate(
+      sizes.map((m, i) => ({ height: m.height, ...(i === 0 ? { keepWithNext: true } : {}) })),
+      contH - CONTINUATION.top - CONTINUATION.bottom
     );
-    const links: SheetLink[] = [];
+    for (const p of pages) {
+      const index = continued.length;
+      let y = CONTINUATION.top;
+      let inner = '';
+      const links: SheetLink[] = [];
+      for (const i of p.blocks) {
+        inner += `<div class="mk-flow" style="top:${px(y)};left:${px(left)};width:${px(column)}">${blocks[i]}</div>`;
+        if (i > 0) {
+          const note = cut[i - 1]!;
+          contAt.set(note.entry.number, {
+            sheet: index,
+            y: Math.max(0, Math.round(y - 8)),
+            page: opts.sourcePages + index + 1,
+          });
+          for (const link of sizes[i]!.links) {
+            links.push({
+              rect: { x: left + link.x, y: y + link.y, w: link.w, h: link.h },
+              target: {
+                kind: 'page',
+                page: plan.page,
+                y: Math.max(
+                  0,
+                  Math.round(anchorTopFromTop(note.entry.comment.anchor, plan.size.h) - 24)
+                ),
+              },
+            });
+          }
+        }
+        y += sizes[i]!.height;
+      }
+      continued.push({
+        kind: 'feedback',
+        widthPt: contW,
+        heightPt: contH,
+        html: sheet('feedback', contW, contH, inner),
+        links,
+      });
+    }
+  }
+
+  const margins: ExportSheet[] = plans.map((plan) => {
     let inner = '';
-    for (const p of placed) {
-      const i = notes.findIndex((n) => String(n.entry.number) === p.id);
-      const note = notes[i]!;
-      const which = p.form === 'full' ? 0 : p.form === 'short' ? 1 : 2;
-      inner += `<div class="mk-flow" style="top:${px(p.top)};left:${px(MARGIN.left)};width:${px(noteWidth)}">${[note.forms.full, note.forms.short, note.forms.tiny][which]}</div>`;
-      const where = located.get(note.entry.number);
-      if (where) {
-        for (const link of sizes[i * 3 + which]!.links) {
+    const links: SheetLink[] = [];
+    if (plan.summary) {
+      inner += `<div class="mk-flow" style="top:${px(MARGIN.top)};left:${px(MARGIN.left)};width:${px(noteWidth)}">${plan.summary.html}</div>`;
+    }
+    for (const n of plan.notes) {
+      const where = contAt.get(n.entry.number);
+      const html =
+        n.stub && where
+          ? stubHtml(n.entry, opts, plan.noteSize, String(where.page))
+          : noteHtml(n.entry, opts, plan.noteSize);
+      inner += `<div class="mk-flow" style="top:${px(n.top)};left:${px(MARGIN.left)};width:${px(noteWidth)}">${html}</div>`;
+      if (n.stub && where) {
+        for (const link of n.stubbed.links) {
           links.push({
-            rect: { x: MARGIN.left + link.x, y: p.top + link.y, w: link.w, h: link.h },
-            target: { kind: 'sheet', sheet: where.sheet, y: where.y },
+            rect: { x: MARGIN.left + link.x, y: n.top + link.y, w: link.w, h: link.h },
+            target: { kind: 'sheet', sheet: where.sheet, y: where.y } satisfies LinkTarget,
           });
         }
       }
     }
-    sheets.push({
+    return {
       kind: 'margin',
-      page,
+      page: plan.page,
       widthPt: marginPt,
-      heightPt: size.h,
-      html: sheetHtml('margin', marginPt, size.h, inner),
+      heightPt: plan.size.h,
+      html: sheet('margin', marginPt, plan.size.h, inner),
       links,
-    });
-  }
+    };
+  });
 
   return {
     source: opts.source,
     dest: opts.dest,
     marginPt,
     marks: buildMarks(opts.entries, opts),
-    sheets,
+    // Continuation pages first, so a link's `sheet` is its index here.
+    sheets: [...continued, ...margins],
   };
 }
 
-/** A margin note in its three lengths. */
-function noteForms(entry: Entry, see: string, opts: BuildInput) {
-  const c = entry.comment;
-  const badge = `<a class="mk-badge mk-k-${c.kind}" data-link="badge">${entry.number}</a>`;
-  let text: string;
-  if (c.kind === 'typo') {
-    const note =
-      c.replacement !== null && c.body.trim()
-        ? ` <span class="mk-dim">${inlineHtml(c.body.trim(), { math: opts.math, cite: opts.cite })}</span>`
-        : '';
-    text = `${fixHtml(c, opts)}${note}`;
-  } else if (c.body.trim()) {
-    text = renderBody(c.body, { math: opts.math, cite: opts.cite });
-  } else {
-    text = `<span class="mk-dim">${KIND_LABEL[c.kind]}</span>`;
-  }
-  const seeHtml = see ? `<div class="mk-see">... ${escapeHtml(see)}</div>` : '';
-  return {
-    full: `<div class="mk-note">${badge}<div class="mk-note-text">${text}</div></div>`,
-    short: `<div class="mk-note is-short">${badge}<div class="mk-note-text">${text}</div>${seeHtml}</div>`,
-    tiny: `<div class="mk-note is-tiny">${badge}<div class="mk-see">${escapeHtml(see || KIND_LABEL[c.kind])}</div></div>`,
-  };
+function sheet(kind: 'margin' | 'feedback', width: number, height: number, inner: string) {
+  return `<div class="mk-sheet mk-${kind}" style="width:${width}px;height:${height}px">${inner}</div>`;
 }

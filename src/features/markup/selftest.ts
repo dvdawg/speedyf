@@ -8,7 +8,7 @@
 import { activeTab } from '../../stores/tabsStore';
 import { openInNewTabOrFocus } from '../document/tabsController';
 import { markupSelftestApi } from '../../lib/transport/markup';
-import { exportReview } from './exportActions';
+import { exportReview, sourcePageCount } from './exportActions';
 import { MARKUP_VERSION, type MarkupComment, type MarkupDoc, type Quad } from './types';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -145,6 +145,11 @@ async function run(source: string, dest: string): Promise<void> {
     };
     const { doc: review, anchors } = syntheticReview(size);
     const result = await exportReview(source, review, dest);
+    // A normal review is the paper, widened: never a page more.
+    const pages = sourcePageCount(doc.pages);
+    if (result.pages !== pages) {
+      throw new Error(`${result.pages} pages written for a ${pages}-page paper`);
+    }
     await markupSelftestApi.done({
       ok: true,
       message: `${result.pages} pages, ${result.links} links`,

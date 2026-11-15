@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildExportRequest,
-  feedbackColumn,
-  FEEDBACK,
+  NOTE_SIZES,
   plainContents,
   type BuildInput,
   type MeasureItem,
   type Measured,
 } from './exportBuild';
 import { quadsFromRects } from './geometry';
+import { MARGIN } from './layout';
 import type { CommentLabel } from './labels';
 import { buildEntries } from './model';
 import type { Anchor, MarkupComment } from './types';
@@ -33,63 +33,54 @@ function comment(over: Partial<MarkupComment> & { anchor: Anchor }): MarkupComme
   };
 }
 
-function label(a: Anchor): CommentLabel {
-  return {
-    page: a.page + 1,
-    section: a.page === 0 ? null : { title: '2 Method', short: 'Sec. 2', page: 1, y: 700 },
-    statement: a.page === 1 ? 'Lemma 2.3' : null,
-    equation: null,
-  };
-}
+const label = (a: Anchor): CommentLabel => ({
+  page: a.page + 1,
+  section: null,
+  statement: null,
+  equation: null,
+});
 
-/** A stand-in for the browser: fixed heights by kind of block, and every
- * `data-link` at the block's top-left. */
-function fakeMeasure(heights: Partial<Record<string, number>> = {}) {
-  const seen: MeasureItem[] = [];
-  const measure = async (items: MeasureItem[]): Promise<Measured[]> => {
-    seen.push(...items);
-    return items.map((item) => {
-      const kind =
-        item.sheet === 'margin'
-          ? item.html.includes('is-tiny')
-            ? 'tiny'
-            : item.html.includes('is-short')
-              ? 'short'
-              : 'full'
-          : (/mk-block mk-([a-z]+)/.exec(item.html)?.[1] ?? 'other');
-      const defaults: Record<string, number> = { full: 30, short: 20, tiny: 10, entry: 60 };
-      const height = heights[kind] ?? defaults[kind] ?? 24;
-      const links = [...item.html.matchAll(/data-link="([^"]+)"/g)].map((m, i) => ({
-        key: m[1]!,
-        x: 1,
-        y: 2 + i,
-        w: 10,
-        h: 10,
-      }));
-      return { height, links };
-    });
-  };
-  return { measure, seen };
+/** A stand-in for the browser: a note's height is its lines at its type
+ * size, about half an em a character; a stub is two lines. */
+async function measure(items: MeasureItem[]): Promise<Measured[]> {
+  return items.map((item) => {
+    const size = Number(/font-size:([\d.]+)px/.exec(item.html)?.[1] ?? 9);
+    const text = item.html.replace(/<[^>]+>/g, '');
+    const perLine = Math.max(1, Math.floor(item.width / (size * 0.5)));
+    const lines = item.html.includes('is-stub') ? 2 : Math.max(1, Math.ceil(text.length / perLine));
+    const links = [...item.html.matchAll(/data-link="([^"]+)"/g)].map((m) => ({
+      key: m[1]!,
+      x: 0,
+      y: 1,
+      w: 12,
+      h: 9,
+    }));
+    return { height: Math.round(lines * size * 1.34 * 100) / 100, links };
+  });
 }
 
 function input(comments: MarkupComment[], over: Partial<BuildInput> = {}): BuildInput {
   return {
     source: '/papers/draft.pdf',
     dest: '/papers/draft - markup.pdf',
-    title: 'On <Things> & $x$',
-    date: 'November 15, 2026',
-    summary: 'A careful paper. See [@jar97].',
+    summary: '',
     entries: buildEntries(comments, label),
     sourcePages: 2,
     pageSize: () => PAGE,
     marginPt: 180,
     math: (tex) => `<k>${tex}</k>`,
     cite: (key) => (key === 'jar97' ? 'Jar97' : null),
-    reference: (key) => (key === 'jar97' ? 'Jarvis. On things. 1997.' : null),
-    measure: fakeMeasure().measure,
+    measure,
     ...over,
   };
 }
+
+const MEDIUM =
+  'The argument here skips the case where the sequence is not bounded; please add a line ' +
+  'explaining why the limit exists, or cite the lemma that gives it.';
+
+/** Every note's top in a margin sheet's html. */
+const topsOf = (html: string) => [...html.matchAll(/top:([\d.]+)px/g)].map((m) => Number(m[1]));
 
 describe('marks', () => {
   it('highlights comments, strikes typo fixes with a caret, and boxes regions', async () => {
@@ -101,28 +92,41 @@ describe('marks', () => {
         replacement: 'the',
         quickmark: 'typo',
       }),
+      comment({ anchor: anchor(0, 300, 'the the'), kind: 'typo', replacement: '' }),
       comment({
         anchor: { page: 1, quads: null, rect: { x: 72, y: 300, w: 200, h: 100 }, quote: '' },
         body: 'Label the axes.',
       }),
     ];
     const request = await buildExportRequest(input(list));
-    expect(request.marks.map((m) => [m.page, m.kind])).toEqual([
+    const native = request.marks.filter((m) => m.kind !== 'label');
+    const labels = request.marks.filter((m) => m.kind === 'label');
+    // Each phrase also carries its number, in its note's full colour.
+    expect(labels.map((m) => [m.page, m.contents, m.color])).toEqual([
+      [0, '1', '#c62828'],
+      [0, '2', '#5c6570'],
+      [0, '3', '#5c6570'],
+      [1, '4', '#694fe3'],
+    ]);
+    // Just after the last word of "the claim" (x 72..192, top 100 from the top).
+    expect(labels[0]!.rect!.x).toBeGreaterThan(192);
+    expect(labels[0]!.rect!.x).toBeLessThan(194);
+    expect(native.map((m) => [m.page, m.kind])).toEqual([
       [0, 'highlight'],
       [0, 'strikeout'],
       [0, 'caret'],
+      [0, 'strikeout'],
       [1, 'square'],
     ]);
-    expect(request.marks[0]!.contents).toBe('1. Justify this step.');
-    expect(request.marks[1]!.contents).toBe('2. Replace "teh" with "the"');
-    expect(request.marks[2]!.contents).toBe('2. Insert "the"');
-    expect(request.marks[3]!.contents).toBe('3. Label the axes.');
-    // Soft tints of the kind colours, a strike in the typo grey.
-    expect(request.marks[0]!.color).toMatch(/^#[0-9a-f]{6}$/);
-    expect(request.marks[0]!.color).not.toBe('#c62828');
-    expect(request.marks[1]!.color).toBe('#5c6570');
-    expect(request.source).toBe('/papers/draft.pdf');
-    expect(request.dest).toBe('/papers/draft - markup.pdf');
+    expect(native.map((m) => m.contents)).toEqual([
+      '1. Justify this step.',
+      '2. Replace "teh" with "the"',
+      '2. Insert "the"',
+      '3. Delete "the the"',
+      '4. Label the axes.',
+    ]);
+    expect(native[0]!.color).toMatch(/^#[0-9a-f]{6}$/);
+    expect(native[0]!.color).not.toBe('#c62828');
     expect(request.marginPt).toBe(180);
   });
 
@@ -132,108 +136,114 @@ describe('marks', () => {
   });
 });
 
-describe('sheets', () => {
-  const list = [
-    comment({ anchor: anchor(0, 100, 'We study'), body: 'Add motivation here.' }),
-    comment({
-      anchor: anchor(1, 300, 'by compactness'),
-      kind: 'proof',
-      quickmark: 'justify',
-      body: 'Justify this step.',
-    }),
-    comment({ anchor: anchor(1, 500, 'teh'), kind: 'typo', replacement: 'the' }),
-    comment({
-      anchor: anchor(1, 600, 'by compactness'),
-      kind: 'proof',
-      quickmark: 'justify',
-      body: 'Justify this step.',
-    }),
-  ];
-
-  it('sends the feedback pages first, then one margin per page with comments', async () => {
+describe('the margin', () => {
+  it('is all there is: one sheet per page with notes, no pages added', async () => {
+    const list = [
+      comment({ anchor: anchor(0, 100, 'We study'), body: 'Add motivation here. See [@jar97].' }),
+      comment({ anchor: anchor(1, 500, 'teh'), kind: 'typo', replacement: 'the' }),
+    ];
     const request = await buildExportRequest(input(list));
-    const kinds = request.sheets.map((s) => [s.kind, s.page ?? null, s.widthPt, s.heightPt]);
-    expect(kinds).toEqual([
-      ['feedback', null, 792, 792],
+    expect(request.sheets.map((s) => [s.kind, s.page, s.widthPt, s.heightPt])).toEqual([
       ['margin', 0, 180, 792],
       ['margin', 1, 180, 792],
     ]);
-    const feedback = request.sheets[0]!.html;
-    expect(feedback).toContain(
-      'Comments on On &lt;Things&gt; &amp; <span class="mk-math"><k>x</k></span>'
-    );
-    expect(feedback).toContain('Overall');
-    expect(feedback).toContain('<span class="mk-cite">[Jar97]</span>');
-    expect(feedback).toContain('Typos and wording');
-    expect(feedback).toContain('References');
-    expect(feedback).toContain('Jarvis. On things. 1997.');
-    // The repeat is folded into its first occurrence.
-    expect(feedback).toContain('Also <a class="mk-link" data-link="also0">p. 2</a>.');
-    expect(feedback.match(/class="mk-num"/g)).toHaveLength(2);
-    expect(feedback).toMatch(/^[\x20-\x7e]*$/);
-  });
-
-  it('links each entry number to its place on the page', async () => {
-    const request = await buildExportRequest(input(list));
-    const targets = request.sheets[0]!.links!.map((l) => l.target);
-    expect(targets).toContainEqual({ kind: 'page', page: 0, y: 76 });
-    expect(targets).toContainEqual({ kind: 'page', page: 1, y: 276 });
-    // The folded repeat's "also" link.
-    expect(targets).toContainEqual({ kind: 'page', page: 1, y: 576 });
-    for (const link of request.sheets[0]!.links!) {
-      expect(link.rect.x).toBeGreaterThanOrEqual(feedbackColumn(792).left);
-      expect(link.rect.y).toBeGreaterThanOrEqual(FEEDBACK.top);
+    const all = request.sheets.map((s) => s.html).join('');
+    expect(all).toContain('<span class="mk-badge mk-k-exposition">1</span>');
+    expect(all).toContain('Add motivation here. See <span class="mk-cite">[Jar97]</span>.');
+    expect(all).toContain('<span class="mk-del">teh</span> <span class="mk-ins">the</span>');
+    // No letter, labels, pointers or kind tags.
+    for (const gone of ['Comments on', 'see 1 on', 'cont.', 'mk-kind', 'p. 1', 'Typo']) {
+      expect(all).not.toContain(gone);
     }
+    expect(all).toMatch(/^[\x20-\x7e]*$/);
   });
 
-  it('links each margin note to its entry in the letter, the repeat to the first', async () => {
+  it('adds no page for a realistic dense page of eight medium notes', async () => {
+    const list = Array.from({ length: 8 }, (_, i) =>
+      comment({ anchor: anchor(0, 90 + i * 70, `phrase ${i}`), body: MEDIUM })
+    );
     const request = await buildExportRequest(input(list));
-    const margin = request.sheets[2]!;
-    expect(margin.links!).toHaveLength(3);
+    expect(request.sheets.filter((s) => s.kind !== 'margin')).toEqual([]);
+    expect(request.sheets[0]!.html).not.toContain('is-stub');
+  });
+
+  it('keeps notes level with their anchors when they fit', async () => {
+    const list = [
+      comment({ anchor: anchor(0, 150, 'a'), body: 'Short.' }),
+      comment({ anchor: anchor(0, 400, 'b'), body: 'Short too.' }),
+    ];
+    const request = await buildExportRequest(input(list));
+    expect(topsOf(request.sheets[0]!.html)).toEqual([149, 399]);
+  });
+
+  it('moves colliding notes up as well as down, inside the page', async () => {
+    const list = Array.from({ length: 5 }, (_, i) =>
+      comment({ anchor: anchor(0, 300 + i, `w${i}`), body: MEDIUM })
+    );
+    const request = await buildExportRequest(input(list));
+    const tops = topsOf(request.sheets[0]!.html);
+    expect(tops[0]!).toBeLessThan(299);
+    expect(tops.at(-1)!).toBeGreaterThan(303);
+    expect(tops[0]!).toBeGreaterThanOrEqual(MARGIN.top);
+    expect([...tops].sort((a, b) => a - b)).toEqual(tops);
+  });
+
+  it('heads the first page with the summary, notes below it', async () => {
+    const list = [
+      comment({ anchor: anchor(0, 5, 'Title words'), body: 'A note at the very top.' }),
+    ];
+    const request = await buildExportRequest(
+      input(list, { summary: 'A careful paper; the bound in $x$ is new.' })
+    );
+    const html = request.sheets[0]!.html;
+    expect(html.indexOf('mk-summary')).toBeLessThan(html.indexOf('mk-note'));
+    expect(html).toContain('<k>x</k>');
+    const [summaryTop, noteTop] = topsOf(html);
+    expect(summaryTop).toBe(MARGIN.top);
+    expect(noteTop!).toBeGreaterThan(summaryTop! + 10);
+  });
+
+  it('puts the summary on page 1 even with no note there', async () => {
+    const list = [comment({ anchor: anchor(1, 100, 'x'), body: 'Later.' })];
+    const request = await buildExportRequest(input(list, { summary: 'Overall fine.' }));
+    expect(request.sheets.map((s) => s.page)).toEqual([0, 1]);
+    expect(request.sheets[0]!.html).toContain('Overall fine.');
+  });
+
+  it('sets a crowded page smaller before anything else', async () => {
+    const list = Array.from({ length: 18 }, (_, i) =>
+      comment({ anchor: anchor(0, 40 + i * 40, `w${i}`), body: MEDIUM })
+    );
+    const request = await buildExportRequest(input(list));
+    const html = request.sheets[0]!.html;
+    expect(html).not.toContain(`font-size:${NOTE_SIZES[0]}px`);
+    expect(request.sheets.every((s) => s.kind === 'margin')).toBe(true);
+  });
+});
+
+describe('continuation, the last resort', () => {
+  it('cuts the longest notes to a line and carries their text to one page at the end', async () => {
+    const long = `${MEDIUM} ${MEDIUM} ${MEDIUM}`;
+    const list = Array.from({ length: 24 }, (_, i) =>
+      comment({ anchor: anchor(0, 30 + i * 30, `w${i}`), body: i % 2 ? long : 'Short.' })
+    );
+    const request = await buildExportRequest(input(list));
+    const added = request.sheets.filter((s) => s.kind === 'feedback');
+    expect(added).toHaveLength(1);
+    // Added pages come first in the request, so a link's sheet is its index.
+    expect(request.sheets[0]!.kind).toBe('feedback');
+    const margin = request.sheets.find((s) => s.kind === 'margin')!;
+    expect(margin.html).toContain('is-stub');
+    // The paper has two pages, so the continuation prints as page 3.
+    expect(margin.html).toContain('(cont. p. 3)');
+    expect(margin.links!.length).toBeGreaterThan(0);
     for (const link of margin.links!)
       expect(link.target).toMatchObject({ kind: 'sheet', sheet: 0 });
-    const ys = margin.links!.map((l) => (l.target as { y: number }).y);
-    expect(ys[0]).toBe(ys[2]);
-    expect(margin.html).toContain('mk-margin');
-    expect(margin.html).toContain(
-      '<span class="mk-del">teh</span> <span class="mk-ins">the</span>'
-    );
-  });
-
-  it('places the notes level with their anchors', async () => {
-    const request = await buildExportRequest(input(list));
-    const tops = [...request.sheets[2]!.html.matchAll(/top:([\d.]+)px/g)].map((m) => Number(m[1]));
-    expect(tops).toEqual([299, 499, 599]);
-  });
-
-  it('shortens notes that do not fit and points to the letter for the rest', async () => {
-    const crowded = Array.from({ length: 12 }, (_, i) =>
-      comment({ anchor: anchor(0, 60 + i * 50, `w${i}`), body: `Long remark ${i}.` })
-    );
-    const { measure } = fakeMeasure({ full: 90, short: 40, tiny: 12 });
-    const request = await buildExportRequest(input(crowded, { measure }));
-    const margin = request.sheets.find((s) => s.kind === 'margin')!;
-    expect(margin.html).toContain('is-short');
-    // Feedback page 1 follows the two pages of the paper: page 3.
-    expect(margin.html).toMatch(/\.\.\. see \d+ on p\. 3/);
-    const tops = [...margin.html.matchAll(/top:([\d.]+)px/g)].map((m) => Number(m[1]));
-    expect(Math.max(...tops)).toBeLessThan(792);
-  });
-
-  it('breaks the letter over pages and repeats the typo table head', async () => {
-    const typos = Array.from({ length: 30 }, (_, i) =>
-      comment({ anchor: anchor(0, 20 + i * 20, `wrod${i}`), kind: 'typo', replacement: `word${i}` })
-    );
-    const { measure } = fakeMeasure({ trow: 40 });
-    const request = await buildExportRequest(input(typos, { measure, summary: '' }));
-    const feedback = request.sheets.filter((s) => s.kind === 'feedback');
-    expect(feedback.length).toBeGreaterThan(1);
-    expect(feedback[1]!.html).toContain('mk-thead is-continued');
-    expect(feedback[0]!.html).toContain(`1 of ${feedback.length}`);
-    expect(feedback.at(-1)!.html).toContain(`${feedback.length} of ${feedback.length}`);
-    // Margin notes say which page of the letter to see.
-    const margin = request.sheets.find((s) => s.kind === 'margin')!;
-    const sheetTargets = new Set(margin.links!.map((l) => (l.target as { sheet: number }).sheet));
-    expect(sheetTargets.size).toBeGreaterThan(1);
+    expect(added[0]!.html).toContain('Notes continued from p. 1');
+    expect(added[0]!.html).not.toContain('Short.');
+    for (const link of added[0]!.links!)
+      expect(link.target).toMatchObject({ kind: 'page', page: 0 });
+    const tops = topsOf(margin.html);
+    expect(Math.max(...tops)).toBeLessThan(PAGE.h - MARGIN.bottom);
   });
 });
