@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { TextRunDto } from '../../types/engine';
-import { buildTextModel, hitTest, selectionRects, wordAt } from './textHit';
+import {
+  buildTextModel,
+  displayEdge,
+  displaysOf,
+  hitTest,
+  selectionRects,
+  wordAt,
+  type DisplayBox,
+} from './textHit';
 
 /** One run, its bottom at `y` (page points, y up). */
 function run(text: string, x: number, y: number, w: number, h = 10): TextRunDto {
@@ -131,5 +139,58 @@ describe('selectionRects', () => {
         { run: 2, from: 0, to: 1 },
       ])
     ).toHaveLength(2);
+  });
+});
+
+/** Prose, a two-row display (a fraction) numbered (3), more prose. */
+function withDisplay(): { runs: TextRunDto[]; box: DisplayBox } {
+  return {
+    runs: [
+      run('we have', 60, 700, 200),
+      run('a + b', 140, 680, 30),
+      run('c', 152, 668, 6),
+      run('(3)', 480, 674, 14),
+      run('and so on', 60, 650, 200),
+    ],
+    box: { x: 138, y: 667, w: 34, h: 24, number: '3' },
+  };
+}
+
+describe('display equations', () => {
+  it('takes the runs inside the box and the number beside it', () => {
+    const { runs, box } = withDisplay();
+    const [display] = displaysOf(runs, [box]);
+    expect(display).toMatchObject({ first: 1, last: 3 });
+    // one box around the rows and the number
+    expect(display!.box[0]).toBe(138);
+    expect(display!.box[0] + display!.box[2]).toBe(494);
+  });
+
+  it('leaves a display whose runs are interleaved with prose', () => {
+    const { runs, box } = withDisplay();
+    const mixed = [runs[1]!, runs[0]!, runs[2]!];
+    expect(displaysOf(mixed, [box])).toEqual([]);
+  });
+
+  it('moves a selection end in a display out to its edge', () => {
+    const { runs, box } = withDisplay();
+    const model = buildTextModel(runs, undefined, [box]);
+    expect(displayEdge(model, { run: 2, offset: 0 }, true)).toEqual({ run: 3, offset: 3 });
+    expect(displayEdge(model, { run: 2, offset: 1 }, false)).toEqual({ run: 1, offset: 0 });
+    expect(displayEdge(model, { run: 0, offset: 2 }, true)).toEqual({ run: 0, offset: 2 });
+  });
+
+  it('paints a display as one box', () => {
+    const { runs, box } = withDisplay();
+    const model = buildTextModel(runs, undefined, [box]);
+    const rects = selectionRects(model, [
+      { run: 0, from: 3, to: 7 },
+      { run: 1, from: 0, to: 5 },
+      { run: 2, from: 0, to: 1 },
+      { run: 3, from: 0, to: 3 },
+      { run: 4, from: 0, to: 3 },
+    ]);
+    expect(rects).toHaveLength(3);
+    expect(rects[1]).toEqual([136, 665, 360, 28]);
   });
 });

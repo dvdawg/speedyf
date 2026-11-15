@@ -6,7 +6,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SelectionGeometry } from '../../stores/selectionStore';
 
 let usable = true;
-vi.mock('../extensions/extensionStore', () => ({ extensionUsable: () => usable }));
+/** What the math converter answers, by mode; null is no converter. */
+let converted: Record<'local' | 'exact', string | null> = { local: null, exact: null };
+const resolveExact: (() => void)[] = [];
+vi.mock('../extensions/extensionStore', () => ({
+  extensionUsable: () => usable,
+  snapshotSelection: () => 'tok',
+  convertSelection: async (_token: string, mode: 'local' | 'exact') => {
+    if (mode === 'exact') await new Promise<void>((resolve) => resolveExact.push(resolve));
+    const markdown = converted[mode];
+    return markdown ? { markdown, source: 'fonts', confidence: 'high', converter: 'X' } : null;
+  },
+  convertEquation: async (_token: string, _ref: unknown, mode: 'local' | 'exact') => {
+    const latex = converted[mode];
+    return latex ? { latex, display: true, source: 'fonts', confidence: 'high' } : null;
+  },
+}));
 vi.mock('../extensions/surfaces', () => ({ closeReaderPane: vi.fn(), shownPane: () => null }));
 vi.mock('../extensions/paperDocs', () => ({ docStatements: async () => [] }));
 vi.mock('../extensions/regionCapture', () => ({
@@ -152,6 +167,46 @@ describe('writing comments', () => {
     expect(c).toMatchObject({ kind: 'proof', body: 'Justify this step.', quickmark: 'justify' });
     await vi.advanceTimersByTimeAsync(600);
     expect(JSON.parse(saved.at(-1)!).comments).toHaveLength(1);
+  });
+
+  it('reads the quote math, then upgrades the kept comment quietly', async () => {
+    converted = { local: 'by $\\mathcal{K}$', exact: 'by $\\mathcal{C}$' };
+    await loaded();
+    store.beginComment('comment');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.draft()!.anchor.quoteTex).toBe('by $\\mathcal{K}$');
+    store.commitDraft({ body: 'Why?', kind: 'proof', quickmark: null, replacement: null });
+    resolveExact.splice(0).forEach((resolve) => resolve());
+    await vi.advanceTimersByTimeAsync(600);
+    expect(store.reviewFor(PATH)!.doc.comments[0]!.anchor.quoteTex).toBe('by $\\mathcal{C}$');
+    expect(JSON.parse(saved.at(-1)!).comments[0].anchor.quoteTex).toBe('by $\\mathcal{C}$');
+    converted = { local: null, exact: null };
+  });
+
+  it('leaves a quote without math as it is', async () => {
+    converted = { local: 'by compactness', exact: null };
+    await loaded();
+    store.beginComment('comment');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.draft()!.anchor.quoteTex).toBeUndefined();
+    converted = { local: null, exact: null };
+  });
+
+  it('comments on a display equation by its box', async () => {
+    converted = { local: 'a^2', exact: null };
+    await loaded();
+    expect(store.beginEquationComment({ page: 1, bbox: [100, 200, 300, 40], number: '3' })).toBe(
+      true
+    );
+    const d = store.draft()!;
+    expect(d.anchor.quote).toBe('Equation (3)');
+    expect(d.anchor.quads).toHaveLength(1);
+    expect(d.anchor.quads![0]).toMatchObject({ x1: 100, y1: 592, x2: 400, y3: 552 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.draft()!.anchor.quoteTex).toBe('$$ a^2 $$');
+    store.cancelDraft();
+    resolveExact.splice(0).forEach((resolve) => resolve());
+    converted = { local: null, exact: null };
   });
 
   it('lets an empty comment go, but keeps a typo fix that deletes', async () => {

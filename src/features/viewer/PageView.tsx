@@ -22,6 +22,7 @@ import { RENDER_RETRIES, renderUrl, retryUrl } from '../../lib/rendering/renderS
 import { pagesInverted } from '../../stores/settings';
 import { engine } from '../../lib/transport/engine';
 import TextLayer from './TextLayer';
+import { equationBlocksFor } from '../extensions/EquationLayer';
 import AnnotationLayer from '../annotations/AnnotationLayer';
 import CitationLayer from '../citations/CitationLayer';
 import HoverSpanLayer from '../hovers/HoverSpanLayer';
@@ -201,6 +202,14 @@ export default function PageView(props: Props) {
     }
   );
 
+  /** The page's display equations, which a selection takes whole. Asked
+   * at the engine's idle priority, and cached there and here (the same
+   * answer the equation buttons use). */
+  const [equationBlocks] = createResource(
+    () => (srcIndex() === null || !doc.loaded ? null : ([doc.docId, srcIndex()] as const)),
+    ([docId, src]) => equationBlocksFor(docId, src as number, 0)
+  );
+
   /** The mark, if it is for this page of this document. Keyed on the reader's
    * page index rather than the page in the file, because that is what a jump
    * asked for and what reordering moves. */
@@ -323,6 +332,7 @@ export default function PageView(props: Props) {
             pageWidthPt={props.geom.widthPt}
             pageHeightPt={props.geom.heightPt}
             rotation={props.geom.rotation}
+            equations={equationBlocks() ?? []}
             zoom={vp.state.zoom}
             page={props.index}
           />
@@ -425,6 +435,7 @@ export default function PageView(props: Props) {
             geom={props.geom}
             zoom={vp.state.zoom}
             runs={textLayout()?.runs ?? []}
+            equations={equationBlocks() ?? []}
           />
         </Show>
       </div>

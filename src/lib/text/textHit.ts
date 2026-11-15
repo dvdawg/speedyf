@@ -41,11 +41,33 @@ export interface HitLine extends Line {
   paintBottom: number;
 }
 
+/** A display equation as the engine finds it (`get_equation_blocks`),
+ * turned y-up: its box, without the number, and the number it prints. */
+export interface DisplayBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  number: string | null;
+}
+
+/** A display equation in the text layer: the consecutive runs that draw it
+ * (its number among them when that follows it), selected as one unit, and
+ * the box its selection is painted as. */
+export interface Display {
+  first: number;
+  last: number;
+  box: [number, number, number, number];
+}
+
 export interface TextModel {
   runs: readonly TextRunDto[];
   lines: readonly HitLine[];
   /** the line holding each run */
   lineOfRun: readonly number[];
+  displays: readonly Display[];
+  /** the display holding each run, or -1 */
+  displayOfRun: readonly number[];
   /** x of each character boundary of a run, `text.length + 1` of them */
   edges(run: number): readonly number[];
 }
@@ -59,6 +81,8 @@ const NEIGHBOUR_GAP_EMS = 1.5;
 /** Paint pads a line by this share of its type above and below its ink, at
  * most half way to the line next to it. */
 const PAINT_PAD_EMS = 0.2;
+/** Paint pads a display equation's box by this much, in points. */
+const DISPLAY_PAINT_PAD_PT = 2;
 /** While dragging, horizontal distance to a line in the column the drag
  * started in counts for less, and to a line in another column for more, so
  * the gutter between two columns stays with the column being selected. */
@@ -81,9 +105,68 @@ function neighbours(a: Line, b: Line): boolean {
   );
 }
 
+/** How far outside an equation's box a run may stick and still be part of
+ * it, in points: a box from glyph ink and a run's box disagree a little. */
+const DISPLAY_SLACK_PT = 2;
+
+const inside = (run: TextRunDto, b: DisplayBox, slack: number) =>
+  run.x >= b.x - slack &&
+  run.x + run.w <= b.x + b.w + slack &&
+  run.y >= b.y - slack &&
+  run.y + run.h <= b.y + b.h + slack;
+
+/** The runs of each display equation, kept only when they are one stretch of
+ * the text layer: a selection is a DOM range, so a display whose runs are
+ * interleaved with prose could not be selected alone, and is left to be
+ * selected like text. */
+export function displaysOf(runs: readonly TextRunDto[], boxes: readonly DisplayBox[]): Display[] {
+  const out: Display[] = [];
+  for (const b of boxes) {
+    let first = -1;
+    let last = -1;
+    runs.forEach((run, i) => {
+      if (!inside(run, b, DISPLAY_SLACK_PT)) return;
+      if (first < 0) first = i;
+      last = i;
+    });
+    if (first < 0) continue;
+    let whole = true;
+    for (let i = first; i <= last && whole; i += 1) {
+      whole = inside(runs[i]!, b, DISPLAY_SLACK_PT);
+    }
+    if (!whole) continue;
+    const box: [number, number, number, number] = [b.x, b.y, b.x + b.w, b.y + b.h];
+    // The printed number, "(3)", to the right on the equation's rows.
+    const next = runs[last + 1];
+    if (b.number && next) {
+      const centre = next.y + next.h / 2;
+      const label = next.text.replace(/\s+/g, '');
+      if (
+        next.x >= b.x + b.w - DISPLAY_SLACK_PT &&
+        centre >= b.y &&
+        centre <= b.y + b.h &&
+        label === `(${b.number})`
+      ) {
+        last += 1;
+        box[2] = Math.max(box[2], next.x + next.w);
+      }
+    }
+    for (let i = first; i <= last; i += 1) {
+      const run = runs[i]!;
+      box[0] = Math.min(box[0], run.x);
+      box[1] = Math.min(box[1], run.y);
+      box[2] = Math.max(box[2], run.x + run.w);
+      box[3] = Math.max(box[3], run.y + run.h);
+    }
+    out.push({ first, last, box: [box[0], box[1], box[2] - box[0], box[3] - box[1]] });
+  }
+  return out.sort((a, b) => a.first - b.first);
+}
+
 export function buildTextModel(
   runs: readonly TextRunDto[],
-  measure: MeasureText = (text) => text.length
+  measure: MeasureText = (text) => text.length,
+  displayBoxes: readonly DisplayBox[] = []
 ): TextModel {
   const base = linesOf(runs);
   const lines: HitLine[] = base.map((line, i) => {
@@ -133,7 +216,13 @@ export function buildTextModel(
     return out;
   };
 
-  return { runs, lines, lineOfRun, edges };
+  const displays = displaysOf(runs, displayBoxes);
+  const displayOfRun: number[] = runs.map(() => -1);
+  displays.forEach((d, i) => {
+    for (let r = d.first; r <= d.last; r += 1) displayOfRun[r] = i;
+  });
+
+  return { runs, lines, lineOfRun, edges, displays, displayOfRun };
 }
 
 function isLowSurrogate(text: string, k: number): boolean {
@@ -210,6 +299,17 @@ export function positionOnLine(model: TextModel, index: number, x: number): Text
   return { run: best, offset };
 }
 
+/** A selection end at `pos`, taken out to the edge of the display
+ * equation it is in (its end when `toEnd`, else its start), so a display is
+ * only ever selected whole; `pos` itself when it is in none. */
+export function displayEdge(model: TextModel, pos: TextPosition, toEnd: boolean): TextPosition {
+  const d = model.displays[model.displayOfRun[pos.run] ?? -1];
+  if (!d) return pos;
+  return toEnd
+    ? { run: d.last, offset: model.runs[d.last]?.text.length ?? 0 }
+    : { run: d.first, offset: 0 };
+}
+
 /** Where a press or a drag at `p` puts the caret. */
 export function hitTest(
   model: TextModel,
@@ -256,10 +356,24 @@ export function selectionRects(
   const out: [number, number, number, number][] = [];
   let lastLine = -1;
   let lastRun = -2;
+  let lastDisplay = -1;
   for (const { run: index, from, to } of pieces) {
     const run = model.runs[index];
     const lineIndex = model.lineOfRun[index];
     if (!run || lineIndex === undefined || to <= from) continue;
+    // A display equation is one box, however many rows it has.
+    const display = model.displayOfRun[index] ?? -1;
+    if (display >= 0) {
+      if (display !== lastDisplay) {
+        const [x, y, w, h] = model.displays[display]!.box;
+        const pad = DISPLAY_PAINT_PAD_PT;
+        out.push([x - pad, y - pad, w + 2 * pad, h + 2 * pad]);
+      }
+      lastDisplay = display;
+      lastLine = -1;
+      continue;
+    }
+    lastDisplay = -1;
     const line = model.lines[lineIndex]!;
     const edges = from === 0 && to === run.text.length ? null : model.edges(index);
     const left = edges ? edges[from]! : run.x;

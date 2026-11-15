@@ -7,10 +7,20 @@
  * press is hit-tested against the page's lines (`textSelection`), and the
  * selection is painted here as one band per line, under the spans, with
  * the browser's own per-span highlight switched off. */
-import { createMemo, createSignal, For, Index, onCleanup, onMount } from 'solid-js';
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  Index,
+  onCleanup,
+  onMount,
+  untrack,
+} from 'solid-js';
 import type { TextRunDto } from '../../types/engine';
 import type { Rotation } from '../../types/model';
-import { registerCopyRun } from '../../lib/text/copySelection';
+import type { EquationBlock } from '../extensions/EquationLayer';
+import { registerCopyRun, setSpanDisplay } from '../../lib/text/copySelection';
 import { buildTextModel, selectionRects } from '../../lib/text/textHit';
 import { toolState } from '../annotations/toolStore';
 import {
@@ -48,13 +58,27 @@ interface Props {
   zoom: number;
   /** position in the document, so a selection spanning pages can be ordered */
   page: number;
+  /** the page's display equations, boxes from its top-left */
+  equations?: readonly EquationBlock[];
 }
 
 const measureChar = (text: string) => measureAt100px(text);
 
 export default function TextLayer(props: Props) {
   let layer!: HTMLDivElement;
-  const model = createMemo(() => buildTextModel(props.runs, measureChar));
+  const model = createMemo(() =>
+    buildTextModel(
+      props.runs,
+      measureChar,
+      (props.equations ?? []).map(({ bbox: [x, y, w, h], number }) => ({
+        x,
+        y: props.pageHeightPt - y - h,
+        w,
+        h,
+        number,
+      }))
+    )
+  );
   const [painted, setPainted] = createSignal<[number, number, number, number][]>([]);
 
   const repaint = () => {
@@ -62,6 +86,19 @@ export default function TextLayer(props: Props) {
     if (pieces.length === 0 && painted().length === 0) return;
     setPainted(selectionRects(model(), pieces));
   };
+
+  // What a selection's geometry reads: a span of a display equation stands
+  // for the whole display. And a selection already there is repainted when
+  // the equations arrive.
+  createEffect(() => {
+    const m = model();
+    const spans = layer.children;
+    for (let i = 0; i < spans.length; i += 1) {
+      const display = m.displays[m.displayOfRun[i] ?? -1];
+      setSpanDisplay(spans[i]!, display ? display.box : null);
+    }
+    untrack(repaint);
+  });
 
   let entry: LayerEntry | undefined;
   onMount(() => {

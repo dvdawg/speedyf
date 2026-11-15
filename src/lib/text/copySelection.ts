@@ -15,6 +15,19 @@ export function registerCopyRun(element: Element, run: CopyRun): void {
   runForSpan.set(element, run);
 }
 
+/** The display equation a span is part of, as its box `[x, y, w, h]` (page
+ * points, y up). Set apart from the run: equations are found after the
+ * text, and can change under a span that stays. */
+const displayForSpan = new WeakMap<Element, readonly [number, number, number, number]>();
+
+export function setSpanDisplay(
+  element: Element,
+  box: readonly [number, number, number, number] | null
+): void {
+  if (box) displayForSpan.set(element, box);
+  else displayForSpan.delete(element);
+}
+
 /** Collect the selected runs, trimming the two partially-selected spans at
  * the ends so copying half a word does not paste the whole one. */
 export function selectedCopyRuns(selection: Selection, root: ParentNode): CopyRun[] {
@@ -49,6 +62,7 @@ export function selectedRunRects(
   const startsInText = range.startContainer.nodeType === Node.TEXT_NODE;
   const endsInText = range.endContainer.nodeType === Node.TEXT_NODE;
   const out: { page: number; rect: [number, number, number, number] }[] = [];
+  const displays = new Set<readonly number[]>();
   for (const span of root.querySelectorAll('.text-layer span')) {
     if (!selection.containsNode(span, true)) continue;
     const run = runForSpan.get(span);
@@ -56,6 +70,14 @@ export function selectedRunRects(
     const from = startsInText && span.contains(range.startContainer) ? range.startOffset : 0;
     const to = endsInText && span.contains(range.endContainer) ? range.endOffset : run.text.length;
     if (to <= from) continue;
+    // A display equation is where it is as a whole: one box, not a
+    // rectangle per row of glyphs.
+    const display = displayForSpan.get(span);
+    if (display) {
+      if (!displays.has(display)) out.push({ page: run.page, rect: [...display] });
+      displays.add(display);
+      continue;
+    }
     const left = run.x + (run.w * from) / run.text.length;
     const right = run.x + (run.w * to) / run.text.length;
     out.push({ page: run.page, rect: [left, run.y, right - left, run.h] });

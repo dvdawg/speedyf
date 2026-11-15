@@ -1,7 +1,8 @@
 /** Buttons on a page's display equations, for extensions that contribute
- * `equationActions`.
+ * `equationActions`, and Markup's Comment while reviewing.
  *
- * Nothing happens here unless an enabled extension contributes one: no
+ * Nothing happens here unless an enabled extension contributes one, or a
+ * review is on: no
  * request, no listener, no DOM. When one does, the page's equation blocks are
  * asked for once the browser is idle (the engine finds them at idle priority
  * too, and caches them), so scrolling never waits on detection. The blocks are
@@ -14,6 +15,7 @@
 import { createMemo, createResource, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 import { equationActions, prefetchEquationSource, runEquationAction } from './extensionStore';
+import { beginEquationComment, reviewing } from '../markup/markupStore';
 
 export interface EquationBlock {
   /** `[x, y, w, h]`, page points from the displayed page's top-left. */
@@ -71,7 +73,7 @@ const REACH_ABOVE_PT = 18;
 export default function EquationLayer(props: Props) {
   const actions = createMemo(() => equationActions());
   return (
-    <Show when={actions().length > 0}>
+    <Show when={actions().length > 0 || reviewing()}>
       <EquationButtons {...props} />
     </Show>
   );
@@ -174,6 +176,26 @@ function EquationButtons(props: Props) {
                     </button>
                   )}
                 </For>
+                {/* While reviewing (Markup), a comment on the equation as a
+                    whole, anchored to its box. */}
+                <Show when={reviewing()}>
+                  <button
+                    type="button"
+                    class="equation-action"
+                    aria-label={
+                      block().number ? `Comment on equation ${block().number}` : 'Comment'
+                    }
+                    onClick={() =>
+                      beginEquationComment({
+                        page: props.page,
+                        bbox: block().bbox,
+                        number: block().number,
+                      })
+                    }
+                  >
+                    Comment
+                  </button>
+                </Show>
               </div>
             </>
           );

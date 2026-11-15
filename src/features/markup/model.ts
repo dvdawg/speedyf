@@ -68,6 +68,7 @@ function readAnchor(v: unknown): Anchor | null {
     quads: quads && quads.length > 0 ? quads : null,
     rect,
     quote: str(o.quote),
+    ...(typeof o.quoteTex === 'string' && o.quoteTex.trim() ? { quoteTex: o.quoteTex } : {}),
   };
 }
 
@@ -221,6 +222,40 @@ export function shortQuote(text: string, max = 140): string {
   return `${(space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,;:.]+$/, '')}...`;
 }
 
+/** A quote cut to about `max` characters, never inside a `$...$` or
+ * `$$...$$`: half a formula is not a formula. */
+export function shortMathQuote(text: string, max = 140): string {
+  const t = text.replace(/\s+/g, ' ').trim();
+  if (t.length <= max) return t;
+  // Where a cut may go: a space outside math.
+  let math = false;
+  let best = -1;
+  for (let i = 0; i < t.length && i <= max; i += 1) {
+    if (t[i] === '\\') {
+      i += 1;
+      continue;
+    }
+    if (t[i] === '$') {
+      if (t[i + 1] === '$') i += 1;
+      math = !math;
+      continue;
+    }
+    if (!math && t[i] === ' ') best = i;
+  }
+  if (best <= 0) {
+    // The first formula runs past the limit: it is kept whole.
+    const end = /^\$\$.*?\$\$|^\$.*?\$/.exec(t)?.[0];
+    return end ? `${end}...` : shortQuote(t, max);
+  }
+  return `${t.slice(0, best).replace(/[\s,;:.]+$/, '')}...`;
+}
+
+/** What a comment quotes, for the letter: its words with their math as
+ * LaTeX when that was read, else as the page gave them. */
+export function anchorQuote(anchor: Anchor, max = 140): string {
+  return anchor.quoteTex ? shortMathQuote(anchor.quoteTex, max) : shortQuote(anchor.quote, max);
+}
+
 /** Every `[@key]` citation in a body, in order of first appearance. */
 export function citedKeys(text: string): string[] {
   const out: string[] = [];
@@ -323,7 +358,7 @@ export function plainLetter(input: LetterInput): string {
         .filter(Boolean)
         .join(' ');
       out.push(`  ${head}`);
-      if (c.anchor.quote.trim()) out.push(`     "${shortQuote(c.anchor.quote)}"`);
+      if (c.anchor.quote.trim()) out.push(`     "${anchorQuote(c.anchor)}"`);
       else if (c.anchor.rect) out.push('     (marked region)');
       const body = citationsAsText(c.body.trim(), input.label);
       if (body) out.push(indent(body, '     '));

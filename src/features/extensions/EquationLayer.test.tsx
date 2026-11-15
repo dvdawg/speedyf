@@ -24,6 +24,13 @@ vi.mock('./extensionStore', () => ({
   prefetchEquationSource: (docId: number) => prefetchEquationSource(docId),
 }));
 
+const [reviewing, setReviewing] = createSignal(false);
+const beginEquationComment = vi.fn((_target: unknown) => true);
+vi.mock('../markup/markupStore', () => ({
+  reviewing: () => reviewing(),
+  beginEquationComment: (target: unknown) => beginEquationComment(target),
+}));
+
 const { default: EquationLayer } = await import('./EquationLayer');
 
 const action = {
@@ -36,6 +43,8 @@ const action = {
 afterEach(() => {
   cleanup();
   setActions([]);
+  setReviewing(false);
+  beginEquationComment.mockClear();
   invoke.mockClear();
   runEquationAction.mockClear();
   prefetchEquationSource.mockClear();
@@ -93,6 +102,21 @@ describe('EquationLayer', () => {
     fireEvent.pointerMove(screen.getByTestId('space'), { clientX: 200, clientY: 220 });
     expect(screen.getByRole('button')).toBeTruthy();
     setActions([]);
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it('offers a Markup comment on the equation while reviewing', async () => {
+    setReviewing(true);
+    mount(4);
+    await idle();
+    fireEvent.pointerMove(screen.getByTestId('space'), { clientX: 200, clientY: 220 });
+    fireEvent.click(screen.getByRole('button', { name: 'Comment on equation 3' }));
+    expect(beginEquationComment).toHaveBeenCalledWith({
+      page: 4,
+      bbox: [100, 200, 300, 40],
+      number: '3',
+    });
+    setReviewing(false);
     expect(screen.queryByRole('button')).toBeNull();
   });
 });
