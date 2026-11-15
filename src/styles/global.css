@@ -7956,3 +7956,40 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   outline: none;
   box-shadow: var(--focus-ring);
 }
+
+/* A run of reference entries folded to one quiet line, "3 references";
+   opened, the entries as they are. */
+.np-ref-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0.1em 0;
+  padding: 0;
+  border: none;
+  border-radius: 2px;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 0.82em;
+  cursor: pointer;
+}
+
+.np-ref-toggle:hover {
+  color: var(--text);
+}
+
+.np-ref-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.np-ref-chevron {
+  display: inline-flex;
+  width: 12px;
+  height: 12px;
+}
+
+.np-ref-chevron svg {
+  width: 12px;
+  height: 12px;
+}

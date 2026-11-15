@@ -140,9 +140,21 @@ export type Span =
    * the words as printed, the paper, the zero-based page and the target's
    * box (top-left page points). */
   | { kind: 'xref'; text: string; key: string; page: number | null; box: Box | null; raw: string }
-  /** A reference a quoted paper printed that no item is: `[^Sim15]`, its
-   * entry in the note's `[^Sim15]: ...` line. */
-  | { kind: 'noteref'; id: string; raw: string };
+  /** A reference a quoted paper printed that no item is: `[^id]`, its
+   * entry in the note's `[^id]: ...` line, optionally followed by
+   * `{label=Sim15 at=1}`: the label the paper printed (else the one its
+   * entry opens with) and, in a citation group, its place among the
+   * group's citations. */
+  | { kind: 'noteref'; id: string; label: string | null; at: number | null; raw: string }
+  /** Citations printed as one bracket, "[Han16, Lar23, AAHLZ24]": a
+   * Pandoc group `[@a; @b]` and the reference markers right after it, or
+   * citations and markers written side by side, in the printed order. */
+  | { kind: 'group'; items: GroupItem[]; raw: string };
+
+/** One citation of a group: an item's, or a reference no item is. */
+export type GroupItem =
+  | { kind: 'cite'; cite: Citation; raw: string }
+  | { kind: 'noteref'; id: string; label: string | null; at: number | null; raw: string };
 
 /** Characters a cite key is made of: Pandoc's, less what ends a sentence. */
 const KEY = String.raw`[A-Za-z0-9_][A-Za-z0-9_:.#$%&+?<>~/-]*[A-Za-z0-9_]|[A-Za-z0-9_]`;
@@ -151,7 +163,10 @@ const BOX = String.raw`\{box=${NUM},${NUM},${NUM},${NUM}(?:\s+page=(\d{1,6}))?\}
 const BRACKET_CITE = new RegExp(String.raw`^\[@(${KEY})(?:\s*,\s*([^\]]*))?\](?:${BOX})?`);
 const BARE_CITE = new RegExp(String.raw`^@(${KEY})`);
 const XREF = new RegExp(String.raw`^\[([^\]\n]+)\]\(@([^)\s]+?)(?:#p(\d{1,6}))?\)(?:${BOX})?`);
-const NOTEREF = /^\[\^([A-Za-z0-9_.:+-]{1,80})\](?!:)/;
+const NOTEREF =
+  /^\[\^([A-Za-z0-9_.:+-]{1,80})\](?!:)(?:\{((?:\s*(?:label=(?:"[^"\n]{0,60}"|[^\s}"]{1,60})|at=\d{1,3}))+)\s*\})?/;
+/** `[@a; @b, p. 3; @c]`: a Pandoc citation of several works. */
+const GROUP_CITE = new RegExp(String.raw`^\[(@(?:${KEY})[^\];\n]*(?:;\s*@(?:${KEY})[^\];\n]*)+)\]`);
 
 function boxOf(m: RegExpExecArray, at: number): Box | null {
   return m[at] !== undefined
@@ -249,7 +264,8 @@ export function footnotesIn(text: string): Map<string, string> {
 
 /** How a `[^id]` reads: the printed label its entry opens with
  * ("[Sim15] B. Simon, ..."), else the id in brackets. */
-export function noterefLabel(id: string, entry: string | undefined): string {
+export function noterefLabel(id: string, entry: string | undefined, label?: string | null): string {
+  if (label) return `[${label}]`;
   const m = entry ? /^\[([^\]\n]{1,40})\]/.exec(entry.trim()) : null;
   return m ? `[${m[1]}]` : `[${id}]`;
 }
@@ -309,6 +325,89 @@ function closeEmphasis(text: string, at: number, mark: string): number {
   return -1;
 }
 
+/** A bracketed citation at the start of `rest`: `[@key, locator]{box=...}`,
+ * a Pandoc group `[@a; @b]`, or a reference marker `[^id]{label=...}`. */
+function citationAt(rest: string): { items: GroupItem[]; group: boolean; raw: string } | null {
+  if (rest[1] === '@') {
+    const m = BRACKET_CITE.exec(rest);
+    if (m) {
+      const locator = m[2]?.trim() || null;
+      const attrPage = m[7] !== undefined ? Number(m[7]) - 1 : null;
+      const cite: Citation = {
+        key: m[1]!,
+        locator,
+        page: locatorPage(locator) ?? (attrPage !== null && attrPage >= 0 ? attrPage : null),
+        box: boxOf(m, 3),
+      };
+      return { items: [{ kind: 'cite', cite, raw: m[0] }], group: false, raw: m[0] };
+    }
+    const g = GROUP_CITE.exec(rest);
+    if (!g) return null;
+    const items: GroupItem[] = [];
+    for (const part of g[1]!.split(';')) {
+      const one = new RegExp(String.raw`^\s*@(${KEY})(?:\s*,\s*(.*))?$`).exec(part);
+      if (!one) return null;
+      const locator = one[2]?.trim() || null;
+      items.push({
+        kind: 'cite',
+        raw: part.trim(),
+        cite: { key: one[1]!, locator, page: locatorPage(locator), box: null },
+      });
+    }
+    return { items, group: true, raw: g[0] };
+  }
+  const m = NOTEREF.exec(rest);
+  if (!m) return null;
+  const attrs = m[2] ?? '';
+  const label = /label=(?:"([^"\n]*)"|([^\s}"]+))/.exec(attrs);
+  const at = /at=(\d{1,3})/.exec(attrs);
+  return {
+    items: [
+      {
+        kind: 'noteref',
+        id: m[1]!,
+        label: label ? (label[1] ?? label[2] ?? '').trim() || null : null,
+        at: at ? Number(at[1]) : null,
+        raw: m[0],
+      },
+    ],
+    group: false,
+    raw: m[0],
+  };
+}
+
+/** The citations written side by side from `i`, as one span: a lone
+ * citation or marker as itself, several as a group in the printed order
+ * (a marker's `at` its place among the cited items before it). */
+function citationRun(text: string, i: number): { span: Span; length: number } | null {
+  const first = citationAt(text.slice(i));
+  if (!first) return null;
+  const parts = [first];
+  let end = i + first.raw.length;
+  for (;;) {
+    const next = text[end] === '[' ? citationAt(text.slice(end)) : null;
+    if (!next) break;
+    parts.push(next);
+    end += next.raw.length;
+  }
+  if (parts.length === 1 && !first.group) {
+    const only = first.items[0]!;
+    return { span: only, length: first.raw.length };
+  }
+  const items: GroupItem[] = [];
+  const placed: { item: GroupItem; at: number }[] = [];
+  for (const part of parts) {
+    for (const item of part.items) {
+      if (item.kind === 'noteref' && item.at !== null) placed.push({ item, at: item.at });
+      else items.push(item);
+    }
+  }
+  for (const { item, at } of placed.sort((a, b) => a.at - b.at)) {
+    items.splice(Math.min(at, items.length), 0, item);
+  }
+  return { span: { kind: 'group', items, raw: text.slice(i, end) }, length: end - i };
+}
+
 /** Inline spans of one line's text. */
 export function inlineSpans(text: string): Span[] {
   const out: Span[] = [];
@@ -344,23 +443,12 @@ export function inlineSpans(text: string): Span[] {
         continue;
       }
     }
-    if (c === '[' && text[i + 1] === '@') {
-      const m = BRACKET_CITE.exec(rest);
-      if (m) {
+    if (c === '[' && (text[i + 1] === '@' || text[i + 1] === '^')) {
+      const run = citationRun(text, i);
+      if (run) {
         flush();
-        const locator = m[2]?.trim() || null;
-        const attrPage = m[7] !== undefined ? Number(m[7]) - 1 : null;
-        out.push({
-          kind: 'cite',
-          raw: m[0],
-          cite: {
-            key: m[1]!,
-            locator,
-            page: locatorPage(locator) ?? (attrPage !== null && attrPage >= 0 ? attrPage : null),
-            box: boxOf(m, 3),
-          },
-        });
-        i += m[0].length;
+        out.push(run.span);
+        i += run.length;
         continue;
       }
     }
@@ -382,15 +470,6 @@ export function inlineSpans(text: string): Span[] {
       if (m) {
         flush();
         out.push({ kind: 'image', alt: m[1]!, src: m[2]! });
-        i += m[0].length;
-        continue;
-      }
-    }
-    if (c === '[' && text[i + 1] === '^') {
-      const m = NOTEREF.exec(rest);
-      if (m) {
-        flush();
-        out.push({ kind: 'noteref', id: m[1]!, raw: m[0] });
         i += m[0].length;
         continue;
       }
@@ -462,6 +541,17 @@ export function citationsIn(text: string): { cite: Citation; offset: number }[] 
           const at = block.raw.indexOf(span.raw, searchFrom);
           if (at >= 0) searchFrom = at + span.raw.length;
           out.push({ cite: span.cite, offset: block.start + Math.max(0, at) });
+        } else if (span.kind === 'group') {
+          const at = block.raw.indexOf(span.raw, searchFrom);
+          if (at >= 0) searchFrom = at + span.raw.length;
+          for (const item of span.items) {
+            if (item.kind !== 'cite') continue;
+            const inner = at >= 0 ? span.raw.indexOf(`@${item.cite.key}`) : -1;
+            out.push({
+              cite: item.cite,
+              offset: block.start + Math.max(0, at) + Math.max(0, inner),
+            });
+          }
         } else if (span.kind === 'em' || span.kind === 'strong' || span.kind === 'link') {
           walk(span.children);
         }

@@ -616,6 +616,10 @@ export interface ConvertedSelection {
   markdown: string;
   source: ShowMathArgs['source'];
   confidence: ShowMathArgs['confidence'];
+  /** Where in `markdown` a formal statement the selection opened ends,
+   * when text follows it (an exact source knows where its environment
+   * closes); absent otherwise. */
+  statementEnd?: number;
 }
 
 /** Selection conversions waiting on a converter's `selection.converted`:
@@ -811,7 +815,13 @@ export async function convertSelection(
 async function selectionConvertCall(
   extension: ExtensionRecord,
   args: unknown
-): Promise<{ selection: string; markdown: string; source: string; confidence: string } | null> {
+): Promise<{
+  selection: string;
+  markdown: string;
+  source: string;
+  confidence: string;
+  statementEnd?: number;
+} | null> {
   const record = (args ?? {}) as Record<string, unknown>;
   const mode = record.mode;
   if (mode !== 'local' && mode !== 'exact') {
@@ -837,6 +847,7 @@ async function selectionConvertCall(
         markdown: answer.markdown,
         source: answer.source,
         confidence: answer.confidence,
+        ...(answer.statementEnd !== undefined ? { statementEnd: answer.statementEnd } : {}),
       }
     : null;
 }
@@ -858,7 +869,18 @@ function readConvertedSelection(args: unknown): ConvertedSelection & { ticket: s
   if (confidence !== 'high' && confidence !== 'medium' && confidence !== 'low') {
     throw new Error('selection.converted: "confidence" must be "high", "medium" or "low"');
   }
-  return { markdown, source, confidence, ticket };
+  const end = record.statementEnd;
+  const statementEnd =
+    typeof end === 'number' && Number.isInteger(end) && end > 0 && end < markdown.length
+      ? end
+      : undefined;
+  return {
+    markdown,
+    source,
+    confidence,
+    ticket,
+    ...(statementEnd !== undefined ? { statementEnd } : {}),
+  };
 }
 
 /** Documents whose equation source the converter was already asked to
@@ -1308,7 +1330,12 @@ async function handleCall(extension: ExtensionRecord, call: CallMessage): Promis
     const answer = readConvertedSelection(call.args);
     const capture = convertingSelections.get(extension.id)?.get(answer.ticket);
     if (!capture) return { accepted: false };
-    capture({ markdown: answer.markdown, source: answer.source, confidence: answer.confidence });
+    capture({
+      markdown: answer.markdown,
+      source: answer.source,
+      confidence: answer.confidence,
+      ...(answer.statementEnd !== undefined ? { statementEnd: answer.statementEnd } : {}),
+    });
     return { accepted: true };
   }
 

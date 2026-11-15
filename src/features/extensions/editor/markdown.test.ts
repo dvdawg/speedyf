@@ -225,6 +225,8 @@ describe('statements, cross-references and quoted references', () => {
     expect(inlineSpans('as in [^Sim15].')[1]).toEqual({
       kind: 'noteref',
       id: 'Sim15',
+      label: null,
+      at: null,
       raw: '[^Sim15]',
     });
     const entry = '[^rz26-12]: [12] B. Simon, Spectral theory (2015).';
@@ -251,5 +253,50 @@ describe('statements, cross-references and quoted references', () => {
     expect(statementHead('**Theorem**. Every')).toMatchObject({ number: null, title: null });
     expect(statementHead('**Bold** words')).toBeNull();
     expect(statementHead('Theorem 2. Plain')).toBeNull();
+  });
+});
+
+describe('citations printed as one bracket', () => {
+  it('reads a Pandoc group and the markers after it in the printed order', () => {
+    const spans = inlineSpans('by [@han2016; @aahlz2024][^Lar23]{at=1}, it holds');
+    expect(spans).toHaveLength(3);
+    const group = spans[1]!;
+    expect(group.kind).toBe('group');
+    if (group.kind !== 'group') return;
+    expect(group.raw).toBe('[@han2016; @aahlz2024][^Lar23]{at=1}');
+    expect(group.items.map((it) => (it.kind === 'cite' ? `@${it.cite.key}` : `^${it.id}`))).toEqual(
+      ['@han2016', '^Lar23', '@aahlz2024']
+    );
+  });
+
+  it('reads citations written side by side as one group, and a group of items alone', () => {
+    const [side] = inlineSpans('[@han2016][^Lar23][@aahlz2024]');
+    expect(side!.kind).toBe('group');
+    if (side!.kind === 'group') {
+      expect(side!.items.map((it) => it.kind)).toEqual(['cite', 'noteref', 'cite']);
+    }
+    const [all] = inlineSpans('[@a; @b, p. 3]');
+    expect(all).toMatchObject({
+      kind: 'group',
+      items: [
+        { kind: 'cite', cite: { key: 'a', locator: null } },
+        { kind: 'cite', cite: { key: 'b', locator: 'p. 3', page: 2 } },
+      ],
+    });
+    // A page link after a space is not part of the group before it.
+    expect(inlineSpans('[@a; @b] [@k, p. 2]{box=1,2,3,4}').map((s) => s.kind)).toEqual([
+      'group',
+      'text',
+      'cite',
+    ]);
+  });
+
+  it('reads a marker label and place', () => {
+    expect(inlineSpans('[^simon2015almost]{label="Simon 2015" at=2}')[0]).toMatchObject({
+      kind: 'noteref',
+      id: 'simon2015almost',
+      label: 'Simon 2015',
+      at: 2,
+    });
   });
 });

@@ -187,8 +187,115 @@ describe('statements and links in the note', () => {
     )!;
     fireEvent.click(link);
     expect(followExternalLink).toHaveBeenCalledWith('https://arxiv.org/abs/1501.01234');
-    // The entry line itself is a quiet reference entry.
+    // The entry line itself is folded away, and opens as a quiet entry.
+    expect(view.container.querySelector('.np-ref-entry')).toBeNull();
+    fireEvent.click(view.container.querySelector('.np-ref-toggle')!);
+    await settle();
     expect(view.container.querySelector('.np-ref-entry')!.textContent).toContain('[Sim15]');
+  });
+});
+
+const ENTRIES = [
+  '> As in [^Sim15] and [^Lar23], see [^Kel99]. [@rz26, p. 2]',
+  '',
+  '[^Sim15]: [Sim15] B. Simon, Spectral theory, arXiv:1501.01234 (2015).',
+  '[^Lar23]: [Lar23] L. Larsen, Blocks of random matrices (2023).',
+  '[^Kel99]: [Kel99] K. Keller, Overlaps (1999).',
+  '',
+  'After the entries.',
+].join('\n');
+
+describe('reference entries folded', () => {
+  it('folds a run of entries to one line with its count, closed by default', async () => {
+    const { view } = mount(ENTRIES);
+    await settle();
+    const toggle = view.container.querySelector<HTMLButtonElement>('.np-ref-toggle')!;
+    expect(toggle.tagName).toBe('BUTTON');
+    expect(toggle.textContent).toBe('3 references');
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    // An icon, not a character, says it opens.
+    expect(toggle.querySelector('svg')).toBeTruthy();
+    expect(view.container.querySelectorAll('.np-ref-entry')).toHaveLength(0);
+    expect(view.container.textContent).toContain('After the entries.');
+    expect(view.container.querySelectorAll('.np-ref-toggle')).toHaveLength(1);
+  });
+
+  it('opens and closes, by click or from the keyboard', async () => {
+    const { view } = mount(ENTRIES);
+    await settle();
+    const toggle = view.container.querySelector<HTMLButtonElement>('.np-ref-toggle')!;
+    fireEvent.click(toggle);
+    await settle();
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    const entries = [...view.container.querySelectorAll('.np-ref-entry')];
+    expect(entries.map((e) => e.textContent!.slice(0, 7))).toEqual([
+      '[Sim15]',
+      '[Lar23]',
+      '[Kel99]',
+    ]);
+    fireEvent.click(toggle);
+    await settle();
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(view.container.querySelectorAll('.np-ref-entry')).toHaveLength(0);
+    // A native button: Enter and Space press it, and focus shows.
+    toggle.focus();
+    expect(document.activeElement).toBe(toggle);
+  });
+
+  it('keeps every marker previewing its entry while folded', async () => {
+    const { view } = mount(ENTRIES);
+    await settle();
+    const refs = [...view.container.querySelectorAll<HTMLButtonElement>('.np-cite.is-reference')];
+    expect(refs.map((r) => r.textContent)).toEqual(['[Sim15]', '[Lar23]', '[Kel99]']);
+    fireEvent.pointerEnter(refs[1]!);
+    await settle(400);
+    expect(previewShown()).toEqual({
+      kind: 'reference',
+      label: '[Lar23]',
+      text: 'L. Larsen, Blocks of random matrices (2023).',
+    });
+  });
+
+  it('shows the source of every entry in Source mode', async () => {
+    const { view } = mount(ENTRIES);
+    await settle();
+    fireEvent.click(view.container.querySelector('.note-source-toggle')!);
+    await settle();
+    const source = view.container.querySelector<HTMLTextAreaElement>('.note-source')!;
+    expect(source.value).toBe(ENTRIES);
+  });
+});
+
+describe('citations printed as one bracket', () => {
+  const GROUPED = [
+    'By [@rz26; @han2016][^Lar23]{at=1}, it holds.',
+    '',
+    '[^Lar23]: [Lar23] L. Larsen, Blocks of random matrices (2023).',
+  ].join('\n');
+
+  it('draws a mixed group as one bracket, each label a link in the printed order', async () => {
+    const { view } = mount(GROUPED);
+    await settle();
+    const group = view.container.querySelector('.np-cite-group')!;
+    expect(group.textContent).toBe('[RZ26, Lar23, @han2016]');
+    const links = [...group.querySelectorAll<HTMLButtonElement>('button')];
+    expect(links.map((l) => l.textContent)).toEqual(['RZ26', 'Lar23', '@han2016']);
+    // The brackets and commas are the text's own, not links.
+    expect(links.every((l) => !/[[\],]/.test(l.textContent!))).toBe(true);
+    // An item opens its paper; a reference no item is previews its entry.
+    fireEvent.click(links[0]!);
+    expect(events.at(-1)).toMatchObject({ event: 'activate', cite: { key: 'rz26' } });
+    fireEvent.pointerEnter(links[1]!);
+    await settle(400);
+    expect(previewShown()).toMatchObject({ kind: 'reference', label: '[Lar23]' });
+  });
+
+  it('draws a group of items alone as one bracket', async () => {
+    const { view } = mount('Both [@rz26; @rz26, p. 3] agree.');
+    await settle();
+    const group = view.container.querySelector('.np-cite-group')!;
+    expect(group.textContent).toBe('[RZ26, RZ26, p. 3]');
+    expect(group.querySelectorAll('button')).toHaveLength(2);
   });
 });
 
@@ -240,5 +347,28 @@ describe('citing a statement from the @ picker', () => {
     fireEvent.keyDown(field, { key: 'Enter' });
     await settle();
     expect(state.text).toBe('See [@rz26, Eq. (3)]{box=100,300,300,30 page=2}');
+  });
+});
+
+describe('a statement and the paragraph quoted after it', () => {
+  it('draws the statement italic and the paragraph after it upright, apart', async () => {
+    const { view } = mount(
+      [
+        '> **Proposition 2.2** (Moments of two block overlaps). Let $P$ be a distribution.',
+        '>',
+        '> [@rz26, p. 2]{box=72,100,468,80}',
+        '',
+        '> This result is analogous to the overlap estimate of Simon. [@rz26, p. 2]',
+      ].join('\n')
+    );
+    await settle();
+    const statement = view.container.querySelector('.np-statement')!;
+    expect(statement.classList.contains('is-italic')).toBe(true);
+    expect(statement.textContent).not.toContain('analogous');
+    const quotes = [...view.container.querySelectorAll('.np-quote')];
+    expect(quotes).toHaveLength(1);
+    expect(quotes[0]!.textContent).toContain('This result is analogous');
+    expect(quotes[0]!.closest('.np-statement')).toBeNull();
+    expect(quotes[0]!.querySelector('.np-statement-body')).toBeNull();
   });
 });

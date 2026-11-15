@@ -171,3 +171,29 @@ describe('statements, cross-references and quoted references on export', () => {
     );
   });
 });
+
+describe('citations printed as one bracket, on export', () => {
+  const NOTE = [
+    '> By [@han2016; @aahlz2024][^Lar23]{at=1}, it holds.',
+    '',
+    '[^Lar23]: [Lar23] L. Larsen, Blocks (2023).',
+  ].join('\n');
+
+  it('keeps the Pandoc group and the footnote in Markdown, without the place hint', () => {
+    expect(exportMarkdown(NOTE, 'notes-assets').text).toBe(
+      [
+        '> By [@han2016; @aahlz2024][^Lar23], it holds.',
+        '',
+        '[^Lar23]: [Lar23] L. Larsen, Blocks (2023).',
+      ].join('\n')
+    );
+  });
+
+  it('writes one \\cite for the items and the reference no item is as its footnote', () => {
+    const latex = noteToLatex(NOTE);
+    expect(latex).toContain(
+      'By \\cite{han2016,aahlz2024}[Lar23]\\footnote{L. Larsen, Blocks (2023).}, it holds.'
+    );
+    expect(noteToLatex('Both [@a; @b] agree.')).toContain('Both \\cite{a,b} agree.');
+  });
+});

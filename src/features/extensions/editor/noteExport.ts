@@ -51,7 +51,7 @@ function outsideCode(line: string, change: (part: string) => string): string {
  * `{box=...}` a page link or a statement citation carries for SpeedyF
  * dropped, so `[@key, p. 12]` and `[@key, Prop. 2.2]` are plain Pandoc,
  * and a cross-reference into a paper (`[Theorem 2.1](@key#p3){box=...}`)
- * its words. Reference entries (`[^Sim15]: ...`) are Pandoc footnotes
+ * its words; a reference marker's `{label=... at=...}` goes too. Reference entries (`[^Sim15]: ...`) are Pandoc footnotes
  * already. `assets` lists the pictures to copy, as the note names them. */
 export function exportMarkdown(text: string, folder: string): { text: string; assets: string[] } {
   const assets: string[] = [];
@@ -63,6 +63,10 @@ export function exportMarkdown(text: string, folder: string): { text: string; as
         outsideCode(line, (part) =>
           part
             .replace(/(\[@[^\]\n]*\])\{box=[^}\n]*\}/g, '$1')
+            .replace(
+              /(\[\^[A-Za-z0-9_.:+-]{1,80}\])\{(?:\s*(?:label=(?:"[^"\n]*"|[^\s}"]+)|at=\d{1,3}))+\s*\}/g,
+              '$1'
+            )
             .replace(/\[([^\]\n]+)\]\(@[^)\s]+\)(?:\{box=[^}\n]*\})?/g, '$1')
             .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (whole, alt: string, src: string) => {
               if (!isNoteAsset(src)) return whole;
@@ -182,8 +186,27 @@ function inlineLatex(spans: Span[], opts: LatexOptions): string {
         break;
       case 'noteref': {
         const entry = opts.notes?.get(span.id);
-        line += escapeLatex(noterefLabel(span.id, entry));
+        line += escapeLatex(noterefLabel(span.id, entry, span.label));
         if (entry) line += `\\footnote{${escapeLatex(noterefText(entry))}}`;
+        break;
+      }
+      case 'group': {
+        // The items' citations as one \cite (the bibliography style orders
+        // them), one with a locator on its own, then each reference no
+        // item is as its printed label with its entry as a footnote.
+        const plain = span.items.flatMap((it) =>
+          it.kind === 'cite' && !it.cite.locator ? [keyOf(it.cite)] : []
+        );
+        if (plain.length > 0) line += `\\cite{${[...new Set(plain)].join(',')}}`;
+        for (const it of span.items) {
+          if (it.kind === 'cite' && it.cite.locator) {
+            line += `\\cite[${latexLocator(it.cite.locator)}]{${keyOf(it.cite)}}`;
+          } else if (it.kind === 'noteref') {
+            const entry = opts.notes?.get(it.id);
+            line += escapeLatex(noterefLabel(it.id, entry, it.label));
+            if (entry) line += `\\footnote{${escapeLatex(noterefText(entry))}}`;
+          }
+        }
         break;
       }
       case 'image': {

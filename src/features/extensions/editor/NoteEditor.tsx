@@ -35,6 +35,7 @@ import {
   type JSX,
 } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
+import { IconChevronDown, IconChevronRight } from '../../../components/icons';
 import MathText, { MathFormula } from '../../../components/MathText';
 import { followExternalLink } from '../../../lib/links/followExternalLink';
 import { engine } from '../../../lib/transport/engine';
@@ -60,6 +61,7 @@ import {
   sourceOffset,
   statementHead,
   type Citation,
+  type GroupItem,
   type Span,
 } from './markdown';
 import NotePreview, { previewLeave, previewSoon, type PreviewContent } from './NotePreview';
@@ -251,6 +253,39 @@ function EditorBody(props: BodyProps) {
   const [stmt, setStmt] = createSignal<StatementPick | null>(null);
   /** The note's reference entries (`[^id]: ...`), by id. */
   const notes = createMemo(() => footnotesIn(s.text()));
+  /** Runs of reference entries, folded to one line unless opened here:
+   * the run each entry block is in (by its first block's id), and how many
+   * entries each run has. */
+  const runs = createMemo(() => {
+    const of = new Map<number, number>();
+    const count = new Map<number, number>();
+    let first: number | null = null;
+    for (const block of blocks()) {
+      const entry = block.kind === 'line' && lineShape(block.raw).kind === 'footnote';
+      if (!entry) {
+        first = null;
+        continue;
+      }
+      if (first === null) first = block.id;
+      of.set(block.id, first);
+      count.set(first, (count.get(first) ?? 0) + 1);
+    }
+    return { of, count };
+  });
+  const [openRuns, setOpenRuns] = createSignal<ReadonlySet<number>>(new Set());
+  const toggleRun = (id: number) =>
+    setOpenRuns((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  /** Whether a run is shown: opened, or holding the block being edited. */
+  const runOpen = (id: number) => {
+    if (openRuns().has(id)) return true;
+    const editing = active();
+    return editing !== null && runs().of.get(editing.id) === id;
+  };
   /** Absolute caret while a block is being edited. */
   let caret = 0;
   /** Where the active block starts, and its text as last committed. */
@@ -1019,113 +1054,134 @@ function EditorBody(props: BodyProps) {
             <For each={blocks()}>
               {(block) => (
                 <>
+                  <Show when={runs().count.get(block.id)}>
+                    {(count) => (
+                      <button
+                        type="button"
+                        class="np-ref-toggle"
+                        aria-expanded={runOpen(block.id)}
+                        onClick={() => toggleRun(block.id)}
+                      >
+                        <span class="np-ref-chevron" aria-hidden="true">
+                          {runOpen(block.id) ? <IconChevronDown /> : <IconChevronRight />}
+                        </span>
+                        {count() === 1 ? '1 reference' : `${count()} references`}
+                      </button>
+                    )}
+                  </Show>
                   <Show
-                    when={active() === block}
-                    fallback={
-                      <Show when={!empty()}>
-                        <div
-                          class="note-block"
-                          classList={{ 'is-flash': flash() === block.id }}
-                          data-block={block.id}
-                          onClick={(e) => onBlockClick(e, block)}
-                        >
-                          {drawBlock({
-                            block,
-                            index: () => props.index,
-                            notes,
-                            noteKey: props.noteKey,
-                            onCite: activateCitation,
-                          })}
-                        </div>
-                      </Show>
+                    when={
+                      runs().of.get(block.id) === undefined || runOpen(runs().of.get(block.id)!)
                     }
                   >
-                    <div class="note-block is-active" data-block={block.id}>
-                      <textarea
-                        ref={(el) => {
-                          field = el;
-                          el.value = activeRaw;
-                          // No inline writing suggestions or their affordance
-                          // beside the line: the page shows only the caret.
-                          el.setAttribute('writingsuggestions', 'false');
-                        }}
-                        class="note-field"
-                        classList={{ 'is-mono': block.kind === 'math' || block.kind === 'code' }}
-                        placeholder={blank() ? props.placeholder : undefined}
-                        rows={1}
-                        spellcheck={true}
-                        aria-label="Note line"
-                        onInput={onInput}
-                        onKeyDown={onKeyDown}
-                        onPaste={onPaste}
-                        onCompositionStart={() => (composing = true)}
-                        onCompositionEnd={() => {
-                          composing = false;
-                          if (deferredExternal) {
-                            deferredExternal = false;
-                            applyExternal(null);
-                          }
-                        }}
-                        onBlur={(e) => {
-                          // Focus moving to the picker or the head is not leaving.
-                          const next = e.relatedTarget as HTMLElement | null;
-                          if (next?.closest('.note-picker')) return;
-                          if (!composing) deactivate();
-                        }}
-                      />
-                      {/* The line being typed stays raw; any math in it is
-                        shown typeset just under it as it is written. */}
-                      <Show when={liveMath(liveRaw())}>
-                        {(kind) => (
-                          <div class="note-live-preview" aria-hidden="true">
+                    <Show
+                      when={active() === block}
+                      fallback={
+                        <Show when={!empty()}>
+                          <div
+                            class="note-block"
+                            classList={{ 'is-flash': flash() === block.id }}
+                            data-block={block.id}
+                            onClick={(e) => onBlockClick(e, block)}
+                          >
                             {drawBlock({
-                              block: { ...block, kind: kind(), raw: liveRaw() },
+                              block,
                               index: () => props.index,
                               notes,
                               noteKey: props.noteKey,
-                              onCite: () => {},
+                              onCite: activateCitation,
                             })}
                           </div>
-                        )}
-                      </Show>
-                      <Show
-                        when={
-                          !picker() &&
-                          stmt() &&
-                          (statementRows.loading || statementMatches().length > 0)
-                        }
-                      >
-                        <StatementPicker
-                          rows={statementMatches()}
-                          loading={statementRows.loading}
-                          index={stmt()?.index ?? -1}
-                          onPick={pickStatement}
+                        </Show>
+                      }
+                    >
+                      <div class="note-block is-active" data-block={block.id}>
+                        <textarea
+                          ref={(el) => {
+                            field = el;
+                            el.value = activeRaw;
+                            // No inline writing suggestions or their affordance
+                            // beside the line: the page shows only the caret.
+                            el.setAttribute('writingsuggestions', 'false');
+                          }}
+                          class="note-field"
+                          classList={{ 'is-mono': block.kind === 'math' || block.kind === 'code' }}
+                          placeholder={blank() ? props.placeholder : undefined}
+                          rows={1}
+                          spellcheck={true}
+                          aria-label="Note line"
+                          onInput={onInput}
+                          onKeyDown={onKeyDown}
+                          onPaste={onPaste}
+                          onCompositionStart={() => (composing = true)}
+                          onCompositionEnd={() => {
+                            composing = false;
+                            if (deferredExternal) {
+                              deferredExternal = false;
+                              applyExternal(null);
+                            }
+                          }}
+                          onBlur={(e) => {
+                            // Focus moving to the picker or the head is not leaving.
+                            const next = e.relatedTarget as HTMLElement | null;
+                            if (next?.closest('.note-picker')) return;
+                            if (!composing) deactivate();
+                          }}
                         />
-                      </Show>
-                      <Show when={picker() && matches().length > 0}>
-                        <div class="note-picker" role="listbox" aria-label="Cite an item">
-                          <For each={matches()}>
-                            {(entry, i) => (
-                              <div
-                                role="option"
-                                class="note-picker-row"
-                                aria-selected={i() === (picker()?.index ?? 0)}
-                                classList={{ 'is-current': i() === (picker()?.index ?? 0) }}
-                                onMouseDown={(e) => {
-                                  e.preventDefault();
-                                  pick(entry);
-                                }}
-                              >
-                                <span class="note-picker-title">
-                                  <MathText text={entry.title || entry.label} />
-                                </span>
-                                <span class="note-picker-detail">{entry.detail}</span>
-                              </div>
-                            )}
-                          </For>
-                        </div>
-                      </Show>
-                    </div>
+                        {/* The line being typed stays raw; any math in it is
+                        shown typeset just under it as it is written. */}
+                        <Show when={liveMath(liveRaw())}>
+                          {(kind) => (
+                            <div class="note-live-preview" aria-hidden="true">
+                              {drawBlock({
+                                block: { ...block, kind: kind(), raw: liveRaw() },
+                                index: () => props.index,
+                                notes,
+                                noteKey: props.noteKey,
+                                onCite: () => {},
+                              })}
+                            </div>
+                          )}
+                        </Show>
+                        <Show
+                          when={
+                            !picker() &&
+                            stmt() &&
+                            (statementRows.loading || statementMatches().length > 0)
+                          }
+                        >
+                          <StatementPicker
+                            rows={statementMatches()}
+                            loading={statementRows.loading}
+                            index={stmt()?.index ?? -1}
+                            onPick={pickStatement}
+                          />
+                        </Show>
+                        <Show when={picker() && matches().length > 0}>
+                          <div class="note-picker" role="listbox" aria-label="Cite an item">
+                            <For each={matches()}>
+                              {(entry, i) => (
+                                <div
+                                  role="option"
+                                  class="note-picker-row"
+                                  aria-selected={i() === (picker()?.index ?? 0)}
+                                  classList={{ 'is-current': i() === (picker()?.index ?? 0) }}
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    pick(entry);
+                                  }}
+                                >
+                                  <span class="note-picker-title">
+                                    <MathText text={entry.title || entry.label} />
+                                  </span>
+                                  <span class="note-picker-detail">{entry.detail}</span>
+                                </div>
+                              )}
+                            </For>
+                          </div>
+                        </Show>
+                      </div>
+                    </Show>
                   </Show>
                   <For each={decorSlots().get(block.id) ?? []}>
                     {(id) => (
@@ -1383,15 +1439,23 @@ export function citeText(label: string, locator: string | null): string {
   return /^\[.*\]$/.test(label) ? `${label.slice(0, -1)}, ${locator}]` : `${label}, ${locator}`;
 }
 
+/** A label without the brackets around it: "[Han16]" -> "Han16". */
+const unbracket = (label: string) => label.replace(/^\[(.*)\]$/, '$1');
+
 function CiteToken(props: {
   cite: Citation;
   raw: string;
   index: CitationIndex;
   onCite: (c: Citation) => void;
+  /** In a group: the label alone, the group drawing the brackets. */
+  bare?: boolean;
 }) {
   const entry = () => props.index.byKey.get(props.cite.key);
   const text = () => {
     const e = entry();
+    if (props.bare) {
+      return e ? unbracket(citeText(e.label, props.cite.locator)) : `@${props.cite.key}`;
+    }
     return e ? citeText(e.label, props.cite.locator) : props.raw;
   };
   const preview = (): PreviewContent | null => {
@@ -1472,9 +1536,14 @@ function XrefToken(props: {
 
 /** A reference the quoted paper printed that no item is: its printed
  * label, dim, its entry on hover. */
-function NoterefToken(props: { id: string; notes: () => Map<string, string> }) {
+function NoterefToken(props: {
+  id: string;
+  label: string | null;
+  notes: () => Map<string, string>;
+  bare?: boolean;
+}) {
   const entry = () => props.notes().get(props.id);
-  const label = () => noterefLabel(props.id, entry());
+  const label = () => noterefLabel(props.id, entry(), props.label);
   const preview = (): PreviewContent | null => {
     const e = entry();
     return e ? { kind: 'reference', label: label(), text: noterefText(e) } : null;
@@ -1489,8 +1558,43 @@ function NoterefToken(props: { id: string; notes: () => Map<string, string> }) {
       }}
       {...previewHandlers(preview)}
     >
-      {label()}
+      {props.bare ? unbracket(label()) : label()}
     </button>
+  );
+}
+
+/** Citations printed as one bracket, "[Han16, Lar23, AAHLZ24]": the
+ * brackets and commas in the text's colour, each label a link of its own
+ * in the printed order. */
+function CiteGroup(props: {
+  items: GroupItem[];
+  index: CitationIndex;
+  onCite: (c: Citation) => void;
+  notes: () => Map<string, string>;
+}) {
+  return (
+    <span class="np-cite-group">
+      [
+      <For each={props.items}>
+        {(item, i) => (
+          <>
+            {i() > 0 ? ', ' : ''}
+            {item.kind === 'cite' ? (
+              <CiteToken
+                cite={item.cite}
+                raw={item.raw}
+                index={props.index}
+                onCite={props.onCite}
+                bare
+              />
+            ) : (
+              <NoterefToken id={item.id} label={item.label} notes={props.notes} bare />
+            )}
+          </>
+        )}
+      </For>
+      ]
+    </span>
   );
 }
 
@@ -1552,7 +1656,22 @@ function Spans(props: {
           case 'xref':
             return <XrefToken span={span} index={props.index} onCite={props.onCite} />;
           case 'noteref':
-            return <NoterefToken id={span.id} notes={props.notes ?? (() => NO_NOTES)} />;
+            return (
+              <NoterefToken
+                id={span.id}
+                label={span.label}
+                notes={props.notes ?? (() => NO_NOTES)}
+              />
+            );
+          case 'group':
+            return (
+              <CiteGroup
+                items={span.items}
+                index={props.index}
+                onCite={props.onCite}
+                notes={props.notes ?? (() => NO_NOTES)}
+              />
+            );
         }
       }}
     </For>

@@ -48,6 +48,15 @@ export function plainText(spans: Span[], label?: (cite: Citation, raw: string) =
       case 'cite':
         out += label ? label(span.cite, span.raw) : span.raw;
         break;
+      case 'group':
+        out += `[${span.items
+          .map((it) =>
+            it.kind === 'cite'
+              ? (label ? label(it.cite, it.raw) : it.cite.key).replace(/^\[|\]$/g, '')
+              : (it.label ?? it.id)
+          )
+          .join(', ')}]`;
+        break;
     }
   }
   return out;
