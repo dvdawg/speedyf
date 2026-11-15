@@ -1439,18 +1439,34 @@ fn opens_proof(page: &Page, line: usize) -> bool {
 }
 
 /// A theorem's statement: from its label down to "Proof", the next labelled
-/// block, or a gap. The region, and the lines in it in reading order.
+/// block, a gap, or - for a statement set in a face of its own (amsthm's
+/// italic `plain` style) - the first prose line back in the body face: the
+/// paragraph after it, which LaTeX sets only a little apart. The region,
+/// and the lines in it in reading order.
 fn statement_region(page: &Page, head: &Head) -> (Rect, Vec<usize>) {
     let line = &page.lines[head.line];
     let top = line.top;
     let mut region = line_rect(line);
     let mut lines = vec![head.line];
+    let prose = |i: usize| {
+        let l = &page.lines[i];
+        !l.is_display() && l.math_share < 0.2
+    };
+    // The face the statement's words are set in: its first prose line's.
+    let mut own_face: Option<bool> = None;
     for i in following_lines(page, head.line, 1.6, |i| {
         !opens_proof(page, i) && !starts_another(page, i)
     }) {
         let l = &page.lines[i];
         if top - l.bottom > 260.0 {
             break;
+        }
+        if prose(i) {
+            match own_face {
+                None => own_face = Some(l.font != page.body_font),
+                Some(true) if l.font == page.body_font => break,
+                _ => {}
+            }
         }
         region = union(region, line_rect(l));
         lines.push(i);

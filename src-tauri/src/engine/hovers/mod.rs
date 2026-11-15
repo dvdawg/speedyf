@@ -662,6 +662,41 @@ mod tests {
     }
 
     #[test]
+    fn an_italic_statement_ends_where_the_upright_paragraph_after_it_starts() {
+        // RZ26: Proposition 2.2, then "This result is analogous to ..." set
+        // only a line's gap below it, no proof between.
+        let mut b = Builder::new();
+        b.line(720.0, BODY, "Some running text before the statements here.");
+        let x = b.text(72.0, 700.0, BOLD, "Proposition 2.2");
+        b.text(x, 700.0, BODY, " (Moments of two block");
+        b.newline();
+        b.line(688.0, ITALIC, "overlaps). Let P be a distribution on the");
+        b.line(676.0, ITALIC, "cube. Then the moments agree.");
+        b.line(
+            662.0,
+            BODY,
+            "This result is analogous to the overlap estimate of",
+        );
+        b.line(
+            650.0,
+            BODY,
+            "Simon, and the bound is tight in general here.",
+        );
+        let mut builder = IndexBuilder::new(1);
+        builder.add_page(Some(b.page()));
+        let result = builder.finish();
+        let prop = &result.statements[0];
+        assert!(
+            prop.text.ends_with("Then the moments agree."),
+            "{}",
+            prop.text
+        );
+        assert!(!prop.text.contains("analogous"));
+        let bottom = prop.region[1];
+        assert!(bottom > 662.0 && bottom < 676.0, "region bottom {bottom}");
+    }
+
+    #[test]
     fn statements_are_recalled_by_fingerprint() {
         remember_statements("st-1".into(), Arc::new(Vec::new()));
         assert!(recall_statements("st-1").is_some());
