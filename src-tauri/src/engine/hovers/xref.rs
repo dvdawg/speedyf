@@ -658,8 +658,49 @@ fn list_separator(text: &[char], from: usize) -> Option<usize> {
     None
 }
 
-/// Words after which a bare "(12)" reads as an equation.
-const BARE_TRIGGERS: &[&str] = &["in", "from", "by", "using"];
+/// Words after which a bare "(12)" reads as an equation: the prepositions
+/// and verbs a proof uses to point at one, and the nouns that name what an
+/// equation states ("the VC bound (3)", "the estimate (5)"). Precision comes
+/// from resolution too - a mention links only to a tag the document sets.
+const BARE_TRIGGERS: &[&str] = &[
+    "in",
+    "from",
+    "by",
+    "using",
+    "and",
+    "with",
+    "via",
+    "see",
+    "cf",
+    "apply",
+    "applying",
+    "combine",
+    "combining",
+    "substitute",
+    "substituting",
+    "plug",
+    "plugging",
+    "bound",
+    "bounds",
+    "estimate",
+    "estimates",
+    "inequality",
+    "inequalities",
+    "identity",
+    "identities",
+    "equation",
+    "equations",
+    "relation",
+    "formula",
+    "condition",
+    "constraint",
+    "assumption",
+    "expansion",
+    "expression",
+    "recursion",
+    "recurrence",
+    "decomposition",
+];
 
 /// Phrases after a mention that make it about some other work.
 const ELSEWHERE: &[&str] = &[
@@ -865,7 +906,7 @@ fn mention_at(page: &Page, start: usize) -> Option<(Found, usize)> {
             .collect();
         return Some((found, end));
     }
-    // A bare "(12)" after "in", "from", "by", "using".
+    // A bare "(12)" after one of BARE_TRIGGERS.
     if at(text, start) == Some('(') {
         return None;
     }
@@ -877,6 +918,12 @@ fn mention_at(page: &Page, start: usize) -> Option<(Found, usize)> {
         .collect::<String>()
         .to_lowercase();
     if !BARE_TRIGGERS.contains(&word.as_str()) || at(text, word_end) != Some(' ') {
+        return None;
+    }
+    // "see [12] and (12)": after a bracketed citation, "and" joins another
+    // citation, not an equation.
+    let before: String = text[start.saturating_sub(4)..start].iter().collect();
+    if word == "and" && before.trim_end().ends_with(']') {
         return None;
     }
     let paren_at = word_end + 1;
@@ -1866,7 +1913,7 @@ mod tests {
         assert_eq!(labels("in \u{00A7}3 we"), vec!["3"]);
         assert_eq!(labels("in Appendix B we"), vec!["B"]);
         assert_eq!(labels("see Algorithm 1 for"), vec!["1"]);
-        assert_eq!(labels("see (A3) from Eq. (A3) and"), vec!["A3"]);
+        assert_eq!(labels("see (A3) from Eq. (A3) and"), vec!["A3", "A3"]);
         assert_eq!(labels("in Eq. (2.14), and"), vec!["2.14"]);
     }
 
@@ -1925,10 +1972,19 @@ mod tests {
         assert_eq!(labels("substituting in (12) gives"), vec!["12"]);
         assert_eq!(labels("from (11) and (12) we"), vec!["11", "12"]);
         assert_eq!(labels("using (3) we"), vec!["3"]);
+        // The words papers put before an equation number.
+        assert_eq!(labels("the VC bound (3). By"), vec!["3"]);
+        assert_eq!(labels("Applying (3) to the"), vec!["3"]);
+        assert_eq!(labels("the lower bound (4) with"), vec!["4"]);
+        assert_eq!(labels("relative estimate (3), which"), vec!["3"]);
+        assert_eq!(labels("of A(S) and (4), it holds"), vec!["4"]);
         for text in [
             "as reported (12) previously",
             "the year (2019) was",
             "in (2019) it was",
+            "the bound (2019) of",
+            "and (a) or",
+            "volume 36(4):929",
             "items (a) and (b)",
             "see [12] and (12)",
             "pages (12) to (15)",
