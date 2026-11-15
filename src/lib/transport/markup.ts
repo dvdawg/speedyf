@@ -5,6 +5,7 @@
  * captured (`src-tauri/src/markup_capture.rs`).
  */
 import { invoke } from '@tauri-apps/api/core';
+import { emit, listen, type UnlistenFn } from '@tauri-apps/api/event';
 
 /** Display-normalized page space: y-up, origin at the displayed crop-box
  * bottom-left, pt (the annotation tools' space). */
@@ -92,6 +93,16 @@ export const markupApi = {
   /** Write the annotated copy. macOS only while sheets are rendered by WebKit. */
   exportPdf: (request: MarkupExportRequest): Promise<MarkupExportResult> =>
     invoke('markup_export', { request }),
+};
+
+/** Development builds only: the app's markup self-test drives the real
+ * export from the main window (`src-tauri/src/markup_selftest.rs`). */
+export const markupSelftestApi = {
+  ready: (): Promise<void> => emit('markup-selftest:ready'),
+  onRun: (cb: (run: { source: string; dest: string }) => void): Promise<UnlistenFn> =>
+    listen<{ source: string; dest: string }>('markup-selftest:run', (e) => cb(e.payload)),
+  done: (report: { ok: boolean; message: string; detail?: unknown }): Promise<void> =>
+    emit('markup-selftest:done', report),
 };
 
 /** One sheet as the print page renders it. */

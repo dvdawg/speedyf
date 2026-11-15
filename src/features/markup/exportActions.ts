@@ -21,8 +21,9 @@ import {
   reviewFor,
   settleLabelSources,
 } from './markupStore';
-import { markupApi } from '../../lib/transport/markup';
+import { markupApi, type MarkupExportResult } from '../../lib/transport/markup';
 import type { MarkupTransport } from './markupStore';
+import type { MarkupDoc } from './types';
 
 let transport: MarkupTransport = markupApi;
 let measure: MeasureFn = measureBlocks;
@@ -84,6 +85,33 @@ function pageSize(page: number): { w: number; h: number } | null {
 
 let exporting = false;
 
+/** Lay out `review` of the active document and write it to `dest`. */
+export async function exportReview(
+  source: string,
+  review: MarkupDoc,
+  dest: string
+): Promise<MarkupExportResult> {
+  const doc = activeTab()?.documentStore.state;
+  if (!doc) throw new Error('no document is open');
+  await Promise.all([loadMath(), settleLabelSources(review.comments)]);
+  const request = await buildExportRequest({
+    source,
+    dest,
+    title: paperTitle(),
+    date: longDate(new Date()),
+    summary: review.summary,
+    entries: entriesOf(review),
+    sourcePages: doc.searchIndex.total || doc.pages.length,
+    pageSize,
+    marginPt: DEFAULT_MARGIN_PT,
+    math: mathRenderer(),
+    cite: label,
+    reference,
+    measure,
+  });
+  return transport.exportPdf(request);
+}
+
 export async function exportMarkupPdf(): Promise<string | null> {
   if (exporting) return null;
   const review = readyReview();
@@ -104,23 +132,7 @@ export async function exportMarkupPdf(): Promise<string | null> {
   flashStatus('Exporting the review...', { ms: 60_000 });
   try {
     flushSaves();
-    await Promise.all([loadMath(), settleLabelSources(review.doc.comments)]);
-    const request = await buildExportRequest({
-      source: review.path,
-      dest,
-      title: paperTitle(),
-      date: longDate(new Date()),
-      summary: review.doc.summary,
-      entries: entriesOf(review.doc),
-      sourcePages: doc.searchIndex.total || doc.pages.length,
-      pageSize,
-      marginPt: DEFAULT_MARGIN_PT,
-      math: mathRenderer(),
-      cite: label,
-      reference,
-      measure,
-    });
-    const result = await transport.exportPdf(request);
+    const result = await exportReview(review.path, review.doc, dest);
     const name = result.path.split(/[\\/]/).pop() ?? result.path;
     flashStatus(`Saved ${name}`, {
       action: { label: 'Open', run: () => void openInNewTabOrFocus(result.path) },

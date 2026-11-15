@@ -1020,3 +1020,110 @@ fn markup_selftest_output() {
         );
     }
 }
+
+/// Checks the frontend half of the app's markup self-test: the review laid
+/// out by `buildExportRequest` and written by `markup_export`.
+///
+///   SPEEDYF_MARKUP_INSPECT_FRONTEND=/path/out-frontend.pdf cargo test ... markup_frontend_output -- --ignored --nocapture
+///
+/// Reads the report beside it (`out-frontend.json`) for where each comment
+/// was anchored.
+#[test]
+#[ignore]
+fn markup_frontend_output() {
+    let _guard = pdfium_init::test_guard();
+    let pdfium = test_pdfium();
+    let b = pdfium.bindings();
+    let path = std::env::var("SPEEDYF_MARKUP_INSPECT_FRONTEND").expect("set the variable");
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(Path::new(&path).with_extension("json")).expect("report"),
+    )
+    .unwrap();
+    let doc = pdfium.load_pdf_from_file(&path, None).unwrap();
+    let n = doc.pages().len();
+    // Words each margin note starts with, by comment number.
+    let first_words = [
+        "",
+        "The induction",
+        "This paragraph",
+        "teh",
+        "Cite the",
+        "This figure",
+        "recieve",
+    ];
+    let mut worst = 0.0f32;
+    for anchor in report["detail"]["anchors"].as_array().unwrap() {
+        let number = anchor["number"].as_u64().unwrap() as usize;
+        let page_index = anchor["page"].as_u64().unwrap() as u16;
+        let top = anchor["top"].as_f64().unwrap() as f32;
+        let page = doc.pages().get(page_index).unwrap();
+        let (w, h) = (page.width().value, page.height().value);
+        let strip = w - 180.0;
+        let text = page.text().unwrap();
+        // The note's first words, found by scanning down the strip in bands.
+        let mut found = None;
+        let mut y = 0.0;
+        while y < h {
+            let band = text.inside_rect(PdfRect::new_from_values(h - y - 14.0, strip, h - y, w));
+            if band.contains(first_words[number]) {
+                found = Some(y);
+                break;
+            }
+            y += 2.0;
+        }
+        let at =
+            found.unwrap_or_else(|| panic!("note {number} not in the strip of page {page_index}"));
+        worst = worst.max((at - top).abs());
+        eprintln!("note {number}: anchored {top} from top, set at about {at}");
+        assert!(
+            (at - top).abs() < 30.0,
+            "note {number} is {at}, anchor {top}"
+        );
+    }
+    eprintln!("worst offset {worst}");
+
+    // The letter: comments in order, then the typo table.
+    let letter: String = (n - 1..n)
+        .map(|i| doc.pages().get(i).unwrap().text().unwrap().all())
+        .collect();
+    let order = [
+        "OVERALL",
+        "The induction",
+        "This paragraph",
+        "Cite the",
+        "This figure",
+        "teh",
+        "recieve",
+    ];
+    let mut at = 0;
+    for word in order {
+        let found = letter[at..]
+            .find(word)
+            .unwrap_or_else(|| panic!("{word} missing or out of order"));
+        at += found + word.len();
+    }
+
+    // Every link goes somewhere: source page links into the letter, letter
+    // links back onto the pages.
+    let raw = render::open_document(b, &path, None).unwrap();
+    for i in [0, 1, n as i32 - 1] {
+        let page = b.FPDF_LoadPage(raw, i);
+        let mut pos: c_int = 0;
+        let mut link = std::ptr::null_mut();
+        let mut dests = Vec::new();
+        while b.FPDFLink_Enumerate(page, &mut pos, &mut link) != 0 {
+            let dest = b.FPDFLink_GetDest(raw, link);
+            if !dest.is_null() {
+                dests.push(b.FPDFDest_GetDestPageIndex(raw, dest));
+            }
+        }
+        eprintln!("page {i} internal links -> {dests:?}");
+        if i == n as i32 - 1 {
+            assert!(dests.contains(&0) && dests.contains(&1));
+        } else {
+            assert!(!dests.is_empty() && dests.iter().all(|&d| d == n as i32 - 1));
+        }
+        b.FPDF_ClosePage(page);
+    }
+    b.FPDF_CloseDocument(raw);
+}

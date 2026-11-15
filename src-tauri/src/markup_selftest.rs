@@ -14,6 +14,7 @@ use crate::engine::markup_export::{
 use crate::engine::types::RectDto;
 use std::path::PathBuf;
 use std::time::Duration;
+use tauri::{Emitter, Listener};
 
 const ENV: &str = "SPEEDYF_MARKUP_SELFTEST";
 /// KaTeX output for `\int_0^1 x^2\,dx = \frac{1}{3}` (inline) and
@@ -121,22 +122,89 @@ pub fn maybe_run(app: &tauri::AppHandle) {
         return;
     };
     let (src, out) = (PathBuf::from(src), PathBuf::from(out));
+    // The frontend half announces itself once the main window has loaded;
+    // listen from the start so that is never missed.
+    let (ready_tx, mut ready_rx) = tauri::async_runtime::channel::<()>(1);
+    app.listen_any("markup-selftest:ready", move |_| {
+        let _ = ready_tx.try_send(());
+    });
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         // Let the main window finish loading first, as a user would.
         tokio::time::sleep(Duration::from_secs(4)).await;
-        let code = match run(&app, &src, &out).await {
-            Ok(summary) => {
-                eprintln!("markup selftest: OK {summary}");
-                0
-            }
+        let mut failed = false;
+        match run(&app, &src, &out).await {
+            Ok(summary) => eprintln!("markup selftest: capture OK {summary}"),
             Err(e) => {
-                eprintln!("markup selftest: FAILED {e}");
-                1
+                eprintln!("markup selftest: capture FAILED {e}");
+                failed = true;
             }
-        };
-        app.exit(code);
+        }
+        let ready = tokio::time::timeout(Duration::from_secs(60), ready_rx.recv()).await;
+        if !matches!(ready, Ok(Some(()))) {
+            eprintln!("markup selftest: frontend FAILED never became ready");
+            failed = true;
+        } else {
+            match run_frontend(&app, &src, &out).await {
+                Ok(summary) => eprintln!("markup selftest: frontend OK {summary}"),
+                Err(e) => {
+                    eprintln!("markup selftest: frontend FAILED {e}");
+                    failed = true;
+                }
+            }
+        }
+        eprintln!("markup selftest: {}", if failed { "FAILED" } else { "OK" });
+        app.exit(i32::from(failed));
     });
+}
+
+/// `out.pdf` -> `out-frontend.pdf` beside it.
+fn sibling(out: &std::path::Path, suffix: &str, ext: &str) -> PathBuf {
+    let stem = out.file_stem().and_then(|s| s.to_str()).unwrap_or("out");
+    out.with_file_name(format!("{stem}-{suffix}.{ext}"))
+}
+
+/// The same export driven from the main window through the real frontend
+/// path (`src/features/markup/selftest.ts`). Writes `<out>-frontend.pdf`,
+/// and `<out>-frontend.json` with the report (anchors, sizes, result).
+async fn run_frontend(
+    app: &tauri::AppHandle,
+    src: &std::path::Path,
+    out: &std::path::Path,
+) -> Result<String, String> {
+    let dir = std::env::temp_dir().join("speedyf-markup-selftest");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let copy = dir.join("frontend-source.pdf");
+    std::fs::copy(src, &copy).map_err(|e| format!("copy source: {e}"))?;
+    let dest = sibling(out, "frontend", "pdf");
+    let _ = std::fs::remove_file(&dest);
+    let (tx, mut rx) = tauri::async_runtime::channel::<String>(1);
+    let id = app.listen_any("markup-selftest:done", move |event| {
+        let _ = tx.try_send(event.payload().to_string());
+    });
+    app.emit_to(
+        "main",
+        "markup-selftest:run",
+        serde_json::json!({
+            "source": copy.to_string_lossy(),
+            "dest": dest.to_string_lossy(),
+        }),
+    )
+    .map_err(|e| e.to_string())?;
+    let report = tokio::time::timeout(Duration::from_secs(120), rx.recv()).await;
+    app.unlisten(id);
+    let report = match report {
+        Ok(Some(report)) => report,
+        _ => return Err("no report from the main window".into()),
+    };
+    let value: serde_json::Value = serde_json::from_str(&report).map_err(|e| e.to_string())?;
+    std::fs::write(sibling(out, "frontend", "json"), &report).map_err(|e| e.to_string())?;
+    let message = value["message"].as_str().unwrap_or("").to_string();
+    if value["ok"].as_bool() == Some(true) {
+        Ok(format!("{message} -> {}", dest.display()))
+    } else {
+        Err(message)
+    }
 }
 
 async fn run(
