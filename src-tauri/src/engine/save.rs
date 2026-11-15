@@ -113,6 +113,18 @@ impl PageSpace {
         }
     }
 
+    /// The same mapping from a crop box `[left, bottom, right, top]` and a
+    /// `/Rotate` already read through the raw API (markup export).
+    pub(crate) fn from_box(crop: [f32; 4], rot: u16) -> PageSpace {
+        PageSpace {
+            crop_l: crop[0],
+            crop_b: crop[1],
+            crop_r: crop[2],
+            crop_t: crop[3],
+            rot,
+        }
+    }
+
     /// display-normalized (y-up) point -> raw PDF user-space point
     pub(crate) fn disp_to_user(&self, dx: f32, dy: f32) -> (f32, f32) {
         let (l, b, r, t) = (self.crop_l, self.crop_b, self.crop_r, self.crop_t);

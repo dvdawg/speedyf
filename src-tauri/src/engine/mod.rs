@@ -18,6 +18,7 @@ pub mod hovers;
 pub mod invert;
 pub mod layout_text;
 pub mod links;
+pub mod markup_export;
 pub mod ocr;
 pub mod ocr_thread;
 pub mod outline_gen;
