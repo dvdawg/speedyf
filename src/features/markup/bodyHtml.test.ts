@@ -22,6 +22,14 @@ describe('comment bodies as HTML', () => {
     );
   });
 
+  it('sets $$...$$ inside a sentence as display math', () => {
+    expect(renderBody('check $$\\sum k$$ holds, $x$ too', { math })).toBe(
+      '<p>check <span class="mk-display"><k d>\\sum k</k></span> holds, ' +
+        '<span class="mk-math"><k>x</k></span> too</p>'
+    );
+    expect(renderBody('a $$y$$ b')).toBe('<p>a <span class="mk-math-raw">$$y$$</span> b</p>');
+  });
+
   it('reads citations as labels and marks unknown ones', () => {
     expect(inlineHtml('see [@jar97, p. 2].', { cite })).toBe(
       'see <span class="mk-cite">[Jar97, p. 2]</span>.'

@@ -64,6 +64,23 @@ export function inlineHtml(text: string, opts: BodyOptions = {}): string {
 }
 
 const BULLET = /^\s*[-*]\s+/;
+const DISPLAY_RUN = /\$\$([^$]+?)\$\$/g;
+
+/** A body line: like `inlineHtml`, but a `$$...$$` run inside the line is
+ * display math too (in a body, unlike a title, it always means that). */
+function bodyLine(text: string, opts: BodyOptions): string {
+  let out = '';
+  let at = 0;
+  for (const m of text.matchAll(DISPLAY_RUN)) {
+    out += inlineHtml(text.slice(at, m.index), opts);
+    const tex = m[1]!.trim();
+    out += opts.math
+      ? `<span class="mk-display">${opts.math(tex, true)}</span>`
+      : `<span class="mk-math-raw">${escapeHtml(m[0])}</span>`;
+    at = m.index + m[0].length;
+  }
+  return out + inlineHtml(text.slice(at), opts);
+}
 
 /** A whole body: blank lines part paragraphs, "- " lines make a list,
  * a `$$ ... $$` paragraph is display math, single newlines are kept. */
@@ -97,12 +114,12 @@ export function renderBody(text: string, opts: BodyOptions = {}): string {
       for (const line of lines) {
         if (BULLET.test(line)) {
           flushProse();
-          list.push(inlineHtml(line.replace(BULLET, ''), opts));
+          list.push(bodyLine(line.replace(BULLET, ''), opts));
         } else if (list.length > 0 && /^\s+\S/.test(line)) {
-          list[list.length - 1] += ` ${inlineHtml(line.trim(), opts)}`;
+          list[list.length - 1] += ` ${bodyLine(line.trim(), opts)}`;
         } else {
           flushList();
-          prose.push(inlineHtml(line, opts));
+          prose.push(bodyLine(line, opts));
         }
       }
       flushList();

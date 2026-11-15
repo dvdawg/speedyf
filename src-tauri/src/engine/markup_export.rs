@@ -736,6 +736,76 @@ fn decorate_page(
     fill_rect(b, page, rule, [RULE_GREY; 3])
 }
 
+/// Whether a link WebKit wrote into a captured sheet may stay: only links
+/// out to the web or to mail. Every `<a>` in the sheet becomes a URI link,
+/// and anything else (`#`, a relative href) resolves against the hidden
+/// print page's own address, which means nothing to the reader.
+pub(crate) fn keeps_sheet_uri(uri: &str) -> bool {
+    let lower = uri.trim().to_ascii_lowercase();
+    if lower.starts_with("mailto:") {
+        return true;
+    }
+    let Some(rest) = lower
+        .strip_prefix("https://")
+        .or_else(|| lower.strip_prefix("http://"))
+    else {
+        return false;
+    };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = host.rsplit('@').next().unwrap_or(host);
+    let host = host.split(':').next().unwrap_or(host);
+    !(host.is_empty()
+        || host == "localhost"
+        || host.ends_with(".localhost")
+        || host == "127.0.0.1"
+        || host == "[::1]")
+}
+
+/// Remove the link annotations of an appended sheet page that point back
+/// into the app (see `keeps_sheet_uri`). The sheet's own links come from the
+/// request and are written by the lopdf pass.
+fn drop_capture_links(b: &dyn PdfiumLibraryBindings, doc: FPDF_DOCUMENT, page: FPDF_PAGE) {
+    const ANNOT_LINK: c_int = 2;
+    let count = b.FPDFPage_GetAnnotCount(page);
+    for index in (0..count).rev() {
+        let annot = b.FPDFPage_GetAnnot(page, index);
+        if annot.is_null() {
+            continue;
+        }
+        let guard = AnnotGuard { b, annot };
+        if b.FPDFAnnot_GetSubtype(guard.annot) != ANNOT_LINK {
+            continue;
+        }
+        let link = b.FPDFAnnot_GetLink(guard.annot);
+        let action = if link.is_null() {
+            std::ptr::null_mut()
+        } else {
+            b.FPDFLink_GetAction(link)
+        };
+        let uri = if action.is_null() {
+            String::new()
+        } else {
+            let len = b.FPDFAction_GetURIPath(doc, action, std::ptr::null_mut(), 0) as usize;
+            let mut buf = vec![0u8; len];
+            if len > 0 {
+                b.FPDFAction_GetURIPath(
+                    doc,
+                    action,
+                    buf.as_mut_ptr() as *mut c_void,
+                    len as c_ulong,
+                );
+            }
+            String::from_utf8_lossy(&buf)
+                .trim_end_matches('\0')
+                .to_string()
+        };
+        drop(guard);
+        if !keeps_sheet_uri(&uri) {
+            b.FPDFPage_RemoveAnnot(page, index);
+        }
+    }
+}
+
 fn create_annot<'b>(
     b: &'b dyn PdfiumLibraryBindings,
     page: FPDF_PAGE,
@@ -1009,6 +1079,7 @@ fn pdfium_pass(
             return Err(AppError::Internal("cannot append a feedback sheet".into()));
         }
         let page = load_page(b, doc.0, at as usize)?;
+        drop_capture_links(b, doc.0, page.page);
         geos.push(page_geo(b, page.page)?);
         out_page_of_sheet.insert(i, at as usize);
     }
@@ -1085,6 +1156,20 @@ fn lopdf_pass(
 ) -> Result<Vec<u8>, String> {
     use lopdf::{dictionary, Object};
     let mut inc: lopdf::IncrementalDocument = bytes.try_into().map_err(lopdf_err)?;
+    // New objects must be numbered past the previous trailer's /Size. lopdf
+    // counts only the objects it parsed, and an xref STREAM is not among
+    // them: on a stream-xref file it would hand out the xref stream's own
+    // number again, and stricter readers then resolve the new annotation to
+    // the cross-reference stream.
+    let declared = inc
+        .get_prev_documents()
+        .trailer
+        .get(b"Size")
+        .and_then(lopdf::Object::as_i64)
+        .unwrap_or(0)
+        .clamp(0, u32::MAX as i64) as u32;
+    let next = inc.new_document.max_id.max(declared.saturating_sub(1));
+    inc.new_document.max_id = next;
     let page_ids: Vec<lopdf::ObjectId> = inc
         .get_prev_documents()
         .get_pages()
@@ -1229,6 +1314,13 @@ pub fn export(
         dest,
         |temp| {
             summary.set(build(pdfium, req, sheet_pdfs, temp)?);
+            // The temp file is created owner-only; this one is meant to be
+            // sent to someone, so give it an ordinary document's mode.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(temp, std::fs::Permissions::from_mode(0o644))?;
+            }
             Ok(())
         },
         |temp| {
