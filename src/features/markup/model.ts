@@ -297,9 +297,7 @@ export function summarySkeleton(comments: readonly MarkupComment[]): string {
   say(counts.typo, 'typo', 'typos');
   const total = comments.length;
   const tally =
-    total === 0
-      ? ''
-      : `${total} ${total === 1 ? 'note' : 'notes'}: ${joinList(parts)}.`;
+    total === 0 ? '' : `${total} ${total === 1 ? 'note' : 'notes'}: ${joinList(parts)}.`;
   return ['Summary: ', '', 'Main concerns:', '- ', '', tally].join('\n').trimEnd() + '\n';
 }
 
