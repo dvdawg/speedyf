@@ -23,6 +23,7 @@
       },
       { "id": "quote", "title": "Quote to Notepad", "hidden": true },
       { "id": "equation", "title": "Send Equation to Notepad", "hidden": true },
+      { "id": "statement", "title": "Send Statement to Notepad", "hidden": true },
       { "id": "editor", "title": "Notepad: Editor Events", "hidden": true },
       { "id": "mentions", "title": "Notepad: Mentions", "hidden": true },
       { "id": "jump", "title": "Notepad: Go To Mention", "hidden": true }
@@ -33,6 +34,9 @@
     ],
     "equationActions": [
       { "command": "equation", "title": "Send to Notepad", "when": "documentInProject" }
+    ],
+    "statementActions": [
+      { "command": "statement", "title": "Send to Notepad", "when": "documentInProject" }
     ],
     "readerPanes": [
       {

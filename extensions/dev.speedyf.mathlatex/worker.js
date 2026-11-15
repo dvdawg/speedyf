@@ -4739,7 +4739,106 @@ function texDocument(files) {
   const begin = body.search(/\\begin\s*\{document\}/);
   const end = body.search(/\\end\s*\{document\}/);
   const text = body.slice(begin >= 0 ? begin : 0, end > begin ? end : body.length);
-  return { body: expandEnvironmentMacros(text, macros), macros };
+  return {
+    body: expandEnvironmentMacros(text, macros),
+    macros,
+    theorems: theoremEnvironments(macroText),
+    bib: bibLabels(files),
+  };
+}
+
+/** Theorem-like environments a paper's TeX is likely to use without
+ * declaring them in a file we have (a class or package defines them), and
+ * what they print. */
+const THEOREM_DEFAULTS = {
+  theorem: 'Theorem',
+  thm: 'Theorem',
+  lemma: 'Lemma',
+  lem: 'Lemma',
+  proposition: 'Proposition',
+  prop: 'Proposition',
+  corollary: 'Corollary',
+  cor: 'Corollary',
+  definition: 'Definition',
+  defn: 'Definition',
+  dfn: 'Definition',
+  remark: 'Remark',
+  rem: 'Remark',
+  example: 'Example',
+  conjecture: 'Conjecture',
+  conj: 'Conjecture',
+  claim: 'Claim',
+  assumption: 'Assumption',
+  fact: 'Fact',
+  observation: 'Observation',
+};
+
+/** Theorem-like environments and the word each prints:
+ * `\newtheorem{prop}[theorem]{Proposition}`, `\newtheorem*{rem}{Remark}`,
+ * `\declaretheorem[name=Claim]{claim}`, and the usual names undeclared. */
+function theoremEnvironments(text) {
+  const out = new Map(Object.entries(THEOREM_DEFAULTS));
+  const re = /\\newtheorem\*?\s*\{([^}]+)\}\s*(?:\[[^\]]*\]\s*)?\{([^}]+)\}/g;
+  let m;
+  while ((m = re.exec(text))) out.set(m[1].trim(), m[2].trim());
+  const declared = /\\declaretheorem\s*(?:\[([^\]]*)\])?\s*\{([^}]+)\}/g;
+  while ((m = declared.exec(text))) {
+    const name = /name\s*=\s*\{?([^,}\]]+)/.exec(m[1] ?? '');
+    const env = m[2].trim();
+    out.set(env, name ? name[1].trim() : env[0].toUpperCase() + env.slice(1));
+  }
+  return out;
+}
+
+/** What each `\bibitem` key prints, from the source's `.bbl` (or its
+ * inline bibliography): the optional label (`\bibitem[Sim15]{simon}`,
+ * natbib's `[{Simon(2015)}]` read as "Simon 2015"), else its number. */
+function bibLabels(files) {
+  const out = new Map();
+  for (const file of files) {
+    if (!/\.(bbl|tex)$/i.test(file.name) || !/\\bibitem/.test(file.text)) continue;
+    let n = 0;
+    const re = /\\bibitem\s*(?:\[((?:[^\][]|\[[^\]]*\])*)\])?\s*\{([^}]+)\}/g;
+    let m;
+    while ((m = re.exec(file.text))) {
+      n++;
+      const key = m[2].trim();
+      if (out.has(key)) continue;
+      let label = m[1] === undefined ? String(n) : m[1];
+      label = label
+        .replace(/\\[A-Za-z]+\s*/g, '')
+        .replace(/[{}]/g, '')
+        .replace(/\s*\((\d{4}[a-z]?)\)\s*/, ' $1')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (label) out.set(key, label);
+    }
+  }
+  return out;
+}
+
+/** A theorem-like `\begin{...}` at `i`: its word, its starred-ness, its
+ * optional name's span and where its head ends; null for anything else. */
+function theoremAt(text, i, theorems) {
+  const m = /^\\begin\s*\{([A-Za-z@]+)(\*?)\}/.exec(text.slice(i, i + 60));
+  if (!m || !theorems || !theorems.has(m[1])) return null;
+  let k = i + m[0].length;
+  let p = k;
+  while (/\s/.test(text[p] ?? '')) p++;
+  let title = null;
+  if (text[p] === '[') {
+    let depth = 0;
+    for (let q = p; q < text.length && q < p + 600; q++) {
+      if (text[q] === '[' || text[q] === '{') depth++;
+      else if (text[q] === ']' || text[q] === '}') depth--;
+      if (depth === 0) {
+        title = [p + 1, q];
+        k = q + 1;
+        break;
+      }
+    }
+  }
+  return { word: theorems.get(m[1]), title, end: k };
 }
 
 /** Where a math region starting at `i` ends, and whether it is displayed:
@@ -5033,16 +5132,35 @@ function exactQuote(doc, quote) {
     if (s.k === 'ref' && (q.k === 'ref' || q.k === 'num')) refLabel.set(s.start, q.t);
     if (s.k === 'm' && q.k === 'm' && q.tag) tagAt.set(s.start, q.tag);
   }
+  // A quote of a theorem starts at its label, which the source does not
+  // have ("Proposition 2.2" is LaTeX's), so the alignment starts at its
+  // name or its first words: take the environment's head in, so the name
+  // is read as its name, never as prose ending in "]".
+  let from = S[found.start].start;
+  const head = doc.body.lastIndexOf('\\begin', from);
+  if (head >= 0 && from - head < 800) {
+    const env = theoremAt(doc.body, head, doc.theorems);
+    const between = env ? doc.body.slice(env.end, from) : '';
+    const inside = env && env.title && from <= env.title[1];
+    const right = env && /^\s*(?:\\label\s*\{[^}]*\}\s*)*$/.test(between);
+    if (inside || right) from = head;
+  }
+  const printed = new RegExp(
+    `^\\W*(${[...new Set((doc.theorems ?? new Map()).values())].map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') || 'Theorem'})\\s+([A-Z]?\\d+(?:\\.\\d+)*|[A-Z])\\b`
+  ).exec(String(quote));
   let to = S[found.end].end;
   const tail = /[.,;:]$/.exec(String(quote).trim());
   if (tail) {
     const m = /^\s*([.,;:])/.exec(doc.body.slice(to, to + 8));
     if (m && m[1] === tail[0]) to += m[0].length;
   }
-  const markdown = texToMarkdown(doc.body, S[found.start].start, to, {
+  const markdown = texToMarkdown(doc.body, from, to, {
     macros: doc.macros,
     refLabel,
     tagAt,
+    theorems: doc.theorems,
+    bib: doc.bib,
+    number: printed ? printed[2] : null,
   });
   if (!markdown) return null;
   return { markdown, exact: found.words >= 0.95 * words };
@@ -5137,7 +5255,14 @@ function texToMarkdown(text, from, to, ctx, depth = 0) {
       const rest = text.slice(i, Math.min(text.length, i + 300));
       let m = REF_COMMAND.exec(rest);
       if (m) {
-        const label = ctx.refLabel?.get(i);
+        let label = ctx.refLabel?.get(i);
+        // A citation the page's own text did not pair: its keys' labels
+        // from the source's bibliography, when it has one.
+        if (!label && /cite/.test(m[0].slice(0, 12)) && ctx.bib && ctx.bib.size > 0) {
+          const keys = (/\{([^}]*)\}$/.exec(m[0])?.[1] ?? '').split(',').map((k) => k.trim());
+          const labels = keys.map((k) => ctx.bib.get(k));
+          if (keys.length > 0 && labels.every(Boolean)) label = `[${labels.join(', ')}]`;
+        }
         prose(label ?? '[ref]');
         i += m[0].length;
         continue;
@@ -5145,6 +5270,17 @@ function texToMarkdown(text, from, to, ctx, depth = 0) {
       m = DROPPED.exec(rest);
       if (m) {
         i = skipArguments(text, i + m[0].length);
+        continue;
+      }
+      // A theorem-like environment opens with its header, as the page
+      // prints it: "**Proposition 2.2** (Name)." - the number the page
+      // showed, when the quote had it.
+      const env = depth === 0 ? theoremAt(text, i, ctx.theorems) : null;
+      if (env) {
+        const name = env.title ? inner(env.title[0], env.title[1]) : '';
+        const label = ctx.number ? `${env.word} ${ctx.number}` : env.word;
+        out += `\n\n**${label}**${name ? ` (${name})` : ''}. `;
+        i = env.end;
         continue;
       }
       m = /^\\(begin|end)\s*\{[^}]*\}/.exec(rest);

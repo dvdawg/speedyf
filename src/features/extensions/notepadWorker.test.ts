@@ -41,7 +41,7 @@ interface Notepad {
 
 const notepad = new Function(
   'self',
-  `${SOURCE}\nreturn { escapeQuote, quoteBlock, quoteParagraphs, pageLink, baseLabel, alphaLabels, resolveKey, citationsIn, mentions, displayMath };`
+  `${SOURCE}\nconst quoteBlock = (text, key, page, box) => markdownQuote(plainMarkdown(text), pageLink(key, page, box));\nreturn { escapeQuote, quoteBlock, quoteParagraphs, pageLink, baseLabel, alphaLabels, resolveKey, citationsIn, mentions, displayMath };`
 )({}) as Notepad;
 
 const ATTIAS: Item = {
@@ -267,19 +267,26 @@ describe('notepad: reader actions', () => {
     const { calls, invoke } = boot({ ...EDITOR, 'reader.context': readerIn('p2') });
     expect(await invoke('quote', 'Some text')).toEqual({ type: 'done', requestId: 1, ok: true });
     // The fast path: the placeholder is filled straight away, nothing in
-    // between but asking for the page's math (the editor draws a text
-    // placeholder only if it lingers). With no converter it is today's quote.
+    // between but asking what the reader knows of the passage (its
+    // statement, references and cross-references) and for the page's math
+    // (the editor draws a text placeholder only if it lingers). With none of
+    // them answering it is today's quote.
     expect(calls.map((c) => c.api)).toEqual([
       'reader.context',
       'editor.insert',
       'editor.reveal',
+      'selection.context',
+      'projects.references',
+      'projectFiles.read',
       'selection.convert',
       'editor.resolve',
     ]);
     expect(calls[1]!.args).toEqual({ projectId: 'p2', at: 'end', pending: { kind: 'text' } });
     expect(calls[2]!.args).toEqual({ projectId: 'p2', handle: 'h1' });
-    expect(calls[3]!.args).toEqual({ text: 'Some text', mode: 'local' });
-    expect(calls[4]!.args).toEqual({
+    expect(calls[3]!.args).toEqual({ text: 'Some text' });
+    expect(calls[4]!.args).toEqual({ itemId: 'i1' });
+    expect(calls[6]!.args).toEqual({ text: 'Some text', mode: 'local' });
+    expect(calls[7]!.args).toEqual({
       handle: 'h1',
       text: '> Some text [@attias2022quantum, p. 5]{box=10,20,30,40}',
     });
@@ -730,3 +737,292 @@ describe('notepad: identifiers for pasting', () => {
     ]);
   });
 });
+
+/* ---- statements, references and cross-references in quotes ---- */
+
+interface Statement {
+  kind: string;
+  word: string;
+  number: string;
+  title: string | null;
+  page: number;
+  box: number[];
+}
+interface Ref {
+  label: string | null;
+  text: string;
+  ids: string[];
+  itemId: string | null;
+  citeKey: string | null;
+}
+interface Xref {
+  label: string;
+  kind: string;
+  number: string;
+  page: number;
+  box: number[] | null;
+}
+interface Quoting {
+  statementBlock(statement: Statement, markdown: string, link: string): string;
+  linkCitations(
+    markdown: string,
+    refs: Ref[],
+    key: string
+  ): { markdown: string; entries: Map<string, string> };
+  linkXrefs(markdown: string, xrefs: Xref[], key: string): string;
+}
+
+const quoting = new Function(
+  'self',
+  `${SOURCE}\nreturn { statementBlock, linkCitations, linkXrefs };`
+)({}) as Quoting;
+
+const PROP: Statement = {
+  kind: 'proposition',
+  word: 'Proposition',
+  number: '2.2',
+  title: 'Moments of two block overlaps',
+  page: 1,
+  box: [72, 100, 468, 80],
+};
+
+/** RZ26's reference list as the core hands it: Han16 is in the library. */
+const REFS: Ref[] = [
+  {
+    label: 'Sim15',
+    text: 'B. Simon, Spectral theory, arXiv:1501.01234 (2015).',
+    ids: ['arxiv:1501.01234'],
+    itemId: null,
+    citeKey: null,
+  },
+  { label: 'Han16', text: 'H. Han, Overlaps (2016).', ids: [], itemId: 'i9', citeKey: 'han2016' },
+  {
+    label: 'Lar23',
+    text: 'L. Larsen, Blocks (2023).',
+    ids: ['doi:10.1000/blocks'],
+    itemId: null,
+    citeKey: null,
+  },
+  {
+    label: 'AAHLZ24',
+    text: 'A. Author et al., Five (2024).',
+    ids: [],
+    itemId: 'i8',
+    citeKey: 'aahlz2024',
+  },
+];
+
+describe('notepad: statements', () => {
+  it('writes a statement block with its header, whatever the page text led with', () => {
+    const link = '[@rz26, p. 2]{box=72,100,468,80}';
+    const expected = [
+      '> **Proposition 2.2** (Moments of two block overlaps). Let $P$ be a distribution.',
+      '>',
+      '> $$ x \\le y $$',
+      '>',
+      `> ${link}`,
+    ].join('\n');
+    // The label as the page has it, as the source has it (bold), missed,
+    // and the selection begun inside the name: one header, no stray "]".
+    for (const body of [
+      'Proposition 2.2 (Moments of two block overlaps). Let $P$ be a distribution.',
+      '**Proposition 2.2** (Moments of two block overlaps). Let $P$ be a distribution.',
+      'Let $P$ be a distribution.',
+      'block overlaps). Let $P$ be a distribution.',
+    ]) {
+      expect(quoting.statementBlock(PROP, `${body}\n\n$$ x \\le y $$`, link)).toBe(expected);
+    }
+    // No name: the label alone.
+    expect(
+      quoting.statementBlock(
+        { ...PROP, title: null, word: 'Lemma', number: '3' },
+        'Lemma 3. Every x.',
+        link
+      )
+    ).toBe(`> **Lemma 3**. Every x.\n>\n> ${link}`);
+  });
+
+  it('reads back as a statement in the editor', async () => {
+    const { statementHead } = await import('./editor/markdown');
+    const block = quoting.statementBlock(PROP, 'Let $P$ be.', '[@rz26, p. 2]');
+    expect(splitBlocks(block)).toHaveLength(1);
+    expect(statementHead(block.split('\n')[0]!.slice(2))).toMatchObject({
+      kind: 'proposition',
+      number: '2.2',
+      title: 'Moments of two block overlaps',
+      italic: true,
+      rest: 'Let $P$ be.',
+    });
+  });
+});
+
+describe('notepad: citations in quotes', () => {
+  it('cites items the library has, keeps the rest with their entries attached', () => {
+    const { markdown, entries } = quoting.linkCitations(
+      'As in \\[Sim15\\], by \\[Han16, Lar23, AAHLZ24\\] and \\[AAHLZ24\\]; not \\[Thm. 2\\] nor $[a, b]$.',
+      REFS,
+      'rz26'
+    );
+    expect(markdown).toBe(
+      'As in [^Sim15], by [@han2016][^Lar23][@aahlz2024] and [@aahlz2024]; not \\[Thm. 2\\] nor $[a, b]$.'
+    );
+    expect([...entries.values()]).toEqual([
+      '[^Sim15]: [Sim15] B. Simon, Spectral theory, arXiv:1501.01234 (2015).',
+      '[^Lar23]: [Lar23] L. Larsen, Blocks (2023). doi:10.1000/blocks',
+    ]);
+  });
+
+  it('groups items cited together and expands numeric ranges', () => {
+    const numbered: Ref[] = [1, 2, 3, 4, 5].map((n) => ({
+      label: String(n),
+      text: `Work ${n}.`,
+      ids: [],
+      itemId: n === 2 ? null : `i${n}`,
+      citeKey: n === 2 ? null : `w${n}`,
+    }));
+    const { markdown, entries } = quoting.linkCitations(
+      'See \\[1, 3\\], \\[3-5\\] and \\[1\u20132\\].',
+      numbered,
+      'rz26'
+    );
+    expect(markdown).toBe('See [@w1; @w3], [@w3; @w4; @w5] and [@w1][^rz26-2].');
+    // A number means another work in every paper: its id names the paper.
+    expect([...entries.keys()]).toEqual(['rz26-2']);
+  });
+
+  it('reads author-year citations in a paper whose list has no labels', () => {
+    const refs: Ref[] = [
+      {
+        label: null,
+        text: 'Simon, B. Spectral theory. 2015.',
+        ids: [],
+        itemId: 'i1',
+        citeKey: 'simon2015',
+      },
+      { label: null, text: 'Larsen, L. Blocks. 2023.', ids: [], itemId: null, citeKey: null },
+    ];
+    const { markdown } = quoting.linkCitations(
+      'Simon (2015) shows it, as do others (Larsen, 2023).',
+      refs,
+      'rz26'
+    );
+    expect(markdown).toBe('@simon2015 shows it, as do others (Larsen, 2023)[^Larsen2023].');
+  });
+
+  it('leaves the text alone without a reference list', () => {
+    expect(quoting.linkCitations('As in \\[Sim15\\].', [], 'rz26').markdown).toBe(
+      'As in \\[Sim15\\].'
+    );
+  });
+});
+
+describe('notepad: cross-references in quotes', () => {
+  it('links the mentions the reader resolved, as printed, and leaves the rest', () => {
+    const xrefs: Xref[] = [
+      { label: 'Theorem 2.1', kind: 'theorem', number: '2.1', page: 0, box: [72, 300, 400, 60] },
+      { label: 'Equation 3', kind: 'equation', number: '3', page: 1, box: [100, 200, 300, 30] },
+      { label: 'Section 2', kind: 'section', number: '2', page: 0, box: null },
+    ];
+    const out = quoting.linkXrefs(
+      'By Theorem 2.1 and Eq. (3), see Section 2; not Theorem 2.11, Lemma 4 or $f(3)$.',
+      xrefs,
+      'rz26'
+    );
+    expect(out).toBe(
+      'By [Theorem 2.1](@rz26#p1){box=72,300,400,60} and [Eq. (3)](@rz26#p2){box=100,200,300,30}, ' +
+        'see [Section 2](@rz26#p1); not Theorem 2.11, Lemma 4 or $f(3)$.'
+    );
+  });
+});
+
+describe('notepad: quoting Proposition 2.2 and the paragraph after it', () => {
+  it('writes the statement block, the quote after it, citations, links and entries', async () => {
+    const { calls, invoke } = boot({
+      ...EDITOR,
+      'reader.context': () => ({
+        item: { id: 'rz', citeKey: 'rz26', title: 'RZ26' },
+        projectIds: ['p1'],
+        projectId: 'p1',
+        page: 1,
+        selection: { page: 1, box: [72, 90, 468, 200], text: 'x' },
+      }),
+      'selection.context': () => ({
+        selection: 's0',
+        statement: { ...PROP, labelBox: [72, 100, 90, 10] },
+        parts: {
+          before: null,
+          statement: { selection: 's1', text: 'Let P be a distribution [Sim15].' },
+          after: { selection: 's2', text: 'By Theorem 2.1 and [Han16, Lar23, AAHLZ24], it holds.' },
+        },
+        xrefs: [
+          {
+            label: 'Theorem 2.1',
+            kind: 'theorem',
+            number: '2.1',
+            page: 0,
+            box: [72, 300, 400, 60],
+          },
+        ],
+      }),
+      'projects.references': () => REFS,
+      'projectFiles.read': () => 'Notes\n\n[^Lar23]: [Lar23] already here',
+      'selection.convert': (args) => ({
+        selection: args.selection,
+        markdown:
+          args.selection === 's1'
+            ? args.mode === 'local'
+              ? 'Proposition 2.2 (Moments of two block overlaps). Let $P$ be a distribution \\[Sim15\\].'
+              : // What an exact source wrote before the fix: the name's "]" leaked.
+                'Moments of two block overlaps\\] Let $P$ be a distribution \\[Sim15\\].'
+            : 'By Theorem 2.1 and \\[Han16, Lar23, AAHLZ24\\], it holds.',
+        source: args.mode === 'local' ? 'fonts' : 'arxiv',
+        confidence: 'high',
+      }),
+    });
+    await invoke('quote', 'Proposition 2.2 ...');
+    const text = calls.find((c) => c.api === 'editor.resolve')!.args.text as string;
+    const expected = [
+      '> **Proposition 2.2** (Moments of two block overlaps). Let $P$ be a distribution [^Sim15].',
+      '>',
+      '> [@rz26, p. 2]{box=72,100,468,80}',
+      '',
+      '> By [Theorem 2.1](@rz26#p1){box=72,300,400,60} and [@han2016][^Lar23][@aahlz2024], it holds. [@rz26, p. 2]{box=72,90,468,200}',
+      '',
+      // Lar23's entry is in the note already; Sim15's goes under the quote.
+      '[^Sim15]: [Sim15] B. Simon, Spectral theory, arXiv:1501.01234 (2015).',
+    ].join('\n');
+    expect(text).toBe(expected);
+    // The exact source changed nothing once read as a statement: no stray "]".
+    await until(() => calls.some((c) => c.api === 'editor.unmark'));
+    expect(calls.filter((c) => c.api === 'editor.replaceMarked')).toHaveLength(0);
+    // Each part read on its own, by its own selection.
+    expect(calls.filter((c) => c.api === 'selection.convert').map((c) => c.args.selection)).toEqual(
+      ['s1', 's2', 's1', 's2']
+    );
+  });
+
+  it('sends a statement whole from its button', async () => {
+    const { calls, invoke } = boot({
+      ...EDITOR,
+      'reader.context': readerIn('p1'),
+      'selection.context': (args) => ({
+        selection: args.selection,
+        statement: { ...PROP, labelBox: [72, 100, 90, 10] },
+        parts: { before: null, statement: { selection: 'st', text: PROP_TEXT }, after: null },
+        xrefs: [],
+      }),
+    });
+    await invoke('statement', { ...PROP, selection: 'whole', text: PROP_TEXT });
+    expect(calls.find((c) => c.api === 'selection.context')!.args).toEqual({ selection: 'whole' });
+    expect(calls.find((c) => c.api === 'editor.resolve')!.args.text).toBe(
+      [
+        '> **Proposition 2.2** (Moments of two block overlaps). Let P be a distribution on the cube.',
+        '>',
+        '> [@attias2022quantum, p. 2]{box=72,100,468,80}',
+      ].join('\n')
+    );
+  });
+});
+
+const PROP_TEXT =
+  'Proposition 2.2 (Moments of two block overlaps). Let P be a distribution on the cube.';

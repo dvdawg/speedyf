@@ -33,6 +33,15 @@ with the caret at its start, and Escape closes the list.
   from the Projects list land as `@a; @b`.
 - `[@citekey, p. 12]{box=72,310,240,28}` reads "[AS22, p. 12]" and opens
   the paper at that place on page 12.
+- **Cite a statement.** After picking an item from `@` (or typing
+  `@citekey,`), the picker lists that paper's theorems, lemmas, definitions
+  and numbered equations ("Reading statements..." while it reads a paper
+  that is not open). Type to narrow ("prop 2.2", a word of the name); Enter
+  writes `[@citekey, Prop. 2.2]{box=... page=3}`, which reads "[RZ26, Prop.
+  2.2]" and opens the paper at the statement. Escape keeps plain `@citekey`.
+- Citations read like the links in a PDF: the label in the link colour,
+  underlined when you point at it, and a preview of what it points to (the
+  place on the page, or the paper's title).
 - Paste a DOI or an arXiv id (bare, `doi:...`, `arXiv:2401.01234v2`, or a
   doi.org or arxiv.org link) and it becomes `@citekey` when an item in your
   library has it; otherwise it pastes as it is. In a longer paste only the
@@ -72,6 +81,38 @@ with the caret at its start, and Escape closes the list.
   quote you edit meanwhile is left alone. With Math to LaTeX off, or a
   passage with no math, the quote is the plain text, as above.
 
+- **Statements.** A quote that takes in a theorem, lemma, proposition,
+  definition (any of the paper's labelled statements) - or starts on its
+  label's line, or runs from inside it to its end - becomes a statement
+  block, set as the paper sets it: the label bold, its name upright, the
+  body italic (upright for a definition, remark or example), with the page
+  link small under it. It is stored as a quote opening with the bold label,
+  which any Markdown reader shows the same way:
+
+  ```
+  > **Proposition 2.2** (Moments of two block overlaps). Let $P$ be ...
+  >
+  > [@key, p. 2]{box=...}
+  ```
+
+  The label, number and name come from the reader even when the selection
+  missed the label. Text selected after (or before) the statement is quoted
+  on its own beside it. Pointing at a statement's label on the page shows a
+  small **Send to Notepad** button that sends the whole statement, down to
+  its end before "Proof".
+
+- **Citations in a quote** ("[Sim15]", "[Han16, Lar23]", "[12]", "[3-5]")
+  are read through the quoted paper's reference list: one an item in your
+  library is becomes `[@citekey]` (several `[@a; @b]`); one that is not
+  keeps its label as `[^Sim15]`, with the reference itself written once
+  under the quote as `[^Sim15]: [Sim15] B. Simon, ...` (a Pandoc footnote;
+  a number gets the paper's key, `[^key-12]`). It reads "[Sim15]", dim, and
+  pointing at it shows the reference with its DOI or arXiv link.
+- **Cross-references in a quote** ("Theorem 2.1", "Eq. (3)", "Section 2",
+  "Fig. 1") that the reader resolved become links into the paper,
+  `[Theorem 2.1](@key#p3){box=...}`: they read as the words, preview the
+  target on hover and open the paper there. Others stay text.
+
 - **Send to Notepad** on an equation's hover button shows where it will go
   at once - a soft placeholder with its caption ("Equation (3), [ZD24a,
   p. 4]") - then fills it in: as LaTeX when Math to LaTeX is on and can read
@@ -101,13 +142,17 @@ with a project open, or in the reader for a paper in a project):
   project's name by default). Its pictures are copied into a
   `<name>-assets/` folder beside the file, and the links point there.
   Citations stay Pandoc's `@key`; a page link `[@key, p. 12]{box=...}`
-  becomes `[@key, p. 12]`.
+  becomes `[@key, p. 12]` (and a statement's `[@key, Prop. 2.2]`), a
+  cross-reference its words, and a quoted reference stays a footnote.
 - **Copy Notepad as LaTeX** puts the note on the clipboard as LaTeX:
   headings as `\section`, `\subsection` and `\subsubsection`, emphasis as
   `\emph` and `\textbf`, lists as `itemize` and `enumerate`, quotes as
   `quote`, math as written (`$$ ... $$` as `\[ ... \]`), `@a; @b` as
   `\cite{a,b}` and `[@key, p. 12]` as `\cite[p.~12]{key}` (with the key the
-  item has now), and each picture as a `% figure: <path>` comment. LaTeX's
+  item has now; `[@key, Prop. 2.2]` as `\cite[Prop.~2.2]{key}`), a statement
+  as a `quote` with its label in `\textbf` and its body `\itshape`, a
+  cross-reference as its words, a quoted reference as `[Sim15]\footnote{...}`,
+  and each picture as a `% figure: <path>` comment. LaTeX's
   special characters in the prose are escaped; nothing in math is.
 
 ## On the Projects screen

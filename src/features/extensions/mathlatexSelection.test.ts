@@ -320,3 +320,78 @@ describe('Math to LaTeX: a quote found in the TeX source', () => {
     ).toBeNull();
   });
 });
+
+/** A fake arXiv source: theorem-like environments with and without a
+ * name, a `\label`, a starred environment, and a `.bbl` that says what each
+ * key prints. */
+const STATEMENTS = String.raw`\documentclass{article}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\begin{document}
+Some earlier words in the paper that do not matter at all for this.
+\begin{proposition}[Moments of two block overlaps]\label{prop:moments}
+Let $P$ be a distribution on the cube, as in~\cite{simon}. Then every pair
+of block overlaps has bounded moments~\cite{han,larsen}.
+\end{proposition}
+\begin{theorem*}\label{thm:bw}
+Every bounded sequence of real numbers has, by~\cite{simon}, a convergent subsequence.
+\end{theorem*}
+\bibliography{refs}
+\end{document}
+`;
+const BBL = String.raw`\begin{thebibliography}{Lar23}
+\bibitem[Sim15]{simon} B.~Simon, \emph{A comprehensive course}, 2015.
+\bibitem[Han16]{han} H.~Han, Overlaps, 2016.
+\bibitem[Lar23]{larsen} L.~Larsen, Blocks, 2023.
+\end{thebibliography}
+`;
+
+describe('Math to LaTeX: a statement found in the TeX source', () => {
+  const doc = ext.texDocument([
+    { name: 'paper.tex', text: STATEMENTS },
+    { name: 'paper.bbl', text: BBL },
+  ]);
+
+  it('writes a named statement header, never leaking the "]" of its name', () => {
+    const found = ext.exactQuote(
+      doc,
+      'Proposition 2.2 (Moments of two block overlaps). Let $P$ be a distribution on the cube, ' +
+        'as in \\[Sim15\\]. Then every pair of block overlaps has bounded moments \\[Han16, Lar23\\].'
+    );
+    expect(found!.markdown).toBe(
+      '**Proposition 2.2** (Moments of two block overlaps). Let $P$ be a distribution on the ' +
+        'cube, as in \\[Sim15\\]. Then every pair of block overlaps has bounded moments ' +
+        '\\[Han16, Lar23\\].'
+    );
+    expect(found!.markdown).not.toContain(']]');
+  });
+
+  it('takes the header in when the quote starts inside the name or after the label', () => {
+    const inside = ext.exactQuote(
+      doc,
+      'two block overlaps). Let $P$ be a distribution on the cube, as in \\[Sim15\\]. Then every pair'
+    );
+    expect(
+      inside!.markdown.startsWith('**Proposition** (Moments of two block overlaps). Let')
+    ).toBe(true);
+    const after = ext.exactQuote(
+      doc,
+      'Let $P$ be a distribution on the cube, as in \\[Sim15\\]. Then every pair of block overlaps'
+    );
+    expect(after!.markdown.startsWith('**Proposition** (Moments of two block overlaps). Let')).toBe(
+      true
+    );
+  });
+
+  it('reads a starred environment and its label, and cites by the bibliography', () => {
+    const found = ext.exactQuote(
+      doc,
+      'Theorem. Every bounded sequence of real numbers has, by, a convergent subsequence.'
+    );
+    // A citation the page's text did not pair: the .bbl says what it prints.
+    expect(found!.markdown).toBe(
+      '**Theorem**. Every bounded sequence of real numbers has, by \\[Sim15\\], a convergent subsequence.'
+    );
+    expect(found!.markdown).not.toContain('thm:bw');
+  });
+});

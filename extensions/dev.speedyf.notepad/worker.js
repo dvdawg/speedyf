@@ -147,6 +147,8 @@ function citationEntries(items, projectId) {
     // A DOI or arXiv id pasted into the note becomes a citation of this item.
     doi: item.doi || null,
     arxiv: item.arxiv || null,
+    // The item itself: the editor offers its statements and previews it.
+    item: item.id,
   }));
 }
 
@@ -208,18 +210,6 @@ function quoteParagraphs(text) {
       return out.replace(/\u00ad/g, '');
     })
     .filter((paragraph) => paragraph.trim() !== '');
-}
-
-/** A block quote of the selection, one `> ` line per paragraph and a bare
- * `>` between them, with the link to its page on the last line:
- * `> one ...\n>\n> two ... [@key, p. 12]{box=...}`. Quoted whole, however
- * long. */
-function quoteBlock(text, key, page, box) {
-  const paragraphs = quoteParagraphs(text).map(escapeQuote);
-  const link = pageLink(key, page, box);
-  if (paragraphs.length === 0) return `> ${link}`;
-  paragraphs[paragraphs.length - 1] += ` ${link}`;
-  return paragraphs.map((paragraph) => `> ${paragraph}`).join('\n>\n');
 }
 
 /** A block quote of Markdown a converter wrote from the selection (its
@@ -345,40 +335,412 @@ async function convertQuote(args) {
   }
 }
 
+// ---------- what a quote knows about its paper ----------
+
+function escapeRegExp(text) {
+  return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Markdown paragraphs: apart by a blank line, each on one line. */
+function paragraphsOf(markdown) {
+  return String(markdown)
+    .replace(/\r\n?/g, '\n')
+    .split(/\n[ \t]*\n\s*/)
+    .map((paragraph) => paragraph.replace(/\s*\n\s*/g, ' ').trim())
+    .filter((paragraph) => paragraph !== '');
+}
+
+/** Plain selected text as Markdown paragraphs, escaped. */
+function plainMarkdown(text) {
+  return quoteParagraphs(text).map(escapeQuote).join('\n\n');
+}
+
+/** A statement's body without the header the page (or the source) set
+ * before it: "Proposition 2.2 (Name).", bold or not, or - a selection that
+ * began inside the name - the name's tail and its closing parenthesis. */
+function statementBody(markdown, statement) {
+  let body = String(markdown).trim();
+  const word = escapeRegExp(statement.word);
+  const number = statement.number ? `\\s*${escapeRegExp(statement.number)}` : '';
+  const head = new RegExp(
+    `^(?:\\*\\*)?(?:${word}|${word.toUpperCase()})${number}\\.?(?:\\*\\*)?\\s*(?:\\((?:[^()]|\\([^()]*\\))*\\))?\\s*[.:]?\\s*`
+  );
+  const m = head.exec(body);
+  if (m) return body.slice(m[0].length);
+  // Begun inside the name: "two block overlaps). Let ...", or the name as
+  // a source's optional argument leaves it, "Moments of ...\] Let ...".
+  const title = statement.title ? String(statement.title).trim() : '';
+  const close = /\)|\\\]|\]/.exec(body);
+  if (title && close && close.index > 0 && close.index < title.length + 4) {
+    const tail = body.slice(0, close.index).replace(/\\(.)/g, '$1').trim();
+    if (tail && title.endsWith(tail)) {
+      body = body.slice(close.index + close[0].length).replace(/^\s*[.:]?\s*/, '');
+    }
+  }
+  return body;
+}
+
+/** A statement block: `> **Proposition 2.2** (Name). body`, its displays
+ * and paragraphs on `>` lines of their own, and the page link last on a
+ * line of its own. The bold label opening a quote is what marks it as a
+ * statement; any Markdown reader shows it as the paper does. */
+function statementBlock(statement, markdown, link) {
+  const label = statement.number ? `${statement.word} ${statement.number}` : statement.word;
+  const title = statement.title ? ` (${escapeQuote(statement.title)})` : '';
+  const header = `**${label}**${title}.`;
+  const paragraphs = paragraphsOf(statementBody(markdown, statement));
+  if (paragraphs.length === 0 || /^\$\$/.test(paragraphs[0])) paragraphs.unshift(header);
+  else paragraphs[0] = `${header} ${paragraphs[0]}`;
+  paragraphs.push(link);
+  return paragraphs.map((paragraph) => `> ${paragraph}`).join('\n>\n');
+}
+
+/** Apply `change` to the parts of Markdown that are prose: not math, not a
+ * link or a citation already written. */
+function inProse(markdown, change) {
+  const protectedRe =
+    /\$\$[\s\S]*?\$\$|\$[^$\n]+\$|!?\[[^\]\n]*\]\([^)\n]*\)(?:\{[^}\n]*\})?|\[@[^\]\n]*\](?:\{[^}\n]*\})?|\[\^[^\]\n]*\]/g;
+  let out = '';
+  let last = 0;
+  let m;
+  while ((m = protectedRe.exec(markdown)) !== null) {
+    out += change(markdown.slice(last, m.index)) + m[0];
+    last = m.index + m[0].length;
+  }
+  return out + change(markdown.slice(last));
+}
+
+/** "3-5" -> ["3", "4", "5"]; a label is itself. */
+function expandLabel(part) {
+  const range = /^(\d{1,4})\s*(?:-|\u2013|\u2014|--)\s*(\d{1,4})$/.exec(part);
+  if (range) {
+    const from = Number(range[1]);
+    const to = Number(range[2]);
+    if (to >= from && to - from <= 30) {
+      return Array.from({ length: to - from + 1 }, (_, i) => String(from + i));
+    }
+  }
+  return [part];
+}
+
+/** A footnote id for a reference no item is: the printed label, made of
+ * id characters; a number is prefixed with the quoted paper's key, since
+ * "[12]" means another work in every paper. */
+function noteId(label, citingKey) {
+  const clean = String(label).replace(/[^A-Za-z0-9_.+-]/g, '');
+  const base = /^\d+$/.test(clean) || !clean ? `${citingKey}-${clean || 'ref'}` : clean;
+  return base.replace(/[^A-Za-z0-9_.+-]/g, '').slice(0, 60);
+}
+
+/** A reference entry's line: `[^id]: [label] text`, its identifiers added
+ * when the text does not print them. */
+function noteEntry(id, label, ref) {
+  let text = String(ref.text || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  text = text.replace(/^\[[^\]]{1,40}\]\s*/, '');
+  for (const identifier of ref.ids || []) {
+    const value = identifier.replace(/^(doi|arxiv):/, '');
+    if (!text.toLowerCase().includes(value.toLowerCase())) {
+      text += identifier.startsWith('arxiv:') ? ` arXiv:${value}` : ` doi:${value}`;
+    }
+  }
+  return `[^${id}]: [${label}] ${escapeQuote(text)}`;
+}
+
+/** The first author's family name and the year of a reference entry, for
+ * author-year citations. */
+function authorYear(ref) {
+  const text = String(ref.text || '').replace(/^\[[^\]]*\]\s*/, '');
+  const name = /\b([A-Z][a-z\u00C0-\u024F'-]{1,30})\b(?!\.)/.exec(text);
+  const year = ref.year || (/\b(1[89]\d\d|20\d\d)\b/.exec(text) || [])[1];
+  return name && year ? { name: name[1], year: String(year) } : null;
+}
+
+/** The printed citations in quoted Markdown, mapped through the quoted
+ * paper's reference list (`refs`, each entry with the item it resolves
+ * to): an entry an item is becomes `[@key]` (several `[@a; @b]`); one no
+ * item is keeps its printed label as `[^id]`, its entry returned in
+ * `entries` to go under the quote. Brackets that are not all labels of the
+ * list stay as they are. Author-year citations, in a paper whose list has
+ * no labels: "Simon (2015)" and "(Simon, 2015)". */
+function linkCitations(markdown, refs, citingKey) {
+  const entries = new Map();
+  if (!Array.isArray(refs) || refs.length === 0) return { markdown, entries };
+  const byLabel = new Map();
+  for (const ref of refs) {
+    if (ref.label && !byLabel.has(ref.label)) byLabel.set(ref.label, ref);
+  }
+  const write = (refsHere, printed) => {
+    const out = [];
+    let group = [];
+    const flush = () => {
+      if (group.length > 0) out.push(`[${[...new Set(group)].map((k) => `@${k}`).join('; ')}]`);
+      group = [];
+    };
+    refsHere.forEach((ref, i) => {
+      if (ref.citeKey) {
+        group.push(ref.citeKey);
+        return;
+      }
+      flush();
+      const label = printed[i];
+      const id = noteId(label, citingKey);
+      if (!entries.has(id)) entries.set(id, noteEntry(id, label, ref));
+      out.push(`[^${id}]`);
+    });
+    flush();
+    return out.join('');
+  };
+  let out = markdown;
+  if (byLabel.size > 0) {
+    out = inProse(out, (prose) =>
+      prose.replace(/\\\[([^[\]\\\n]{1,120}?)\\\]/g, (whole, inner) => {
+        const labels = inner
+          .split(/\s*[,;]\s*/)
+          .map((part) => part.trim())
+          .filter(Boolean)
+          .flatMap(expandLabel);
+        if (labels.length === 0 || labels.length > 40) return whole;
+        const found = labels.map((label) => byLabel.get(label));
+        if (found.some((ref) => !ref)) return whole;
+        return write(found, labels);
+      })
+    );
+  } else {
+    const named = refs.map((ref) => ({ ref, at: authorYear(ref) })).filter((r) => r.at);
+    for (const { ref, at } of named) {
+      const name = escapeRegExp(at.name);
+      const others = "(?: et al\\.?| and [A-Z][\\w\u00C0-\u024F'-]+)?";
+      const narrative = new RegExp(`\\b${name}${others} \\(${at.year}[a-z]?\\)`, 'g');
+      const parenthetical = new RegExp(`\\(${name}${others},? ${at.year}[a-z]?\\)`, 'g');
+      const label = `${at.name} ${at.year}`;
+      out = inProse(out, (prose) =>
+        prose
+          .replace(parenthetical, (whole) =>
+            ref.citeKey ? write([ref], [label]) : whole + write([ref], [label])
+          )
+          .replace(narrative, (whole) =>
+            ref.citeKey ? `@${ref.citeKey}` : whole + write([ref], [label])
+          )
+      );
+    }
+  }
+  return { markdown: out, entries };
+}
+
+/** How a cross-reference of each kind may be printed: "Theorem 2.1",
+ * "Thm. 2.1", "Eq. (3)", "(3)", "Fig. 1", "Section 2", "Sec. 2". */
+const XREF_WORDS = {
+  equation: ['Equations', 'Equation', 'Eqs.', 'Eq.', 'eq.'],
+  figure: ['Figures', 'Figure', 'Figs.', 'Fig.', 'FIG.'],
+  table: ['Tables', 'Table', 'Tab.'],
+  algorithm: ['Algorithm', 'Alg.'],
+  section: ['Sections', 'Section', 'Secs.', 'Sec.', '\u00A7'],
+  Theorem: ['Theorem', 'Thm.'],
+  Lemma: ['Lemma', 'Lem.'],
+  Proposition: ['Proposition', 'Prop.'],
+  Corollary: ['Corollary', 'Cor.'],
+  Definition: ['Definition', 'Def.'],
+  Remark: ['Remark', 'Rem.'],
+  Example: ['Example', 'Ex.'],
+  Conjecture: ['Conjecture', 'Conj.'],
+  Claim: ['Claim'],
+  Assumption: ['Assumption'],
+};
+
+/** The cross-references the reader resolved in the quoted selection,
+ * written as links into the paper: `[Theorem 2.1](@key#p3){box=...}`, the
+ * words as printed, the page one-based, the target's box. A mention the
+ * reader did not resolve stays text. */
+function linkXrefs(markdown, xrefs, key) {
+  if (!Array.isArray(xrefs) || xrefs.length === 0) return markdown;
+  let out = markdown;
+  for (const x of xrefs) {
+    if (!x || typeof x.number !== 'string' || !Number.isInteger(x.page)) continue;
+    const word = x.kind === 'theorem' ? String(x.label).split(' ')[0] : x.kind;
+    const words = XREF_WORDS[word] || [word];
+    const number = escapeRegExp(x.number);
+    const end = '(?![\\d]|\\.\\d)';
+    const named = words.map(escapeRegExp).join('|');
+    const pattern =
+      x.kind === 'equation'
+        ? new RegExp(`(?:\\b(?:${named})~?\\s*)?\\(${number}\\)`, 'g')
+        : new RegExp(`(?:${named})~?\\s*${number}${end}`, 'g');
+    const box =
+      Array.isArray(x.box) && x.box.length === 4 && x.box.every(Number.isFinite)
+        ? `{box=${x.box.map((v) => Math.round(v)).join(',')}}`
+        : '';
+    out = inProse(out, (prose) =>
+      prose.replace(pattern, (words) => `[${words}](@${key}#p${x.page + 1})${box}`)
+    );
+  }
+  return out;
+}
+
+/** Notes already in the note file: its reference entries' ids, so an entry
+ * is written once. */
+async function noteIds(projectId) {
+  try {
+    const text = await call('projectFiles.read', { projectId, path: FILE });
+    const ids = new Set();
+    const re = /^\[\^([A-Za-z0-9_.:+-]{1,80})\]:/gm;
+    let m;
+    while (typeof text === 'string' && (m = re.exec(text)) !== null) ids.add(m[1]);
+    return ids;
+  } catch {
+    return new Set();
+  }
+}
+
+/** The quoted paper's reference list, each entry with the item it names. */
+async function references(itemId) {
+  try {
+    const refs = await call('projects.references', { itemId });
+    return Array.isArray(refs) ? refs : [];
+  } catch (err) {
+    log('info', `no reference list: ${String((err && err.message) || err)}`);
+    return [];
+  }
+}
+
+/** `selection.context`: the statement a selection quotes and the
+ * cross-references in it; null when SpeedyF cannot tell. */
+async function selectionContext(args) {
+  try {
+    return await call('selection.context', args);
+  } catch (err) {
+    log('info', `no selection context: ${String((err && err.message) || err)}`);
+    return null;
+  }
+}
+
 /** Quote the selection: at once from what the page itself says - its math
  * as LaTeX when a converter (Math to LaTeX) can read it from the glyphs,
  * else the text as it is - then, when that had math, upgraded quietly to
  * the passage as the paper's own TeX source writes it, if the converter
- * finds it there. */
+ * finds it there. A formal statement in it becomes a statement block (its
+ * label, number and name as the reader detected them, even when the
+ * selection missed the label); printed citations become citations of the
+ * items they name, or keep their label with the entry attached; resolved
+ * cross-references become links into the paper. */
 async function quote(text) {
   if (typeof text !== 'string' || !text.trim()) return;
+  return quoteSelection({ text });
+}
+
+/** Send a statement the reader detected, whole: `value` is what a
+ * statement action is handed (the statement and a selection token for its
+ * extent). */
+async function sendStatement(value) {
+  if (!value || typeof value !== 'object' || typeof value.selection !== 'string') {
+    log('info', 'Send to Notepad works from the button on a statement.');
+    return;
+  }
+  return quoteSelection({ selection: value.selection, text: value.text || '', statement: value });
+}
+
+async function quoteSelection({ text, selection, statement: given = null }) {
   const target = await readerTarget();
   if (!target) return;
   const { context, projectId } = target;
-  const selection = context.selection;
-  const page = selection ? selection.page : context.page;
-  const box = selection ? selection.box : null;
-  const link = pageLink(context.item.citeKey, page, box);
+  const key = context.item.citeKey;
+  const at = context.selection;
+  const selectionLink = pageLink(
+    key,
+    at ? at.page : given ? given.page : context.page,
+    at ? at.box : given ? given.box : null
+  );
   // Filled at once: the placeholder is drawn only if this ever takes long.
   const placeholder = await hold(projectId, { kind: 'text' });
-  const local = await convertQuote({ text, mode: 'local' });
-  const converted = local ? markdownQuote(local.markdown, link) : null;
-  const block = converted || quoteBlock(text, context.item.citeKey, page, box);
+  let parts;
+  let xrefs = [];
+  let refs = [];
+  let known = new Set();
+  try {
+    const [found, list, ids] = await Promise.all([
+      selectionContext(selection ? { selection } : { text }),
+      references(context.item.id),
+      noteIds(projectId),
+    ]);
+    refs = list;
+    known = ids;
+    xrefs = (found && found.xrefs) || [];
+    const statement = found && found.statement;
+    if (statement && found.parts && found.parts.statement) {
+      const link = pageLink(key, statement.page, statement.box);
+      parts = [
+        found.parts.before && {
+          selection: found.parts.before.selection,
+          text: found.parts.before.text,
+          link: selectionLink,
+        },
+        {
+          selection: found.parts.statement.selection,
+          text: found.parts.statement.text,
+          link,
+          statement,
+        },
+        found.parts.after && {
+          selection: found.parts.after.selection,
+          text: found.parts.after.text,
+          link: selectionLink,
+        },
+      ].filter(Boolean);
+    } else {
+      parts = [
+        { selection: found ? found.selection : selection || null, text, link: selectionLink },
+      ];
+    }
+    for (const part of parts) {
+      const local = await convertQuote(
+        part.selection
+          ? { selection: part.selection, mode: 'local' }
+          : { text: part.text, mode: 'local' }
+      );
+      part.local = local;
+      part.markdown = local ? local.markdown : plainMarkdown(part.text);
+    }
+  } catch (err) {
+    await drop(placeholder);
+    throw err;
+  }
+  const compose = () => {
+    const entries = new Map();
+    const blocks = parts.map((part) => {
+      const cited = linkCitations(part.markdown, refs, key);
+      for (const [id, line] of cited.entries) if (!known.has(id)) entries.set(id, line);
+      const markdown = linkXrefs(cited.markdown, xrefs, key);
+      if (part.statement) return statementBlock(part.statement, markdown, part.link);
+      return markdownQuote(markdown, part.link) || `> ${part.link}`;
+    });
+    return [...blocks, ...(entries.size > 0 ? [[...entries.values()].join('\n')] : [])].join(
+      '\n\n'
+    );
+  };
+  const block = compose();
   const handle = await fill(projectId, placeholder, block);
-  if (!converted) return;
+  const upgradable = parts.filter((part) => part.local && part.local.selection);
+  if (upgradable.length === 0) return;
   // Not awaited: the quote is in; this only ever improves it.
   void upgradeMarked({
     handle,
     block,
     what: 'Markdown',
     exact: async () => {
-      const exact = await convertQuote({
-        selection: local.selection,
-        mode: 'exact',
-        status: handle,
-      });
-      const better = exact ? markdownQuote(exact.markdown, link) : null;
-      return better ? { text: better, source: exact.source } : null;
+      let source = null;
+      for (const part of upgradable) {
+        const exact = await convertQuote({
+          selection: part.local.selection,
+          mode: 'exact',
+          status: handle,
+        });
+        if (exact) {
+          part.markdown = exact.markdown;
+          source = exact.source;
+        }
+      }
+      return source ? { text: compose(), source } : null;
     },
   });
 }
@@ -633,6 +995,8 @@ async function handle(command, value) {
       return quote(value);
     case 'equation':
       return sendEquation(value);
+    case 'statement':
+      return sendStatement(value);
     case 'region':
       return sendRegion();
     case 'editor':
