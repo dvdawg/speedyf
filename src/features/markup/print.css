@@ -1,0 +1,21 @@
+/* Markup print page (markup-print.html). Base reset only; the sheet styles
+ * belong to the Markup frontend. One sheet is shown at a time, at the page's
+ * top-left, sized in px == pt by printEntry.ts. */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: #fff;
+  overflow: hidden;
+}
+
+#sheet {
+  position: relative;
+  overflow: hidden;
+}

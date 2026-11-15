@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitest/config';
 import solid from 'vite-plugin-solid';
+import { fileURLToPath } from 'node:url';
 
 // Tauri expects a fixed dev port and no auto-clearing of its own logs.
 export default defineConfig({
@@ -19,6 +20,14 @@ export default defineConfig({
     // The CSP allows fonts from 'self' only (no data: URIs), so KaTeX's small
     // fonts must stay files instead of being inlined into its stylesheet.
     assetsInlineLimit: (file) => (/\.(woff2?|ttf|otf)$/.test(file) ? false : undefined),
+    rollupOptions: {
+      // The hidden page Markup export renders its comment sheets in. Its own
+      // entry, so none of it loads with the app.
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        markupPrint: fileURLToPath(new URL('./markup-print.html', import.meta.url)),
+      },
+    },
   },
   test: {
     // Node by default: almost every test here is over pure logic, and a DOM
