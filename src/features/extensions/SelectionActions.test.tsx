@@ -30,6 +30,7 @@ vi.mock('../../stores/selectionStore', () => ({
   settleSelectionNow: () => settleSelectionNow(),
 }));
 vi.mock('../annotations/toolStore', () => ({ toolState: tools }));
+vi.mock('../markup/markupStore', () => ({ reviewing: () => false, beginComment: vi.fn() }));
 
 const { default: SelectionActions, shortLabels } = await import('./SelectionActions');
 

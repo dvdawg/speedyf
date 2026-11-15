@@ -1,5 +1,6 @@
 /** A small text button by a page selection, for the extensions that act on
- * one (`selectionActions`): "Quote" for the Notepad's Quote to Notepad.
+ * one (`selectionActions`): "Quote" for the Notepad's Quote to Notepad, and
+ * while Markup's review mode is on, "Comment" and "Fix" before them.
  *
  * Nothing is here unless an enabled extension offers an action whose `when`
  * holds now: no listener, no DOM. When one does, the button appears just past
@@ -22,9 +23,40 @@ import {
   type ExtensionAction,
 } from './extensionStore';
 import { placeMathPopover } from './mathPopoverStore';
+import { beginComment, reviewing } from '../markup/markupStore';
 
 /** At most this many buttons; more would be a menu, which the palette is. */
 const MAX_ACTIONS = 3;
+
+/** One button in the row: an extension's action, or a core one. */
+export interface RowAction {
+  id: string;
+  title: string;
+  /** The tooltip: the title and its key. */
+  hint: string;
+  /** Run with the selected text (already captured). */
+  run: (text: string) => void;
+}
+
+/** Markup's own buttons while reviewing: they act on the live selection,
+ * and its keys say so. */
+function markupActions(): RowAction[] {
+  if (!reviewing()) return [];
+  return [
+    {
+      id: 'markup/comment',
+      title: 'Comment',
+      hint: 'Comment on the selection (C)',
+      run: () => void beginComment('comment'),
+    },
+    {
+      id: 'markup/typo',
+      title: 'Fix',
+      hint: 'Suggest a fix for the selection (T)',
+      run: () => void beginComment('typo'),
+    },
+  ];
+}
 
 /** Size used to place the row before it has been measured. */
 const GUESS = { width: 64, height: 22 };
@@ -41,8 +73,26 @@ export function shortLabels(titles: readonly string[]): string[] {
   return unique ? firsts : titles.map((title) => title.trim());
 }
 
+function hintFor(action: ExtensionAction): string {
+  const binding = extensionBindings().find((b) => `${b.extensionId}/${b.command}` === action.id);
+  return binding
+    ? `${action.title} (${formatShortcut(canonicalChord(binding.chord))})`
+    : action.title;
+}
+
 export default function SelectionActions() {
-  const actions = createMemo(() => selectionActions().slice(0, MAX_ACTIONS));
+  const actions = createMemo<RowAction[]>(() => {
+    const core = markupActions();
+    const contributed = selectionActions()
+      .slice(0, MAX_ACTIONS)
+      .map((action: ExtensionAction) => ({
+        id: action.id,
+        title: action.title,
+        hint: hintFor(action),
+        run: (text: string) => void runExtensionAction(action, text),
+      }));
+    return [...core, ...contributed];
+  });
   return (
     <Show when={actions().length > 0}>
       <SelectionButtons actions={actions()} />
@@ -95,7 +145,7 @@ function sameRange(a: Range, b: Range): boolean {
   );
 }
 
-function SelectionButtons(props: { actions: ExtensionAction[] }) {
+function SelectionButtons(props: { actions: RowAction[] }) {
   let row: HTMLDivElement | undefined;
   const [shown, setShown] = createSignal<Shown | null>(null);
   let dragging = false;
@@ -120,20 +170,14 @@ function SelectionButtons(props: { actions: ExtensionAction[] }) {
   };
 
   const labels = createMemo(() => shortLabels(props.actions.map((a) => a.title)));
-  const hint = (action: ExtensionAction) => {
-    const binding = extensionBindings().find((b) => `${b.extensionId}/${b.command}` === action.id);
-    return binding
-      ? `${action.title} (${formatShortcut(canonicalChord(binding.chord))})`
-      : action.title;
-  };
 
-  const run = (action: ExtensionAction) => {
+  const run = (action: RowAction) => {
     // The text is captured a moment after the selection settles; a press
     // sooner than that takes it now.
     settleSelectionNow();
     const text = selectedText();
     hide();
-    if (text.length > 0) void runExtensionAction(action, text);
+    if (text.length > 0) action.run(text);
   };
 
   onMount(() => {
@@ -204,7 +248,7 @@ function SelectionButtons(props: { actions: ExtensionAction[] }) {
                 <button
                   type="button"
                   class="selection-action"
-                  title={hint(action)}
+                  title={action.hint}
                   aria-label={action.title}
                   // Neither the selection nor the focus moves.
                   onPointerDown={(e) => e.preventDefault()}

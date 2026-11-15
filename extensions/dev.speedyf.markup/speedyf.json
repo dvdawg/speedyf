@@ -1,0 +1,11 @@
+{
+  "id": "dev.speedyf.markup",
+  "apiVersion": 1,
+  "name": "Markup",
+  "version": "1.0.0",
+  "description": "Review someone else's paper the way a careful referee would. Select text and comment, suggest fixes, mark regions; SpeedyF numbers, labels and groups every comment by section, and exports one PDF to send back: the paper with its comments marked and a margin of notes beside each page, and a referee letter at the end. Works on any PDF, offline.",
+  "author": "speedyf",
+  "entry": "worker.js",
+  "icon": "icon.svg",
+  "permissions": []
+}

@@ -28,6 +28,7 @@ import HoverSpanLayer from '../hovers/HoverSpanLayer';
 import EquationLayer from '../extensions/EquationLayer';
 import StatementLayer from '../extensions/StatementLayer';
 import FormLayer from '../forms/FormLayer';
+import MarkupLayer from '../markup/MarkupLayer';
 import { reveal } from '../../stores/revealStore';
 import type { Rotation } from '../../types/model';
 import { TabContext } from '../../app/TabContext';
@@ -405,6 +406,14 @@ export default function PageView(props: Props) {
             page={props.index}
             src={srcIndex()!}
             pageHeightPt={props.geom.heightPt}
+            zoom={vp.state.zoom}
+          />
+        </Show>
+        <Show when={srcIndex() !== null}>
+          <MarkupLayer
+            src={srcIndex()!}
+            widthPt={props.geom.widthPt}
+            heightPt={props.geom.heightPt}
             zoom={vp.state.zoom}
           />
         </Show>

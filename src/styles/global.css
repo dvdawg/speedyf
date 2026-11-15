@@ -8033,3 +8033,827 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .np-ref-entry.is-unused {
   opacity: 0.55;
 }
+
+/* ---------- Markup: reviewing a paper ----------
+   The marks on the page, the review drawer and its cards. Each kind of
+   comment wears one token: proofs --danger, exposition --accent,
+   literature --warn, typos --text-dim. */
+
+.mk-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.mk-mark {
+  --mk-ink: var(--accent);
+  position: absolute;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--mk-ink) 20%, transparent);
+  box-shadow: inset 0 -1.5px 0 color-mix(in srgb, var(--mk-ink) 55%, transparent);
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+
+:root[data-invert-pages='on'] .mk-mark {
+  mix-blend-mode: screen;
+}
+
+.mk-mark.is-proof,
+.mk-pin.is-proof,
+.mk-card.is-proof,
+.mk-num-badge.is-proof,
+.mk-kind-chip.is-proof,
+.mk-filter-chip.is-proof,
+.mk-menu-kind.is-proof {
+  --mk-ink: var(--danger);
+}
+
+.mk-mark.is-exposition,
+.mk-pin.is-exposition,
+.mk-card.is-exposition,
+.mk-num-badge.is-exposition,
+.mk-kind-chip.is-exposition,
+.mk-filter-chip.is-exposition,
+.mk-menu-kind.is-exposition {
+  --mk-ink: var(--accent);
+}
+
+.mk-mark.is-literature,
+.mk-pin.is-literature,
+.mk-card.is-literature,
+.mk-num-badge.is-literature,
+.mk-kind-chip.is-literature,
+.mk-filter-chip.is-literature,
+.mk-menu-kind.is-literature {
+  --mk-ink: var(--warn);
+}
+
+.mk-mark.is-typo,
+.mk-pin.is-typo,
+.mk-card.is-typo,
+.mk-num-badge.is-typo,
+.mk-kind-chip.is-typo,
+.mk-filter-chip.is-typo,
+.mk-menu-kind.is-typo {
+  --mk-ink: var(--text-dim);
+}
+
+/* A typo fix strikes its words rather than washing them. */
+.mk-mark.is-strike {
+  background: linear-gradient(
+    to bottom,
+    transparent calc(55% - 0.75px),
+    var(--danger) calc(55% - 0.75px),
+    var(--danger) calc(55% + 0.75px),
+    transparent calc(55% + 0.75px)
+  );
+  box-shadow: none;
+  mix-blend-mode: normal;
+}
+
+.mk-mark.mk-region {
+  border: 1.5px solid color-mix(in srgb, var(--mk-ink) 70%, transparent);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--mk-ink) 6%, transparent);
+  box-shadow: none;
+}
+
+/* The comment being written: its words marked, not yet in a colour. */
+.mk-mark.is-pending {
+  background: var(--hit);
+  box-shadow: none;
+}
+
+.mk-mark.mk-region.is-pending {
+  border-style: dashed;
+  border-color: var(--accent);
+}
+
+/* The comment's number in the page's right margin. */
+.mk-pin {
+  --mk-ink: var(--accent);
+  position: absolute;
+  min-width: 1.6em;
+  height: 1.45em;
+  padding: 0 0.35em;
+  border: none;
+  border-radius: 0.75em;
+  background: var(--mk-ink);
+  color: #ffffff;
+  font-family: inherit;
+  font-weight: 600;
+  line-height: 1.45em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  pointer-events: auto;
+  cursor: pointer;
+  opacity: 0.85;
+}
+
+.mk-pin:hover {
+  opacity: 1;
+}
+
+.mk-pin:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* ---- the drawer ---- */
+
+.mk-drawer {
+  font-size: 12.5px;
+}
+
+.mk-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 6px 8px 6px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mk-head-count {
+  color: var(--text-dim);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.mk-head-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.mk-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 14px 18px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+.mk-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.mk-section-label {
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.mk-note-line,
+.mk-dim {
+  color: var(--text-dim);
+}
+
+.mk-note-line {
+  margin: 6px 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.mk-text-btn {
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.mk-text-btn:hover {
+  background: var(--bg-inset);
+  color: var(--text);
+}
+
+.mk-text-btn.is-primary {
+  color: var(--accent);
+}
+
+.mk-text-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Overall */
+
+.mk-overall {
+  padding-bottom: 12px;
+}
+
+.mk-overall-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 22px;
+  margin-bottom: 4px;
+}
+
+.mk-overall-field,
+.mk-textarea,
+.mk-fix-input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.45;
+  resize: none;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.mk-overall-field {
+  min-height: 44px;
+  overflow: hidden;
+}
+
+.mk-overall-field::placeholder,
+.mk-textarea::placeholder,
+.mk-fix-input::placeholder {
+  color: var(--text-dim);
+  opacity: 0.8;
+}
+
+/* Filter */
+
+.mk-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 0 8px;
+}
+
+.mk-filter-chip {
+  --mk-ink: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.mk-filter-chip:hover:not(:disabled) {
+  background: var(--row-hover);
+}
+
+.mk-filter-chip.is-active {
+  border-color: color-mix(in srgb, var(--mk-ink) 55%, transparent);
+  background: color-mix(in srgb, var(--mk-ink) 12%, transparent);
+}
+
+.mk-filter-chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.mk-filter-chip:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.mk-filter-n {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Groups and cards */
+
+.mk-group + .mk-group {
+  margin-top: 6px;
+}
+
+.mk-group-title {
+  margin: 8px 0 2px;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mk-card {
+  --mk-ink: var(--accent);
+  position: relative;
+  margin: 0 -8px;
+  padding: 8px 8px 9px;
+  border-radius: var(--row-radius);
+}
+
+.mk-card + .mk-card {
+  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+.mk-card:hover:not(.is-editing) {
+  background: var(--row-hover);
+}
+
+.mk-card.is-editing {
+  background: var(--bg-inset);
+}
+
+.mk-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+}
+
+.mk-num-badge {
+  --mk-ink: var(--accent);
+  flex: none;
+  min-width: 20px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--mk-ink);
+  color: var(--accent-text);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+:root[data-theme='dark'] .mk-num-badge {
+  color: var(--bg);
+}
+
+.mk-card-where {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mk-card-where:hover {
+  color: var(--text);
+}
+
+.mk-card-where:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: 3px;
+}
+
+.mk-label-line {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A drawn dot between label parts, so the text stays ASCII. */
+.mk-sep {
+  display: inline-block;
+  width: 2.5px;
+  height: 2.5px;
+  margin: 0 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.7;
+  vertical-align: middle;
+}
+
+.mk-card-state {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.mk-card-actions {
+  display: inline-flex;
+  opacity: 0;
+}
+
+.mk-card:hover .mk-card-actions,
+.mk-card:focus-within .mk-card-actions {
+  opacity: 1;
+}
+
+.mk-card-actions .icon-btn {
+  height: 22px;
+  min-width: 22px;
+  padding: 0 3px;
+  color: var(--text-dim);
+}
+
+.mk-card-actions .icon-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.mk-kind-chip {
+  --mk-ink: var(--accent);
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.mk-kind-select {
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--mk-ink) 45%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--mk-ink) 9%, transparent);
+  color: var(--mk-ink);
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+
+.mk-kind-select:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.mk-card-body {
+  padding: 3px 0 0 26px;
+  cursor: default;
+}
+
+.mk-card.is-editing .mk-card-quote,
+.mk-card.is-editing .mk-editor {
+  margin-left: 26px;
+}
+
+.mk-card-quote {
+  display: -webkit-box;
+  margin: 2px 0 3px;
+  padding-left: 7px;
+  overflow: hidden;
+  border-left: 2px solid color-mix(in srgb, var(--mk-ink) 45%, transparent);
+  color: var(--text-dim);
+  font-size: 12px;
+  font-style: italic;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.mk-card-quote.is-region {
+  font-style: normal;
+}
+
+.mk-rendered {
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.mk-rendered p {
+  margin: 0;
+}
+
+.mk-rendered p + p,
+.mk-rendered ul {
+  margin-top: 4px;
+}
+
+.mk-rendered ul {
+  margin-bottom: 0;
+  padding-left: 16px;
+}
+
+.mk-rendered code {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 0.92em;
+}
+
+.mk-rendered .katex {
+  font-size: 1.05em;
+}
+
+.mk-rendered .mk-display {
+  margin: 4px 0;
+  overflow-x: auto;
+  text-align: center;
+}
+
+.mk-cite {
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.mk-cite.is-unknown {
+  color: var(--text-dim);
+}
+
+.mk-math-raw {
+  color: var(--text-dim);
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 0.92em;
+}
+
+.mk-fix {
+  line-height: 1.5;
+}
+
+.mk-del {
+  color: var(--text-dim);
+  text-decoration: line-through;
+  text-decoration-color: var(--danger);
+}
+
+.mk-ins {
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-underline-offset: 2px;
+}
+
+/* The editor */
+
+.mk-editor {
+  padding-top: 4px;
+}
+
+.mk-editor-field {
+  position: relative;
+}
+
+.mk-textarea {
+  display: block;
+  min-height: 34px;
+  overflow: hidden;
+}
+
+.mk-textarea:focus,
+.mk-overall-field:focus,
+.mk-fix-input:focus {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+}
+
+.mk-fix-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.mk-fix-old {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  color: var(--text-dim);
+  text-decoration: line-through;
+  text-decoration-color: var(--danger);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mk-fix-input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+}
+
+.mk-preview {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--bg-elev);
+}
+
+.mk-editor-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.mk-editor-hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mk-menu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  z-index: 5;
+  width: 100%;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  box-shadow: var(--shadow);
+}
+
+.mk-menu-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.mk-menu-row:hover {
+  background: var(--row-hover);
+}
+
+.mk-menu-row.is-current {
+  background: var(--row-selected);
+}
+
+.mk-menu-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mk-menu-detail {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mk-menu-row:not(.is-quick) {
+  flex-direction: column;
+  gap: 1px;
+}
+
+.mk-menu-row:not(.is-quick) .mk-menu-title,
+.mk-menu-row:not(.is-quick) .mk-menu-detail {
+  max-width: 100%;
+}
+
+.mk-menu-kind {
+  --mk-ink: var(--accent);
+  flex: none;
+  color: var(--mk-ink);
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 10.5px;
+}
+
+/* Empty state */
+
+.mk-empty {
+  padding: 10px 2px;
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.mk-empty p {
+  margin: 0 0 6px;
+}
+
+.mk-empty ul {
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.mk-empty li {
+  padding: 2px 0;
+}
+
+.mk-empty kbd,
+.mk-editor-hint kbd {
+  display: inline-block;
+  min-width: 18px;
+  margin-right: 6px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--bg-inset);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* Suggestions */
+
+.mk-suggest {
+  margin-top: 14px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.mk-suggest-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 0;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.mk-suggest-toggle svg {
+  width: 12px;
+  height: 12px;
+}
+
+.mk-suggest-toggle:hover {
+  color: var(--text);
+}
+
+.mk-suggest-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: 3px;
+}
+
+.mk-suggest-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.mk-suggest-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.mk-suggest-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mk-suggest-detail {
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .mk-card-actions,
+  .mk-pin {
+    transition: opacity var(--ease-quick);
+  }
+
+  .mk-card.is-flashed {
+    animation: mk-flash 1200ms ease-out;
+  }
+
+  .mk-menu {
+    animation: pop-in var(--ease-quick);
+  }
+}
+
+@keyframes mk-flash {
+  0%,
+  35% {
+    background: var(--row-selected);
+  }
+  100% {
+    background: transparent;
+  }
+}

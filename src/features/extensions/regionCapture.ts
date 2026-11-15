@@ -73,6 +73,23 @@ async function crop(pagePng: ArrayBuffer, widthPt: number, box: Box): Promise<nu
   return Array.from(new Uint8Array(await blob.arrayBuffer()));
 }
 
+/** Let the user drag a rectangle on a page and answer where it is (reader
+ * page, top-left page points), or null on Escape: the same crosshair as a
+ * capture, for a core feature that wants the place and not a picture
+ * (Markup's region comments). One at a time, like a capture. */
+export function pickRegion(prompt: string): Promise<{ page: number; box: Box } | null> {
+  request()?.finish(null);
+  return new Promise((resolve) => {
+    setRequest({
+      prompt,
+      finish: (region) => {
+        setRequest(null);
+        resolve(region);
+      },
+    });
+  });
+}
+
 /** A PNG of `box` on reader page `page` of the active document. */
 async function renderRegion(page: number, box: Box): Promise<CapturedRegion> {
   const tab = activeTab();
