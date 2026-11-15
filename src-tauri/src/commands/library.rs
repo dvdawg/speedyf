@@ -1025,6 +1025,23 @@ pub async fn library_citation_links(
     .map_err(|error| AppError::Internal(format!("library task failed: {error}")))?
 }
 
+/// A paper's reference list, each entry with the library item it names
+/// (`PaperStore::paper_references`).
+#[tauri::command]
+pub async fn library_paper_references(
+    state: tauri::State<'_, EngineState>,
+    paper_id: String,
+) -> AppResult<Vec<crate::library::papers::PaperReferenceDto>> {
+    let engine = state.0.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (_, refs, _) = citation_inputs(&engine);
+        let store = engine.0.papers.lock();
+        store.paper_references(&paper_id, &refs)
+    })
+    .await
+    .map_err(|error| AppError::Internal(format!("library task failed: {error}")))?
+}
+
 /// What citation resolution reads besides the store: the index entries,
 /// the active provider's reference lists, and the network's edges. The
 /// locks in turn, never nested.

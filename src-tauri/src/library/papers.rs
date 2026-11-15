@@ -1812,6 +1812,50 @@ impl PaperStore {
         })
     }
 
+    /// One paper's reference list as its stored sidecar has it, each entry
+    /// with the library item it resolves to (`resolve_reference`), if any:
+    /// what a notepad maps a quoted passage's printed citations through.
+    /// Empty when no file of the paper has a reference list read.
+    pub fn paper_references(
+        &self,
+        paper_id: &str,
+        refs: &DocRefs,
+    ) -> AppResult<Vec<PaperReferenceDto>> {
+        let own = self.index_of(paper_id)?;
+        let Some(list) = self.papers[own]
+            .files
+            .iter()
+            .find_map(|file| refs.get(Path::new(&file.path)))
+        else {
+            return Ok(Vec::new());
+        };
+        let tables = self.citation_tables();
+        Ok(list
+            .iter()
+            .map(|reference| {
+                let item = tables
+                    .resolve_reference(reference, own)
+                    .filter(|&index| index != own)
+                    .map(|index| &self.papers[index]);
+                PaperReferenceDto {
+                    label: reference.label.clone(),
+                    text: reference.text.clone(),
+                    year: reference.year,
+                    ids: reference
+                        .ids
+                        .iter()
+                        .map(|id| match id {
+                            CitationIdDto::Doi(value) => format!("doi:{value}"),
+                            CitationIdDto::ArXiv(value) => format!("arxiv:{value}"),
+                        })
+                        .collect(),
+                    item_id: item.map(|paper| paper.id.clone()),
+                    cite_key: item.map(|paper| paper.cite_key.clone()),
+                }
+            })
+            .collect())
+    }
+
     /// `citation_links` as paper indices, against tables the caller built:
     /// the papers `own` cites and the papers citing it, each once, and how
     /// many of its citations resolve to nothing.
@@ -2456,6 +2500,20 @@ fn push_once(list: &mut Vec<usize>, index: usize) {
     if !list.contains(&index) {
         list.push(index);
     }
+}
+
+/// One entry of a paper's reference list, for a notepad: its printed label
+/// and text, its identifiers (`doi:...`, `arxiv:...`), and the library item
+/// it names, when one does.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PaperReferenceDto {
+    pub label: Option<String>,
+    pub text: String,
+    pub year: Option<i32>,
+    pub ids: Vec<String>,
+    pub item_id: Option<String>,
+    pub cite_key: Option<String>,
 }
 
 /// What citation resolution looks papers up by, for one query.
@@ -5966,5 +6024,56 @@ mod tests {
             paper.set_cite_key(format!("k{n}"));
         }
         assert_eq!(paper.former_keys.len(), MAX_FORMER_KEYS);
+    }
+
+    #[test]
+    fn a_papers_references_name_the_items_they_resolve_to() {
+        use super::super::references::{stored_refs, ProvidedRef};
+        use std::sync::Arc;
+        let mut store = new_store();
+        let mut citing = entry("/l/rz26.pdf", Some("rz26"));
+        citing.arxiv = Some("2601.00001".into());
+        let mut simon = entry("/l/sim15.pdf", Some("sim15"));
+        simon.arxiv = Some("1501.01234".into());
+        for e in [&citing, &simon] {
+            store.reconcile_file(e);
+        }
+        let id_of = |path: &str| {
+            store
+                .papers
+                .iter()
+                .find(|p| p.files.iter().any(|f| f.path == path))
+                .unwrap()
+                .id
+                .clone()
+        };
+        let (citing_id, simon_id) = (id_of("/l/rz26.pdf"), id_of("/l/sim15.pdf"));
+        let provided = [
+            (
+                "Sim15",
+                "B. Simon, Spectral theory, arXiv:1501.01234 (2015).",
+            ),
+            ("Lar23", "L. Larsen, Not in the library (2023)."),
+        ]
+        .map(|(label, text)| ProvidedRef {
+            label: Some(label.into()),
+            text: text.into(),
+            year: None,
+        });
+        let mut refs = DocRefs::new();
+        refs.insert(
+            PathBuf::from("/l/rz26.pdf"),
+            Arc::new(stored_refs(&provided, None, Some("2601.00001"))),
+        );
+        let list = store.paper_references(&citing_id, &refs).unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].label.as_deref(), Some("Sim15"));
+        assert_eq!(list[0].item_id.as_deref(), Some(simon_id.as_str()));
+        assert_eq!(list[0].ids, vec!["arxiv:1501.01234".to_string()]);
+        assert!(list[0].cite_key.is_some());
+        assert_eq!(list[1].item_id, None);
+        assert!(list[1].text.contains("Larsen"));
+        // A paper whose list was never read has none.
+        assert!(store.paper_references(&simon_id, &refs).unwrap().is_empty());
     }
 }
