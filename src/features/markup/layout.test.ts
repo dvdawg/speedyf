@@ -1,65 +1,52 @@
 import { describe, expect, it } from 'vitest';
-import { layoutMargin, MARGIN, paginate, stackMargin, type MarginNote } from './layout';
+import { paginate, placeNotes } from './layout';
 
-const note = (id: string, desiredTop: number, full: number, short = 20, tiny = 10): MarginNote => ({
-  id,
-  desiredTop,
-  full,
-  short,
-  tiny,
-});
+const band = { top: 10, bottom: 500, gap: 4 };
 
-function overlaps(placed: { top: number; height: number }[], gap: number): boolean {
-  const sorted = [...placed].sort((a, b) => a.top - b.top);
-  return sorted.some(
-    (p, i) => i > 0 && p.top < sorted[i - 1]!.top + sorted[i - 1]!.height + gap - 1e-6
-  );
+function ends(tops: number[], heights: number[]) {
+  return tops.map((t, i) => t + heights[i]!);
 }
 
-describe('stackMargin', () => {
-  const box = { top: 10, bottom: 500, gap: 4 };
+function noOverlap(tops: number[], heights: number[], gap: number) {
+  return tops.every((t, i) => i === 0 || t >= tops[i - 1]! + heights[i - 1]! + gap - 1e-6);
+}
 
+describe('placeNotes', () => {
   it('puts each note level with its anchor when there is room', () => {
-    const placed = stackMargin([note('a', 100, 30), note('b', 300, 30)], box);
-    expect(placed.map((p) => [p.id, p.top, p.form])).toEqual([
-      ['a', 100, 'full'],
-      ['b', 300, 'full'],
-    ]);
+    expect(placeNotes([100, 300], [30, 30], band)).toEqual([100, 300]);
   });
 
-  it('pushes a note down below the one before, never overlapping', () => {
-    const placed = stackMargin([note('b', 105, 30), note('a', 100, 30), note('c', 110, 30)], box);
-    expect(placed.map((p) => p.id)).toEqual(['a', 'b', 'c']);
-    expect(placed.map((p) => p.top)).toEqual([100, 134, 168]);
-    expect(overlaps(placed, box.gap)).toBe(false);
+  it('splits a collision between the notes, one up and one down', () => {
+    const tops = placeNotes([100, 110], [30, 30], band);
+    // Each moves 12 pt: the least squared displacement.
+    expect(tops).toEqual([88, 122]);
+    expect(noOverlap(tops, [30, 30], band.gap)).toBe(true);
   });
 
-  it('pulls notes back up so the last one ends on the page', () => {
-    const placed = stackMargin([note('a', 400, 60), note('b', 480, 60)], box);
-    expect(placed.at(-1)!.top + placed.at(-1)!.height).toBeLessThanOrEqual(box.bottom);
-    expect(overlaps(placed, box.gap)).toBe(false);
-    expect(placed.every((p) => p.form === 'full')).toBe(true);
+  it('keeps reading order and moves a crowd as little as it can', () => {
+    const heights = [20, 20, 20, 20];
+    const tops = placeNotes([200, 200, 200, 400], heights, band);
+    expect(noOverlap(tops, heights, band.gap)).toBe(true);
+    // The three that collide straddle 200; the fourth stays put.
+    expect(tops[0]!).toBeLessThan(200);
+    expect(tops[2]!).toBeGreaterThan(200);
+    expect(tops[3]).toBe(400);
   });
 
-  it('shortens the longest notes first when they cannot all fit', () => {
-    const placed = stackMargin([note('a', 20, 100), note('b', 140, 300), note('c', 450, 120)], box);
-    const form = Object.fromEntries(placed.map((p) => [p.id, p.form]));
-    expect(form).toEqual({ a: 'full', b: 'short', c: 'full' });
-    expect(overlaps(placed, box.gap)).toBe(false);
-    expect(placed.at(-1)!.top + placed.at(-1)!.height).toBeLessThanOrEqual(box.bottom);
+  it('stays inside the band at both ends', () => {
+    const heights = [40, 40, 40];
+    const low = placeNotes([480, 490, 495], heights, band);
+    expect(Math.max(...ends(low, heights))).toBeLessThanOrEqual(band.bottom);
+    expect(noOverlap(low, heights, band.gap)).toBe(true);
+    const high = placeNotes([0, 2, 4], heights, band);
+    expect(high[0]).toBe(band.top);
+    expect(noOverlap(high, heights, band.gap)).toBe(true);
   });
 
-  it('goes down to the smallest form when shortening is not enough', () => {
-    const notes = Array.from({ length: 30 }, (_, i) => note(`n${i}`, i * 10, 40, 22, 10));
-    const placed = stackMargin(notes, box);
-    expect(placed.some((p) => p.form === 'tiny')).toBe(true);
-    expect(overlaps(placed, box.gap)).toBe(false);
-    expect(placed.at(-1)!.top + placed.at(-1)!.height).toBeLessThanOrEqual(box.bottom);
-  });
-
-  it('keeps the margin frame of a page', () => {
-    const placed = layoutMargin([note('a', 0, 20)], 792);
-    expect(placed[0]!.top).toBe(MARGIN.top);
+  it('stacks from the top when the notes cannot fit at all', () => {
+    const heights = [300, 300];
+    const tops = placeNotes([100, 200], heights, band);
+    expect(tops).toEqual([10, 314]);
   });
 });
 

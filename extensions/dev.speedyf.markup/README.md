@@ -62,7 +62,7 @@ Nothing here is stored; it is worked out as you go:
   you write the paragraph.
 - The comments, **grouped by section** in reading order. Click a card's
   label line to go to it on the page (it is marked for a moment); click a
-  number in the page's margin to find its card. **Edit** (or a double click)
+  comment's number on the page to find its card. **Edit** (or a double click)
   and **Delete** sit at the card's right; Delete can be undone from the
   status bar.
 - **Filter** by kind with the chips above the list.
@@ -80,27 +80,28 @@ the PDF until you export.
 
 **Export PDF...** (also in the palette, **Markup: Export PDF...**) asks
 where to write, beside the paper as "<name> - markup.pdf" by default, and
-writes one PDF:
+writes one PDF: the paper itself, each page widened on the right by a
+margin strip. Nothing is added before or after it.
 
-- **The paper**, each page widened on the right by a margin strip. Commented
-  words are marked with real PDF annotations (a highlight, a strike-through
-  and caret for a fix, a box for a region), each holding its numbered
-  comment, so any PDF reader lists them.
-- **Margin notes** beside each page, level with what they are about,
-  numbered, math typeset. When a page has more to say than room, the
-  longest notes are shortened to their first lines with "... see 7 on
-  p. 14", pointing into the letter.
-- **The letter** at the end, set like a careful referee report: "Comments
-  on <title>" and the date, the Overall paragraph, the comments by section
-  in paper order (label line, the quoted words, kind, comment), then a
-  table of **Typos and wording** (page, original, suggested), then
-  **References** for the library items cited. The same QuickMark on the
-  same words again is one entry, "Also p. 7, p. 9."
+- **On the page**, each commented phrase keeps its soft highlight in the
+  comment's colour (a strike-through and caret for a fix, a box for a
+  region), as real PDF annotations holding the numbered comment, so any PDF
+  reader lists them. A small number in the same colour sits just after the
+  phrase (at the top-right corner of a region), matching its note.
+- **In the margin**, each note is its number and its words - a fix reads as
+  the struck words and what replaces them, a citation as its short label,
+  math typeset. Notes sit level with what they are about; where two would
+  collide they share the move, one up and one down, keeping their order,
+  over the whole height of the page. Your Overall paragraph, if you wrote
+  one, heads the first page's margin. A crowded page is set a little
+  smaller.
+- **Only as a last resort**, when a page has more to say than its margin
+  can hold even then, its longest notes keep their first line and
+  "(cont. p. N)", and their full text goes on one page added at the end of
+  the document. A normal review adds no pages.
 
-Numbers are links both ways: a margin note's number opens its entry in the
-letter, an entry's number goes to its place on the page.
+**Copy as text** puts the review on the clipboard as a plain letter for an
+email: the Overall paragraph, the comments grouped by section with their
+labels, the typos as a list, and the library items cited.
 
-**Copy as text** puts the same letter on the clipboard as plain text, for an
-email.
-
-Export needs macOS for now: the sheets are set by the system's web view.
+Export needs macOS for now: the margin is set by the system's web view.

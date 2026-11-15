@@ -145,6 +145,11 @@ async function run(source: string, dest: string): Promise<void> {
     };
     const { doc: review, anchors } = syntheticReview(size);
     const result = await exportReview(source, review, dest);
+    // A normal review is the paper, widened: never a page more.
+    const pages = doc.searchIndex.total || doc.pages.length;
+    if (result.pages !== pages) {
+      throw new Error(`${result.pages} pages written for a ${pages}-page paper`);
+    }
     await markupSelftestApi.done({
       ok: true,
       message: `${result.pages} pages, ${result.links} links`,
