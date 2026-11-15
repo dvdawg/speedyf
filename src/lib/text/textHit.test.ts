@@ -72,9 +72,9 @@ describe('hitTest', () => {
     expect(hitTest(model, { x: 400, y: 693 }, left)?.run).toBe(4);
   });
 
-  it('chooses between two runs on a line by the gap between them', () => {
+  it('takes the gap between two runs as the start of the next', () => {
     const model = buildTextModel([run('one', 0, 100, 30), run('two', 40, 100, 30)]);
-    expect(hitTest(model, { x: 33, y: 105 })).toEqual({ run: 0, offset: 3 });
+    expect(hitTest(model, { x: 31, y: 105 })).toEqual({ run: 1, offset: 0 });
     expect(hitTest(model, { x: 38, y: 105 })).toEqual({ run: 1, offset: 0 });
   });
 
@@ -192,5 +192,67 @@ describe('display equations', () => {
     ]);
     expect(rects).toHaveLength(3);
     expect(rects[1]).toEqual([136, 665, 360, 28]);
+  });
+});
+
+/** "Wiﬁ in" in a serif face, as the engine places it: glyph advances of
+ * different widths ("W" wide, "i" narrow), a ligature as one character, an
+ * inkless word space, and a run whose ink starts a little right of its
+ * first advance. Edges from `x` (60). */
+function serifRun(): TextRunDto {
+  return {
+    text: 'Wiﬁ in',
+    start: 0,
+    x: 60,
+    y: 700,
+    w: 38,
+    h: 9,
+    // W 0..9.4, i 9.4..12.2, fi 12.2..18.3, space 18.3..20.8, i 20.8..23.6, n 23.6..28.6
+    edges: [0, 9.4, 12.2, 18.3, 20.8, 23.6, 28.6],
+  };
+}
+
+describe('hitTest on the engine glyph edges', () => {
+  it('includes a glyph pressed at its left edge', () => {
+    const model = buildTextModel([serifRun()]);
+    // the left edge of "W", and just inside the ligature's left half
+    expect(hitTest(model, { x: 60.2, y: 704 })).toEqual({ run: 0, offset: 0 });
+    expect(hitTest(model, { x: 72.5, y: 704 })).toEqual({ run: 0, offset: 2 });
+  });
+
+  it('takes the boundary after a glyph pressed in its right half', () => {
+    const model = buildTextModel([serifRun()]);
+    // the right half of the narrow "i" (69.4..72.2)
+    expect(hitTest(model, { x: 71.5, y: 704 })).toEqual({ run: 0, offset: 2 });
+    // the right half of the ligature: after it, never inside it
+    expect(hitTest(model, { x: 77.5, y: 704 })).toEqual({ run: 0, offset: 3 });
+  });
+
+  it('starts at the next word from anywhere in the space before it', () => {
+    const model = buildTextModel([serifRun()]);
+    // the space is 78.3..80.8: both halves begin the word "in"
+    expect(hitTest(model, { x: 78.5, y: 704 })).toEqual({ run: 0, offset: 4 });
+    expect(hitTest(model, { x: 80.6, y: 704 })).toEqual({ run: 0, offset: 4 });
+  });
+
+  it('paints exactly the characters a press selects', () => {
+    const model = buildTextModel([serifRun()]);
+    const [band] = selectionRects(model, [{ run: 0, from: 4, to: 6 }]);
+    expect(band![0]).toBeCloseTo(80.8);
+    expect(band![2]).toBeCloseTo(7.8);
+  });
+
+  it('starts at the first letter after a leading space', () => {
+    const model = buildTextModel([
+      { text: ' word', start: 0, x: 100, y: 700, w: 30, h: 9, edges: [0, 3, 9, 15, 20, 26] },
+    ]);
+    expect(hitTest(model, { x: 101, y: 704 })).toEqual({ run: 0, offset: 1 });
+    expect(hitTest(model, { x: 103.5, y: 704 })).toEqual({ run: 0, offset: 1 });
+  });
+
+  it('falls back to an estimate when the edges do not fit the text', () => {
+    const model = buildTextModel([{ ...serifRun(), edges: [0, 1] }]);
+    expect(model.edges(0)).toHaveLength(7);
+    expect(model.edges(0)[0]).toBe(60);
   });
 });
