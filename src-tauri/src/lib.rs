@@ -5,6 +5,7 @@ pub mod errors;
 mod extensions;
 mod external;
 mod library;
+mod markup_capture;
 mod printing;
 mod search;
 mod windows;
@@ -249,6 +250,8 @@ pub fn run() {
             app.manage(commands::projectfiles::ProjectFilesState(project_files));
             app.manage(EngineState(engine));
             app.manage(windows::Windows::default());
+            app.manage(markup_capture::PrintJobs::default());
+            app.manage(commands::markup::MarkupKeys::default());
             windows::install_menu(app.handle())?;
 
             // Someone who hand-installed an extension before it began shipping
@@ -420,6 +423,12 @@ pub fn run() {
             commands::list_printers,
             commands::printer_options,
             commands::submit_print,
+            commands::markup::markup_load,
+            commands::markup::markup_save,
+            commands::markup::markup_export,
+            markup_capture::markup_print_payload,
+            markup_capture::markup_print_capture,
+            markup_capture::markup_print_finish,
             commands::get_form_fields,
             commands::get_outline,
             commands::get_generated_outline,

@@ -11,6 +11,7 @@ pub mod citations;
 pub mod health;
 pub mod hovers;
 pub mod library;
+pub mod markup;
 pub mod projectfiles;
 
 pub struct EngineState(pub EngineHandle);

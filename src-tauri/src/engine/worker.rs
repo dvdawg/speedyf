@@ -363,6 +363,8 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         Work::MatchRects { respond, .. } => respond(Err(err())),
         Work::Save { respond, .. } => respond(Err(err())),
         Work::BuildPrintPdf { respond, .. } => respond(Err(err())),
+        Work::MarkupExport { respond, .. } => respond(Err(err())),
+        Work::MarkupKey { respond, .. } => respond(Err(err())),
         Work::FormFields { respond, .. } => respond(Err(err())),
         Work::Outline { respond, .. } => respond(Err(err())),
         Work::GeneratedOutline { respond, .. } => respond(Err(err())),
@@ -501,6 +503,19 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
             dest,
             respond,
         } => respond(do_build_print_pdf(state, doc, plan, &dest)),
+        Work::MarkupExport {
+            request,
+            sheets,
+            respond,
+        } => respond(super::markup_export::export(
+            state.pdfium,
+            &request,
+            &sheets,
+        )),
+        Work::MarkupKey { path, respond } => respond(Ok(super::markup_export::permanent_id(
+            state.bindings,
+            &path,
+        ))),
         Work::FormFields { doc, respond } => respond(do_form_fields(state, doc)),
         Work::Outline { doc, respond } => respond(do_outline(state, doc)),
         Work::GeneratedOutline { doc, respond } => {
