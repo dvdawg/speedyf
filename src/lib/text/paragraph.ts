@@ -47,7 +47,14 @@ export function linesOf(runs: readonly TextRunDto[]): Line[] {
     const top = run.y + h;
     if (current !== null) {
       const em = Math.max(current.size, h);
-      const sameBand = Math.abs(current.bottom - run.y) <= SAME_LINE_RATIO * em;
+      // On the line's baseline, or (a superscript, a subscript, an inline
+      // operator taller than the type) centred within the line's band: a
+      // script measured against a bottom another script already lowered
+      // would otherwise start a line of its own.
+      const centre = run.y + h / 2;
+      const sameBand =
+        Math.abs(current.bottom - run.y) <= SAME_LINE_RATIO * em ||
+        (centre >= current.bottom && centre <= current.top);
       const gap = run.x - current.maxX;
       if (sameBand && gap > -em && gap <= SEGMENT_GAP_EMS * em) {
         current.last = index;

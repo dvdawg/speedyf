@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TextRunDto } from '../../types/engine';
-import { paragraphRunRange } from './paragraph';
+import { linesOf, paragraphRunRange } from './paragraph';
 
 /** One run, its bottom at `y` (page points, y up). */
 function run(text: string, x: number, y: number, w = 200, h = 10): TextRunDto {
@@ -76,5 +76,23 @@ describe('paragraphRunRange', () => {
   it('answers null outside the runs', () => {
     expect(paragraphRunRange([], 0)).toBeNull();
     expect(paragraphRunRange(body(700, 1), 5)).toBeNull();
+  });
+});
+
+describe('inline math on a line', () => {
+  it('keeps a subscript and a superscript on their line', () => {
+    // x_i^2 + y: "x" on the baseline, "i" lowered, "2" raised above where a
+    // check against the lowered bottom would allow, then the rest
+    const runs = [
+      run('x', 60, 700, 6, 7),
+      run('i', 66, 697, 3, 5),
+      run('2', 66, 704.5, 4, 5),
+      run('+ y and more words', 72, 698, 150, 9),
+      run('next line', 60, 688, 200, 9),
+    ];
+    expect(linesOf(runs).map((l) => [l.first, l.last])).toEqual([
+      [0, 3],
+      [4, 4],
+    ]);
   });
 });
