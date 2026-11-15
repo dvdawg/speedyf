@@ -3,6 +3,7 @@
  * letter at the end - and "Copy as text" puts the letter on the clipboard
  * for an email. */
 import { save } from '@tauri-apps/plugin-dialog';
+import { engine } from '../../lib/transport/engine';
 import { activeTab } from '../../stores/tabsStore';
 import { flashStatus } from '../../stores/statusMessage';
 import { openInNewTabOrFocus } from '../document/tabsController';
@@ -83,6 +84,26 @@ function pageSize(page: number): { w: number; h: number } | null {
   return entry ? { w: entry.widthPt, h: entry.heightPt } : null;
 }
 
+/** Margin sheets are cut to each page's height, so every page's real size
+ * must be known first: until the engine reports it, a page carries the
+ * document's estimate. */
+async function settlePageSizes(): Promise<void> {
+  const tab = activeTab();
+  if (!tab) return;
+  const state = tab.documentStore.state;
+  if (state.pages.every((p) => p.sizeKnown)) return;
+  const docId = state.docId;
+  try {
+    for (let from = 0; from < state.pages.length; from += 256) {
+      const res = await engine.requestPageSizes(docId, from, 256);
+      if (tab.documentStore.state.docId !== docId) return;
+      tab.documentStore.updateSizes(res.from, res.sizes);
+    }
+  } catch {
+    /* keep the estimates */
+  }
+}
+
 let exporting = false;
 
 /** Lay out `review` of the active document and write it to `dest`. */
@@ -93,7 +114,7 @@ export async function exportReview(
 ): Promise<MarkupExportResult> {
   const doc = activeTab()?.documentStore.state;
   if (!doc) throw new Error('no document is open');
-  await Promise.all([loadMath(), settleLabelSources(review.comments)]);
+  await Promise.all([loadMath(), settleLabelSources(review.comments), settlePageSizes()]);
   const request = await buildExportRequest({
     source,
     dest,
