@@ -312,7 +312,7 @@ fn direct(words: &[&str], full: bool) -> Option<(Vec<Author>, bool, usize)> {
         // sentence followed by the year ("Jones. 2019."), or by "(2019)".
         let next = words.get(at).map(|w| w.trim_matches(['(', ')', '.', ',']));
         let year_next = next.is_some_and(|w| {
-            w.len() >= 4 && w[..4].bytes().all(|b| b.is_ascii_digit()) && w.len() <= 5
+            w.len() >= 4 && w.bytes().take(4).all(|b| b.is_ascii_digit()) && w.len() <= 5
         });
         if !(year_next && (sentence_end || words[at].starts_with('('))) {
             return None;
