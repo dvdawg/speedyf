@@ -371,6 +371,7 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         Work::Annotations { respond, .. } => respond(Err(err())),
         Work::ImageSize { respond, .. } => respond(Err(err())),
         Work::PageHovers { respond, .. } => respond(Err(err())),
+        Work::DocStatements { respond, .. } => respond(Err(err())),
         Work::SetHoverTerms { respond, .. } => respond(Err(err())),
         Work::HoverPreview { respond, .. } => respond(Err(err())),
         Work::HoverIndexNext { .. }
@@ -512,6 +513,7 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
         }
         Work::Annotations { doc, respond } => respond(do_annotations(state, shared, doc)),
         Work::PageHovers { doc, src, respond } => do_page_hovers(state, shared, doc, src, respond),
+        Work::DocStatements { doc, respond } => do_doc_statements(state, shared, doc, respond),
         Work::HoverIndexNext { doc } => do_hover_index_next(state, shared, doc),
         Work::SetHoverTerms {
             doc,
@@ -3191,10 +3193,23 @@ fn do_page_hovers(
         return respond(hover_page(state, shared, doc, src));
     }
     entry.waiting.push((src, respond));
+    start_hover_index(state, shared, doc, &path, page_count);
+}
+
+/// Start reading a document's hover index, unless it is being read: from
+/// the recent indexes by content fingerprint, else page by page at idle.
+fn start_hover_index(
+    state: &mut WorkerState,
+    shared: &EngineShared,
+    doc: DocId,
+    path: &str,
+    page_count: u32,
+) {
+    let entry = state.hovers.entry(doc).or_default();
     if entry.builder.is_some() {
         return;
     }
-    let fingerprint = library::content_fingerprint(Path::new(&path));
+    let fingerprint = library::content_fingerprint(Path::new(path));
     if let Some(result) = fingerprint.as_deref().and_then(hovers::recall) {
         entry.result = Some(result);
         return flush_hovers(state, shared, doc);
@@ -3202,6 +3217,34 @@ fn do_page_hovers(
     entry.fingerprint = fingerprint;
     entry.builder = Some(hovers::IndexBuilder::new(page_count));
     queue_hover_step(shared, doc);
+}
+
+/// A document's statements: at once when its index is read or a file with
+/// the same content was read before, otherwise once the index is.
+fn do_doc_statements(
+    state: &mut WorkerState,
+    shared: &EngineShared,
+    doc: DocId,
+    respond: super::Respond<Vec<hovers::StatementDto>>,
+) {
+    let (page_count, path) = match state.doc(doc) {
+        Ok(d) => (d.page_count, d.path.clone()),
+        Err(error) => return respond(Err(error)),
+    };
+    let entry = state.hovers.entry(doc).or_default();
+    if let Some(result) = &entry.result {
+        return respond(Ok(result.statements.clone()));
+    }
+    if entry.builder.is_none() {
+        let known = library::content_fingerprint(Path::new(&path))
+            .as_deref()
+            .and_then(hovers::recall_statements);
+        if let Some(statements) = known {
+            return respond(Ok(statements.as_ref().clone()));
+        }
+    }
+    entry.waiting_statements.push(respond);
+    start_hover_index(state, shared, doc, &path, page_count);
 }
 
 fn queue_hover_step(shared: &EngineShared, doc: DocId) {
@@ -3250,6 +3293,7 @@ fn do_hover_index_next(state: &mut WorkerState, shared: &EngineShared, doc: DocI
     }
     let result = Arc::new(builder.finish());
     if let Some(fingerprint) = entry.fingerprint.take() {
+        hovers::remember_statements(fingerprint.clone(), Arc::new(result.statements.clone()));
         hovers::remember(fingerprint, result.clone());
     }
     entry.result = Some(result);
@@ -3257,6 +3301,16 @@ fn do_hover_index_next(state: &mut WorkerState, shared: &EngineShared, doc: DocI
 }
 
 fn flush_hovers(state: &mut WorkerState, shared: &EngineShared, doc: DocId) {
+    if let Some(h) = state.hovers.get_mut(&doc) {
+        let statements = h
+            .result
+            .as_ref()
+            .map(|r| r.statements.clone())
+            .unwrap_or_default();
+        for respond in std::mem::take(&mut h.waiting_statements) {
+            respond(Ok(statements.clone()));
+        }
+    }
     let waiting = state
         .hovers
         .get_mut(&doc)

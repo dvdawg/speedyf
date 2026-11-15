@@ -2,7 +2,7 @@
 //! extension contributes (`engine::hovers`).
 
 use super::EngineState;
-use crate::engine::hovers::{terms::TermInput, PageHoversDto};
+use crate::engine::hovers::{terms::TermInput, PageHoversDto, StatementDto};
 use crate::engine::types::{DocId, PreviewSpecDto, Priority};
 use crate::engine::Work;
 use crate::errors::AppResult;
@@ -21,6 +21,26 @@ pub async fn get_page_hovers(
             Work::PageHovers {
                 doc: doc_id,
                 src,
+                respond,
+            }
+        })
+        .await
+}
+
+/// A document's formal statements (theorems, lemmas, definitions...) and
+/// numbered equations, in document order, from its hover index: at once
+/// when the index (or a file with the same content) was read, otherwise
+/// once it is.
+#[tauri::command]
+pub async fn get_doc_statements(
+    state: tauri::State<'_, EngineState>,
+    doc_id: DocId,
+) -> AppResult<Vec<StatementDto>> {
+    state
+        .0
+        .call_async(Priority::TextExtract, doc_id, move |respond| {
+            Work::DocStatements {
+                doc: doc_id,
                 respond,
             }
         })

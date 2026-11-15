@@ -58,6 +58,35 @@ impl Kind {
         }
     }
 
+    /// The kind in lower case, as a statement names it: "proposition".
+    pub fn name(self) -> &'static str {
+        match self {
+            Kind::Equation => "equation",
+            Kind::Figure => "figure",
+            Kind::Table => "table",
+            Kind::Algorithm => "algorithm",
+            Kind::Section => "section",
+            Kind::Theorem => "theorem",
+            Kind::Lemma => "lemma",
+            Kind::Proposition => "proposition",
+            Kind::Corollary => "corollary",
+            Kind::Definition => "definition",
+            Kind::Remark => "remark",
+            Kind::Example => "example",
+            Kind::Conjecture => "conjecture",
+            Kind::Claim => "claim",
+            Kind::Assumption => "assumption",
+        }
+    }
+
+    /// Whether this kind is a formal statement: a theorem-like environment.
+    pub fn is_statement(self) -> bool {
+        !matches!(
+            self,
+            Kind::Equation | Kind::Figure | Kind::Table | Kind::Algorithm | Kind::Section
+        )
+    }
+
     /// The kind as a reader would say it, for labels.
     pub fn word(self) -> &'static str {
         match self {
@@ -263,6 +292,12 @@ pub struct Definition {
     /// The opening words of what the label introduces, letters and digits
     /// only: a restated theorem has the same ones as the original.
     pub signature: String,
+    /// A theorem's name, in the parentheses after its label:
+    /// "Moments of two block overlaps".
+    pub title: Option<String>,
+    /// A theorem's statement as text, label to end (before "Proof"), lines
+    /// joined; empty for anything else.
+    pub text: String,
 }
 
 /// A reference to a label in running text.
@@ -1404,11 +1439,12 @@ fn opens_proof(page: &Page, line: usize) -> bool {
 }
 
 /// A theorem's statement: from its label down to "Proof", the next labelled
-/// block, or a gap.
-fn statement_region(page: &Page, head: &Head) -> Rect {
+/// block, or a gap. The region, and the lines in it in reading order.
+fn statement_region(page: &Page, head: &Head) -> (Rect, Vec<usize>) {
     let line = &page.lines[head.line];
     let top = line.top;
     let mut region = line_rect(line);
+    let mut lines = vec![head.line];
     for i in following_lines(page, head.line, 1.6, |i| {
         !opens_proof(page, i) && !starts_another(page, i)
     }) {
@@ -1417,8 +1453,59 @@ fn statement_region(page: &Page, head: &Head) -> Rect {
             break;
         }
         region = union(region, line_rect(l));
+        lines.push(i);
     }
-    pad(region, 3.0, page)
+    (pad(region, 3.0, page), lines)
+}
+
+/// The text of `lines`, from `from` on the first: lines that follow one
+/// another in the page's text are joined as it joins them (a space, or
+/// nothing after a closed-up hyphen), any others by a space.
+fn lines_text(page: &Page, lines: &[usize], from: usize) -> String {
+    let mut out = String::new();
+    let mut previous: Option<usize> = None;
+    for &i in lines {
+        let l = &page.lines[i];
+        let start = if previous.is_none() {
+            from.max(l.start)
+        } else {
+            l.start
+        };
+        if let Some(end) = previous {
+            if l.start >= end && l.start - end <= 1 {
+                out.extend(&page.text[end..l.start]);
+            } else {
+                out.push(' ');
+            }
+        }
+        out.extend(&page.text[start.min(l.end)..l.end]);
+        previous = Some(l.end);
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The name in parentheses straight after a theorem's label, "Theorem 2.1
+/// (Main result).", read on into the next line when it wraps.
+fn theorem_title(page: &Page, lines: &[usize], label_end: usize) -> Option<String> {
+    let text = lines_text(page, &lines[..lines.len().min(3)], label_end);
+    let rest = text.trim_start();
+    let inner = rest.strip_prefix('(')?;
+    let mut depth = 1;
+    for (i, c) in inner.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    let title = inner[..i].trim();
+                    let plausible = !title.is_empty() && title.chars().count() <= 160;
+                    return plausible.then(|| title.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// A heading and the start of what follows it.
@@ -1599,10 +1686,17 @@ pub fn find_definitions(page: &Page, regions: &Regions, src: u32) -> Vec<Definit
             .or_else(|| theorem_head(page, line))
             .or_else(|| section_head(page, line));
         if let Some(head) = head {
+            let mut title = None;
+            let mut text = String::new();
             let region = match head.kind {
                 Kind::Figure | Kind::Table | Kind::Algorithm => caption_region(page, &head),
                 Kind::Section => section_region(page, &head),
-                _ => statement_region(page, &head),
+                _ => {
+                    let (region, lines) = statement_region(page, &head);
+                    title = theorem_title(page, &lines, head.label_range.1);
+                    text = lines_text(page, &lines, head.label_range.0);
+                    region
+                }
             };
             let signature = signature(page, line, head.label_range.1);
             out.push(Definition {
@@ -1615,6 +1709,8 @@ pub fn find_definitions(page: &Page, regions: &Regions, src: u32) -> Vec<Definit
                 region,
                 jump: (l.x0, l.top),
                 signature,
+                title,
+                text,
             });
             continue;
         }
@@ -1630,6 +1726,8 @@ pub fn find_definitions(page: &Page, regions: &Regions, src: u32) -> Vec<Definit
                 jump: (region[0], region[1] + region[3]),
                 region,
                 signature: String::new(),
+                title: None,
+                text: String::new(),
             });
         }
     }
@@ -1988,6 +2086,8 @@ mod tests {
             region: [0.0; 4],
             jump: (0.0, 0.0),
             signature: String::new(),
+            title: None,
+            text: String::new(),
         }
     }
 

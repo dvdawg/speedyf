@@ -82,6 +82,30 @@ pub struct HoverSpanDto {
     pub target: HoverTargetDto,
 }
 
+/// A formal statement (theorem, lemma, definition...) or a numbered
+/// equation the index found: what a notepad cites and quotes by.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct StatementDto {
+    /// "theorem", "lemma", "proposition", ..., or "equation".
+    pub kind: &'static str,
+    /// As a reader says it: "Proposition", "Equation".
+    pub word: &'static str,
+    /// As printed: "2.2", "A.3", "12".
+    pub number: String,
+    /// The name in parentheses after the label, when there is one.
+    pub title: Option<String>,
+    /// The page in the file.
+    pub page: u32,
+    /// The printed label ("Proposition 2.2", "(12)"), y-up page space.
+    pub label_rects: Vec<Rect>,
+    /// The whole statement, label to its end, y-up page space.
+    pub region: Rect,
+    /// The statement's text as printed, label included; empty for an
+    /// equation.
+    pub text: String,
+}
+
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PageHoversDto {
@@ -95,6 +119,8 @@ pub struct PageHoversDto {
 #[derive(Debug, Default)]
 pub struct IndexResult {
     pub spans: HashMap<u32, Vec<HoverSpanDto>>,
+    /// Every formal statement and numbered equation, in document order.
+    pub statements: Vec<StatementDto>,
     pub starts: Vec<RegionState>,
     pub indexed: u32,
 }
@@ -114,6 +140,10 @@ pub struct IndexBuilder {
     definitions: Vec<Definition>,
     mentions: Vec<Mention>,
     footnotes: HashMap<u32, Vec<HoverSpanDto>>,
+    statements: Vec<StatementDto>,
+    /// Statements already listed, by kind, number and opening words: a
+    /// theorem restated before its proof is listed once.
+    listed: std::collections::HashSet<(Kind, String, String)>,
     /// The page before, kept until the next one says whether its last
     /// footnote runs on.
     previous: Option<(u32, Page)>,
@@ -129,6 +159,8 @@ impl IndexBuilder {
             definitions: Vec::new(),
             mentions: Vec::new(),
             footnotes: HashMap::new(),
+            statements: Vec::new(),
+            listed: std::collections::HashSet::new(),
             previous: None,
         }
     }
@@ -150,6 +182,27 @@ impl IndexBuilder {
         };
         let regions = classify(&mut page, &mut self.state);
         let definitions = xref::find_definitions(&page, &regions, src);
+        for d in &definitions {
+            if !(d.kind.is_statement() || d.kind == Kind::Equation) {
+                continue;
+            }
+            if !self
+                .listed
+                .insert((d.kind, d.label.clone(), d.signature.clone()))
+            {
+                continue;
+            }
+            self.statements.push(StatementDto {
+                kind: d.kind.name(),
+                word: d.kind.word(),
+                number: d.label.clone(),
+                title: d.title.clone(),
+                page: src,
+                label_rects: page.rects(d.label_range.0, d.label_range.1),
+                region: d.region,
+                text: d.text.clone(),
+            });
+        }
         let mentions = xref::find_mentions(&page, &regions, src);
         self.mentions.extend(
             mentions
@@ -217,6 +270,7 @@ impl IndexBuilder {
         }
         IndexResult {
             spans,
+            statements: self.statements,
             starts: self.starts,
             indexed: self.next,
         }
@@ -356,6 +410,8 @@ pub struct DocHovers {
     pub result: Option<Arc<IndexResult>>,
     /// Page requests that arrived before the index was finished.
     pub waiting: Vec<(u32, crate::engine::Respond<PageHoversDto>)>,
+    /// Statement requests that arrived before the index was finished.
+    pub waiting_statements: Vec<crate::engine::Respond<Vec<StatementDto>>>,
     pub terms: Vec<TermInput>,
     /// The content fingerprint the index will be remembered under.
     pub fingerprint: Option<String>,
@@ -384,6 +440,9 @@ impl DocHovers {
         for (_, respond) in self.waiting {
             respond(Err(crate::errors::AppError::DocumentNotFound));
         }
+        for respond in self.waiting_statements {
+            respond(Err(crate::errors::AppError::DocumentNotFound));
+        }
     }
 }
 
@@ -408,6 +467,33 @@ pub fn remember(fingerprint: String, result: Arc<IndexResult>) {
     recent.retain(|(f, _)| *f != fingerprint);
     recent.push((fingerprint, result));
     while recent.len() > RECENT_CAP {
+        recent.remove(0);
+    }
+}
+
+/// Statements of files read before, by content fingerprint: far smaller
+/// than a whole index, so many more are kept - what lets a notepad offer a
+/// paper's statements without reading it again.
+static STATEMENTS: std::sync::Mutex<Vec<(String, Arc<Vec<StatementDto>>)>> =
+    std::sync::Mutex::new(Vec::new());
+const STATEMENTS_CAP: usize = 64;
+
+pub fn recall_statements(fingerprint: &str) -> Option<Arc<Vec<StatementDto>>> {
+    let mut recent = STATEMENTS.lock().ok()?;
+    let at = recent.iter().position(|(f, _)| f == fingerprint)?;
+    let entry = recent.remove(at);
+    let statements = entry.1.clone();
+    recent.push(entry);
+    Some(statements)
+}
+
+pub fn remember_statements(fingerprint: String, statements: Arc<Vec<StatementDto>>) {
+    let Ok(mut recent) = STATEMENTS.lock() else {
+        return;
+    };
+    recent.retain(|(f, _)| *f != fingerprint);
+    recent.push((fingerprint, statements));
+    while recent.len() > STATEMENTS_CAP {
         recent.remove(0);
     }
 }
@@ -518,6 +604,68 @@ mod tests {
     fn pathology_i_huge_documents_index_a_bounded_prefix() {
         let builder = IndexBuilder::new(70_000);
         assert_eq!(builder.total, MAX_INDEX_PAGES);
+    }
+
+    /// A page with two statements: one named, one not, a proof between.
+    fn statements_page() -> Page {
+        let mut b = Builder::new();
+        b.line(720.0, BODY, "Some running text before the statements here.");
+        let x = b.text(72.0, 700.0, BOLD, "Proposition 2.2");
+        let x = b.text(x, 700.0, BODY, " (Moments of two block");
+        b.newline();
+        let _ = x;
+        b.line(688.0, ITALIC, "overlaps). Let P be a distribution on the");
+        b.line(676.0, ITALIC, "cube. Then the moments agree.");
+        b.line(652.0, BODY, "Proof. It follows from Theorem 2.1 directly.");
+        let x = b.text(72.0, 628.0, BOLD, "Lemma 3.");
+        b.text(
+            x,
+            628.0,
+            ITALIC,
+            " Every bounded sequence has a limit point.",
+        );
+        b.newline();
+        b.page()
+    }
+
+    #[test]
+    fn statements_carry_their_number_title_extent_and_text() {
+        let mut builder = IndexBuilder::new(1);
+        builder.add_page(Some(statements_page()));
+        let result = builder.finish();
+        let found: Vec<(&str, &str, Option<&str>)> = result
+            .statements
+            .iter()
+            .map(|s| (s.kind, s.number.as_str(), s.title.as_deref()))
+            .collect();
+        assert_eq!(
+            found,
+            vec![
+                ("proposition", "2.2", Some("Moments of two block overlaps")),
+                ("lemma", "3", None),
+            ]
+        );
+        let prop = &result.statements[0];
+        assert_eq!(prop.word, "Proposition");
+        assert_eq!(prop.page, 0);
+        // The statement runs to the proof and stops before it.
+        assert!(prop
+            .text
+            .starts_with("Proposition 2.2 (Moments of two block overlaps)."));
+        assert!(prop.text.ends_with("Then the moments agree."));
+        assert!(!prop.text.contains("Proof"));
+        let bottom = prop.region[1];
+        assert!(bottom > 652.0 && bottom < 676.0, "region bottom {bottom}");
+        // The label's rectangle covers "Proposition 2.2" on its line.
+        assert_eq!(prop.label_rects.len(), 1);
+        assert!((prop.label_rects[0][1] - 700.0).abs() < 0.5);
+    }
+
+    #[test]
+    fn statements_are_recalled_by_fingerprint() {
+        remember_statements("st-1".into(), Arc::new(Vec::new()));
+        assert!(recall_statements("st-1").is_some());
+        assert!(recall_statements("st-2").is_none());
     }
 
     #[test]

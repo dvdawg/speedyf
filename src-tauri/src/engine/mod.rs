@@ -259,6 +259,12 @@ pub enum Work {
         src: u32,
         respond: Respond<hovers::PageHoversDto>,
     },
+    /// The formal statements and numbered equations a document's hover
+    /// index found. Answered once the index is read.
+    DocStatements {
+        doc: DocId,
+        respond: Respond<Vec<hovers::StatementDto>>,
+    },
     /// Read a few more pages of a document's hover index; requeues itself.
     HoverIndexNext {
         doc: DocId,
