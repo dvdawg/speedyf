@@ -26,7 +26,9 @@ const PARAGRAPH_INDENT_RATIO = 0.6;
  * its section, a caption beside body text. */
 const SIZE_CHANGE_RATIO = 1.2;
 
-interface Line {
+/** One line, or one segment of a line split at a column gap: a range of
+ * consecutive runs and their joint box, page points, y up. */
+export interface Line {
   first: number;
   last: number;
   top: number;
@@ -37,7 +39,7 @@ interface Line {
   size: number;
 }
 
-function linesOf(runs: readonly TextRunDto[]): Line[] {
+export function linesOf(runs: readonly TextRunDto[]): Line[] {
   const lines: Line[] = [];
   let current: Line | null = null;
   runs.forEach((run, index) => {

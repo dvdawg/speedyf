@@ -92,6 +92,13 @@ function EquationButtons(props: Props) {
     const space = root?.parentElement;
     if (!space) return;
     const onMove = (event: PointerEvent) => {
+      // A drag is a selection being made: no buttons popping up under it.
+      // (A press on one of the buttons themselves is a click on it.)
+      const onButton = event.target instanceof Node && root?.contains(event.target);
+      if (event.buttons !== 0 && !onButton) {
+        setHovered(null);
+        return;
+      }
       const list = blocks();
       if (!list || list.length === 0) return;
       const box = space.getBoundingClientRect();

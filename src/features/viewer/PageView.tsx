@@ -320,7 +320,9 @@ export default function PageView(props: Props) {
         <Show when={textLayout()}>
           <TextLayer
             runs={textLayout()!.runs}
+            pageWidthPt={props.geom.widthPt}
             pageHeightPt={props.geom.heightPt}
+            rotation={props.geom.rotation}
             zoom={vp.state.zoom}
             page={props.index}
           />
