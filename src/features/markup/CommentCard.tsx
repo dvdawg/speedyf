@@ -6,12 +6,29 @@ import { createEffect, createMemo, For, on, Show } from 'solid-js';
 import IconButton from '../../components/IconButton';
 import { IconEdit, IconTrash } from '../../components/icons';
 import CommentEditor, { KindSelect, type EditorResult } from './CommentEditor';
-import { renderBody } from './bodyHtml';
+import { quoteHtml, renderBody } from './bodyHtml';
 import { labelParts } from './labels';
 import { mathRenderer } from './mathHtml';
 import { shortQuote, type Entry } from './model';
 import { citeIndex, flashed } from './markupStore';
-import { KIND_LABEL, type CommentKind } from './types';
+import { KIND_LABEL, type Anchor, type CommentKind } from './types';
+
+/** The words a comment is about: with their math typeset when it was read
+ * as LaTeX (`quoteTex`), else as the page gave them. */
+function Quote(props: { anchor: Anchor }) {
+  return (
+    <Show
+      when={props.anchor.quoteTex}
+      fallback={<div class="mk-card-quote">{shortQuote(props.anchor.quote, 160)}</div>}
+    >
+      {(tex) => (
+        // Escaped text and KaTeX output (bodyHtml.ts).
+        // eslint-disable-next-line solid/no-innerhtml
+        <div class="mk-card-quote is-tex" innerHTML={quoteHtml(tex(), { math: mathRenderer() })} />
+      )}
+    </Show>
+  );
+}
 
 interface Props {
   entry: Entry;
@@ -123,7 +140,7 @@ export default function CommentCard(props: Props) {
               </div>
             </Show>
             <Show when={!typoFix() && c().anchor.quote.trim()}>
-              <div class="mk-card-quote">{shortQuote(c().anchor.quote, 160)}</div>
+              <Quote anchor={c().anchor} />
             </Show>
             <Show when={!typoFix() && c().anchor.rect}>
               <div class="mk-card-quote is-region">Region on the page</div>
@@ -142,7 +159,7 @@ export default function CommentCard(props: Props) {
         }
       >
         <Show when={!typoFix() && c().anchor.quote.trim()}>
-          <div class="mk-card-quote">{shortQuote(c().anchor.quote, 160)}</div>
+          <Quote anchor={c().anchor} />
         </Show>
         <CommentEditor
           mode={c().kind === 'typo' && c().replacement !== null ? 'typo' : 'comment'}

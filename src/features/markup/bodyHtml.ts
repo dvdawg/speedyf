@@ -128,3 +128,35 @@ export function renderBody(text: string, opts: BodyOptions = {}): string {
     })
     .join('');
 }
+
+/** Markdown's backslash escapes, which a converter's quote carries in its
+ * prose, undone: a quote is shown, not parsed further. */
+function unescapeMarkdown(text: string): string {
+  return text.replace(/\\([\\`*_{}[\]()#+\-.!|>~])/g, '$1');
+}
+
+/** A quote with its math as LaTeX (an anchor's `quoteTex`), as HTML on a
+ * few lines: prose escaped, `$...$` inline, `$$ ... $$` set as a display.
+ * No marks or citations: the words are the paper's, not the reviewer's. */
+export function quoteHtml(text: string, opts: BodyOptions = {}): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  const inline = (part: string) =>
+    splitMath(part)
+      .map((segment) => {
+        if (segment.kind === 'text') return escapeHtml(unescapeMarkdown(segment.text));
+        if (!opts.math) return `<span class="mk-math-raw">${escapeHtml(segment.raw)}</span>`;
+        return `<span class="mk-math">${opts.math(segment.src, segment.display)}</span>`;
+      })
+      .join('');
+  let out = '';
+  let at = 0;
+  for (const m of flat.matchAll(DISPLAY_RUN)) {
+    out += inline(flat.slice(at, m.index));
+    const tex = m[1]!.trim();
+    out += opts.math
+      ? `<span class="mk-display">${opts.math(tex, true)}</span>`
+      : `<span class="mk-display mk-math-raw">${escapeHtml(m[0])}</span>`;
+    at = m.index + m[0].length;
+  }
+  return out + inline(flat.slice(at));
+}
