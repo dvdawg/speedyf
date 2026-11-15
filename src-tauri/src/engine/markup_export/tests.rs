@@ -1033,7 +1033,6 @@ fn markup_selftest_output() {
 fn markup_frontend_output() {
     let _guard = pdfium_init::test_guard();
     let pdfium = test_pdfium();
-    let b = pdfium.bindings();
     let path = std::env::var("SPEEDYF_MARKUP_INSPECT_FRONTEND").expect("set the variable");
     let report: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(Path::new(&path).with_extension("json")).expect("report"),
@@ -1082,48 +1081,167 @@ fn markup_frontend_output() {
     }
     eprintln!("worst offset {worst}");
 
-    // The letter: comments in order, then the typo table.
-    let letter: String = (n - 1..n)
-        .map(|i| doc.pages().get(i).unwrap().text().unwrap().all())
-        .collect();
-    let order = [
-        "OVERALL",
-        "The induction",
-        "This paragraph",
-        "Cite the",
-        "This figure",
-        "teh",
-        "recieve",
-    ];
-    let mut at = 0;
-    for word in order {
-        let found = letter[at..]
-            .find(word)
-            .unwrap_or_else(|| panic!("{word} missing or out of order"));
-        at += found + word.len();
+    // Nothing but the paper: no letter, no pointers to pages that are not
+    // there.
+    for i in 0..n {
+        let all = doc.pages().get(i).unwrap().text().unwrap().all();
+        assert!(!all.contains("Comments on"), "page {i} has a letter");
+        assert!(!all.contains("see 1 on"), "page {i} points elsewhere");
     }
+    // Each phrase carries its number, just after it, in the page's own area.
+    for anchor in report["detail"]["anchors"].as_array().unwrap() {
+        let number = anchor["number"].as_u64().unwrap().to_string();
+        let page = doc
+            .pages()
+            .get(anchor["page"].as_u64().unwrap() as u16)
+            .unwrap();
+        let top = anchor["top"].as_f64().unwrap() as f32;
+        let (w, h) = (page.width().value, page.height().value);
+        let band = page.text().unwrap().inside_rect(PdfRect::new_from_values(
+            h - top - 24.0,
+            0.0,
+            h - top + 12.0,
+            w - 180.0,
+        ));
+        assert!(band.contains(&number), "no marker {number} near its phrase");
+    }
+}
 
-    // Every link goes somewhere: source page links into the letter, letter
-    // links back onto the pages.
-    let raw = render::open_document(b, &path, None).unwrap();
-    for i in [0, 1, n as i32 - 1] {
-        let page = b.FPDF_LoadPage(raw, i);
-        let mut pos: c_int = 0;
-        let mut link = std::ptr::null_mut();
-        let mut dests = Vec::new();
-        while b.FPDFLink_Enumerate(page, &mut pos, &mut link) != 0 {
-            let dest = b.FPDFLink_GetDest(raw, link);
-            if !dest.is_null() {
-                dests.push(b.FPDFDest_GetDestPageIndex(raw, dest));
+fn label_mark(page: u32, r: RectDto, text: &str) -> MarkupMark {
+    MarkupMark {
+        page,
+        kind: MarkKind::Label,
+        quads: None,
+        rect: Some(r),
+        color: "#694fe3".into(),
+        contents: text.into(),
+    }
+}
+
+/// The text of a text object, read through its page's text page.
+fn text_of(b: &dyn PdfiumLibraryBindings, page: FPDF_PAGE, obj: FPDF_PAGEOBJECT) -> String {
+    let text_page = b.FPDFText_LoadPage(page);
+    let mut buf = vec![0u16; 64];
+    let n = b.FPDFTextObj_GetText(obj, text_page, buf.as_mut_ptr(), (buf.len() * 2) as c_ulong);
+    b.FPDFText_ClosePage(text_page);
+    let chars = (n as usize / 2).saturating_sub(1);
+    String::from_utf16_lossy(&buf[..chars.min(buf.len())])
+}
+
+#[test]
+fn labels_sit_at_their_phrase_upright_small_and_on_top() {
+    let _guard = pdfium_init::test_guard();
+    let pdfium = test_pdfium();
+    let b = pdfium.bindings();
+    let dir = scratch();
+    let src = dir.path().join("paper.pdf");
+    let dest = dir.path().join("out.pdf");
+    source_fixture(&src);
+    let mut req = request(&src, &dest);
+    // Page 0 is upright, page 1 is /Rotate 90: each label must land where
+    // asked in display space, either way.
+    let cases = [
+        (0u32, rect(120.0, 214.0, 8.0, 6.5), "3"),
+        (1, rect(60.0, 90.0, 11.0, 6.5), "12"),
+    ];
+    req.marks = cases
+        .iter()
+        .map(|(page, r, text)| label_mark(*page, *r, text))
+        .collect();
+    let result = export(&pdfium, &req, &[]).expect("export");
+    assert_eq!(result.pages, 4, "a label never adds a page");
+
+    let before = render::open_document(b, src.to_str().unwrap(), None).unwrap();
+    let after = render::open_document(b, dest.to_str().unwrap(), None).unwrap();
+    for (page, r, text) in cases {
+        let p0 = b.FPDF_LoadPage(before, page as c_int);
+        let p1 = b.FPDF_LoadPage(after, page as c_int);
+        let bounds = |p: FPDF_PAGE, obj: FPDF_PAGEOBJECT| {
+            let (mut l, mut bo, mut ri, mut t) = (0.0, 0.0, 0.0, 0.0);
+            b.FPDFPageObj_GetBounds(obj, &mut l, &mut bo, &mut ri, &mut t);
+            let _ = p;
+            [l, bo, ri, t]
+        };
+        // The original content is where it was.
+        let a = bounds(p0, b.FPDFPage_GetObject(p0, 0));
+        let z = bounds(p1, b.FPDFPage_GetObject(p1, 0));
+        for k in 0..4 {
+            assert!((a[k] - z[k]).abs() < 0.01, "page {page}: {a:?} vs {z:?}");
+        }
+        let geo = page_geo(b, p1).unwrap();
+        let space = geo.space();
+        let display = |u: [f32; 4]| {
+            let (x1, y1) = space.user_to_disp(u[0], u[1]);
+            let (x2, y2) = space.user_to_disp(u[2], u[3]);
+            [x1.min(x2), y1.min(y2), x1.max(x2), y1.max(y2)]
+        };
+        let count = b.FPDFPage_CountObjects(p1);
+        let objects: Vec<FPDF_PAGEOBJECT> =
+            (0..count).map(|i| b.FPDFPage_GetObject(p1, i)).collect();
+        // The number: a text object reading it, centred in its pill.
+        let number = objects
+            .iter()
+            .copied()
+            .find(|&o| b.FPDFPageObj_GetType(o) == 1 && text_of(b, p1, o) == text)
+            .unwrap_or_else(|| panic!("page {page}: no label text {text}"));
+        let d = display(bounds(p1, number));
+        let (cx, cy) = ((d[0] + d[2]) / 2.0, (d[1] + d[3]) / 2.0);
+        assert!(
+            (cx - (r.x + r.w / 2.0)).abs() < 1.0 && (cy - (r.y + r.h / 2.0)).abs() < 1.2,
+            "page {page}: number centred at ({cx}, {cy}), pill {r:?}"
+        );
+        // Upright on screen: wider than tall for "12", and inside the pill.
+        assert!(
+            d[0] >= r.x - 0.5 && d[2] <= r.x + r.w + 0.5,
+            "page {page}: {d:?} vs {r:?}"
+        );
+        // The pill: a filled path exactly over the rect, drawn before (under)
+        // the number and after (over) the page's own content.
+        let at = objects.iter().position(|&o| o == number).unwrap();
+        let pill = objects[..at]
+            .iter()
+            .copied()
+            .rev()
+            .find(|&o| b.FPDFPageObj_GetType(o) == 2)
+            .expect("pill path");
+        let pd = display(bounds(p1, pill));
+        for (got, want) in pd.iter().zip([r.x, r.y, r.x + r.w, r.y + r.h]) {
+            assert!(
+                (got - want).abs() < 0.6,
+                "page {page}: pill {pd:?} vs {r:?}"
+            );
+        }
+        // Nothing opaque was laid over the page's own area apart from the
+        // small pills (and the white strip and rule, which sit right of it).
+        let original_w = display_size(display_box(b, p0).unwrap(), page_rotation(b, p0)).0;
+        for &o in &objects[1..] {
+            let ob = display(bounds(p1, o));
+            if ob[0] < original_w - 0.5 {
+                let area = (ob[2] - ob[0]) * (ob[3] - ob[1]);
+                assert!(
+                    area <= r.w * r.h + 1.0,
+                    "page {page}: large object {ob:?} over the content"
+                );
             }
         }
-        eprintln!("page {i} internal links -> {dests:?}");
-        if i == n as i32 - 1 {
-            assert!(dests.contains(&0) && dests.contains(&1));
-        } else {
-            assert!(!dests.is_empty() && dests.iter().all(|&d| d == n as i32 - 1));
-        }
-        b.FPDF_ClosePage(page);
+        b.FPDF_ClosePage(p0);
+        b.FPDF_ClosePage(p1);
     }
-    b.FPDF_CloseDocument(raw);
+    b.FPDF_CloseDocument(before);
+    b.FPDF_CloseDocument(after);
+}
+
+#[test]
+fn labels_need_a_rect_and_a_short_ascii_number() {
+    let dir = scratch();
+    let src = dir.path().join("paper.pdf");
+    source_fixture(&src);
+    let dest = dir.path().join("out.pdf");
+    let mut req = request(&src, &dest);
+    req.marks = vec![label_mark(0, rect(1.0, 1.0, 8.0, 6.0), "1234567")];
+    assert!(validate(&req).is_err());
+    req.marks = vec![label_mark(0, rect(1.0, 1.0, 8.0, 6.0), "")];
+    assert!(validate(&req).is_err());
+    req.marks = vec![label_mark(0, rect(1.0, 1.0, 8.0, 6.0), "42")];
+    assert!(validate(&req).is_ok());
 }
