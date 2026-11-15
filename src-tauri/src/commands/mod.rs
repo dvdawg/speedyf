@@ -728,6 +728,8 @@ pub struct ExtensionDto {
     pub document_tasks: Vec<ActionDto>,
     /// Buttons on detected display equations, ids namespaced like commands.
     pub equation_actions: Vec<ActionDto>,
+    /// Buttons on detected formal statements, ids namespaced like commands.
+    pub statement_actions: Vec<ActionDto>,
     /// Hosts the extension may reach through `net.fetch`, as its manifest
     /// lists them; empty for one that never touches the network. The card
     /// shows them whether the extension is on or off.
@@ -892,6 +894,7 @@ fn describe(root: &std::path::Path, installed: InstalledExtension, builtin: bool
         settings: Vec::new(),
         document_tasks: Vec::new(),
         equation_actions: Vec::new(),
+        statement_actions: Vec::new(),
         network: Vec::new(),
         reference_provider: None,
         term_provider: None,
@@ -926,6 +929,7 @@ fn describe(root: &std::path::Path, installed: InstalledExtension, builtin: bool
         settings: manifest.contributes.settings.clone(),
         document_tasks: actions(&manifest, &manifest.contributes.document_tasks),
         equation_actions: actions(&manifest, &manifest.contributes.equation_actions),
+        statement_actions: actions(&manifest, &manifest.contributes.statement_actions),
         network: manifest.network.clone(),
         reference_provider: manifest
             .contributes

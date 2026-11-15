@@ -409,6 +409,11 @@ pub struct Contributions {
     /// command is invoked with `{ page, bbox, number }`.
     #[serde(default)]
     pub equation_actions: Vec<ActionContribution>,
+    /// A button by the label of each formal statement (theorem, lemma,
+    /// definition...) the core detects on a page; the command is invoked
+    /// with the statement and a selection token for its text.
+    #[serde(default)]
+    pub statement_actions: Vec<ActionContribution>,
     /// Terms the open document defines, matched by SpeedyF against its pages
     /// and previewed on hover. The command is invoked with `{ document }`.
     #[serde(default)]
@@ -651,6 +656,7 @@ pub fn parse_manifest(source: &str) -> Result<Manifest, ManifestError> {
         .chain(&manifest.contributes.citation_actions)
         .chain(&manifest.contributes.document_tasks)
         .chain(&manifest.contributes.equation_actions)
+        .chain(&manifest.contributes.statement_actions)
     {
         if !seen.contains(action.command.as_str()) {
             return Err(ManifestError::UnknownBoundCommand(action.command.clone()));
@@ -1697,6 +1703,21 @@ mod tests {
         assert_eq!(m.contributes.equation_actions.len(), 1);
         let err = parse_manifest(&manifest_json(
             r#","contributes":{"equationActions":[{"command":"ghost","title":"Copy LaTeX"}]}"#,
+        ))
+        .unwrap_err();
+        assert_eq!(err, ManifestError::UnknownBoundCommand("ghost".into()));
+    }
+
+    #[test]
+    fn reads_statement_actions_naming_declared_commands() {
+        let m = parse_manifest(&manifest_json(
+            r#","contributes":{"commands":[{"id":"statement","title":"Send"}],
+               "statementActions":[{"command":"statement","title":"Send to Notepad"}]}"#,
+        ))
+        .expect("should parse");
+        assert_eq!(m.contributes.statement_actions.len(), 1);
+        let err = parse_manifest(&manifest_json(
+            r#","contributes":{"statementActions":[{"command":"ghost","title":"Send"}]}"#,
         ))
         .unwrap_err();
         assert_eq!(err, ManifestError::UnknownBoundCommand("ghost".into()));
