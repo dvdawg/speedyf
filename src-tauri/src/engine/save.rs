@@ -1,7 +1,9 @@
 //! EditPlan materialization + safe atomic save.
 //!
 //! Uses the high-level pdfium-render wrapper (editing happens once per save,
-//! so wrapper ergonomics beat raw FFI here):
+//! so wrapper ergonomics beat raw FFI here). A plan that keeps the page list
+//! edits the source in place and appends an incremental update; one that
+//! restructures pages goes:
 //!   new doc -> import kept/reordered/duplicated pages (FPDF_ImportPages under
 //!   the hood) -> blank pages -> true PDF annotations (Highlight/Square/Text
 //!   note/ink/stamp) with explicit text/image appearances -> AcroForm edits ->
@@ -16,6 +18,8 @@ use crate::engine::types::{EditPlan, RectDto, TextFontFamily};
 use crate::errors::{AppError, AppResult};
 use pdfium_render::prelude::*;
 use std::collections::HashMap;
+use std::io::Write;
+use std::os::raw::{c_int, c_ulong, c_void};
 use std::path::Path;
 
 type TextFonts = HashMap<(TextFontFamily, bool, bool), PdfFontToken>;
@@ -53,6 +57,372 @@ pub fn verified_atomic_replace(
         .persist(dest)
         .map_err(|e| AppError::Io(format!("cannot replace destination: {e}")))?;
     Ok(bytes)
+}
+
+// `FPDF_SaveAsCopy` flags from fpdf_save.h. pdfium-render does not re-export
+// them. REMOVE_SECURITY is a value, not a bit to combine with the others.
+const FPDF_INCREMENTAL: c_ulong = 1;
+const FPDF_REMOVE_SECURITY: c_ulong = 3;
+
+/// How a document already open in PDFium is written back out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SaveMode {
+    /// The original bytes, untouched, followed by an appended update holding
+    /// what changed. Everything the editor does not model - links, outline,
+    /// metadata, signatures, structure tree - stays byte-identical.
+    Incremental,
+    /// A complete rewrite of the same document. Still the same object graph,
+    /// so nothing is lost, but the bytes are PDFium's own.
+    Rewrite,
+    /// A complete rewrite with the encryption removed.
+    RewriteDecrypted,
+}
+
+impl SaveMode {
+    fn flags(self) -> c_ulong {
+        match self {
+            SaveMode::Incremental => FPDF_INCREMENTAL,
+            SaveMode::Rewrite => 0,
+            SaveMode::RewriteDecrypted => FPDF_REMOVE_SECURITY,
+        }
+    }
+}
+
+/// Pick the safest way to write the document behind `handle` back out.
+///
+/// An incremental update is only appended to a file PDFium parsed cleanly.
+/// When it had to rebuild a broken cross-reference table on load, the offsets
+/// an update would chain back into are exactly the ones that were wrong, so
+/// the file is rewritten instead.
+///
+/// Encrypted sources are rewritten without their encryption. That is what
+/// every save of one produced before (a document assembled from imported pages
+/// never carried the source's security handler), and the save path reopens
+/// its output without a password to verify it.
+///
+/// A document created in memory has no parser, which PDFium reports as an
+/// invalid cross-reference table - so it is rewritten too, as it must be.
+pub(crate) fn save_mode(bindings: &dyn PdfiumLibraryBindings, handle: FPDF_DOCUMENT) -> SaveMode {
+    if bindings.FPDF_GetSecurityHandlerRevision(handle) != -1 {
+        SaveMode::RewriteDecrypted
+    } else if bindings.is_true(bindings.FPDF_DocumentHasValidCrossReferenceTable(handle)) {
+        SaveMode::Incremental
+    } else {
+        SaveMode::Rewrite
+    }
+}
+
+/// Streams what PDFium writes during `FPDF_SaveAsCopy` into a file.
+///
+/// `inner` must stay the first field: PDFium is handed a pointer to it and
+/// hands that same pointer back to `sink_write_block`, which casts it back to
+/// the whole struct. That only holds while the two share an address.
+#[repr(C)]
+struct FileSink {
+    inner: FPDF_FILEWRITE,
+    out: std::io::BufWriter<std::fs::File>,
+    error: Option<std::io::Error>,
+}
+
+unsafe extern "C" fn sink_write_block(
+    this: *mut FPDF_FILEWRITE,
+    data: *const c_void,
+    size: c_ulong,
+) -> c_int {
+    if this.is_null() {
+        return 0;
+    }
+    // Safe by construction: `inner` is the first field of `FileSink`, and the
+    // only pointer PDFium ever receives came from one.
+    let sink = unsafe { &mut *(this as *mut FileSink) };
+    if size == 0 {
+        return 1;
+    }
+    if data.is_null() || sink.error.is_some() {
+        return 0;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(data as *const u8, size as usize) };
+    match sink.out.write_all(bytes) {
+        Ok(()) => 1,
+        Err(error) => {
+            sink.error = Some(error);
+            0
+        }
+    }
+}
+
+/// Write `document` to `path` in the given mode, flushed and synced.
+fn write_document(document: &PdfDocument<'_>, path: &Path, mode: SaveMode) -> AppResult<()> {
+    let bindings = document.bindings();
+    let handle = bindings.get_handle_from_document(document);
+    let file = std::fs::File::create(path)?;
+    let mut sink = FileSink {
+        inner: FPDF_FILEWRITE {
+            version: 1,
+            WriteBlock: Some(sink_write_block),
+        },
+        out: std::io::BufWriter::new(file),
+        error: None,
+    };
+    let ok = bindings.FPDF_SaveAsCopy(handle, &mut sink.inner, mode.flags());
+    if let Some(error) = sink.error.take() {
+        return Err(AppError::Io(format!("write failed: {error}")));
+    }
+    if !bindings.is_true(ok) {
+        return Err(AppError::Io("write failed: PDFium refused to save".into()));
+    }
+    let file = sink
+        .out
+        .into_inner()
+        .map_err(|e| AppError::Io(format!("write failed: {}", e.error())))?;
+    file.sync_all()?;
+    Ok(())
+}
+
+/// Save an edited, loaded-from-disk document to `path`, keeping everything
+/// it does not know it changed.
+///
+/// Appends an incremental update to the original bytes whenever that is safe
+/// (see `save_mode`), and otherwise rewrites the same document in full. Either
+/// way the output is the source's own object graph, never a copy assembled
+/// from imported pages, so links, the outline, named destinations, document
+/// info and XMP metadata all survive.
+///
+/// `path` must not be the file `document` was loaded from: PDFium may still be
+/// reading from it while the output is written. Write to a sibling and rename,
+/// as `verified_atomic_replace` does.
+pub fn save_incremental(document: &PdfDocument<'_>, path: &Path) -> AppResult<()> {
+    let bindings = document.bindings();
+    let mode = save_mode(bindings, bindings.get_handle_from_document(document));
+    write_document(document, path, mode)?;
+    if mode == SaveMode::Incremental && !mend_xref_stream_type(path)? {
+        log::warn!("incremental save produced an unexpected tail; rewriting in full");
+        write_document(document, path, SaveMode::Rewrite)?;
+    }
+    Ok(())
+}
+
+/// Make the cross-reference section PDFium just appended to `path` well
+/// formed, returning `false` if the file's tail is not in a shape this
+/// understands (the caller then rewrites the file in full instead).
+///
+/// Appending to a file whose cross-reference data is a stream - every modern
+/// pdfTeX paper - PDFium writes its own section as a cross-reference stream
+/// too, but without the `/Type /XRef` entry the specification requires.
+/// PDFium and Poppler read past that; stricter readers (pypdf among them)
+/// refuse the whole file. That stream is the last object written and
+/// `startxref` points at its first byte, so inserting the missing key inside
+/// its dictionary moves nothing any offset in the file refers to.
+fn mend_xref_stream_type(path: &Path) -> AppResult<bool> {
+    use std::io::{Read, Seek, SeekFrom};
+    // A cross-reference stream for an incremental update lists only the
+    // objects it rewrote; anything larger than this is not what PDFium writes.
+    const MAX_SECTION: u64 = 16 << 20;
+
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)?;
+    let len = file.metadata()?.len();
+    let tail_len = len.min(1024);
+    let mut tail = vec![0u8; tail_len as usize];
+    file.seek(SeekFrom::Start(len - tail_len))?;
+    file.read_exact(&mut tail)?;
+    let Some(at) = tail.windows(9).rposition(|w| w == b"startxref") else {
+        return Ok(false);
+    };
+    let Some(section_at) = std::str::from_utf8(&tail[at + 9..])
+        .ok()
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|n| n.parse::<u64>().ok())
+    else {
+        return Ok(false);
+    };
+    if section_at >= len || len - section_at > MAX_SECTION {
+        return Ok(false);
+    }
+    let mut section = Vec::with_capacity((len - section_at) as usize);
+    file.seek(SeekFrom::Start(section_at))?;
+    file.read_to_end(&mut section)?;
+
+    if section.starts_with(b"xref") {
+        // A classic table: nothing to mend.
+        return Ok(true);
+    }
+    // Otherwise it must be `N G obj << ... >> stream`.
+    let header_ok = std::str::from_utf8(&section[..section.len().min(32)])
+        .ok()
+        .and_then(|head| head.split("obj").next())
+        .map(|head| head.split_whitespace().collect::<Vec<_>>())
+        .is_some_and(|parts| parts.len() == 2 && parts.iter().all(|p| p.parse::<u32>().is_ok()));
+    let open = section.windows(2).position(|w| w == b"<<");
+    let stream = section.windows(6).position(|w| w == b"stream");
+    let (Some(open), Some(stream), true) = (open, stream, header_ok) else {
+        return Ok(false);
+    };
+    if open > stream {
+        return Ok(false);
+    }
+    let dict = &section[open..stream];
+    if dict.windows(5).any(|w| w == b"/Type") {
+        return Ok(true);
+    }
+    let insert_at = open + 2;
+    let mut mended = Vec::with_capacity(section.len() - insert_at + 10);
+    mended.extend_from_slice(b"/Type/XRef");
+    mended.extend_from_slice(&section[insert_at..]);
+    file.seek(SeekFrom::Start(section_at + insert_at as u64))?;
+    file.write_all(&mended)?;
+    file.flush()?;
+    file.sync_all()?;
+    Ok(true)
+}
+
+/// The document info entries worth carrying into a rebuilt document, as
+/// (key, value) pairs.
+fn info_entries(document: &PdfDocument<'_>) -> Vec<(&'static str, String)> {
+    document
+        .metadata()
+        .iter()
+        .filter(|tag| !tag.value().is_empty())
+        .map(|tag| {
+            let key = match tag.tag_type() {
+                PdfDocumentMetadataTagType::Title => "Title",
+                PdfDocumentMetadataTagType::Author => "Author",
+                PdfDocumentMetadataTagType::Subject => "Subject",
+                PdfDocumentMetadataTagType::Keywords => "Keywords",
+                PdfDocumentMetadataTagType::Creator => "Creator",
+                PdfDocumentMetadataTagType::Producer => "Producer",
+                PdfDocumentMetadataTagType::CreationDate => "CreationDate",
+                PdfDocumentMetadataTagType::ModificationDate => "ModDate",
+            };
+            (key, tag.value().to_string())
+        })
+        .collect()
+}
+
+/// A PDF string token for `value`: a literal when it is plain printable
+/// ASCII, otherwise UTF-16BE hex with a byte order mark.
+fn pdf_text_string(value: &str) -> String {
+    if value.chars().all(|c| (' '..='~').contains(&c)) {
+        let mut out = String::with_capacity(value.len() + 2);
+        out.push('(');
+        for c in value.chars() {
+            if matches!(c, '(' | ')' | '\\') {
+                out.push('\\');
+            }
+            out.push(c);
+        }
+        out.push(')');
+        out
+    } else {
+        let mut out = String::from("<FEFF");
+        for unit in value.encode_utf16() {
+            out.push_str(&format!("{unit:04X}"));
+        }
+        out.push('>');
+        out
+    }
+}
+
+/// The raw value following `key` in a trailer dictionary: an array up to its
+/// closing bracket, anything else up to the next key or the dictionary end.
+fn trailer_value<'t>(trailer: &'t str, key: &str) -> Option<&'t str> {
+    let mut search = 0;
+    while let Some(found) = trailer[search..].find(key) {
+        let start = search + found + key.len();
+        // `/Root` must not match `/RootX`: a delimiter has to follow.
+        let next = trailer[start..].chars().next()?;
+        if next.is_ascii_whitespace() || matches!(next, '[' | '<' | '(' | '/') {
+            let rest = trailer[start..].trim_start();
+            let end = if rest.starts_with('[') {
+                rest.find(']')? + 1
+            } else {
+                rest.find(['/', '>']).unwrap_or(rest.len())
+            };
+            return Some(rest[..end].trim());
+        }
+        search = start;
+    }
+    None
+}
+
+/// Give a rebuilt document the source's document info by appending a small
+/// incremental update holding a fresh /Info dictionary.
+///
+/// PDFium can read /Info but offers no way to write it, and a document
+/// assembled from imported pages starts with PDFium's own. The update is
+/// written by hand against the trailer PDFium itself just produced - a classic
+/// cross-reference table - and if that trailer is not in the expected shape
+/// the file is left as it was: this is best effort, never a reason to fail a
+/// save.
+fn append_info_update(path: &Path, entries: &[(&'static str, String)]) -> AppResult<()> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let bytes = std::fs::read(path)?;
+    let Some(update) = info_update(&bytes, entries) else {
+        log::warn!("cannot carry document info into the rebuilt file: unexpected trailer");
+        return Ok(());
+    };
+    let mut file = std::fs::OpenOptions::new().append(true).open(path)?;
+    file.write_all(&update)?;
+    file.flush()?;
+    file.sync_all()?;
+    Ok(())
+}
+
+/// The bytes of an incremental update making `entries` the /Info of the PDF
+/// in `bytes`, or `None` if its last trailer cannot be read.
+fn info_update(bytes: &[u8], entries: &[(&'static str, String)]) -> Option<Vec<u8>> {
+    fn rfind(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        haystack.windows(needle.len()).rposition(|w| w == needle)
+    }
+    let startxref = rfind(bytes, b"startxref")?;
+    let trailer_at = rfind(&bytes[..startxref], b"trailer")?;
+    let trailer = std::str::from_utf8(&bytes[trailer_at..startxref]).ok()?;
+    let prev: u64 = std::str::from_utf8(&bytes[startxref + b"startxref".len()..])
+        .ok()?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()?;
+    let size: u32 = trailer_value(trailer, "/Size")?.parse().ok()?;
+    let root = trailer_value(trailer, "/Root")?;
+    let root_parts: Vec<&str> = root.split_whitespace().collect();
+    let root_is_reference = root_parts.len() == 3
+        && root_parts[2] == "R"
+        && root_parts[..2].iter().all(|p| p.parse::<u32>().is_ok());
+    if !root_is_reference {
+        return None;
+    }
+    let id = trailer_value(trailer, "/ID");
+
+    let mut out: Vec<u8> = Vec::new();
+    if !bytes.ends_with(b"\n") && !bytes.ends_with(b"\r") {
+        out.push(b'\n');
+    }
+    let object_at = bytes.len() + out.len();
+    out.extend_from_slice(format!("{size} 0 obj\n<<").as_bytes());
+    for (key, value) in entries {
+        out.extend_from_slice(format!(" /{key} {}", pdf_text_string(value)).as_bytes());
+    }
+    out.extend_from_slice(b" >>\nendobj\n");
+    let xref_at = bytes.len() + out.len();
+    // Each cross-reference entry is exactly 20 bytes, newline included.
+    out.extend_from_slice(format!("xref\n{size} 1\n{object_at:010} 00000 n \n").as_bytes());
+    out.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root {root} /Info {size} 0 R /Prev {prev}",
+            size + 1
+        )
+        .as_bytes(),
+    );
+    if let Some(id) = id {
+        out.extend_from_slice(format!(" /ID {id}").as_bytes());
+    }
+    out.extend_from_slice(format!(" >>\nstartxref\n{xref_at}\n%%EOF\n").as_bytes());
+    Some(out)
 }
 
 fn parse_color(hex: &str, opacity: f32) -> PdfColor {
@@ -525,28 +895,27 @@ fn preserves_source_pages(plan: &EditPlan, src_page_count: u16) -> bool {
 /// Build the output document from `plan` and write it to `out_path`.
 ///
 /// Two ways to produce the output, and which one is used comes down to
-/// whether the document is a form.
+/// whether the plan changes the page list.
 ///
-/// The default is to assemble a fresh document and import the pages the plan
-/// asks for, which is what makes reordering, deletion and inserted blanks
-/// possible at all. It also loses anything that lives on the *document*
-/// rather than on a page - and an AcroForm is exactly that. `FPDF_ImportPages`
-/// copies each widget annotation faithfully and leaves the `/AcroForm`
-/// dictionary that gives them meaning behind, so a filled-in form came out the
-/// other side as a page of inert boxes: the fields unreachable, the radio
-/// groups' parents orphaned, and filling text fields silently doing
-/// nothing because the output no longer had a form to fill.
+/// When it does not - annotations, text, images, rotation and form values are
+/// all per-page edits - the source document itself is edited and saved, as an
+/// incremental update appended to its original bytes wherever that is safe
+/// (see `save_incremental`). Everything that lives on the *document* rather
+/// than in what this editor models survives untouched: link annotations and
+/// the destinations they point at, the outline, named destinations, document
+/// info and XMP metadata, page labels, the AcroForm, the structure tree.
 ///
-/// So when the document has a form and the plan is not restructuring pages -
-/// open a form, tick boxes, save, which is what filling one in *is* - the
-/// source document is edited in place and saved instead. Every later step
-/// works the same either way; they only care about pages.
-///
-/// Restructuring a form's pages still goes through the import path and still
-/// loses the form. That is a real limitation rather than an oversight: pdfium
-/// exposes no way to carry a catalog entry across documents, and dropping
-/// pages out of a form raises questions about the fields on them that this
-/// has no answer for.
+/// When pages are deleted, reordered, duplicated or inserted, a fresh document
+/// is assembled from imported pages, which is what makes those possible at
+/// all. `FPDF_ImportPages` copies each page with its annotations, and re-points
+/// a link's explicit page destination when that page is imported too - but it
+/// copies nothing from the catalog. So that path loses the outline, the named
+/// destinations hyperref links go through (those links stay but lead
+/// nowhere), XMP metadata and the AcroForm (widgets come across as inert
+/// boxes). The document info dictionary is carried over by hand (see
+/// `append_info_update`). Rebuilding the outline and the name tree is not
+/// attempted: PDFium exposes no way to write either, and doing it with
+/// hand-written objects is a PDF writer this module does not want to own.
 pub fn build_output(
     pdfium: &Pdfium,
     src_path: &str,
@@ -558,13 +927,18 @@ pub fn build_output(
         .load_pdf_from_file(src_path, password)
         .map_err(|e| AppError::Malformed(format!("cannot reopen source: {e:?}")))?;
     let has_form = src.form().is_some();
-    let edit_in_place = has_form && preserves_source_pages(plan, src.pages().len());
+    let edit_in_place = preserves_source_pages(plan, src.pages().len());
     if has_form && !edit_in_place {
         log::warn!(
             "{src_path} has an AcroForm, but the save reorders, adds or removes \
              pages; the form cannot be carried across and will be dropped"
         );
     }
+    let source_info = if edit_in_place {
+        Vec::new()
+    } else {
+        info_entries(&src)
+    };
 
     let mut out = if edit_in_place {
         src
@@ -650,13 +1024,12 @@ pub fn build_output(
     }
 
     // 3) write
-    let mut file = std::fs::File::create(out_path)?;
-    out.save_to_writer(&mut file)
-        .map_err(|e| AppError::Io(format!("write failed: {e:?}")))?;
-    use std::io::Write;
-    file.flush()?;
-    file.sync_all()?;
-    drop(file);
+    if edit_in_place {
+        save_incremental(&out, out_path)?;
+    } else {
+        write_document(&out, out_path, SaveMode::Rewrite)?;
+        append_info_update(out_path, &source_info)?;
+    }
 
     // 4) Commit form values AND their appearances through PDFium's form-fill
     //    environment; setting /V alone leaves stale or missing text on disk.
@@ -1559,5 +1932,479 @@ mod tests {
             .map(|entry| entry.expect("directory entry").file_name())
             .collect();
         assert_eq!(siblings, vec![dest.file_name().unwrap()]);
+    }
+
+    // ---------- what a save must not destroy ----------
+
+    const FIXTURE_TITLE: &str = "Linked Fixture \u{e9}t\u{e9}";
+
+    /// A two-page paper in miniature: an internal link from page one to page
+    /// two, a URI link, a one-entry outline pointing at page two, and a
+    /// document info dictionary. Written by hand because PDFium can read all
+    /// of these but create none of them.
+    ///
+    /// `xref_stream` writes the cross-reference data as a stream rather than a
+    /// classic table, as pdfTeX does.
+    fn linked_fixture(xref_stream: bool) -> Vec<u8> {
+        let mut objects: Vec<(u32, Vec<u8>)> = Vec::new();
+        let mut add = |n: u32, body: &[u8]| objects.push((n, body.to_vec()));
+        add(
+            1,
+            b"<< /Type /Catalog /Pages 2 0 R /Outlines 10 0 R /PageMode /UseOutlines >>",
+        );
+        add(2, b"<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>");
+        add(
+            3,
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Contents 5 0 R \
+              /Resources << /Font << /F1 30 0 R >> >> /Annots [20 0 R 21 0 R] >>",
+        );
+        add(
+            4,
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Contents 6 0 R \
+              /Resources << /Font << /F1 30 0 R >> >> >>",
+        );
+        for (n, text) in [(5u32, "PAGE-ONE"), (6, "PAGE-TWO")] {
+            let content = format!("BT /F1 18 Tf 40 340 Td ({text}) Tj ET");
+            add(
+                n,
+                format!(
+                    "<< /Length {} >>\nstream\n{content}\nendstream",
+                    content.len()
+                )
+                .as_bytes(),
+            );
+        }
+        add(
+            10,
+            b"<< /Type /Outlines /First 11 0 R /Last 11 0 R /Count 1 >>",
+        );
+        add(
+            11,
+            b"<< /Title (Chapter Two) /Parent 10 0 R /Dest [4 0 R /XYZ 0 400 0] >>",
+        );
+        let mut info = b"<< /Title <FEFF".to_vec();
+        for unit in FIXTURE_TITLE.encode_utf16() {
+            info.extend_from_slice(format!("{unit:04X}").as_bytes());
+        }
+        info.extend_from_slice(b"> /Author (A. Author) >>");
+        add(12, &info);
+        add(
+            20,
+            b"<< /Type /Annot /Subtype /Link /Rect [40 300 200 330] /Border [0 0 0] \
+              /Dest [4 0 R /XYZ 0 400 0] >>",
+        );
+        add(
+            21,
+            b"<< /Type /Annot /Subtype /Link /Rect [40 200 200 230] /Border [0 0 0] \
+              /A << /S /URI /URI (https://example.com/) >> >>",
+        );
+        add(
+            30,
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+        );
+
+        objects.sort_by_key(|(n, _)| *n);
+        let mut out: Vec<u8> = b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n".to_vec();
+        let mut offsets: Vec<(u32, usize)> = Vec::new();
+        for (n, body) in &objects {
+            offsets.push((*n, out.len()));
+            out.extend_from_slice(format!("{n} 0 obj\n").as_bytes());
+            out.extend_from_slice(body);
+            out.extend_from_slice(b"\nendobj\n");
+        }
+        let size = objects.iter().map(|(n, _)| *n).max().unwrap() + 1;
+        let start_xref = out.len();
+        if xref_stream {
+            // Cross-reference data as a stream, the way pdfTeX writes it:
+            // /W [1 4 1], uncompressed, the stream object itself last.
+            let mut rows: Vec<u8> = vec![0, 0, 0, 0, 0, 0xff];
+            for n in 1..=size {
+                let at = if n == size {
+                    Some(start_xref)
+                } else {
+                    offsets.iter().find(|(o, _)| *o == n).map(|(_, at)| *at)
+                };
+                match at {
+                    Some(at) => {
+                        rows.push(1);
+                        rows.extend_from_slice(&(at as u32).to_be_bytes());
+                        rows.push(0);
+                    }
+                    None => rows.extend_from_slice(&[0, 0, 0, 0, 0, 0]),
+                }
+            }
+            out.extend_from_slice(
+                format!(
+                    "{size} 0 obj\n<< /Type /XRef /Size {} /W [1 4 1] /Root 1 0 R \
+                     /Info 12 0 R /Length {} >>\nstream\n",
+                    size + 1,
+                    rows.len()
+                )
+                .as_bytes(),
+            );
+            out.extend_from_slice(&rows);
+            out.extend_from_slice(b"\nendstream\nendobj\n");
+            out.extend_from_slice(format!("startxref\n{start_xref}\n%%EOF\n").as_bytes());
+            return out;
+        }
+        out.extend_from_slice(format!("xref\n0 {size}\n").as_bytes());
+        out.extend_from_slice(b"0000000000 65535 f \n");
+        for n in 1..size {
+            match offsets.iter().find(|(o, _)| *o == n) {
+                Some((_, at)) => out.extend_from_slice(format!("{at:010} 00000 n \n").as_bytes()),
+                None => out.extend_from_slice(b"0000000000 65535 f \n"),
+            }
+        }
+        out.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {size} /Root 1 0 R /Info 12 0 R >>\nstartxref\n{start_xref}\n%%EOF\n"
+            )
+            .as_bytes(),
+        );
+        out
+    }
+
+    fn linked_fixture_bytes() -> Vec<u8> {
+        linked_fixture(false)
+    }
+
+    #[test]
+    fn appending_to_an_xref_stream_file_writes_a_well_formed_section() {
+        let _guard = pdfium_init::test_guard();
+        let pdfium = test_pdfium();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let source = dir.path().join("paper.pdf");
+        let output = dir.path().join("saved.pdf");
+        let original = linked_fixture(true);
+        std::fs::write(&source, &original).expect("write fixture");
+        {
+            let document = pdfium.load_pdf_from_file(&source, None).expect("open");
+            let bindings = document.bindings();
+            let handle = bindings.get_handle_from_document(&document);
+            assert_eq!(
+                save_mode(bindings, handle),
+                SaveMode::Incremental,
+                "the fixture must parse cleanly"
+            );
+        }
+
+        let mut first = plan_page(Some(0), 0);
+        first.annots.push(highlight_at(40.0, 100.0));
+        save_plan(
+            &pdfium,
+            &source,
+            &output,
+            vec![first, plan_page(Some(1), 0)],
+        );
+
+        let saved = std::fs::read(&output).expect("read output");
+        assert!(saved.starts_with(&original), "still an appended update");
+        let appended = &saved[original.len()..];
+        let text = String::from_utf8_lossy(appended);
+        let section_at: usize = text
+            .rsplit("startxref")
+            .next()
+            .and_then(|tail| tail.split_whitespace().next())
+            .and_then(|n| n.parse().ok())
+            .expect("startxref");
+        let section = String::from_utf8_lossy(&saved[section_at..]);
+        let dict_end = section.find("stream").expect("an xref stream");
+        assert!(
+            section[..dict_end].contains("/Type/XRef")
+                || section[..dict_end].contains("/Type /XRef"),
+            "the appended cross-reference stream must say what it is: {}",
+            &section[..dict_end]
+        );
+
+        let document = pdfium.load_pdf_from_file(&output, None).expect("reopen");
+        assert_paper_intact(&document, 1);
+        let page = document.pages().get(0).expect("page one");
+        assert_eq!(count_kind(&page, PdfPageAnnotationType::Highlight), 1);
+    }
+
+    fn highlight_at(x: f32, y: f32) -> PlanAnnot {
+        PlanAnnot {
+            kind: "highlight".into(),
+            rect: RectDto {
+                x,
+                y,
+                w: 80.0,
+                h: 16.0,
+            },
+            color: "#ffd400".into(),
+            opacity: 0.4,
+            stroke_width: None,
+            quads: None,
+            strokes: None,
+            text: None,
+        }
+    }
+
+    fn save_plan(pdfium: &Pdfium, source: &Path, output: &Path, pages: Vec<PlanPage>) {
+        let plan = EditPlan {
+            pages,
+            form: Vec::new(),
+            form_buttons: Vec::new(),
+        };
+        build_output(
+            pdfium,
+            source.to_str().expect("source path"),
+            None,
+            &plan,
+            output,
+        )
+        .expect("save");
+    }
+
+    fn count_kind(page: &PdfPage<'_>, kind: PdfPageAnnotationType) -> usize {
+        page.annotations()
+            .iter()
+            .filter(|a| a.annotation_type() == kind)
+            .count()
+    }
+
+    /// Assert that both links, the outline and the document info came
+    /// through, with the internal link and the outline still landing on the
+    /// page that says PAGE-TWO.
+    fn assert_paper_intact(document: &PdfDocument<'_>, page_two: u16) {
+        let first = document.pages().get(0).expect("page one");
+        assert_eq!(
+            count_kind(&first, PdfPageAnnotationType::Link),
+            2,
+            "both links must survive"
+        );
+        let targets: Vec<Option<u16>> = first
+            .links()
+            .iter()
+            .map(|link| link.destination().and_then(|dest| dest.page_index().ok()))
+            .collect();
+        assert!(
+            targets.contains(&Some(page_two)),
+            "the internal link must still resolve to page two, got {targets:?}"
+        );
+        let has_uri = first.links().iter().any(|link| {
+            link.action()
+                .and_then(|action| action.as_uri_action().and_then(|uri| uri.uri().ok()))
+                .is_some_and(|uri| uri == "https://example.com/")
+        });
+        assert!(has_uri, "the URI link must keep its target");
+
+        let chapter = document
+            .bookmarks()
+            .find_first_by_title("Chapter Two")
+            .expect("outline entry");
+        let outline_page = chapter
+            .destination()
+            .and_then(|dest| dest.page_index().ok());
+        assert_eq!(outline_page, Some(page_two));
+        let target_text = document
+            .pages()
+            .get(page_two)
+            .expect("page two")
+            .text()
+            .expect("text")
+            .all();
+        assert!(target_text.contains("PAGE-TWO"));
+
+        let title = document
+            .metadata()
+            .get(PdfDocumentMetadataTagType::Title)
+            .map(|tag| tag.value().to_string());
+        assert_eq!(title.as_deref(), Some(FIXTURE_TITLE));
+    }
+
+    #[test]
+    fn adding_a_highlight_keeps_links_outline_and_info() {
+        let _guard = pdfium_init::test_guard();
+        let pdfium = test_pdfium();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let source = dir.path().join("paper.pdf");
+        let output = dir.path().join("saved.pdf");
+        let original = linked_fixture_bytes();
+        std::fs::write(&source, &original).expect("write fixture");
+
+        let mut first = plan_page(Some(0), 0);
+        first.annots.push(highlight_at(40.0, 100.0));
+        save_plan(
+            &pdfium,
+            &source,
+            &output,
+            vec![first, plan_page(Some(1), 0)],
+        );
+
+        let saved = std::fs::read(&output).expect("read output");
+        assert!(
+            saved.len() > original.len() && saved.starts_with(&original),
+            "an in-place save must append to the original bytes, not rewrite them"
+        );
+        let document = pdfium.load_pdf_from_file(&output, None).expect("reopen");
+        assert_paper_intact(&document, 1);
+        let page = document.pages().get(0).expect("page one");
+        assert_eq!(count_kind(&page, PdfPageAnnotationType::Highlight), 1);
+    }
+
+    #[test]
+    fn deleting_a_saved_highlight_removes_only_it() {
+        let _guard = pdfium_init::test_guard();
+        let pdfium = test_pdfium();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let source = dir.path().join("paper.pdf");
+        let once = dir.path().join("once.pdf");
+        let twice = dir.path().join("twice.pdf");
+        std::fs::write(&source, linked_fixture_bytes()).expect("write fixture");
+
+        let mut first = plan_page(Some(0), 0);
+        first.annots.push(highlight_at(40.0, 100.0));
+        first.annots.push(highlight_at(40.0, 150.0));
+        save_plan(&pdfium, &source, &once, vec![first, plan_page(Some(1), 0)]);
+
+        // Read the highlights back the way the frontend does, then delete one
+        // and move the other - its index names the copy to replace.
+        let read = crate::engine::annots::read_annotations(&pdfium, once.to_str().unwrap(), None)
+            .expect("read back");
+        let owned = &read[0].annots;
+        assert_eq!(owned.len(), 2, "links are not the editor's to surface");
+        let mut first = plan_page(Some(0), 0);
+        first.drop_src_annots = owned.iter().map(|a| a.index).collect();
+        first.annots.push(highlight_at(150.0, 50.0));
+        save_plan(&pdfium, &once, &twice, vec![first, plan_page(Some(1), 0)]);
+
+        let document = pdfium.load_pdf_from_file(&twice, None).expect("reopen");
+        assert_paper_intact(&document, 1);
+        let page = document.pages().get(0).expect("page one");
+        assert_eq!(
+            count_kind(&page, PdfPageAnnotationType::Highlight),
+            1,
+            "both originals dropped, the moved copy written once"
+        );
+        let read = crate::engine::annots::read_annotations(&pdfium, twice.to_str().unwrap(), None)
+            .expect("read back");
+        assert!((read[0].annots[0].rect.x - 150.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn a_repaired_source_is_rewritten_rather_than_appended_to() {
+        let _guard = pdfium_init::test_guard();
+        let pdfium = test_pdfium();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let source = dir.path().join("broken.pdf");
+        let output = dir.path().join("saved.pdf");
+        // Point startxref at nothing, so PDFium has to rebuild the table by
+        // scanning the file.
+        let mut broken = linked_fixture_bytes();
+        let at = broken
+            .windows(9)
+            .rposition(|w| w == b"startxref")
+            .expect("startxref");
+        broken.truncate(at);
+        broken.extend_from_slice(b"startxref\n7\n%%EOF\n");
+        std::fs::write(&source, &broken).expect("write fixture");
+        {
+            let document = pdfium.load_pdf_from_file(&source, None).expect("repair");
+            let bindings = document.bindings();
+            let handle = bindings.get_handle_from_document(&document);
+            assert_eq!(save_mode(bindings, handle), SaveMode::Rewrite);
+        }
+
+        let mut first = plan_page(Some(0), 0);
+        first.annots.push(highlight_at(40.0, 100.0));
+        save_plan(
+            &pdfium,
+            &source,
+            &output,
+            vec![first, plan_page(Some(1), 0)],
+        );
+
+        let saved = std::fs::read(&output).expect("read output");
+        assert!(
+            !saved.starts_with(&broken),
+            "a damaged file is not appended to"
+        );
+        let document = pdfium.load_pdf_from_file(&output, None).expect("reopen");
+        assert_paper_intact(&document, 1);
+        let bindings = document.bindings();
+        assert!(
+            bindings.is_true(bindings.FPDF_DocumentHasValidCrossReferenceTable(
+                bindings.get_handle_from_document(&document)
+            ))
+        );
+    }
+
+    #[test]
+    fn restructuring_still_works_and_keeps_document_info() {
+        let _guard = pdfium_init::test_guard();
+        let pdfium = test_pdfium();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let source = dir.path().join("paper.pdf");
+        let output = dir.path().join("saved.pdf");
+        std::fs::write(&source, linked_fixture_bytes()).expect("write fixture");
+
+        let mut moved = plan_page(Some(0), 0);
+        moved.annots.push(highlight_at(40.0, 100.0));
+        save_plan(
+            &pdfium,
+            &source,
+            &output,
+            vec![plan_page(Some(1), 0), moved, plan_page(None, 0)],
+        );
+
+        let document = pdfium.load_pdf_from_file(&output, None).expect("reopen");
+        assert_eq!(document.pages().len(), 3);
+        let texts: Vec<String> = document
+            .pages()
+            .iter()
+            .map(|page| page.text().expect("text").all())
+            .collect();
+        assert!(texts[0].contains("PAGE-TWO"));
+        assert!(texts[1].contains("PAGE-ONE"));
+        let page = document.pages().get(1).expect("moved page");
+        assert_eq!(count_kind(&page, PdfPageAnnotationType::Highlight), 1);
+        // An explicit page destination is re-pointed by the import itself:
+        // the link still lands on PAGE-TWO, now the first page.
+        let targets: Vec<Option<u16>> = page
+            .links()
+            .iter()
+            .map(|link| link.destination().and_then(|dest| dest.page_index().ok()))
+            .collect();
+        assert!(targets.contains(&Some(0)), "got {targets:?}");
+
+        let metadata = document.metadata();
+        let value = |tag| metadata.get(tag).map(|t| t.value().to_string());
+        assert_eq!(
+            value(PdfDocumentMetadataTagType::Title).as_deref(),
+            Some(FIXTURE_TITLE)
+        );
+        assert_eq!(
+            value(PdfDocumentMetadataTagType::Author).as_deref(),
+            Some("A. Author")
+        );
+        let bindings = document.bindings();
+        assert!(
+            bindings.is_true(bindings.FPDF_DocumentHasValidCrossReferenceTable(
+                bindings.get_handle_from_document(&document)
+            ))
+        );
+    }
+
+    #[test]
+    fn info_update_escapes_literals_and_chains_to_the_previous_xref() {
+        let base = b"%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\nxref\n0 2\n\
+                     0000000000 65535 f \n0000000009 00000 n \ntrailer\n\
+                     << /Size 2 /Root 1 0 R /ID [<AB><CD>] >>\nstartxref\n44\n%%EOF\n";
+        let update = info_update(base, &[("Title", "a (b) \\ c".into())]).expect("update");
+        let text = String::from_utf8(update).expect("ascii");
+        assert!(text.starts_with("2 0 obj\n<< /Title (a \\(b\\) \\\\ c) >>"));
+        assert!(text.contains("/Size 3 /Root 1 0 R /Info 2 0 R /Prev 44 /ID [<AB><CD>]"));
+        let xref_at: usize = text
+            .rsplit("startxref\n")
+            .next()
+            .and_then(|tail| tail.lines().next())
+            .and_then(|n| n.parse().ok())
+            .expect("startxref value");
+        assert!(base.len() < xref_at);
+        assert_eq!(&text[xref_at - base.len()..][..4], "xref");
+
+        assert_eq!(pdf_text_string("\u{e9}"), "<FEFF00E9>");
+        assert!(info_update(b"%PDF-1.7\nno trailer here", &[("Title", "x".into())]).is_none());
     }
 }
