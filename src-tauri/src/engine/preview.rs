@@ -184,6 +184,7 @@ mod tests {
             y,
             w,
             h,
+            edges: Vec::new(),
         }
     }
 

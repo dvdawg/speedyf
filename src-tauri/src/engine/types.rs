@@ -100,6 +100,13 @@ pub struct TextRun {
     pub y: f32,
     pub w: f32,
     pub h: f32,
+    /// Where each character of `text` begins, from `x`, in points: one
+    /// entry per UTF-16 unit (what the webview counts a selection in) and
+    /// a last one where the run ends. From each glyph's advance, so a
+    /// selection's ends fall where the glyphs really are. Empty when the
+    /// characters could not be placed.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub edges: Vec<f32>,
 }
 
 /// One row of the formal-environment list: either a section heading or an
