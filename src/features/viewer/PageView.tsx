@@ -435,6 +435,7 @@ export default function PageView(props: Props) {
             geom={props.geom}
             zoom={vp.state.zoom}
             runs={textLayout()?.runs ?? []}
+            equations={equationBlocks() ?? []}
           />
         </Show>
       </div>

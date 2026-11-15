@@ -30,12 +30,16 @@ import { IconTrash } from '../../components/icons';
 import { TabContext } from '../../app/TabContext';
 import { activeTab } from '../../stores/tabsStore';
 import { fitTextBox, textFontCss, textStyleOf } from './textStyle';
+import { highlightRects } from './highlightRects';
+import type { EquationBlock } from '../extensions/EquationLayer';
 
 interface Props {
   page: PageEntry;
   geom: PageGeom;
   zoom: number;
   runs: TextRunDto[];
+  /** the page's display equations, boxes from its top-left */
+  equations?: readonly EquationBlock[];
 }
 
 interface DragState {
@@ -203,14 +207,14 @@ export default function AnnotationLayer(props: Props) {
     } else if (toolState.active === 'highlight') {
       const quads: PdfQuad[] = [];
       let union: PdfRect | null = null;
-      for (const run of props.runs) {
-        const x0 = Math.max(rect.x, run.x);
-        const x1 = Math.min(rect.x + rect.w, run.x + run.w);
-        const y0 = Math.max(rect.y, run.y);
-        const y1 = Math.min(rect.y + rect.h, run.y + run.h);
-        if (x1 - x0 < 1) continue;
-        if (y1 - y0 < run.h * 0.35) continue;
-        const q: PdfRect = { x: x0, y: run.y, w: x1 - x0, h: run.h };
+      const displays = (props.equations ?? []).map(({ bbox: [x, y, w, h], number }) => ({
+        x,
+        y: props.geom.heightPt - y - h,
+        w,
+        h,
+        number,
+      }));
+      for (const q of highlightRects(props.runs, rect, displays)) {
         quads.push({
           p1: { x: q.x, y: q.y },
           p2: { x: q.x + q.w, y: q.y },
