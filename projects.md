@@ -1333,19 +1333,52 @@ Notepad writes them.
 AAHLZ24]`, `[12]`, `[3-5]`, and "Simon (2015)" / "(Simon, 2015)" in a
   paper whose list has no labels) are mapped through the quoted paper's
   reference list (`projects.references`: the refs sidecar, each entry
-  resolved to a library item when one is it). An item: `[@key]`, several
-  `[@a; @b]`, drawn with the note's own labels, LaTeX `\cite{...}`. Not in
-  the library: the printed label kept as a Pandoc footnote, `[^Sim15]`
-  (a numeric label prefixed with the quoted paper's key, `[^rz26-12]`, since
-  "[12]" is another work in every paper), its entry written once under the
-  quote, `[^Sim15]: [Sim15] B. Simon, ... arXiv:1501.01234`. It reads
-  "[Sim15]", dim, and hovering shows the entry with its DOI or arXiv link.
-  Footnotes were chosen over an inline attribute (`[Sim15]{ref=...}` keeps
-  the entry out of the text, so it needs a sidecar and is lost to other
-  readers) and over a "References" footer (which has to be found and kept
-  in step with the note); the entry right under its quote travels with it
-  when the quote is moved, Pandoc and GitHub render it as a footnote, and
-  the LaTeX export writes `[Sim15]\footnote{...}`.
+  resolved to a library item when one is it, with what `witness` reads of
+  it: title, first author, year). An item: `[@key]`, several `[@a; @b]`,
+  drawn with the note's own labels, LaTeX `\cite{...}`. Not in the library:
+  a Pandoc footnote marker naming the note's entry for the work, the label
+  the paper printed kept on it, `[^simon2015spectral]{label=Sim15}`. It
+  reads "[Sim15]", dim, and hovering shows the entry with its DOI or arXiv
+  link.
+- **One bracket as printed.** "[Han16, Lar23, AAHLZ24]" is written
+  `[@han2016; @aahlz2024][^larsen2023blocks]{label=Lar23 at=1}`: the items
+  one Pandoc group, each reference no item is a marker right after it,
+  `at` its place in the printed order. The editor draws any group, and any
+  citations and markers written side by side, as one bracket in that order,
+  the brackets and commas in the text's colour and each label a link of its
+  own (an item opens the paper, a reference previews its entry). Markdown
+  export drops the `{label= at=}` hints (Pandoc reads `[@a; @b][^x]`);
+  LaTeX writes `\cite{han2016,aahlz2024}[Lar23]\footnote{...}`: the
+  bibliography style orders a `\cite`'s keys, so the reference no item is
+  follows the group rather than sitting between its items.
+- **One References section.** The entries live once, at the end of the
+  note, under a `## References` heading (the last heading named
+  References; what is added "at the end" goes before it). An entry is a
+  work, not a label: a second quote citing it - from any paper, printed
+  "[Sim15]" in one and "[37]" in another - names the same entry. The same
+  work is a shared DOI or arXiv id, else (when neither has an identifier of
+  that kind that differs) its title, first author and year all found in the
+  entry; anything less is another work, since merging two loses one. Ids
+  are readable and stable, first author, year, first title word in
+  lower-case ASCII (`simon2015spectral`), suffixed a, b on a clash. Notepad
+  asks the core (`editor.references`, one undoable edit) and adds only the
+  entries that are missing, before it writes the quote. The editor folds
+  the section to one quiet line, "References (12)" with a chevron, closed
+  by default; markers keep their hover preview. Opened, an entry no marker
+  names is dim, with a **Remove unused** text action (never automatic);
+  when entries' works have since become items, the line offers "2 now in
+  your library - link them", which rewrites those markers as citations in
+  their printed place and drops the entries (never silently). Entries an
+  earlier Notepad wrote under each quote fold the same way ("3 references")
+  and move into the section on the next quote's write, or by **Move to
+  References** (idempotent). Export drops the heading when it holds only
+  entries: Pandoc gathers footnotes itself.
+- **A statement ends where the paper's does.** A statement set in a face
+  of its own (amsthm's italic `plain` style) ends at the first upright
+  prose line, the paragraph after it, which LaTeX sets only a little
+  apart; text selected after it is a quote of its own, a blank line
+  between. An exact source says where its environment closes
+  (`statementEnd`), so the upgraded quote keeps the same two blocks.
 - **Cross-references.** The reader's resolved cross-references in the
   selection (`selection.context` `xrefs`) become links into the paper,
   `[Theorem 2.1](@rz26#p1){box=72,300,400,60}`: the words as printed, the
