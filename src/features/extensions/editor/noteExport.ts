@@ -16,6 +16,7 @@ import {
   type Citation,
   type Span,
 } from './markdown';
+import { referencesSection } from './references';
 
 /* ---- Markdown ---- */
 
@@ -55,7 +56,7 @@ function outsideCode(line: string, change: (part: string) => string): string {
  * already. `assets` lists the pictures to copy, as the note names them. */
 export function exportMarkdown(text: string, folder: string): { text: string; assets: string[] } {
   const assets: string[] = [];
-  const blocks = splitBlocks(text).map((block) => {
+  const blocks = splitBlocks(withoutReferencesHeading(text)).map((block) => {
     if (block.kind === 'code' || block.kind === 'math') return block.raw;
     return block.raw
       .split('\n')
@@ -78,6 +79,21 @@ export function exportMarkdown(text: string, folder: string): { text: string; as
       .join('\n');
   });
   return { text: blocks.join('\n'), assets };
+}
+
+/** The note without its references section's heading when the section
+ * holds nothing but entries: Pandoc gathers footnotes itself, and LaTeX
+ * sets each as the footnote of its mention, so the heading would stand
+ * over nothing. */
+export function withoutReferencesHeading(text: string): string {
+  const section = referencesSection(text);
+  if (!section) return text;
+  const lines = text.split('\n');
+  const inside = lines.slice(section.headingLine + 1, section.endLine);
+  if (!inside.every((line) => line.trim() === '' || /^\[\^[^\]\n]+\]:/.test(line))) return text;
+  const blank = lines[section.headingLine + 1]?.trim() === '' ? 1 : 0;
+  lines.splice(section.headingLine, 1 + blank);
+  return lines.join('\n');
 }
 
 /* ---- LaTeX ---- */
@@ -232,7 +248,7 @@ function displayIn(body: string): string | null {
 /** The note as LaTeX, for pasting into a paper. */
 export function noteToLatex(text: string, options: LatexOptions = {}): string {
   const opts: LatexOptions = { notes: footnotesIn(text), ...options };
-  const blocks = splitBlocks(text);
+  const blocks = splitBlocks(withoutReferencesHeading(text));
   const levels = blocks
     .filter((b) => b.kind === 'line')
     .map((b) => lineShape(b.raw))

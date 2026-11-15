@@ -7993,3 +7993,43 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   width: 12px;
   height: 12px;
 }
+
+/* The fold's line and its quiet text actions, "Remove unused". */
+.np-refs-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+}
+
+.np-refs-head.is-section {
+  margin-top: 0.8em;
+}
+
+.np-refs-action {
+  padding: 0;
+  border: none;
+  border-radius: 2px;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 0.78em;
+  cursor: pointer;
+}
+
+.np-refs-action:hover,
+.np-refs-action:focus-visible {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.np-refs-action:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* An entry nothing in the note cites any more. */
+.np-ref-entry.is-unused {
+  opacity: 0.55;
+}

@@ -197,3 +197,31 @@ describe('citations printed as one bracket, on export', () => {
     expect(noteToLatex('Both [@a; @b] agree.')).toContain('Both \\cite{a,b} agree.');
   });
 });
+
+describe('the references section on export', () => {
+  const NOTE = [
+    '> As in [^simon2015spectral]{label=Sim15}.',
+    '',
+    '## References',
+    '',
+    '[^simon2015spectral]: B. Simon, Spectral theory (2015).',
+    '',
+  ].join('\n');
+
+  it('leaves Pandoc its footnotes, without a heading over nothing or the label hint', () => {
+    expect(exportMarkdown(NOTE, 'notes-assets').text).toBe(
+      [
+        '> As in [^simon2015spectral].',
+        '',
+        '[^simon2015spectral]: B. Simon, Spectral theory (2015).',
+        '',
+      ].join('\n')
+    );
+  });
+
+  it('sets each entry as the footnote of its mention, read by the printed label', () => {
+    const latex = noteToLatex(NOTE);
+    expect(latex).toContain('As in [Sim15]\\footnote{B. Simon, Spectral theory (2015).}.');
+    expect(latex).not.toContain('References');
+  });
+});

@@ -372,3 +372,115 @@ describe('a statement and the paragraph quoted after it', () => {
     expect(quotes[0]!.querySelector('.np-statement-body')).toBeNull();
   });
 });
+
+const SECTION = [
+  '> As in [^sim]{label=Sim15} and [^lar]{label=37}. [@rz26, p. 2]',
+  '',
+  '## References',
+  '',
+  '[^sim]: B. Simon, Spectral theory, arXiv:1501.01234 (2015).',
+  '[^lar]: L. Larsen, Blocks of random matrices (2023).',
+  '[^old]: K. Keller, Overlaps (1999).',
+  '',
+].join('\n');
+
+describe("the note's references section", () => {
+  it('folds the section to "References (n)", closed by default, markers still previewing', async () => {
+    const { view } = mount(SECTION);
+    await settle();
+    const head = view.container.querySelector('.np-refs-head.is-section')!;
+    const toggle = head.querySelector<HTMLButtonElement>('.np-ref-toggle')!;
+    expect(toggle.textContent).toBe('References (3)');
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(toggle.querySelector('svg')).toBeTruthy();
+    expect(view.container.querySelectorAll('.np-ref-entry')).toHaveLength(0);
+    // The heading is not drawn as well.
+    expect(view.container.querySelector('.np-h')).toBeNull();
+    const refs = [...view.container.querySelectorAll<HTMLButtonElement>('.np-cite.is-reference')];
+    expect(refs.map((r) => r.textContent)).toEqual(['[Sim15]', '[37]']);
+    fireEvent.pointerEnter(refs[1]!);
+    await settle(400);
+    expect(previewShown()).toEqual({
+      kind: 'reference',
+      label: '[37]',
+      text: 'L. Larsen, Blocks of random matrices (2023).',
+    });
+  });
+
+  it('dims an entry nothing cites, and removes it only when asked', async () => {
+    const { state, view } = mount(SECTION);
+    await settle();
+    expect(view.container.textContent).not.toContain('Remove unused');
+    fireEvent.click(view.container.querySelector('.np-refs-head.is-section .np-ref-toggle')!);
+    await settle();
+    const entries = [...view.container.querySelectorAll('.np-ref-entry')];
+    expect(entries.map((e) => e.classList.contains('is-unused'))).toEqual([false, false, true]);
+    const remove = [...view.container.querySelectorAll<HTMLButtonElement>('.np-refs-action')].find(
+      (b) => b.textContent === 'Remove unused'
+    )!;
+    fireEvent.click(remove);
+    await settle();
+    expect(state.text).not.toContain('[^old]');
+    expect(state.text).toContain('[^lar]: L. Larsen');
+  });
+
+  it('offers once to link entries whose work is now an item, and links them', async () => {
+    const { state, view } = mount(SECTION.replace('[^lar]{label=37}', '[^lar]{label=37}'));
+    host.setCitations('dev.speedyf.notepad', 'p1', [
+      {
+        key: 'rz26',
+        label: '[RZ26]',
+        title: 'Block overlaps',
+        detail: 'R, Z - 2026',
+        pick: true,
+        aliases: [],
+        item: 'rz-item',
+      },
+      {
+        key: 'simon15',
+        label: '[Sim15]',
+        title: 'Spectral theory',
+        detail: 'Simon - 2015',
+        pick: true,
+        aliases: [],
+        arxiv: '1501.01234',
+        item: 'sim-item',
+      },
+    ]);
+    await settle();
+    const offer = [...view.container.querySelectorAll<HTMLButtonElement>('.np-refs-action')].find(
+      (b) => b.textContent === '1 now in your library - link them'
+    )!;
+    expect(offer).toBeTruthy();
+    // Nothing is rewritten until it is pressed.
+    expect(state.text).toContain('[^sim]{label=Sim15}');
+    fireEvent.click(offer);
+    await settle();
+    expect(state.text).toContain('As in [@simon15] and [^lar]{label=37}.');
+    expect(state.text).not.toContain('[^sim]:');
+  });
+
+  it('gathers entries an earlier Notepad left under a quote', async () => {
+    const { state, view } = mount(
+      ['> As in [^Sim15].', '', '[^Sim15]: [Sim15] B. Simon (2015).', '', 'More.'].join('\n')
+    );
+    await settle();
+    const move = [...view.container.querySelectorAll<HTMLButtonElement>('.np-refs-action')].find(
+      (b) => b.textContent === 'Move to References'
+    )!;
+    fireEvent.click(move);
+    await settle();
+    expect(state.text).toBe(
+      [
+        '> As in [^Sim15].',
+        '',
+        'More.',
+        '',
+        '## References',
+        '',
+        '[^Sim15]: [Sim15] B. Simon (2015).',
+        '',
+      ].join('\n')
+    );
+  });
+});

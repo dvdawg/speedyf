@@ -50,6 +50,15 @@ import {
 import { runEditorEvent, type ExtensionEditor } from '../extensionStore';
 import { applyOp, diffOp, mapPos, type Op } from './ops';
 import {
+  bodyEnd,
+  hasStrayDefinitions,
+  libraryMatches,
+  linkToLibrary,
+  removeReferences,
+  tidyReferences,
+  unusedReferences,
+} from './references';
+import {
   codeSource,
   footnotesIn,
   inlineSpans,
@@ -253,24 +262,56 @@ function EditorBody(props: BodyProps) {
   const [stmt, setStmt] = createSignal<StatementPick | null>(null);
   /** The note's reference entries (`[^id]: ...`), by id. */
   const notes = createMemo(() => footnotesIn(s.text()));
-  /** Runs of reference entries, folded to one line unless opened here:
-   * the run each entry block is in (by its first block's id), and how many
-   * entries each run has. */
+  /** Reference entries folded to one line unless opened here: the note's
+   * references section (its heading drawn as "References (12)") and any
+   * run of entries elsewhere ("3 references", as an earlier Notepad wrote
+   * them under each quote). The fold each block is in (by the id of its
+   * heading, or of a run's first entry), and each fold's kind and count. */
   const runs = createMemo(() => {
     const of = new Map<number, number>();
     const count = new Map<number, number>();
-    let first: number | null = null;
-    for (const block of blocks()) {
-      const entry = block.kind === 'line' && lineShape(block.raw).kind === 'footnote';
-      if (!entry) {
-        first = null;
-        continue;
+    const kind = new Map<number, 'section' | 'run'>();
+    const list = blocks();
+    const shapeOf = (b: Block) => (b.kind === 'line' ? lineShape(b.raw) : null);
+    let head = -1;
+    let level = 0;
+    list.forEach((b, i) => {
+      const shape = shapeOf(b);
+      if (shape?.kind === 'heading' && /^references$/i.test(shape.body.trim())) {
+        head = i;
+        level = shape.level;
       }
-      if (first === null) first = block.id;
+    });
+    let end = list.length;
+    if (head >= 0) {
+      const id = list[head]!.id;
+      kind.set(id, 'section');
+      count.set(id, 0);
+      for (let i = head + 1; i < list.length; i++) {
+        const shape = shapeOf(list[i]!);
+        if (shape?.kind === 'heading' && shape.level <= level) {
+          end = i;
+          break;
+        }
+        of.set(list[i]!.id, id);
+        if (shape?.kind === 'footnote') count.set(id, count.get(id)! + 1);
+      }
+    }
+    let first: number | null = null;
+    list.forEach((block, i) => {
+      const inSection = head >= 0 && i > head && i < end;
+      if (inSection || shapeOf(block)?.kind !== 'footnote') {
+        first = null;
+        return;
+      }
+      if (first === null) {
+        first = block.id;
+        kind.set(first, 'run');
+      }
       of.set(block.id, first);
       count.set(first, (count.get(first) ?? 0) + 1);
-    }
-    return { of, count };
+    });
+    return { of, count, kind };
   });
   const [openRuns, setOpenRuns] = createSignal<ReadonlySet<number>>(new Set());
   const toggleRun = (id: number) =>
@@ -280,11 +321,24 @@ function EditorBody(props: BodyProps) {
       else next.add(id);
       return next;
     });
-  /** Whether a run is shown: opened, or holding the block being edited. */
+  /** Whether a fold is shown: opened, or holding the block being edited. */
   const runOpen = (id: number) => {
     if (openRuns().has(id)) return true;
     const editing = active();
-    return editing !== null && runs().of.get(editing.id) === id;
+    return editing !== null && (runs().of.get(editing.id) === id || editing.id === id);
+  };
+  /** Entries no marker names any more, drawn dim. */
+  const unused = createMemo(() => new Set(unusedReferences(s.text())));
+  /** Entries whose work is an item now, by id: the item's key. */
+  const inLibrary = createMemo(() => libraryMatches(s.text(), props.index.entries));
+  const stray = createMemo(() => hasStrayDefinitions(s.text()));
+  /** Rewrite the whole note as one undoable edit. */
+  const rewrite = (change: (text: string) => string) => {
+    const text = s.text();
+    const op = diffOp(text, change(text));
+    if (!op) return;
+    s.edit(op, op.from, op.from + op.insert.length, { alone: true });
+    rebuild();
   };
   /** Absolute caret while a block is being edited. */
   let caret = 0;
@@ -788,7 +842,7 @@ function EditorBody(props: BodyProps) {
     if (target.closest('[data-block], a, button, textarea')) return;
     const selection = window.getSelection();
     if (selection && !selection.isCollapsed) return;
-    activateAt(s.text().length);
+    activateAt(bodyEnd(s.text()));
   };
 
   /* ---- items dropped from the Projects list ---- */
@@ -1054,8 +1108,8 @@ function EditorBody(props: BodyProps) {
             <For each={blocks()}>
               {(block) => (
                 <>
-                  <Show when={runs().count.get(block.id)}>
-                    {(count) => (
+                  <Show when={runs().kind.get(block.id) === 'run'}>
+                    <div class="np-refs-head">
                       <button
                         type="button"
                         class="np-ref-toggle"
@@ -1065,13 +1119,75 @@ function EditorBody(props: BodyProps) {
                         <span class="np-ref-chevron" aria-hidden="true">
                           {runOpen(block.id) ? <IconChevronDown /> : <IconChevronRight />}
                         </span>
-                        {count() === 1 ? '1 reference' : `${count()} references`}
+                        {runs().count.get(block.id) === 1
+                          ? '1 reference'
+                          : `${runs().count.get(block.id) ?? 0} references`}
                       </button>
-                    )}
+                      <button
+                        type="button"
+                        class="np-refs-action"
+                        title="Move every reference entry into one References section at the end"
+                        onClick={() => rewrite((t) => tidyReferences(t))}
+                      >
+                        Move to References
+                      </button>
+                    </div>
+                  </Show>
+                  <Show when={runs().kind.get(block.id) === 'section' && active() !== block}>
+                    <div class="np-refs-head is-section" data-block={block.id}>
+                      <button
+                        type="button"
+                        class="np-ref-toggle"
+                        aria-expanded={runOpen(block.id)}
+                        onClick={() => toggleRun(block.id)}
+                      >
+                        <span class="np-ref-chevron" aria-hidden="true">
+                          {runOpen(block.id) ? <IconChevronDown /> : <IconChevronRight />}
+                        </span>
+                        {`References (${runs().count.get(block.id) ?? 0})`}
+                      </button>
+                      <Show when={inLibrary().size > 0}>
+                        <button
+                          type="button"
+                          class="np-refs-action"
+                          title="Cite these as the library items they now are"
+                          onClick={() => {
+                            const keys = inLibrary();
+                            rewrite((t) => linkToLibrary(t, keys));
+                          }}
+                        >
+                          {`${inLibrary().size} now in your library - link them`}
+                        </button>
+                      </Show>
+                      <Show when={stray()}>
+                        <button
+                          type="button"
+                          class="np-refs-action"
+                          title="Move reference entries from elsewhere in the note here"
+                          onClick={() => rewrite((t) => tidyReferences(t))}
+                        >
+                          Gather entries
+                        </button>
+                      </Show>
+                      <Show when={runOpen(block.id) && unused().size > 0}>
+                        <button
+                          type="button"
+                          class="np-refs-action"
+                          title="Delete the entries nothing in the note cites"
+                          onClick={() => {
+                            const ids = [...unused()];
+                            rewrite((t) => removeReferences(t, ids));
+                          }}
+                        >
+                          Remove unused
+                        </button>
+                      </Show>
+                    </div>
                   </Show>
                   <Show
                     when={
-                      runs().of.get(block.id) === undefined || runOpen(runs().of.get(block.id)!)
+                      (runs().kind.get(block.id) !== 'section' || active() === block) &&
+                      (runs().of.get(block.id) === undefined || runOpen(runs().of.get(block.id)!))
                     }
                   >
                     <Show
@@ -1088,6 +1204,7 @@ function EditorBody(props: BodyProps) {
                               block,
                               index: () => props.index,
                               notes,
+                              unused,
                               noteKey: props.noteKey,
                               onCite: activateCitation,
                             })}
@@ -1690,6 +1807,8 @@ function drawBlock(args: {
   block: Block;
   index: () => CitationIndex;
   notes: () => Map<string, string>;
+  /** Entries no marker names, drawn dim. */
+  unused?: () => ReadonlySet<string>;
   noteKey: NoteKey;
   onCite: (c: Citation) => void;
 }): JSX.Element {
@@ -1777,7 +1896,7 @@ function drawBlock(args: {
       );
     case 'footnote':
       return (
-        <div class="np-ref-entry">
+        <div class="np-ref-entry" classList={{ 'is-unused': !!args.unused?.().has(shape.id) }}>
           <span class="np-ref-label">{noterefLabel(shape.id, shape.body)}</span>{' '}
           {inline(noterefText(shape.body))}
         </div>
