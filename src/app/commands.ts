@@ -45,6 +45,7 @@ import {
 import { flashStatus } from '../stores/statusMessage';
 import { PROJECT_COMMANDS } from '../features/projects/projectCommands';
 import { NOTE_EXPORT_COMMANDS } from '../features/extensions/noteExportCommands';
+import { MARKUP_COMMANDS } from '../features/markup/markupCommands';
 import { setUi, ui, type SidebarMode } from '../stores/uiStore';
 import { tabsStore, type TabRecord } from '../stores/tabsStore';
 import type { Paper } from '../types/engine';
@@ -597,6 +598,8 @@ export const COMMANDS: readonly Command[] = [
   ...PROJECT_COMMANDS,
   // A project's notepad, exported: noteExportCommands.ts.
   ...NOTE_EXPORT_COMMANDS,
+  // Reviewing a paper with the Markup extension: markupCommands.ts.
+  ...MARKUP_COMMANDS,
 
   // ---- Settings ------------------------------------------------------
   {

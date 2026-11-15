@@ -145,6 +145,14 @@ const BINDINGS: readonly Binding[] = [
     preventAlways: true,
   },
   { key: 'l', mod: true, shift: true, id: 'library.showPaperPanel', preventAlways: true },
+  // Markup review mode. While it is on, three plain keys act on the page:
+  // C comments on the selected text, T suggests a fix for it, R marks a
+  // region. Each acts only when it can (a live selection, review mode on),
+  // so the keys otherwise stay free.
+  { key: 'm', mod: true, shift: true, id: 'markup.toggle', preventAlways: true },
+  { key: 'c', mod: false, shift: false, id: 'markup.comment' },
+  { key: 't', mod: false, shift: false, id: 'markup.typo' },
+  { key: 'r', mod: false, shift: false, id: 'markup.region' },
 
   // Unmodified keys only swallow the event when they actually act.
   { key: 'Delete', id: 'edit.deleteSelection' },

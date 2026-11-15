@@ -249,6 +249,18 @@ export const IconForm = () =>
     </>
   );
 export const IconPlus = () => base(<path d="M8 3v10M3 8h10" />);
+/** Lines of text with a pen at them: Markup's review mode. */
+export const IconMarkup = () =>
+  base(
+    <>
+      <path d="M2.5 4h6M2.5 7h4M2.5 10h2.5" />
+      <path d="M12 3.5l1.5 1.5-5.5 5.5-2 .5.5-2 5.5-5.5z" />
+      <path d="M2.5 13h11" />
+    </>
+  );
+/** A dashed box: a comment on a region of the page. */
+export const IconRegion = () =>
+  base(<rect x="2.5" y="3.5" width="11" height="9" rx="1" stroke-dasharray="2 1.75" />);
 export const IconTrash = () =>
   base(
     <>
