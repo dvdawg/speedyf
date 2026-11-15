@@ -87,6 +87,7 @@ body {
 }
 
 .mk-sheet .mk-display {
+  display: block;
   padding: 3px 0;
   text-align: center;
 }
