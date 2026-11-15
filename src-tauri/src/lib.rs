@@ -6,6 +6,8 @@ mod extensions;
 mod external;
 mod library;
 mod markup_capture;
+#[cfg(debug_assertions)]
+mod markup_selftest;
 mod printing;
 mod search;
 mod windows;
@@ -253,6 +255,8 @@ pub fn run() {
             app.manage(markup_capture::PrintJobs::default());
             app.manage(commands::markup::MarkupKeys::default());
             windows::install_menu(app.handle())?;
+            #[cfg(debug_assertions)]
+            markup_selftest::maybe_run(app.handle());
 
             // Someone who hand-installed an extension before it began shipping
             // would otherwise see it listed twice under one id. Best effort -

@@ -136,12 +136,18 @@ pub async fn markup_save(app: tauri::AppHandle, path: String, json: String) -> A
 #[tauri::command]
 pub async fn markup_export(
     app: tauri::AppHandle,
-    state: tauri::State<'_, EngineState>,
+    request: MarkupExportRequest,
+) -> AppResult<MarkupExportResult> {
+    run_export(&app, request).await
+}
+
+pub(crate) async fn run_export(
+    app: &tauri::AppHandle,
     request: MarkupExportRequest,
 ) -> AppResult<MarkupExportResult> {
     markup_export::validate(&request)?;
-    let sheets = crate::markup_capture::capture_sheets(&app, &request).await?;
-    state
+    let sheets = crate::markup_capture::capture_sheets(app, &request).await?;
+    app.state::<EngineState>()
         .0
         .call_async(Priority::VisiblePage, 0, move |respond| {
             Work::MarkupExport {
