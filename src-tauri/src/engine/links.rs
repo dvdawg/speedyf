@@ -492,9 +492,9 @@ fn normalize_destination(
     let LinkTarget::Internal { page, x, y } = target else {
         return target;
     };
-    let (Some(raw_x), Some(raw_y)) = (x, y) else {
+    if x.is_none() && y.is_none() {
         return LinkTarget::Internal { page, x, y };
-    };
+    }
     let mapper = if let Some(mapper) = mappers.get(&page) {
         *mapper
     } else {
@@ -513,12 +513,17 @@ fn normalize_destination(
     let Some(mapper) = mapper else {
         return LinkTarget::Internal { page, x, y };
     };
-    let (display_x, display_y) = mapper.map(raw_x as f64, raw_y as f64);
-    LinkTarget::Internal {
-        page,
-        x: Some(display_x),
-        y: Some(display_y),
-    }
+    // A `/FitH` names only a top, a `/FitV` only a left: map what is named,
+    // never pass raw user space on as display space (wrong on any page whose
+    // crop box is offset or that is rotated).
+    let (x, y) = match (x, y) {
+        (Some(raw_x), Some(raw_y)) => {
+            let (display_x, display_y) = mapper.map(raw_x as f64, raw_y as f64);
+            (Some(display_x), Some(display_y))
+        }
+        (x, y) => mapper.map_partial(x.map(f64::from), y.map(f64::from)),
+    };
+    LinkTarget::Internal { page, x, y }
 }
 
 pub fn extract_links(
