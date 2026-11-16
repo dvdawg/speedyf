@@ -1538,7 +1538,11 @@ fn statement_region(page: &Page, head: &Head) -> (Rect, Vec<usize>) {
         }
         region = union(region, line_rect(l));
         lines.push(i);
-        previous = i;
+        // Read on from the lowest line so far: the pieces of a display
+        // come in no reading order.
+        if l.bottom < page.lines[previous].bottom {
+            previous = i;
+        }
     }
     (pad(region, 3.0, page), lines)
 }
@@ -2386,6 +2390,57 @@ mod tests {
         });
         let found: Vec<&str> = defs.iter().map(|d| d.label.as_str()).collect();
         assert_eq!(found, vec!["A3", "4"]);
+    }
+
+    #[test]
+    fn a_row_of_an_align_previews_the_whole_block_and_marks_its_row() {
+        let (_, defs) = definitions(|b| {
+            b.line(
+                720.0,
+                BODY,
+                "We have the relations below for every point here.",
+            );
+            for (i, tag) in ["(5)", "(6)", "(7)"].iter().enumerate() {
+                let y = 696.0 - 12.0 * i as f32;
+                b.text(200.0, y, MATH, "a+b=c+d+e");
+                b.text(500.0, y, BODY, tag);
+                b.newline();
+            }
+            b.line(
+                640.0,
+                BODY,
+                "and the rest of the argument follows from them.",
+            );
+        });
+        let six = defs.iter().find(|d| d.label == "6").expect("(6)");
+        let region = six.region;
+        // The block: all three rows, none of the prose around them.
+        assert!(
+            region[1] < 684.0 - 0.5 && region[1] + region[3] > 703.0,
+            "{region:?}"
+        );
+        assert!(
+            region[1] + region[3] < 720.0 && region[1] > 647.5,
+            "{region:?}"
+        );
+        // The mark: row (6) alone.
+        let row = six.row.expect("a marked row");
+        assert!(row[1] > 680.0 && row[1] + row[3] < 696.0, "{row:?}");
+        // A click lands on the row.
+        assert!((six.jump.1 - (row[1] + row[3])).abs() < 0.5);
+        // A lone equation has no row to mark.
+        let (_, lone) = definitions(|b| {
+            b.line(
+                720.0,
+                BODY,
+                "We have the relation below for every point here.",
+            );
+            b.text(200.0, 696.0, MATH, "a+b=c+d+e");
+            b.text(500.0, 696.0, BODY, "(8)");
+            b.newline();
+            b.line(670.0, BODY, "and the rest of the argument follows from it.");
+        });
+        assert_eq!(lone[0].row, None);
     }
 
     fn def(kind: Kind, label: &str, page: u32, part: u32) -> Definition {

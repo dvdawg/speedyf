@@ -129,7 +129,9 @@ impl Reader {
         if !item_first && another(j) {
             return false;
         }
-        let display = !prose(l) || !prose(previous);
+        // A display, or a lone script or symbol of one set as a line.
+        let fragment = |m: &Line| m.end.saturating_sub(m.start) < 4;
+        let display = !prose(l) || !prose(previous) || fragment(l) || fragment(previous);
         let gap = previous.bottom - l.top;
         let em = l.em().max(previous.em());
         if gap > 3.0 * em && !display {
@@ -141,7 +143,7 @@ impl Reader {
             self.in_list = true;
             return true;
         }
-        if prose(l) {
+        if prose(l) && !fragment(l) {
             match self.italic {
                 None => self.italic = Some(own_face),
                 Some(true) if !own_face => {
@@ -154,7 +156,7 @@ impl Reader {
         }
         let apart = gap > self.gap0 + 3.5;
         if !apart || display {
-            if !indented && prose(l) {
+            if !indented && prose(l) && !fragment(l) {
                 self.in_list = false;
             }
             return true;

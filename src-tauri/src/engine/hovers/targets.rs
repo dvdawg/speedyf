@@ -553,9 +553,12 @@ fn answers_to(page: &Page, rect: Rect, named: &Named) -> bool {
         .collect::<Vec<_>>()
         .join(" ");
     match named {
+        // The year can be past a column break, in the entry's next piece:
+        // an entry opening with the author's name answers to it too.
         Named::AuthorYear(surname, year) => {
             text.contains(surname.as_str())
-                && year.as_ref().is_none_or(|y| text.contains(y.as_str()))
+                && (year.as_ref().is_none_or(|y| text.contains(y.as_str()))
+                    || text.trim_start().starts_with(surname.as_str()))
         }
         Named::NumberedCitation(key) => text.contains(&format!("[{key}]")),
         _ => false,
