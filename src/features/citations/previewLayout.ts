@@ -19,6 +19,12 @@ const TARGET_SIZE: Record<PreviewPopoverVariant, PreviewSize> = {
 const INTERNAL_CHROME_WIDTH = 26;
 const INTERNAL_CHROME_HEIGHT = 42;
 const INTERNAL_MIN_WIDTH = 140;
+/** A tall preview (a whole figure with its caption) may grow the card to
+ * this height before it is scaled down to fit... */
+const INTERNAL_TALL_HEIGHT = 560;
+/** ...but never below this share of its width-fitted size: smaller than
+ * that, labels stop being legible, and the card scrolls instead. */
+const MIN_FIT_SHARE = 0.6;
 
 /** Convert the encoded crop back to document-sized CSS pixels. Preview PNGs
  * are rendered above CSS resolution for sharpness; displaying their raw pixel
@@ -37,12 +43,26 @@ export function previewContentSize(preview: Pick<PreviewSpec, 'tile' | 'scaleMil
  * intentional: the PNG pixel height is also exposed as an HTML attribute for
  * intrinsic layout, and allowing that attribute to become the CSS height
  * would stretch every 2× preview vertically. */
-export function previewRasterStyle(preview: Pick<PreviewSpec, 'tile' | 'scaleMilli'>): {
+export function previewRasterStyle(
+  preview: Pick<PreviewSpec, 'tile' | 'scaleMilli'>,
+  scale = 1
+): {
   width: string;
   height: 'auto';
 } {
   const size = previewContentSize(preview);
-  return { width: `${size.width}px`, height: 'auto' };
+  return { width: `${size.width * scale}px`, height: 'auto' };
+}
+
+/** How much an internal preview is scaled to fit its card: down to the
+ * card's width, and down to its tall height - a figure with its caption is
+ * shown whole - but not below a legible share of the width fit. */
+export function previewFitScale(viewport: PreviewSize, content: PreviewSize): number {
+  const maxWidth = Math.min(TARGET_SIZE.internal.width, Math.max(0, viewport.width - 16));
+  const maxHeight = Math.min(INTERNAL_TALL_HEIGHT, Math.max(0, viewport.height - 16));
+  const widthFit = Math.min(1, Math.max(1, maxWidth - INTERNAL_CHROME_WIDTH) / content.width);
+  const heightFit = Math.max(1, maxHeight - INTERNAL_CHROME_HEIGHT) / content.height;
+  return Math.min(widthFit, Math.max(heightFit, MIN_FIT_SHARE * widthFit));
 }
 
 export function previewPopoverSize(
@@ -55,18 +75,17 @@ export function previewPopoverSize(
   if (variant === 'internal' && content) {
     const maxWidth = Math.min(TARGET_SIZE.internal.width, availableWidth);
     const minWidth = Math.min(INTERNAL_MIN_WIDTH, maxWidth);
+    const scale = previewFitScale(viewport, content);
     const width = Math.min(
       maxWidth,
-      Math.max(minWidth, Math.ceil(content.width + INTERNAL_CHROME_WIDTH))
+      Math.max(minWidth, Math.ceil(content.width * scale + INTERNAL_CHROME_WIDTH))
     );
-    const rasterWidth = Math.max(1, width - INTERNAL_CHROME_WIDTH);
-    const fittedHeight = content.height * Math.min(1, rasterWidth / content.width);
     return {
       width,
       height: Math.min(
-        TARGET_SIZE.internal.height,
+        INTERNAL_TALL_HEIGHT,
         availableHeight,
-        Math.ceil(fittedHeight + INTERNAL_CHROME_HEIGHT)
+        Math.ceil(content.height * scale + INTERNAL_CHROME_HEIGHT)
       ),
     };
   }
