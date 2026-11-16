@@ -328,10 +328,21 @@ body {
    per-pixel filter on the images, not an overlay: text stays as crisp as
    the raster, figures keep their hues, and the text, search and annotation
    layers above keep their own colours. Blank and loading sheets dim with
-   them; the preview inside a loading sheet is dimmed once, by its sheet. */
+   them; the preview inside a loading sheet is dimmed once, by its sheet.
+   Every other picture of a page dims too: hover previews, figure and tab
+   thumbnails, first pages in the library, page crops in notes and reviews. */
 :root[data-theme='dark'][data-dim-pages='on']
   :is(.page-img, .page-tile, .page-blank, .page-loading),
-:root[data-theme='dark'][data-dim-pages='on'] :is(.thumb-btn img, .thumb-blank) {
+:root[data-theme='dark'][data-dim-pages='on'] :is(.thumb-btn img, .thumb-blank),
+:root[data-theme='dark'][data-dim-pages='on']
+  :is(
+    .citation-preview-image,
+    .figure-thumb,
+    .tab-preview-page,
+    .paper-preview-image,
+    .np-image,
+    .mk-crop img
+  ) {
   filter: brightness(0.85) sepia(0.08);
 }
 
