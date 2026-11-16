@@ -1419,7 +1419,10 @@ fn sheet_with_links(pdfium: &Pdfium, w: f32, h: f32) -> Vec<u8> {
             "https://arxiv.org/abs/1234.5678",
             [10.0, h - 40.0, 90.0, h - 30.0],
         ),
-        ("mailto:author@example.org", [10.0, h - 60.0, 70.0, h - 50.0]),
+        (
+            "mailto:author@example.org",
+            [10.0, h - 60.0, 70.0, h - 50.0],
+        ),
         (
             "http://localhost:1420/markup-print.html#",
             [10.0, h - 80.0, 50.0, h - 70.0],
