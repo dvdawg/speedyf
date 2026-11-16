@@ -35,7 +35,17 @@ const MAX_PIECES: usize = 3;
 pub fn continuation(flow: Flow, page: &Page, next: Option<&Page>, first: Rect) -> Vec<Piece> {
     if flow == Flow::Footnote {
         return super::footnotes::note_continuation(page, next, first)
-            .map(|(next_page, rect)| Piece { next_page, rect })
+            .map(|(next_page, rect)| {
+                let there = if next_page {
+                    next.unwrap_or(page)
+                } else {
+                    page
+                };
+                Piece {
+                    next_page,
+                    rect: super::settle::settle(there, rect),
+                }
+            })
             .into_iter()
             .collect();
     }
@@ -71,6 +81,7 @@ pub fn continuation(flow: Flow, page: &Page, next: Option<&Page>, first: Rect) -
         let Some(piece) = piece else {
             break;
         };
+        let piece = super::settle::settle(there, piece);
         out.push(Piece {
             next_page: to_next,
             rect: piece,

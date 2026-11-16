@@ -24,6 +24,7 @@ pub mod extract;
 pub mod footnotes;
 pub mod page;
 pub mod regions;
+pub mod settle;
 pub mod statement;
 pub mod targets;
 pub mod terms;
