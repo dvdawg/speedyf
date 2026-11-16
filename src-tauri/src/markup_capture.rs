@@ -30,6 +30,7 @@ const ENTRY: &str = "markup-print.html";
 const BASE_TIMEOUT: Duration = Duration::from_secs(20);
 const PER_SHEET: Duration = Duration::from_millis(500);
 /// One createPDF call.
+#[cfg(target_os = "macos")]
 const SHEET_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub const NEEDS_MACOS: &str = "Markup export needs macOS for now";
