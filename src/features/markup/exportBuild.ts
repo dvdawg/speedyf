@@ -101,11 +101,11 @@ function noteText(comment: MarkupComment, opts: BuildInput): string {
   const body = comment.body.trim();
   if (comment.kind === 'typo' && comment.replacement !== null) {
     const note = body
-      ? ` <span class="mk-dim">${inlineHtml(body, { math: opts.math, cite: opts.cite })}</span>`
+      ? ` <span class="mk-dim">${inlineHtml(body, { math: opts.math, cite: opts.cite, links: true })}</span>`
       : '';
     return `<p>${fixHtml(comment, opts)}${note}</p>`;
   }
-  if (body) return renderBody(body, { math: opts.math, cite: opts.cite });
+  if (body) return renderBody(body, { math: opts.math, cite: opts.cite, links: true });
   return `<p class="mk-dim">${KIND_LABEL[comment.kind]}</p>`;
 }
 
@@ -127,7 +127,7 @@ function noteHtml(entry: Entry, opts: BuildInput, size: number, link?: string): 
 function stubHtml(entry: Entry, opts: BuildInput, size: number, to: string): string {
   const c = entry.comment;
   return (
-    `<div class="mk-note is-stub" style="font-size:${size}px">${badge(c, entry.number)}` +
+    `<div class="mk-note is-stub" style="font-size:${size}px">${badge(c, entry.number, 'back')}` +
     `<div class="mk-note-text">${noteText(c, opts)}</div>` +
     `<a class="mk-cont" data-link="cont">(cont. p. ${to})</a></div>`
   );
@@ -136,7 +136,7 @@ function stubHtml(entry: Entry, opts: BuildInput, size: number, to: string): str
 function summaryHtml(opts: BuildInput, size: number): string {
   return (
     `<div class="mk-summary" style="font-size:${size}px">` +
-    `${renderBody(opts.summary, { math: opts.math, cite: opts.cite })}</div>`
+    `${renderBody(opts.summary, { math: opts.math, cite: opts.cite, links: true })}</div>`
   );
 }
 
@@ -159,7 +159,15 @@ export function plainContents(number: number, comment: MarkupComment, opts: Buil
 
 /* ---- marks ---- */
 
-export function buildMarks(entries: readonly Entry[], opts: BuildInput): ExportMark[] {
+/** Where each note sits in its page's margin strip, by comment number:
+ * what a click on the number by its phrase goes to. */
+export type NoteTops = ReadonlyMap<number, { page: number; y: number }>;
+
+export function buildMarks(
+  entries: readonly Entry[],
+  opts: BuildInput,
+  notes: NoteTops = new Map()
+): ExportMark[] {
   const marks: ExportMark[] = [];
   for (const { comment, number } of entries) {
     const a = comment.anchor;
@@ -193,6 +201,7 @@ export function buildMarks(entries: readonly Entry[], opts: BuildInput): ExportM
   for (const { comment, number } of entries) {
     const rect = markers.get(number);
     if (!rect) continue;
+    const note = notes.get(number);
     marks.push({
       page: comment.anchor.page,
       kind: 'label',
@@ -200,6 +209,7 @@ export function buildMarks(entries: readonly Entry[], opts: BuildInput): ExportM
       rect,
       color: KIND_INK[comment.kind],
       contents: String(number),
+      ...(note ? { target: { kind: 'page', page: note.page, y: note.y } } : {}),
     });
   }
   return marks;
@@ -240,7 +250,7 @@ async function planPage(
   for (const s of NOTE_SIZES) {
     if (withSummary) items.push({ html: summaryHtml(opts, s), sheet: 'margin', width });
     for (const e of entries) {
-      items.push({ html: noteHtml(e, opts, s), sheet: 'margin', width });
+      items.push({ html: noteHtml(e, opts, s, 'back'), sheet: 'margin', width });
       items.push({ html: stubHtml(e, opts, s, '999'), sheet: 'margin', width });
     }
   }
@@ -395,18 +405,30 @@ export async function buildExportRequest(opts: BuildInput): Promise<MarkupExport
     }
     for (const n of plan.notes) {
       const where = contAt.get(n.entry.number);
-      const html =
-        n.stub && where
-          ? stubHtml(n.entry, opts, plan.noteSize, String(where.page))
-          : noteHtml(n.entry, opts, plan.noteSize);
+      const stub = n.stub && where;
+      const html = stub
+        ? stubHtml(n.entry, opts, plan.noteSize, String(where.page))
+        : noteHtml(n.entry, opts, plan.noteSize, 'back');
       inner += `<div class="mk-flow" style="top:${px(n.top)};left:${px(MARGIN.left)};width:${px(noteWidth)}">${html}</div>`;
-      if (n.stub && where) {
-        for (const link of n.stubbed.links) {
-          links.push({
-            rect: { x: MARGIN.left + link.x, y: n.top + link.y, w: link.w, h: link.h },
-            target: { kind: 'sheet', sheet: where.sheet, y: where.y } satisfies LinkTarget,
-          });
-        }
+      // The badge goes back to the phrase; a cut note's "(cont. p. N)" to
+      // its full text.
+      const back: LinkTarget = {
+        kind: 'page',
+        page: plan.page,
+        y: Math.max(0, Math.round(anchorTopFromTop(n.entry.comment.anchor, plan.size.h) - 24)),
+      };
+      for (const link of (stub ? n.stubbed : n.full).links) {
+        const target: LinkTarget | null =
+          link.key === 'back'
+            ? back
+            : link.key === 'cont' && where
+              ? { kind: 'sheet', sheet: where.sheet, y: where.y }
+              : null;
+        if (!target) continue;
+        links.push({
+          rect: { x: MARGIN.left + link.x, y: n.top + link.y, w: link.w, h: link.h },
+          target,
+        });
       }
     }
     return {
@@ -419,11 +441,19 @@ export async function buildExportRequest(opts: BuildInput): Promise<MarkupExport
     };
   });
 
+  // A little air above a note when its number on the page is clicked.
+  const noteTops = new Map<number, { page: number; y: number }>();
+  for (const plan of plans) {
+    for (const n of plan.notes) {
+      noteTops.set(n.entry.number, { page: plan.page, y: Math.max(0, Math.round(n.top - 12)) });
+    }
+  }
+
   return {
     source: opts.source,
     dest: opts.dest,
     marginPt,
-    marks: buildMarks(opts.entries, opts),
+    marks: buildMarks(opts.entries, opts, noteTops),
     // Continuation pages first, so a link's `sheet` is its index here.
     sheets: [...continued, ...margins],
   };

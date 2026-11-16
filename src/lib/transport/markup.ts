@@ -41,6 +41,8 @@ export interface MarkupMark {
   color: string;
   /** Plain text, prefixed by the comment's number: "3. Justify this step: ..." */
   contents: string;
+  /** A label only: where a click on it goes (its note in the margin). */
+  target?: MarkupLinkTarget;
 }
 
 export type MarkupLinkTarget =
