@@ -97,6 +97,59 @@ pub fn extract(
     }
 }
 
+/// Display equations found on a page (`glyphs::EquationBlockDto`, top-left
+/// origin) in the y-up space of the hover lines, with their numbers: what
+/// `Page::set_displays` takes.
+pub fn displays_y_up(
+    blocks: &[crate::engine::glyphs::EquationBlockDto],
+    page_h: f32,
+) -> Vec<([f32; 4], Option<String>)> {
+    blocks
+        .iter()
+        .map(|b| {
+            let [x, y, w, h] = b.bbox;
+            ([x, page_h - y - h, w, h], b.number.clone())
+        })
+        .collect()
+}
+
+/// A page's display equations, read from its glyphs and raster as the
+/// equation layer reads them (`glyphs::page_equation_blocks`), ready for
+/// `Page::set_displays`. `runs` are the page's text runs, for its floats;
+/// without `raster` the glyphs alone are read - quicker, a little less sure.
+pub fn displays(
+    b: &dyn PdfiumLibraryBindings,
+    page: FPDF_PAGE,
+    disp_w: f32,
+    disp_h: f32,
+    runs: &[crate::engine::types::TextRun],
+    raster: bool,
+) -> Vec<([f32; 4], Option<String>)> {
+    use crate::engine::{glyphs, vision};
+    let all = glyphs::extract_page_glyphs(b, page, disp_w, disp_h);
+    let raster = raster
+        .then(|| vision::render_raster(b, page, disp_w, disp_h))
+        .flatten();
+    let blocks = glyphs::page_equation_blocks(&all, raster.as_ref(), runs, disp_w, disp_h);
+    displays_y_up(&blocks, disp_h)
+}
+
+/// The displays the hover index reads a page with: from its glyphs alone,
+/// quick enough for every page, and none looked for on a page without a
+/// character of mathematics. A preview settles its crop against the
+/// raster's as well (`displays`).
+pub fn index_displays(
+    b: &dyn PdfiumLibraryBindings,
+    handle: FPDF_PAGE,
+    page: &super::page::Page,
+) -> Vec<([f32; 4], Option<String>)> {
+    if !page.lines.iter().any(|l| l.math_count > 0) {
+        return Vec::new();
+    }
+    let runs = super::xref::runs_of(page);
+    displays(b, handle, page.width, page.height, &runs, false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
