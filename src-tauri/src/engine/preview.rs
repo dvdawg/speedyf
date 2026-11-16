@@ -185,6 +185,7 @@ mod tests {
             w,
             h,
             edges: Vec::new(),
+            math: Vec::new(),
         }
     }
 
