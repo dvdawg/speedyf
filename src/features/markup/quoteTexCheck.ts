@@ -25,7 +25,7 @@ const OPERATOR_IN_PROSE = /[\u2200-\u22FF\u2A00-\u2AFF]/;
 
 /** Commands whose argument is words, not math. */
 const TEXT_COMMANDS =
-  /\\(?:text|textrm|textit|textbf|mathrm|operatorname|mbox|mathsf|mathtt|mathit|mathbf|mbox)\s*\{[^{}]*\}/g;
+  /\\(?:text|textrm|textit|textbf|mathrm|operatorname|mbox|mathsf|mathtt|mathit|mathbf|begin|end)\s*\{[^{}]*\}/g;
 
 /** Of a quote's prose words (three letters or more), the share that must be
  * words of the page's own text. */
@@ -36,8 +36,10 @@ function words(text: string): string[] {
 }
 
 /** The formulas and the prose of a quote. */
-function parts(tex: string): { math: string[]; prose: string[] } {
+function parts(tex: string): { math: string[]; prose: string[]; displays: Set<number> } {
   const math: string[] = [];
+  /** which of `math` are displays */
+  const displays = new Set<number>();
   const prose: string[] = [];
   let at = 0;
   const flat = tex.replace(/\s+/g, ' ');
@@ -49,17 +51,19 @@ function parts(tex: string): { math: string[]; prose: string[] } {
   };
   for (const m of flat.matchAll(DISPLAY)) {
     inline(flat.slice(at, m.index));
+    displays.add(math.length);
     math.push(m[1]!);
     at = m.index + m[0].length;
   }
   inline(flat.slice(at));
-  return { math, prose };
+  return { math, prose, displays };
 }
 
-/** A formula that reads as one: balanced braces, and no run of four or more
- * letters outside a command or a text argument - variables are letters one
- * at a time, and a word inside a formula is prose the reading swallowed. */
-function plausibleFormula(src: string): boolean {
+/** A formula that reads as one: balanced braces, scripts on something,
+ * and no run of four or more letters outside a command or a text argument
+ * - variables are letters one at a time, and a word inside a formula is
+ * prose the reading swallowed. */
+export function plausibleFormula(src: string): boolean {
   let depth = 0;
   for (const ch of src) {
     if (ch === '{') depth += 1;
@@ -67,6 +71,12 @@ function plausibleFormula(src: string): boolean {
     if (depth < 0) return false;
   }
   if (depth !== 0) return false;
+  // A script on nothing ("(_{a}", "e^{-^{b}"), or a block opening on an
+  // empty row: a layout the reading did not understand.
+  if (/(^|[({[,=&]|\\left.|\\\\)\s*[_^]/.test(src) || /[_^]\{?\s*[-+]?\s*[_^]/.test(src)) {
+    return false;
+  }
+  if (/\\begin\{[a-z]+\*?\}\s*\\\\/.test(src)) return false;
   const bare = src.replace(TEXT_COMMANDS, ' ').replace(/\\[A-Za-z]+/g, ' ');
   return !/[A-Za-z]{4,}/.test(bare);
 }
@@ -80,7 +90,10 @@ export function plausibleQuoteTex(tex: string, plain: string): boolean {
   const { math, prose } = parts(text);
   if (math.length === 0) return false;
   if (!math.every(plausibleFormula)) return false;
-  const proseText = prose.join(' ');
+  // A formula that could not be read stands in the quote as its plain
+  // text in italics (`fillQuote`): the page's words, not a reading's, so
+  // the checks of a reading's prose do not apply to it.
+  const proseText = prose.join(' ').replace(/(^|[^\\])\*(?:[^*\\]|\\.)*\*/g, '$1 ');
   if (OPERATOR_IN_PROSE.test(proseText)) return false;
   // A number of three digits or more in the prose that the page's text
   // does not have: a margin line number the reading picked up.
@@ -109,10 +122,15 @@ export async function texParses(tex: string): Promise<boolean> {
     .catch(() => null);
   const k = await katex;
   if (!k) return false;
-  const { math } = parts(tex);
-  return math.every((src) => {
+  const { math, displays } = parts(tex);
+  return math.every((src, i) => {
     try {
-      k.renderToString(src, { throwOnError: true, strict: 'ignore', trust: false });
+      k.renderToString(src, {
+        displayMode: displays.has(i),
+        throwOnError: true,
+        strict: 'ignore',
+        trust: false,
+      });
       return true;
     } catch {
       return false;

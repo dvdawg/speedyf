@@ -13,10 +13,16 @@ import { engine } from '../../lib/transport/engine';
 import { activeTab } from '../../stores/tabsStore';
 import { flashStatus } from '../../stores/statusMessage';
 import { revealPlace } from '../../stores/revealStore';
-import { selectedGeometry, selectedText, settleSelectionNow } from '../../stores/selectionStore';
+import {
+  selectedGeometry,
+  selectedPieces,
+  selectedText,
+  settleSelectionNow,
+} from '../../stores/selectionStore';
+import { planQuote } from '../../lib/text/quoteParts';
+import { readQuote } from './quoteReading';
 import {
   convertEquation,
-  convertSelection,
   extensionUsable,
   snapshotSelection,
   type ConvertMode,
@@ -293,11 +299,15 @@ export function beginComment(mode: DraftMode): boolean {
   const quads = quadsFromRects(geometry.rects, page.heightPt);
   if (quads.length === 0) return false;
   ensureLoaded(path);
-  // Taken while the selection is still the one the text came from: what a
-  // math converter reads the quote's formulas from.
+  // Taken while the selection is still the one the text came from: what the
+  // exact source of the passage is looked for by.
   const token = snapshotSelection(selectedText());
+  // The quote's parts: prose, formulas, displays (`quoteParts`).
+  const pieces = selectedPieces();
+  const plan = mode === 'comment' && pieces.length > 0 ? planQuote(pieces) : null;
   document.getSelection()?.removeAllRanges();
-  const anchor: Anchor = { page: page.srcIndex!, quads, rect: null, quote: text };
+  const quote = plan?.plain.replace(/\s+/g, ' ').trim() || text;
+  const anchor: Anchor = { page: page.srcIndex!, quads, rect: null, quote };
   batch(() => {
     setEditing(null);
     setDraft({
@@ -308,14 +318,39 @@ export function beginComment(mode: DraftMode): boolean {
       quickmark: mode === 'typo' ? 'typo' : null,
     });
   });
-  if (token && mode === 'comment') {
-    void readQuoteMath(path, anchor, text, async (m) => {
-      const answer = await convertSelection(token, m);
-      const markdown = answer?.markdown.trim() ?? '';
-      return markdown.includes('$') ? markdown : null;
-    });
+  if (plan && (plan.inline.length > 0 || plan.displays.length > 0)) {
+    const docId = doc.docId;
+    setReading(anchor, true);
+    void readQuote(
+      plan,
+      { docId, pageHeight: (p) => tab.documentStore.state.pages[p]?.heightPt },
+      token,
+      (tex) => {
+        setReading(anchor, false);
+        if (tex) setQuoteTex(path, anchor, tex);
+      }
+    ).finally(() => setReading(anchor, false));
   }
   return true;
+}
+
+/** Quotes whose math is being read: their cards show the plain text,
+ * marked as still coming. */
+const [reading, setReadingSet] = createSignal<ReadonlySet<Anchor>>(new Set());
+
+function setReading(anchor: Anchor, on: boolean): void {
+  const now = untrack(reading);
+  if (now.has(anchor) === on) return;
+  const next = new Set(now);
+  if (on) next.add(anchor);
+  else next.delete(anchor);
+  setReadingSet(next);
+}
+
+/** Whether the math of `anchor`'s quote is still being read. */
+export function quoteReading(anchor: Anchor): boolean {
+  for (const a of reading()) if (a === anchor || a === unwrap(anchor)) return true;
+  return false;
 }
 
 /** Start a comment on a display equation (its button on the page): the
@@ -349,11 +384,14 @@ export function beginEquationComment(target: {
   });
   const ref = { docId: doc.docId, page: target.page, bbox: target.bbox, number: target.number };
   const token = equationToken(ref);
+  setReading(anchor, true);
   void readQuoteMath(path, anchor, '', async (m) => {
     const answer = await convertEquation(token, ref, m);
-    const latex = answer?.latex.trim() ?? '';
-    return latex ? `$$ ${latex.replace(/\s*\n\s*/g, ' ')} $$` : null;
-  });
+    if (m === 'local') setReading(anchor, false);
+    let latex = answer?.latex.replace(/\s+/g, ' ').trim() ?? '';
+    if (latex && target.number && !latex.includes('\\tag')) latex += ` \\tag{${target.number}}`;
+    return latex ? `$$ ${latex} $$` : null;
+  }).finally(() => setReading(anchor, false));
   return true;
 }
 

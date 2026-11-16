@@ -15,16 +15,22 @@ export function registerCopyRun(element: Element, run: CopyRun): void {
   runForSpan.set(element, run);
 }
 
-/** The display equation a span is part of, as its box `[x, y, w, h]` (page
- * points, y up). Set apart from the run: equations are found after the
- * text, and can change under a span that stays. */
-const displayForSpan = new WeakMap<Element, readonly [number, number, number, number]>();
+/** A display equation as a span of it knows it: the box its selection is
+ * (`box`, number included) and the engine's box for the equation itself
+ * (`block`), both `[x, y, w, h]` in page points, y up, and its number. */
+export interface SpanDisplay {
+  box: readonly [number, number, number, number];
+  block: readonly [number, number, number, number];
+  number: string | null;
+}
 
-export function setSpanDisplay(
-  element: Element,
-  box: readonly [number, number, number, number] | null
-): void {
-  if (box) displayForSpan.set(element, box);
+/** The display equation a span is part of. Set apart from the run:
+ * equations are found after the text, and can change under a span that
+ * stays. One object for all the spans of one display. */
+const displayForSpan = new WeakMap<Element, SpanDisplay>();
+
+export function setSpanDisplay(element: Element, display: SpanDisplay | null): void {
+  if (display) displayForSpan.set(element, display);
   else displayForSpan.delete(element);
 }
 
@@ -55,7 +61,7 @@ export function selectedCopyRuns(selection: Selection, root: ParentNode): CopyRu
     const to = endsInText && span.contains(range.endContainer) ? range.endOffset : run.text.length;
     const text = run.text.slice(from, to);
     const display = displayForSpan.get(span);
-    if (text.length > 0) runs.push({ ...run, text, ...(display ? { display } : {}) });
+    if (text.length > 0) runs.push({ ...run, text, ...(display ? { display: display.box } : {}) });
   }
   return runs;
 }
@@ -73,7 +79,7 @@ export function selectedRunRects(
   const startsInText = range.startContainer.nodeType === Node.TEXT_NODE;
   const endsInText = range.endContainer.nodeType === Node.TEXT_NODE;
   const out: { page: number; rect: [number, number, number, number] }[] = [];
-  const displays = new Set<readonly number[]>();
+  const displays = new Set<SpanDisplay>();
   for (const span of root.querySelectorAll('.text-layer span')) {
     if (marginSpans.has(span) || !selection.containsNode(span, true)) continue;
     const run = runForSpan.get(span);
@@ -85,13 +91,42 @@ export function selectedRunRects(
     // rectangle per row of glyphs.
     const display = displayForSpan.get(span);
     if (display) {
-      if (!displays.has(display)) out.push({ page: run.page, rect: [...display] });
+      if (!displays.has(display)) out.push({ page: run.page, rect: [...display.box] });
       displays.add(display);
       continue;
     }
     const left = run.x + (run.w * from) / run.text.length;
     const right = run.x + (run.w * to) / run.text.length;
     out.push({ page: run.page, rect: [left, run.y, right - left, run.h] });
+  }
+  return out;
+}
+
+/** One selected stretch of a run, for building a quote from its parts
+ * (`quoteParts`): the whole run (its geometry, edges and math stretches),
+ * the characters selected, and the display equation it is part of. */
+export interface QuotePiece {
+  run: CopyRun;
+  from: number;
+  to: number;
+  display: SpanDisplay | null;
+}
+
+/** The selection as pieces of runs, in the text layer's order, margin line
+ * numbers left out. */
+export function selectedQuotePieces(selection: Selection, root: ParentNode): QuotePiece[] {
+  if (selection.isCollapsed || selection.rangeCount === 0) return [];
+  const range = selection.getRangeAt(0);
+  const startsInText = range.startContainer.nodeType === Node.TEXT_NODE;
+  const endsInText = range.endContainer.nodeType === Node.TEXT_NODE;
+  const out: QuotePiece[] = [];
+  for (const span of root.querySelectorAll('.text-layer span')) {
+    if (marginSpans.has(span) || !selection.containsNode(span, true)) continue;
+    const run = runForSpan.get(span);
+    if (!run) continue;
+    const from = startsInText && span.contains(range.startContainer) ? range.startOffset : 0;
+    const to = endsInText && span.contains(range.endContainer) ? range.endOffset : run.text.length;
+    if (to > from) out.push({ run, from, to, display: displayForSpan.get(span) ?? null });
   }
   return out;
 }

@@ -24,7 +24,11 @@ import PageView from './PageView';
 import { openFromDialog } from '../document/tabsController';
 import { IconOpen } from '../../components/icons';
 import { engine } from '../../lib/transport/engine';
-import { selectedRunRects, smartCopyForSelection } from '../../lib/text/copySelection';
+import {
+  selectedQuotePieces,
+  selectedRunRects,
+  smartCopyForSelection,
+} from '../../lib/text/copySelection';
 import {
   clearSelection,
   noteSelectionChanged,
@@ -172,7 +176,8 @@ function ViewerContent(props: { tab: TabRecord }) {
           documentStore.state.docId,
           selectedRunRects(selection, scroller),
           (page) => documentStore.state.pages[page]?.heightPt
-        )
+        ),
+      () => selectedQuotePieces(selection, scroller)
     );
     const rect = range.getBoundingClientRect();
     if (rect.height === 0 && rect.width === 0) return;

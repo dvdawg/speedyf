@@ -107,6 +107,10 @@ pub struct TextRun {
     /// characters could not be placed.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub edges: Vec<f32>,
+    /// The stretches of `text` set in a math font, `[from, to)` in UTF-16
+    /// units: a formula among the prose. Empty when there is none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub math: Vec<[u32; 2]>,
 }
 
 /// One row of the formal-environment list: either a section heading or an

@@ -8584,6 +8584,27 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   font-style: normal;
 }
 
+/* A formula that could not be read, as the page's plain text. */
+.mk-card-quote .mk-math-plain {
+  font-family: 'Times New Roman', Times, serif;
+  font-style: italic;
+}
+
+/* The plain text while its math is still being read: the notepad
+   skeleton's sheen passing over it, still under reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+  .mk-card-quote.is-pending {
+    background: linear-gradient(
+      100deg,
+      transparent 30%,
+      var(--skeleton-sheen) 50%,
+      transparent 70%
+    );
+    background-size: 300% 100%;
+    animation: shimmer 1.8s infinite linear;
+  }
+}
+
 .mk-rendered {
   line-height: 1.5;
   overflow-wrap: anywhere;
