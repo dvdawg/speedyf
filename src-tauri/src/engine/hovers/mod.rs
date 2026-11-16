@@ -23,6 +23,7 @@ pub mod extract;
 pub mod footnotes;
 pub mod page;
 pub mod regions;
+pub mod targets;
 pub mod terms;
 pub mod xref;
 
@@ -742,3 +743,5 @@ mod tests {
 }
 #[cfg(test)]
 mod eval;
+#[cfg(test)]
+mod eval_links;

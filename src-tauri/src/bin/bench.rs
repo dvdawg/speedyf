@@ -768,6 +768,7 @@ fn measure_citation_preview(
                 src: 0,
                 x: None,
                 y: None,
+                from: None,
                 respond,
             }
         })?;
