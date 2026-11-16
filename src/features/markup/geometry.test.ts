@@ -7,6 +7,7 @@ import {
   numberComments,
   quadsFromRects,
   rectFromBox,
+  rectFromViewBox,
   revealRects,
 } from './geometry';
 import type { Anchor, MarkupComment } from './types';
@@ -154,5 +155,36 @@ describe('markerRects', () => {
     expect(r.x + r.w).toBeGreaterThan(300);
     expect(r.y + r.h).toBeGreaterThan(400);
     expect(r.x).toBeLessThan(300);
+  });
+});
+
+describe('rectFromViewBox', () => {
+  const page = { widthPt: 600, heightPt: 800 };
+  const box = [100, 50, 40, 20] as const;
+  it('is the plain flip on an unturned page', () => {
+    expect(rectFromViewBox(box, { ...page, rotation: 0 })).toEqual(rectFromBox(box, 800));
+  });
+
+  it("finds the page's own place of a box dragged on a turned page", () => {
+    // Turned a quarter clockwise, the page shows 800 wide and 600 tall; its
+    // own top-left corner is at the shown top-right.
+    expect(rectFromViewBox([760, 0, 40, 20], { ...page, rotation: 90 })).toEqual({
+      x: 0,
+      y: 760,
+      w: 20,
+      h: 40,
+    });
+    expect(rectFromViewBox([0, 0, 40, 20], { ...page, rotation: 180 })).toEqual({
+      x: 560,
+      y: 0,
+      w: 40,
+      h: 20,
+    });
+    expect(rectFromViewBox([0, 0, 40, 20], { ...page, rotation: 270 })).toEqual({
+      x: 580,
+      y: 760,
+      w: 20,
+      h: 40,
+    });
   });
 });

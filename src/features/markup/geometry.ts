@@ -1,5 +1,6 @@
 /** Where a comment is on its page: quads from a selection, its bounding box,
  * and the reading order comments are numbered in. Pure. */
+import { cssRectToPdfRect, type PageGeom } from '../../lib/coordinates/coords';
 import type { Anchor, MarkupComment, Quad, Rect } from './types';
 
 /** A rectangle `[x, y, w, h]` in page points from the displayed page's
@@ -56,6 +57,14 @@ export function rectFromBox(box: TopLeftRect, pageHeight: number): Rect {
     w: round(box[2]),
     h: round(box[3]),
   };
+}
+
+/** A box `[x, y, w, h]` dragged on a page as it is shown - turned by the
+ * reader's rotation, top-left points of the turned page (`pickRegion`) -
+ * as a y-up rect in the page's own space, where every anchor lives. */
+export function rectFromViewBox(box: TopLeftRect, page: PageGeom): Rect {
+  const r = cssRectToPdfRect({ x: box[0], y: box[1], w: box[2], h: box[3] }, page, 1);
+  return { x: round(r.x), y: round(r.y), w: round(r.w), h: round(r.h) };
 }
 
 /** The y-up bounding rect of a quad. */

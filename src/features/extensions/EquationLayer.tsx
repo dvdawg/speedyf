@@ -16,6 +16,7 @@ import { createMemo, createResource, createSignal, For, onCleanup, onMount, Show
 import { equationActions, prefetchEquationSource, runEquationAction } from './extensionStore';
 import { beginEquationComment, reviewing } from '../markup/markupStore';
 import { equationBlocksFor } from './equationBlocks';
+import { cssToPdf, type PageGeom } from '../../lib/coordinates/coords';
 
 export { equationBlocksFor, type EquationBlock } from './equationBlocks';
 
@@ -27,6 +28,8 @@ interface Props {
   src: number;
   generation: number;
   zoom: number;
+  /** The page's size and how it is turned on screen; unturned without. */
+  geom?: PageGeom;
 }
 
 /** Resolve once the browser has a moment, so detection never competes with
@@ -78,9 +81,18 @@ function EquationButtons(props: Props) {
       }
       const list = blocks();
       if (!list || list.length === 0) return;
+      // The layer's box on screen is the page as turned; the blocks are in
+      // the page's own space, top-left.
       const box = space.getBoundingClientRect();
-      const x = (event.clientX - box.left) / props.zoom;
-      const y = (event.clientY - box.top) / props.zoom;
+      const css = { x: event.clientX - box.left, y: event.clientY - box.top };
+      const geom = props.geom;
+      let x = css.x / props.zoom;
+      let y = css.y / props.zoom;
+      if (geom && geom.rotation !== 0) {
+        const pt = cssToPdf(css, geom, props.zoom);
+        x = pt.x;
+        y = geom.heightPt - pt.y;
+      }
       const index = list.findIndex(
         ({ bbox: [bx, by, bw, bh] }) =>
           x >= bx && x <= bx + bw && y >= by - REACH_ABOVE_PT && y <= by + bh
