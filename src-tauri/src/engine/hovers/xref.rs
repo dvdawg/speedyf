@@ -23,7 +23,7 @@
 use super::page::{same_column, Line, Page, Script};
 use super::regions::Regions;
 use super::Rect;
-use crate::engine::preview::column_bounds;
+use crate::engine::preview::{column_bounds, page_columns, Interval};
 use crate::engine::types::TextRun;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -1628,20 +1628,108 @@ fn runs_of(page: &Page) -> Vec<TextRun> {
         .collect()
 }
 
+/// The column a display sits in, and the full text width of a
+/// multi-column page. On a multi-column page that is the column under the
+/// tagged line - all of the text width when the tag's row reaches across a
+/// gutter (a full-width display). The tag itself is no guide: it sits at
+/// the column's right edge, beside the gutter. A single column is read from
+/// the text above the display and below it alike.
+fn display_column(page: &Page, tag_line: &Line) -> (Interval, Option<Interval>) {
+    let runs = runs_of(page);
+    let columns = page_columns(&runs, page.width);
+    if columns.len() < 2 {
+        let column = column_bounds(
+            &runs,
+            page.width,
+            tag_line.baseline + 200.0,
+            Some(tag_line.x0),
+        );
+        return (column, None);
+    }
+    let full = Interval {
+        start: columns[0].start,
+        end: columns[columns.len() - 1].end,
+    };
+    // The tag's row: a full-width display set level with its tag can be a
+    // line of its own, the tag alone in the right-hand column.
+    let em = tag_line.em();
+    let row: Vec<&Line> = page
+        .lines
+        .iter()
+        .filter(|l| {
+            let centre = (l.top + l.bottom) / 2.0;
+            l == &tag_line
+                || (!l.flags.furniture
+                    && l.is_display()
+                    && centre >= tag_line.bottom - 0.5 * em
+                    && centre <= tag_line.top + 0.5 * em)
+        })
+        .collect();
+    if row.iter().any(|l| crosses_gutter(&columns, l)) {
+        return (full, Some(full));
+    }
+    let holding: Vec<Interval> = columns
+        .iter()
+        .copied()
+        .filter(|c| tag_line.x1.min(c.end) - tag_line.x0.max(c.start) > 2.0)
+        .collect();
+    let column = match holding.as_slice() {
+        [one] => *one,
+        [] => {
+            let centre = (tag_line.x0 + tag_line.x1) / 2.0;
+            columns
+                .iter()
+                .copied()
+                .min_by(|a, b| {
+                    let da = (a.start - centre).max(centre - a.end);
+                    let db = (b.start - centre).max(centre - b.end);
+                    da.total_cmp(&db)
+                })
+                .unwrap_or(columns[0])
+        }
+        [..] => full,
+    };
+    (column, Some(full))
+}
+
+fn crosses_gutter(columns: &[Interval], l: &Line) -> bool {
+    columns
+        .windows(2)
+        .any(|pair| l.x0 < pair[0].end - 2.0 && l.x1 > pair[1].start + 2.0)
+}
+
 /// A display around its tag: the tagged line, the mathematics level with it
 /// in its column (the lines of an `align` whose tag sits between them), and
-/// the mathematics set close above and below.
+/// the mathematics set close above and below. On a multi-column page, a
+/// display with a line reaching across the gutter close by is a full-width
+/// display: its preview is the full text width, whichever column the tag
+/// fell in.
 fn equation_region(page: &Page, line: usize, tagged: &[bool]) -> Rect {
     let tag_line = &page.lines[line];
     let em = tag_line.em();
-    // The column around the display, read from the text above it and below
-    // it alike.
-    let column = column_bounds(
-        &runs_of(page),
-        page.width,
-        tag_line.baseline + 200.0,
-        Some(tag_line.x0),
-    );
+    let (column, full) = display_column(page, tag_line);
+    let region = display_region(page, line, tagged, column);
+    let Some(full) = full.filter(|full| *full != column) else {
+        return region;
+    };
+    let columns = page_columns(&runs_of(page), page.width);
+    let wide_nearby = page.lines.iter().any(|l| {
+        !l.flags.furniture
+            && l.is_display()
+            && crosses_gutter(&columns, l)
+            && l.top >= region[1] - 0.9 * em
+            && l.bottom <= region[1] + region[3] + 0.9 * em
+    });
+    if wide_nearby {
+        display_region(page, line, tagged, full)
+    } else {
+        region
+    }
+}
+
+fn display_region(page: &Page, line: usize, tagged: &[bool], column: Interval) -> Rect {
+    let tag_line = &page.lines[line];
+    let em = tag_line.em();
     let width = (column.end - column.start).max(1.0);
     // A display is set apart from the column's margin; a line of prose dense
     // with inline mathematics starts at the margin, runs most of the way
@@ -2095,6 +2183,92 @@ mod tests {
         });
         let found: Vec<&str> = defs.iter().map(|d| d.label.as_str()).collect();
         assert_eq!(found, vec!["12"]);
+    }
+
+    /// A two-column page (columns 54-290 and 306-560) under a full-width
+    /// title, drawn in reading order - the left column, then the right -
+    /// with each column's line on baseline 520 left to `left` and `right`.
+    fn two_column_page(
+        b: &mut Builder,
+        left: impl FnOnce(&mut Builder),
+        right: impl FnOnce(&mut Builder),
+    ) {
+        let title = "A Title Set Right Across Both Columns Of The Page";
+        b.text(100.0, 716.0, BOLD, title);
+        b.newline();
+        let column = |b: &mut Builder, x: f32, text: &str| {
+            for i in 0..40 {
+                let y = 700.0 - 12.0 * i as f32;
+                if (y - 520.0).abs() > 1.0 {
+                    b.text(x, y, BODY, text);
+                    b.newline();
+                }
+            }
+        };
+        column(b, 54.0, "Running text set from margin to margin of col.");
+        left(b);
+        column(
+            b,
+            306.0,
+            "Running text, the other column, margin to margin.",
+        );
+        right(b);
+    }
+
+    #[test]
+    fn a_column_equation_preview_stays_in_its_column() {
+        // A display in the left column, and another in the right column on
+        // the same baseline. The full-width title within the old 200pt
+        // window fused the columns, and the right-hand display joined the
+        // left-hand equation's preview.
+        let (_, defs) = definitions(|b| {
+            two_column_page(
+                b,
+                |b| {
+                    b.text(120.0, 520.0, MATH, "x=y+z");
+                    b.text(270.0, 520.0, BODY, "(3)");
+                    b.newline();
+                },
+                |b| {
+                    b.text(380.0, 520.0, MATH, "a=b+c+d");
+                    b.newline();
+                },
+            )
+        });
+        let eq = defs.iter().find(|d| d.label == "3").expect("equation 3");
+        let right = eq.region[0] + eq.region[2];
+        assert!(
+            right < 300.0,
+            "the preview crosses the gutter: {:?}",
+            eq.region
+        );
+        assert!(eq.region[0] < 120.0, "{:?}", eq.region);
+    }
+
+    #[test]
+    fn a_full_width_display_previews_full_width_with_its_tag_in_one_column() {
+        // A display set across both columns, its number alone on the right.
+        let (_, defs) = definitions(|b| {
+            two_column_page(
+                b,
+                |b| {
+                    b.text(
+                        100.0,
+                        520.0,
+                        MATH,
+                        "x=y+z+w+v+u+t+s+r+q+p+o+n+m+l+k+j+i+h+g+f+e+d+c+b+a+zz+yy+xx+ww+vv+uu+tt",
+                    );
+                    b.newline();
+                },
+                |b| {
+                    b.text(540.0, 520.0, BODY, "(4)");
+                    b.newline();
+                },
+            )
+        });
+        let eq = defs.iter().find(|d| d.label == "4").expect("equation 4");
+        let (x0, x1) = (eq.region[0], eq.region[0] + eq.region[2]);
+        assert!(x0 <= 100.0 && x1 >= 555.0, "{:?}", eq.region);
     }
 
     #[test]
