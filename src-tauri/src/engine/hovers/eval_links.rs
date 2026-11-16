@@ -458,11 +458,11 @@ fn statement_truth(pages: &[&Page], head: usize) -> Truth {
         let indented = l.x0 > margin + 3.0;
         let gap = prev_line.bottom - l.top;
         let apart = gap > leading_gap(here) + 3.5;
-        let prev_display = !prose(prev_line);
+        let prev_display = !prose(prev_line) || text_of(prev_page, at.1).chars().count() < 4;
         let take = if item {
             in_list = true;
             true
-        } else if prose(l) && italic == Some(true) && !own_face {
+        } else if prose(l) && italic == Some(true) && !own_face && t.chars().count() >= 4 {
             // The body face again: an item's further lines, or the
             // paragraph after.
             in_list && indented
@@ -647,13 +647,26 @@ fn truth(pages: &[&Page], target: &Target, anchor: Option<(Option<f32>, f32)>) -
                 >= 2;
             let mut margin = lines[head].x0;
             let mut at = (0, head);
-            while out.len() < 16 {
+            // The last whole line: a piece of its row (a ligature splits
+            // lines; an accent sits above) is read with it.
+            let mut whole = (0, head);
+            while out.len() < 24 {
                 let Some((next, broke)) = step(pages, at) else {
                     break;
                 };
                 let here = pages[next.0];
-                let (prev, l) = (&pages[at.0].lines[at.1], &here.lines[next.1]);
+                let (prev, l) = (&pages[whole.0].lines[whole.1], &here.lines[next.1]);
                 let t = text_of(here, next.1);
+                let centre = (l.top + l.bottom) / 2.0;
+                if !broke
+                    && next.0 == whole.0
+                    && centre > prev.bottom
+                    && centre < prev.top + 0.5 * prev.em()
+                {
+                    out.push(next);
+                    at = next;
+                    continue;
+                }
                 if broke {
                     // Over a break: more of the entry unless a new one
                     // starts there.
@@ -670,6 +683,7 @@ fn truth(pages: &[&Page], target: &Target, anchor: Option<(Option<f32>, f32)>) -
                     margin = left;
                     out.push(next);
                     at = next;
+                    whole = next;
                     continue;
                 }
                 let g = prev.bottom - l.top;
@@ -686,6 +700,7 @@ fn truth(pages: &[&Page], target: &Target, anchor: Option<(Option<f32>, f32)>) -
                 }
                 out.push(next);
                 at = next;
+                whole = next;
             }
             Some(Truth {
                 lines: out,
