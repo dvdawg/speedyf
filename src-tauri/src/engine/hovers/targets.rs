@@ -94,7 +94,124 @@ fn target_at(page: &Page, x: Option<f32>, y: f32) -> Option<Rect> {
             return Some(note.region);
         }
     }
-    bibliography_entry(&page, x, y)
+    statement_at(&page, x, y).or_else(|| bibliography_entry(&page, x, y))
+}
+
+/// Words that open a numbered statement.
+const STATEMENT_WORDS: &[&str] = &[
+    "theorem",
+    "lemma",
+    "proposition",
+    "corollary",
+    "definition",
+    "remark",
+    "example",
+    "assumption",
+    "claim",
+    "conjecture",
+    "fact",
+    "observation",
+    "hypothesis",
+    "condition",
+    "property",
+    "problem",
+    "question",
+    "notation",
+    "exercise",
+];
+
+fn opens_statement(text: &str) -> bool {
+    let lower = text.trim_start().to_lowercase();
+    let mut tokens = lower.split_whitespace();
+    let (Some(word), Some(number)) = (tokens.next(), tokens.next()) else {
+        return false;
+    };
+    STATEMENT_WORDS.contains(&word.trim_end_matches('.'))
+        && number
+            .trim_end_matches(['.', ':'])
+            .split('.')
+            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_alphanumeric()))
+        && number.chars().any(|c| c.is_ascii_digit())
+}
+
+/// A numbered heading: "3 Method", "4.2 Results" - short, no full stop.
+fn opens_section(text: &str) -> bool {
+    let mut tokens = text.split_whitespace();
+    let (Some(number), Some(word)) = (tokens.next(), tokens.next()) else {
+        return false;
+    };
+    let numbered = number.trim_end_matches('.').split('.').all(|p| {
+        !p.is_empty()
+            && (p.chars().all(|c| c.is_ascii_digit())
+                || (p.len() == 1 && p.chars().all(|c| c.is_ascii_uppercase())))
+    });
+    numbered
+        && word.starts_with(char::is_uppercase)
+        && text.split_whitespace().count() <= 12
+        && !text.trim_end().ends_with('.')
+}
+
+/// A statement the hover index did not read as one (a head split by a
+/// ligature, a kind it does not know): from its numbered head to the
+/// proof, the next statement or heading, the paragraph after it (set apart,
+/// or back in the body face after an italic statement), or a column's end.
+fn statement_at(page: &Page, x: Option<f32>, y: f32) -> Option<Rect> {
+    let lines = &page.lines;
+    let head = (0..lines.len())
+        .filter(|&i| {
+            let l = &lines[i];
+            !l.flags.furniture
+                && l.top <= y + ANCHOR_BELOW_PT
+                && l.top >= y - ANCHOR_ABOVE_PT
+                && x.is_none_or(|x| l.x0 <= x + 40.0 && l.x1 >= x)
+                && opens_statement(&page.line_text(i))
+        })
+        .min_by(|&a, &b| {
+            (lines[a].top - y)
+                .abs()
+                .total_cmp(&(lines[b].top - y).abs())
+        })?;
+    let gap0 = leading_gap(page);
+    let first = &lines[head];
+    let mut region = line_rect(first);
+    let mut italic: Option<bool> = None;
+    let mut previous = head;
+    let mut count = 0;
+    while count < 40 {
+        let Some(j) = next_line(page, previous) else {
+            break;
+        };
+        let l = &lines[j];
+        let p = &lines[previous];
+        // Pieces of the same row (a ligature splits lines) belong to it.
+        let same_row = (l.top + l.bottom) / 2.0 > p.bottom && (l.top + l.bottom) / 2.0 < p.top;
+        let text = page.line_text(j);
+        let display = l.is_display() || p.is_display();
+        if !same_row {
+            let below = l.top < p.top;
+            let gap = p.bottom - l.top;
+            let face = l.font != page.body_font;
+            let prose = !l.is_display() && l.math_share < 0.2;
+            let ends = !below
+                || !same_column(l, first)
+                || text.starts_with("Proof")
+                || text.starts_with("PROOF")
+                || opens_statement(&text)
+                || opens_section(&text)
+                || (!display && gap > gap0 + 3.5)
+                || (prose && italic == Some(true) && !face);
+            if ends {
+                break;
+            }
+            if prose && italic.is_none() {
+                italic = Some(face);
+            }
+        }
+        region = union(region, line_rect(l));
+        previous = j;
+        count += 1;
+    }
+    Some(pad(region, 3.0, page))
 }
 
 /// A link's own words and the words just before it on its line: what
@@ -249,9 +366,7 @@ fn named(text: &LinkText) -> Option<Named> {
     // and the year, which the link or the words before it must have: a
     // name alone could be anything.
     let year = year_of(inside).or_else(|| year_of(before.rsplit(['(', ';']).next().unwrap_or("")));
-    if year.is_none() {
-        return None;
-    }
+    year.as_ref()?;
     let tail = format!("{before} {inside}");
     let opened = tail
         .rfind(['(', ';', '['])
@@ -568,7 +683,7 @@ mod tests {
         // (672, 660, 648); [3] at 636. Lines are 7.5pt tall.
         let rect = link_target(&page, Some(72.0), 694.0).expect("an entry");
         let top = rect[1] + rect[3];
-        assert!(top >= 691.5 && top < 696.0, "[1]'s last line: {rect:?}");
+        assert!((691.5..696.0).contains(&top), "[1]'s last line: {rect:?}");
         assert!(rect[1] <= 648.0 && rect[1] > 643.5, "[3]: {rect:?}");
     }
 
