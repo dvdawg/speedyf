@@ -12,7 +12,7 @@ import { plausibleQuoteTex } from './quoteTexCheck';
 import { labelParts } from './labels';
 import { mathRenderer } from './mathHtml';
 import { shortQuote, type Entry } from './model';
-import { citeIndex, flashed } from './markupStore';
+import { citeIndex, flashed, quoteReading } from './markupStore';
 import { KIND_LABEL, type Anchor, type CommentKind } from './types';
 
 /** The words a comment is about, as text: with their math typeset when a
@@ -30,7 +30,13 @@ function TextQuote(props: { anchor: Anchor }) {
           when={props.anchor.quote.trim()}
           fallback={<div class="mk-card-quote is-region">Region on the page</div>}
         >
-          <div class="mk-card-quote">{shortQuote(props.anchor.quote, 160)}</div>
+          <div
+            class="mk-card-quote"
+            classList={{ 'is-pending': quoteReading(props.anchor) }}
+            aria-busy={quoteReading(props.anchor) ? 'true' : undefined}
+          >
+            {shortQuote(props.anchor.quote, 160)}
+          </div>
         </Show>
       }
     >
@@ -43,15 +49,20 @@ function TextQuote(props: { anchor: Anchor }) {
   );
 }
 
-/** The words a comment is about as they are printed: a crop of the page,
- * which is faithful to any formula; the text when there is no page. */
+/** The words a comment is about: as text, with their math typeset. A
+ * region, which has no words, is shown as the page draws it. */
 function Quote(props: { anchor: Anchor }) {
   return (
-    <QuoteCrop
-      anchor={props.anchor}
-      alt={props.anchor.quote.trim() || 'Region on the page'}
+    <Show
+      when={props.anchor.rect && !props.anchor.quote.trim()}
       fallback={<TextQuote anchor={props.anchor} />}
-    />
+    >
+      <QuoteCrop
+        anchor={props.anchor}
+        alt="Region on the page"
+        fallback={<TextQuote anchor={props.anchor} />}
+      />
+    </Show>
   );
 }
 

@@ -144,27 +144,38 @@ describe('MarkupDrawer', () => {
     expect(cards()).toHaveLength(3);
   });
 
-  it('shows the quoted words as the page prints them, and their text if it cannot', async () => {
+  it('quotes words as text with their math, and shows a region as the page draws it', async () => {
+    const region = {
+      ...comment('r', 2, 100),
+      anchor: { page: 2, quads: null, rect: { x: 72, y: 600, w: 100, h: 50 }, quote: '' },
+    };
     stored = JSON.stringify({
       version: 1,
       summary: '',
       comments: [
-        comment('a', 1, 100, { anchor: { ...comment('a', 1, 100).anchor, quoteTex: '$q$ 746' } }),
+        comment('a', 0, 100, {
+          anchor: { ...comment('a', 0, 100).anchor, quoteTex: 'q $x$ *y*' },
+        }),
+        // a reading saved before readings were checked, and not to be trusted
+        comment('b', 1, 100, { anchor: { ...comment('b', 1, 100).anchor, quoteTex: '$q$ 746' } }),
+        region,
       ],
     });
     await open();
-    const card = screen.getByRole('article', { name: 'Comment 1' });
-    const img = card.querySelector('.mk-crop img') as HTMLImageElement;
-    expect(img.alt).toBe('q a');
-    expect(img.src).toContain('src=1');
+    const first = screen.getByRole('article', { name: 'Comment 1' });
+    expect(first.querySelector('img')).toBeNull();
+    const quote = first.querySelector('.mk-card-quote.is-tex')!;
+    expect(quote.querySelector('.mk-math-raw')?.textContent).toBe('$x$');
+    expect(quote.querySelector('.mk-math-plain')?.textContent).toBe('y');
+    const second = screen.getByRole('article', { name: 'Comment 2' });
+    expect(second.querySelector('.mk-card-quote')?.textContent).toBe('q b');
+    const third = screen.getByRole('article', { name: 'Comment 3' });
+    const img = third.querySelector('.mk-crop img') as HTMLImageElement;
+    expect(img.alt).toBe('Region on the page');
     expect(img.src).toContain('kind=preview');
-    // the render fails, again and again: the text instead (an untrustworthy
-    // reading of it dropped)
-    for (let i = 0; i < 3; i += 1) {
-      fireEvent.error(card.querySelector('.mk-crop img')!);
-    }
-    expect(card.querySelector('.mk-crop')).toBeNull();
-    expect(card.querySelector('.mk-card-quote')?.textContent).toBe('q a');
+    // the render fails, again and again: words instead
+    for (let i = 0; i < 3; i += 1) fireEvent.error(third.querySelector('.mk-crop img')!);
+    expect(third.querySelector('.mk-card-quote')?.textContent).toBe('Region on the page');
   });
 
   it('goes to a comment on the page from its label line', async () => {
