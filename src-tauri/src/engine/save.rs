@@ -13,8 +13,8 @@
 //! origin at the displayed crop-box bottom-left); `disp_to_user` maps them
 //! back into raw PDF user space honoring crop box + /Rotate.
 
-use crate::engine::forms;
 use crate::engine::types::{EditPlan, RectDto, TextFontFamily};
+use crate::engine::{carry, forms};
 use crate::errors::{AppError, AppResult};
 use pdfium_render::prelude::*;
 use std::collections::HashMap;
@@ -409,8 +409,13 @@ fn info_update(bytes: &[u8], entries: &[(&'static str, String)]) -> Option<Vec<u
     }
     out.extend_from_slice(b" >>\nendobj\n");
     let xref_at = bytes.len() + out.len();
-    // Each cross-reference entry is exactly 20 bytes, newline included.
-    out.extend_from_slice(format!("xref\n{size} 1\n{object_at:010} 00000 n \n").as_bytes());
+    // Each cross-reference entry is exactly 20 bytes, newline included. The
+    // section opens with object 0, the head of the free list, as a full table
+    // does: strict readers (pypdf) otherwise take it for one numbered from
+    // the wrong place.
+    out.extend_from_slice(
+        format!("xref\n0 1\n0000000000 65535 f \n{size} 1\n{object_at:010} 00000 n \n").as_bytes(),
+    );
     out.extend_from_slice(
         format!(
             "trailer\n<< /Size {} /Root {root} /Info {size} 0 R /Prev {prev}",
@@ -878,6 +883,53 @@ fn drop_replaced_annotations(page: &mut PdfPage<'_>, drop: &[u32]) {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Lets the restructure evaluation save the way it did before the carry
+    /// pass existed, for a before/after comparison.
+    pub(crate) static SKIP_CARRY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Give a rebuilt document the source's outline, named destinations, page
+/// labels, XMP metadata and form, remapped to the new page order (see
+/// `carry`).
+///
+/// Best effort, like `append_info_update`: the update is only written once
+/// PDFium has read it back with every page, and anything that stops it - an
+/// encrypted source lopdf cannot open, a structure it cannot parse - leaves
+/// the output exactly as PDFium wrote it.
+fn carry_structure(
+    pdfium: &Pdfium,
+    src_path: &Path,
+    password: Option<&str>,
+    plan: &EditPlan,
+    out_path: &Path,
+) -> AppResult<()> {
+    let layout: Vec<Option<u32>> = plan.pages.iter().map(|page| page.src_index).collect();
+    let bytes = std::fs::read(out_path)?;
+    let (updated, carried) = match carry::carry_catalog(src_path, password, &layout, &bytes) {
+        Ok(Some(result)) => result,
+        Ok(None) => return Ok(()),
+        Err(error) => {
+            log::warn!("cannot carry the outline, destinations and form across: {error}");
+            return Ok(());
+        }
+    };
+    let readable = pdfium
+        .load_pdf_from_byte_slice(&updated, None)
+        .is_ok_and(|document| document.pages().len() as usize == layout.len());
+    if !readable {
+        log::warn!("the carried outline, destinations and form did not read back; left out");
+        return Ok(());
+    }
+    let mut file = std::fs::File::create(out_path)?;
+    file.write_all(&updated)?;
+    file.flush()?;
+    file.sync_all()?;
+    log::info!("carried across a page restructure: {carried:?}");
+    Ok(())
+}
+
 /// Whether `plan` hands back the source's pages exactly as it found them:
 /// same count, same order, nothing inserted, nothing dropped.
 ///
@@ -907,15 +959,12 @@ fn preserves_source_pages(plan: &EditPlan, src_page_count: u16) -> bool {
 ///
 /// When pages are deleted, reordered, duplicated or inserted, a fresh document
 /// is assembled from imported pages, which is what makes those possible at
-/// all. `FPDF_ImportPages` copies each page with its annotations, and re-points
-/// a link's explicit page destination when that page is imported too - but it
-/// copies nothing from the catalog. So that path loses the outline, the named
-/// destinations hyperref links go through (those links stay but lead
-/// nowhere), XMP metadata and the AcroForm (widgets come across as inert
-/// boxes). The document info dictionary is carried over by hand (see
-/// `append_info_update`). Rebuilding the outline and the name tree is not
-/// attempted: PDFium exposes no way to write either, and doing it with
-/// hand-written objects is a PDF writer this module does not want to own.
+/// all. `FPDF_ImportPages` copies each page with its annotations, re-pointing
+/// a link's explicit page destination only when that page was imported before
+/// it, and copies nothing from the catalog. The document info dictionary is carried
+/// over by hand (see `append_info_update`), and the outline, named
+/// destinations, page labels, XMP metadata and the AcroForm are rebuilt for
+/// the new page order in an incremental update of their own (see `carry`).
 pub fn build_output(
     pdfium: &Pdfium,
     src_path: &str,
@@ -926,14 +975,7 @@ pub fn build_output(
     let src = pdfium
         .load_pdf_from_file(src_path, password)
         .map_err(|e| AppError::Malformed(format!("cannot reopen source: {e:?}")))?;
-    let has_form = src.form().is_some();
     let edit_in_place = preserves_source_pages(plan, src.pages().len());
-    if has_form && !edit_in_place {
-        log::warn!(
-            "{src_path} has an AcroForm, but the save reorders, adds or removes \
-             pages; the form cannot be carried across and will be dropped"
-        );
-    }
     let source_info = if edit_in_place {
         Vec::new()
     } else {
@@ -1029,6 +1071,13 @@ pub fn build_output(
     } else {
         write_document(&out, out_path, SaveMode::Rewrite)?;
         append_info_update(out_path, &source_info)?;
+        #[cfg(test)]
+        let carry = !SKIP_CARRY.with(std::cell::Cell::get);
+        #[cfg(not(test))]
+        let carry = true;
+        if carry {
+            carry_structure(pdfium, Path::new(src_path), password, plan, out_path)?;
+        }
     }
 
     // 4) Commit form values AND their appearances through PDFium's form-fill

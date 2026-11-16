@@ -9,6 +9,7 @@
 
 pub mod annots;
 pub mod bubbles;
+pub mod carry;
 pub mod citation;
 pub mod figures;
 pub mod floats;
