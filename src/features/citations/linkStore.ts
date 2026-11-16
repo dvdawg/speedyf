@@ -299,6 +299,14 @@ export interface CitationStore {
   /** Follow an internal link, recording the current view for Back
    * (see viewer/navHistory.ts). */
   navigateInternalTarget(target: Extract<LinkTarget, { kind: 'internal' }>): void;
+  /** Follow a clicked internal link: to where its preview says it really
+   * goes (`PreviewSpec.goto`), else to its own destination. */
+  followInternalLink(
+    docId: number,
+    sourceSrc: number,
+    target: Extract<LinkTarget, { kind: 'internal' }>,
+    linkRect: [number, number, number, number]
+  ): Promise<void>;
   dispose(): void;
 }
 
@@ -327,7 +335,10 @@ export function createCitationStore(doc: DocumentStore, vp: ViewportStore): Cita
         target.y,
         from
       );
-      return { kind: 'internal', preview, page: target.page, x: target.x, y: target.y };
+      // The engine corrects a destination that does not carry the number
+      // the link's words name; the preview and a click both follow it.
+      const to = preview.goto ?? target;
+      return { kind: 'internal', preview, page: to.page, x: to.x, y: to.y };
     }
     const { uri, citation } = request.target;
     if (!citation) {
@@ -452,6 +463,26 @@ export function createCitationStore(doc: DocumentStore, vp: ViewportStore): Cita
           : Math.max(0, (page.heightPt - target.y) * vp.state.zoom - vp.state.containerH * 0.2);
       recordJumpForViewport(vp, { page: pageIndex, offsetCss: offset });
       vp.requestScrollToPage(pageIndex, offset);
+    },
+
+    async followInternalLink(docId, sourceSrc, target, linkRect): Promise<void> {
+      const shown = state.hover.result;
+      const request = state.hover.request;
+      if (shown?.kind === 'internal' && request?.linkRect === linkRect) {
+        this.navigateInternalTarget({ kind: 'internal', page: shown.page, x: shown.x, y: shown.y });
+        return;
+      }
+      let to: Extract<LinkTarget, { kind: 'internal' }> = target;
+      try {
+        const preview = await engine.getPreviewRect(docId, target.page, target.x, target.y, {
+          src: sourceSrc,
+          rect: linkRect,
+        });
+        if (preview.goto) to = { kind: 'internal', ...preview.goto };
+      } catch {
+        // The link's own destination, as it stands.
+      }
+      this.navigateInternalTarget(to);
     },
 
     dispose(): void {

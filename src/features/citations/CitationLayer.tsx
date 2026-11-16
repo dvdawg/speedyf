@@ -102,7 +102,12 @@ export default function CitationLayer(props: Props) {
               onClick={(event) => {
                 event.preventDefault();
                 if (link.target.kind === 'internal') {
-                  citationStore.navigateInternalTarget(link.target);
+                  void citationStore.followInternalLink(
+                    props.docId,
+                    props.src,
+                    link.target,
+                    link.rect
+                  );
                   citationStore.close();
                 } else if (link.target.kind === 'uri') {
                   citationStore.close();
