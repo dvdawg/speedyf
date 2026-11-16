@@ -14,6 +14,13 @@
 //! extent read off the page's lines. A preview is right when it holds all
 //! of the target and none of what surrounds it: the statement's proof, the
 //! next reference, the previous section's tail, a line cut in half.
+//!
+//! Every preview - classified or not, floats too - is also checked for the
+//! invariants `settle` keeps, against the displays the equation layer finds
+//! (glyphs and raster): (a) a display it touches is in it whole, (b) a line
+//! it touches is in it whole, (c) it is as wide as the target's lines and
+//! the displays it touches ("inv a/b/c"). SPEEDYF_SWEEP=1 lists every
+//! preview with whether they hold.
 
 use super::page::{Line, Page};
 use super::{extract, IndexBuilder};
@@ -797,6 +804,10 @@ struct Tally {
     split: usize,
     /// Targets whose text after a display - "where ..." - is cut.
     after_display: usize,
+    /// Previews breaking an invariant: a display touched but not whole (a),
+    /// a line touched but not whole (b), narrower than the target's lines
+    /// and displays (c).
+    inv: [usize; 3],
 }
 
 impl Tally {
@@ -809,16 +820,22 @@ impl Tally {
         self.cut += t.cut;
         self.split += t.split;
         self.after_display += t.after_display;
+        for k in 0..3 {
+            self.inv[k] += t.inv[k];
+        }
     }
 
     fn line(&self, name: &str) -> String {
         format!(
-            "{name:<22} checked {:>5}  target-cut {:>4}  head-missing {:>4}  leaks {:>4}  cut-line {:>4}  (split {}, after-display cut {}, no truth {})",
+            "{name:<22} checked {:>5}  target-cut {:>4}  head-missing {:>4}  leaks {:>4}  cut-line {:>4}  inv a/b/c {:>3}/{:>3}/{:>3}  (split {}, after-display cut {}, no truth {})",
             self.checked,
             self.missing,
             self.start_cut,
             self.leaks,
             self.cut,
+            self.inv[0],
+            self.inv[1],
+            self.inv[2],
             self.split,
             self.after_display,
             self.no_truth
@@ -909,6 +926,127 @@ fn judge(pages: &[&Page], crops: &Crops, truth: &Truth, tally: &mut Tally) -> Ve
     problems
 }
 
+/// How far a line or display reaches into a crop: its horizontal overlap
+/// in points and the share of its height inside.
+fn reach(x0: f32, x1: f32, bottom: f32, top: f32, crop: &[f32; 4]) -> (f32, f32) {
+    let (cx0, cy0, cx1, cy1) = (crop[0], crop[1], crop[0] + crop[2], crop[1] + crop[3]);
+    let ox = x1.min(cx1) - x0.max(cx0);
+    let oy = (top.min(cy1) - bottom.max(cy0)).max(0.0);
+    (ox, oy / (top - bottom).max(0.5))
+}
+
+/// Whether `[x0, x1] x [bottom, top]` lies inside a crop, give or take.
+fn holds(x0: f32, x1: f32, bottom: f32, top: f32, crop: &[f32; 4]) -> bool {
+    x0 >= crop[0] - 2.0
+        && x1 <= crop[0] + crop[2] + 2.0
+        && bottom >= crop[1] - 1.5
+        && top <= crop[1] + crop[3] + 1.5
+}
+
+/// The invariants every preview crop keeps, checked independently of the
+/// engine: (a) a display it touches is in it whole - limits, fractions,
+/// number; (b) a line it touches is in it whole; (c) it is as wide as the
+/// target's lines (those level with it) and the displays it touches. A
+/// display is touched through a line of it (a line whose middle is inside
+/// it) or by a good part of its height. One message per broken invariant.
+fn invariants(
+    pages: &[&Page],
+    displays: &[&[[f32; 4]]],
+    crops: &Crops,
+    truth: Option<&Truth>,
+    tally: &mut Tally,
+) -> Vec<String> {
+    let mut broken: [Option<String>; 3] = [None, None, None];
+    let touched_line = |l: &Line, crop: &[f32; 4]| {
+        let (ox, share) = reach(l.x0, l.x1, l.bottom, l.top, crop);
+        !l.flags.furniture && l.end > l.start && ox > 3.0 && share > 0.15
+    };
+    for (p, crop) in crops {
+        let page = pages[*p];
+        let mut wide: Option<(f32, f32)> = None;
+        let mut widen = |x0: f32, x1: f32| {
+            wide = Some(wide.map_or((x0, x1), |(a, b)| (a.min(x0), b.max(x1))));
+        };
+        for d in displays.get(*p).copied().unwrap_or(&[]) {
+            let (dx0, dx1, db, dt) = (d[0], d[0] + d[2], d[1], d[1] + d[3]);
+            let member = page.lines.iter().any(|l| {
+                let (cx, cy) = ((l.x0 + l.x1) / 2.0, (l.top + l.bottom) / 2.0);
+                cx >= dx0 - 1.0
+                    && cx <= dx1 + 1.0
+                    && cy >= db - 1.0
+                    && cy <= dt + 1.0
+                    && touched_line(l, crop)
+            });
+            let (ox, share) = reach(dx0, dx1, db, dt, crop);
+            let touched = member || (ox > 3.0 && share > 0.25 && share * (dt - db) > 3.0);
+            if !touched {
+                continue;
+            }
+            widen(dx0, dx1);
+            if broken[0].is_none() && !holds(dx0, dx1, db, dt, crop) {
+                broken[0] = Some(format!(
+                    "INV-A display [{dx0:.0},{db:.0},{dx1:.0},{dt:.0}] cut"
+                ));
+            }
+        }
+        for (i, l) in page.lines.iter().enumerate() {
+            if broken[1].is_none()
+                && touched_line(l, crop)
+                && !holds(l.x0, l.x1, l.bottom, l.top, crop)
+            {
+                broken[1] = Some(format!("INV-B line cut: {:?}", text_of(page, i)));
+            }
+        }
+        if let Some(truth) = truth {
+            // The crop's columns: those it covers a good part of. A target
+            // line in another column is a target cut, not a narrow crop.
+            let columns =
+                crate::engine::preview::page_columns(&super::xref::runs_of(page), page.width);
+            let (cx0, cx1) = (crop[0], crop[0] + crop[2]);
+            let own: Vec<(f32, f32)> = columns
+                .iter()
+                .filter(|c| {
+                    let overlap = c.end.min(cx1) - c.start.max(cx0);
+                    overlap >= 0.5 * (c.end - c.start).min(cx1 - cx0)
+                })
+                .map(|c| (c.start, c.end))
+                .collect();
+            for &(tp, i) in &truth.lines {
+                if tp != *p {
+                    continue;
+                }
+                let l = &page.lines[i];
+                let centre = (l.top + l.bottom) / 2.0;
+                let mid = (l.x0 + l.x1) / 2.0;
+                let in_own = own.is_empty()
+                    || own.iter().any(|&(a, b)| mid >= a - 2.0 && mid <= b + 2.0)
+                    || (l.x1.min(cx1) - l.x0.max(cx0)) > 0.0;
+                if in_own && centre >= crop[1] && centre <= crop[1] + crop[3] {
+                    widen(l.x0, l.x1);
+                }
+            }
+        }
+        if let Some((x0, x1)) = wide {
+            let (x0, x1) = (x0.max(0.0), x1.min(page.width));
+            if broken[2].is_none() && (crop[0] > x0 + 2.0 || crop[0] + crop[2] < x1 - 2.0) {
+                broken[2] = Some(format!(
+                    "INV-C narrow: [{:.0},{:.0}] of [{x0:.0},{x1:.0}]",
+                    crop[0],
+                    crop[0] + crop[2]
+                ));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for (k, b) in broken.into_iter().enumerate() {
+        if let Some(b) = b {
+            tally.inv[k] += 1;
+            out.push(b);
+        }
+    }
+    out
+}
+
 /// A link's preview as the engine shows it: its crop, and the pieces the
 /// target runs on into.
 #[allow(clippy::too_many_arguments)]
@@ -946,6 +1084,12 @@ fn corrected(
 
 /// A hover span's preview: its region, and the pieces it runs on into.
 fn span_pieces(kind: &str, page: &Page, next: Option<&Page>, region: [f32; 4]) -> Crops {
+    // The worker settles the index's region against the page's displays.
+    let region = if matches!(kind, "figure" | "table" | "algorithm") {
+        region
+    } else {
+        super::settle::settle(page, region)
+    };
     let flow = match kind {
         "theorem" => Some(super::targets::Flow::Statement),
         "footnote" => Some(super::targets::Flow::Footnote),
@@ -971,6 +1115,8 @@ struct Doc {
     spans: std::collections::HashMap<u32, Vec<super::HoverSpanDto>>,
     /// Every numbered definition, by kind and label: page and click point.
     labels: LabelMap,
+    /// Each page's display equations, y-up, numbers joined.
+    displays: Vec<Vec<[f32; 4]>>,
 }
 
 type LabelMap = std::collections::HashMap<(super::xref::Kind, String), Vec<(u32, f32, f32)>>;
@@ -1005,6 +1151,9 @@ fn carries_number(page: &Page, crop: [f32; 4], number: &str) -> bool {
         })
 }
 
+/// Time spent finding pages' displays, in microseconds.
+static DISPLAY_TIME: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn load(b: &dyn PdfiumLibraryBindings, path: &str) -> Option<Doc> {
     let raw = render::open_document(b, path, None).ok()?;
     let count = (b.FPDF_GetPageCount(raw).max(0) as u32).min(80);
@@ -1020,6 +1169,7 @@ fn load(b: &dyn PdfiumLibraryBindings, path: &str) -> Option<Doc> {
         links: Vec::new(),
         spans: Default::default(),
         labels: Default::default(),
+        displays: Vec::new(),
     };
     let mut builder = IndexBuilder::new(count);
     while let Some(src) = builder.next_page() {
@@ -1044,23 +1194,44 @@ fn load(b: &dyn PdfiumLibraryBindings, path: &str) -> Option<Doc> {
                         })
                         .collect(),
                 );
+                // As the engine reads it: the index's page with the
+                // displays its glyphs show; a preview's with the raster's.
+                let started = std::time::Instant::now();
+                let mut page = Page::new(input);
+                let quick = extract::index_displays(b, handle, &page);
+                let full = extract::displays(b, handle, w, h, &extracted.runs, true);
+                DISPLAY_TIME.fetch_add(
+                    started.elapsed().as_micros() as u64,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                let mut shown = page.clone();
+                shown.set_displays(full);
+                doc.displays.push(shown.displays.clone());
+                page.set_displays(quick);
+                if std::env::var("SPEEDYF_NO_DISPLAYS").is_ok() {
+                    page.displays.clear();
+                    shown.displays.clear();
+                }
+                let page = (page, shown);
                 doc.runs.push(extracted.runs);
                 doc.sizes.push([w, h]);
-                Some(Page::new(input))
+                Some(page)
             }
             _ => {
                 doc.links.push(Vec::new());
                 doc.runs.push(Vec::new());
                 doc.sizes.push([0.0, 0.0]);
+                doc.displays.push(Vec::new());
                 None
             }
         };
         if !handle.is_null() {
             b.FPDF_ClosePage(handle);
         }
-        builder.add_page(model.clone());
+        let (model, shown) = model.unzip();
+        builder.add_page(model);
         doc.pages
-            .push(model.map(|p| super::prepare_page(p, Default::default())));
+            .push(shown.map(|p| super::prepare_page(p, Default::default())));
     }
     doc.spans = builder.finish().spans;
     for (src, page) in doc.pages.iter().enumerate() {
@@ -1133,6 +1304,8 @@ fn evaluate_all_previews() {
     let b = pdfium.bindings();
     let mut totals: BTreeMap<String, Tally> = BTreeMap::new();
     let mut detail = String::new();
+    // Every preview listed with whether its invariants hold.
+    let sweep = std::env::var("SPEEDYF_SWEEP").is_ok();
     for path in paths {
         let Some(doc) = load(b, &path) else { continue };
         // link previews
@@ -1149,12 +1322,7 @@ fn evaluate_all_previews() {
                     .iter()
                     .collect();
                 let inside: String = source.text[start..end].iter().collect();
-                let Some(target) = classify_link(&before, &inside, rect) else {
-                    continue;
-                };
-                if matches!(target, Target::Float(..)) {
-                    continue;
-                }
+                let classified = classify_link(&before, &inside, rect);
                 let Some(Some(dest)) = doc.pages.get(to as usize) else {
                     continue;
                 };
@@ -1165,6 +1333,7 @@ fn evaluate_all_previews() {
                     x.map(f32::to_bits),
                     y.map(f32::to_bits),
                     inside.trim().to_string(),
+                    classified.as_ref().map(Target::kind),
                 )) {
                     continue;
                 }
@@ -1185,6 +1354,52 @@ fn evaluate_all_previews() {
                     )]
                 } else {
                     link_pieces(dest, dest_next, &doc.runs[to as usize], w, h, x, y, &words)
+                };
+                // A link the words do not classify, or a float's: only the
+                // invariants are checked, against no truth.
+                let target = match classified {
+                    Some(Target::Float(..)) | None => {
+                        let key = if classified.is_some() {
+                            "link float"
+                        } else {
+                            "link other"
+                        };
+                        let tally = totals.entry(key.into()).or_default();
+                        tally.checked += 1;
+                        let pages: Vec<&Page> = std::iter::once(dest).chain(dest_next).collect();
+                        let displays: Vec<&[[f32; 4]]> = [to as usize, to as usize + 1]
+                            .iter()
+                            .map(|&p| doc.displays.get(p).map_or(&[][..], Vec::as_slice))
+                            .collect();
+                        let problems = invariants(&pages, &displays, &crops, None, tally);
+                        if sweep {
+                            let _ = writeln!(
+                                detail,
+                                "SWEEP {key} {inside:?} p{}->p{} crop {} invariants {}",
+                                src + 1,
+                                to + 1,
+                                show_crops(&crops),
+                                if problems.is_empty() {
+                                    "hold"
+                                } else {
+                                    "BROKEN"
+                                }
+                            );
+                        }
+                        if !problems.is_empty() {
+                            let _ = writeln!(
+                                detail,
+                                "{} {key} {inside:?} p{}->p{} x={x:?} y={y:?} crop {}\n    {}",
+                                doc.name,
+                                src + 1,
+                                to + 1,
+                                show_crops(&crops),
+                                problems.join("\n    ")
+                            );
+                        }
+                        continue;
+                    }
+                    Some(target) => target,
                 };
                 // A destination that does not carry the number the words
                 // name gives way, in the engine, to the one that does.
@@ -1234,18 +1449,40 @@ fn evaluate_all_previews() {
                 let key = format!("link {}", target.kind());
                 let tally = totals.entry(key.clone()).or_default();
                 let anchor = y.map(|y| (x, y));
-                let Some(truth) = truth(&pages, &target, anchor) else {
-                    tally.no_truth += 1;
+                let found = truth(&pages, &target, anchor);
+                let displays: Vec<&[[f32; 4]]> = [to as usize, to as usize + 1]
+                    .iter()
+                    .map(|&p| doc.displays.get(p).map_or(&[][..], Vec::as_slice))
+                    .collect();
+                let mut problems = Vec::new();
+                match &found {
+                    Some(truth) => problems.extend(judge(&pages, &crops, truth, tally)),
+                    None => {
+                        tally.no_truth += 1;
+                        let _ = writeln!(
+                            detail,
+                            "{} NO-TRUTH {key} {target:?} {inside:?} p{}->p{} x={x:?} y={y:?}",
+                            doc.name,
+                            src + 1,
+                            to + 1
+                        );
+                    }
+                }
+                problems.extend(invariants(&pages, &displays, &crops, found.as_ref(), tally));
+                if sweep {
                     let _ = writeln!(
                         detail,
-                        "{} NO-TRUTH {key} {target:?} {inside:?} p{}->p{} x={x:?} y={y:?}",
-                        doc.name,
+                        "SWEEP {key} {target:?} {inside:?} p{}->p{} crop {} invariants {}",
                         src + 1,
-                        to + 1
+                        to + 1,
+                        show_crops(&crops),
+                        if problems.iter().any(|p| p.starts_with("INV")) {
+                            "BROKEN"
+                        } else {
+                            "hold"
+                        }
                     );
-                    continue;
-                };
-                let problems = judge(&pages, &crops, &truth, tally);
+                }
                 if !problems.is_empty() {
                     let _ = writeln!(
                         detail,
@@ -1284,12 +1521,32 @@ fn evaluate_all_previews() {
                 let key = format!("span {}", target.kind());
                 let tally = totals.entry(key.clone()).or_default();
                 let anchor = Some((span.target.x, span.target.y));
-                let Some(truth) = truth(&pages, &target, anchor) else {
-                    tally.no_truth += 1;
-                    continue;
-                };
+                let found = truth(&pages, &target, anchor);
                 let crops = span_pieces(span.kind, page, next, region);
-                let problems = judge(&pages, &crops, &truth, tally);
+                let displays: Vec<&[[f32; 4]]> = [to, to + 1]
+                    .iter()
+                    .map(|&p| doc.displays.get(p).map_or(&[][..], Vec::as_slice))
+                    .collect();
+                let mut problems = Vec::new();
+                match &found {
+                    Some(truth) => problems.extend(judge(&pages, &crops, truth, tally)),
+                    None => tally.no_truth += 1,
+                }
+                problems.extend(invariants(&pages, &displays, &crops, found.as_ref(), tally));
+                if sweep {
+                    let _ = writeln!(
+                        detail,
+                        "SWEEP {key} {target:?} {:?} ->p{} crop {} invariants {}",
+                        span.label,
+                        to + 1,
+                        show_crops(&crops),
+                        if problems.iter().any(|p| p.starts_with("INV")) {
+                            "BROKEN"
+                        } else {
+                            "hold"
+                        }
+                    );
+                }
                 if !problems.is_empty() {
                     let _ = writeln!(
                         detail,
@@ -1310,9 +1567,18 @@ fn evaluate_all_previews() {
         all.add(tally);
     }
     let _ = writeln!(report, "{}", all.line("TOTAL"));
+    let _ = writeln!(
+        report,
+        "displays found in {} ms",
+        DISPLAY_TIME.load(std::sync::atomic::Ordering::Relaxed) / 1000
+    );
     let _ = writeln!(report, "\nPROBLEMS\n{detail}");
     std::fs::write(&out_path, &report).expect("write report");
     eprintln!("wrote {out_path}");
+}
+
+fn near_y(d: &[f32; 4], y: f32) -> bool {
+    d[1] - 60.0 < y && d[1] + d[3] + 60.0 > y
 }
 
 /// One destination's lines and target, for debugging:
@@ -1338,10 +1604,10 @@ fn dump_link_target() {
         if handle.is_null() {
             return None;
         }
-        let page = super::prepare_page(
-            Page::new(extract::extract(b, handle, w, h)),
-            Default::default(),
-        );
+        let mut page = Page::new(extract::extract(b, handle, w, h));
+        let runs = text::extract_page(b, handle, w, h).runs;
+        page.set_displays(extract::displays(b, handle, w, h, &runs, true));
+        let page = super::prepare_page(page, Default::default());
         b.FPDF_ClosePage(handle);
         Some(page)
     };
@@ -1367,6 +1633,11 @@ fn dump_link_target() {
         }
     };
     show(&page, (!all).then_some(y));
+    for d in &page.displays {
+        if near_y(d, y) || all {
+            eprintln!("display {d:?}");
+        }
+    }
     let target = super::targets::link_preview(Some(&page), &[], w, h, x, Some(y), None);
     eprintln!("target {target:?}");
     if let Some(flow) = target.flow {

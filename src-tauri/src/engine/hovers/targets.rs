@@ -258,11 +258,15 @@ pub(crate) fn statement_lines(
     let column = &lines[first];
     let extent = super::statement::column_extent(page, column);
     let mut reader = Reader::new(page, extent.0, italic);
+    let text_column = super::statement::text_column(page, column);
     let another = |i: usize| opens_another(page, i);
     let mut region = line_rect(column);
-    // The last whole line taken, and where reading has got to: a piece of
-    // a row is taken without being the line the next is read against.
-    let mut previous = first;
+    // The lowest whole line taken - a display taken whole stands as one -
+    // and where reading has got to: a piece of a row is taken without
+    // being the line the next is read against.
+    let mut previous = column.clone();
+    let mut taken = vec![false; lines.len()];
+    taken[first] = true;
     let mut cursor = first;
     let mut count = 0;
     while count < 40 {
@@ -270,11 +274,35 @@ pub(crate) fn statement_lines(
             break;
         };
         cursor = j;
+        // A mark goes with the line it sits on, taken or not.
+        if taken[j] || super::settle::is_mark(page, j) {
+            continue;
+        }
+        // A display is read as one line, whatever order its pieces come
+        // in: its limits, numerators and number are the statement's with
+        // it, and the statement goes on from under it.
+        if let Some((unit, pieces)) = display_unit(page, j) {
+            let below = unit.bottom < previous.bottom;
+            if !below
+                || !display_in(&unit, text_column)
+                || !reader.takes_line(page, &previous, &unit, j, &another)
+            {
+                break;
+            }
+            for i in pieces {
+                taken[i] = true;
+            }
+            region = union(region, line_rect(&unit));
+            previous = unit;
+            count += 1;
+            continue;
+        }
         let l = &lines[j];
-        let p = &lines[previous];
-        // A display's pieces come in no reading order: one set above the
-        // last line read but below the statement's top (a fraction's
-        // numerator) is the display's, not a new column's.
+        let p = &previous;
+        // A display the detector missed: its pieces come in no reading
+        // order, and one set above the last line read but below the
+        // statement's top (a fraction's numerator) is the display's, not a
+        // new column's.
         let within = l.top <= region[1] + region[3]
             && l.top >= p.top
             && l.x0 >= extent.0 - 2.0
@@ -286,12 +314,12 @@ pub(crate) fn statement_lines(
         }
         if !same_row(p, l) {
             let below = l.top < p.top;
-            if !below || !same_column(l, column) || !reader.takes(page, p, j, &another) {
+            if !below || !in_extent(l, text_column) || !reader.takes(page, p, j, &another) {
                 break;
             }
             // Read on from the lowest line so far.
             if l.bottom < p.bottom {
-                previous = j;
+                previous = l.clone();
             }
         }
         region = union(region, line_rect(l));
@@ -299,6 +327,28 @@ pub(crate) fn statement_lines(
     }
     *face = reader.italic;
     region
+}
+
+/// The display line `j` is a piece of, as one line, with all its pieces.
+pub(crate) fn display_unit(page: &Page, j: usize) -> Option<(Line, Vec<usize>)> {
+    let d = super::settle::display_of(page, j)?;
+    let unit = super::settle::display_line(page, d)?;
+    Some((unit, super::settle::members(page, d).collect()))
+}
+
+/// Whether a display lies in a column `[left, right]`: it starts there. A
+/// display is set out across its column, often wider than the lines the
+/// column's edges were read from.
+pub(crate) fn display_in(unit: &Line, (left, right): (f32, f32)) -> bool {
+    unit.x0 >= left - 2.0 && unit.x0 < right
+}
+
+/// Whether a line lies in a column `[left, right]`: most of it inside. Not
+/// the statement's first line's own extent - a display set out across the
+/// column can lie wholly beside a short first line.
+pub(crate) fn in_extent(l: &Line, (left, right): (f32, f32)) -> bool {
+    let overlap = l.x1.min(right) - l.x0.max(left);
+    overlap >= 0.5 * (l.x1 - l.x0).max(1.0)
 }
 
 /// A link's own words and the words just before it on its line: what
@@ -710,7 +760,7 @@ pub fn link_preview(
         page.zip(named.as_ref())
             .is_some_and(|(page, named)| answers_to(page, rect, named))
     };
-    match (by_anchor, by_words) {
+    let target = match (by_anchor, by_words) {
         // They disagree: the destination is coarse, the words are not.
         (Some(anchor), Some(words))
             if !overlaps(anchor.rect, words.rect) && !answers(anchor.rect) =>
@@ -720,6 +770,14 @@ pub fn link_preview(
         (Some(anchor), _) => anchor,
         (None, Some(words)) => words,
         (None, None) => Target::plain(crate::engine::preview::crop_rect(&input)),
+    };
+    // Whatever found it, the crop cuts through no display and no line.
+    match page {
+        Some(page) => Target {
+            rect: super::settle::settle(page, target.rect),
+            ..target
+        },
+        None => target,
     }
 }
 
@@ -820,7 +878,8 @@ fn bibliography_entry(page: &Page, x: Option<f32>, y: f32) -> Option<Rect> {
         return None;
     }
     let mut region = line_rect(head);
-    let mut previous = first;
+    let mut previous = head.clone();
+    let mut taken = vec![false; lines.len()];
     let mut cursor = first;
     let mut count = 1;
     while count < 20 {
@@ -828,20 +887,36 @@ fn bibliography_entry(page: &Page, x: Option<f32>, y: f32) -> Option<Rect> {
             break;
         };
         cursor = j;
+        if taken[j] {
+            continue;
+        }
         let l = &lines[j];
         // A piece of the row before (a ligature splits a line) is its.
-        if same_row(&lines[previous], l) {
+        if same_row(&previous, l) {
             region = union(region, line_rect(l));
+            continue;
+        }
+        // A display in an entry is taken whole, as one line.
+        if let Some((unit, pieces)) = display_unit(page, j) {
+            if !same_column(&unit, head) || !close(&previous, &unit) {
+                break;
+            }
+            for piece in pieces {
+                taken[piece] = true;
+            }
+            region = union(region, line_rect(&unit));
+            previous = unit;
+            count += 1;
             continue;
         }
         let text = page.line_text(j);
         let new_entry = labelled(&text) || (hanging && l.x0 <= head.x0 + 1.5);
-        let in_column = same_column(l, head) && close(&lines[previous], l);
+        let in_column = same_column(l, head) && close(&previous, l);
         if new_entry || !in_column {
             break;
         }
         region = union(region, line_rect(l));
-        previous = j;
+        previous = l.clone();
         count += 1;
     }
     Some(pad(region, 3.0, page))
@@ -973,6 +1048,118 @@ mod tests {
         assert!(
             !lines.iter().any(|l| l.starts_with("Our theorem")),
             "{lines:?}"
+        );
+    }
+
+    /// Whether `rect` holds the box `[x0, bottom, x1, top]`, give or take.
+    fn holds(rect: Rect, b: [f32; 4]) -> bool {
+        b[0] >= rect[0] - 1.0
+            && b[2] <= rect[0] + rect[2] + 1.0
+            && b[1] >= rect[1] - 1.0
+            && b[3] <= rect[1] + rect[3] + 1.0
+    }
+
+    #[test]
+    fn theorem_8_takes_its_detected_display_whole_and_goes_on() {
+        for face in [ITALIC, BODY] {
+            let mut page = statement_with_display("Theorem 8.", face, 15.0);
+            // The display as the detector finds it: every piece, the
+            // fraction's numerator and the limits.
+            page.set_displays(vec![([183.0, 438.0, 233.0, 24.0], None)]);
+            let rect = link_target(&page, Some(72.0), 500.0).expect("a statement");
+            assert!(holds(rect, [183.0, 438.0, 416.0, 462.0]), "{rect:?}");
+            let lines = lines_in(&page, rect);
+            assert!(
+                lines.iter().any(|l| l.starts_with("the randomness of A")),
+                "{lines:?}"
+            );
+            assert!(
+                !lines.iter().any(|l| l.starts_with("Our theorem")),
+                "{lines:?}"
+            );
+            assert!(super::super::settle::is_settled(&page, rect), "{rect:?}");
+        }
+    }
+
+    /// Bassily et al. 2018, Lemma 17: a short first line ("Lemma 17 If
+    /// I(A(S);S) <= d, then"), then a display set out to its right - a
+    /// fraction 1/m, a sum with its limits, the rest of the expression - whose
+    /// pieces come in no reading order and mostly lie beside the first line,
+    /// not under it; then the statement's last line, after the display.
+    fn lemma_17(displays: bool) -> Page {
+        let mut b = Builder::new();
+        for y in [560.0, 548.0, 536.0, 524.0] {
+            b.line(
+                y,
+                BODY,
+                "Running text of the body before the lemma here, set across the whole column.",
+            );
+        }
+        let x = b.text(72.0, 489.0, BOLD, "Lemma 17");
+        b.text(x + 4.0, 489.0, ITALIC, "If I(A(S); S) <= d, then");
+        b.newline();
+        // The numerator over the sum's upper limit, the sum, the upper
+        // limit, the lower one, then the rest of the row.
+        b.line_at(240.0, 462.0, MATH, "1");
+        b.line_at(238.0, 450.0, MATH, "mX");
+        b.line_at(255.0, 468.0, SCRIPT, "m");
+        b.line_at(252.0, 440.0, SCRIPT, "i=1");
+        b.line_at(270.0, 452.0, MATH, "pI(A(S);Si)<=rd/m");
+        b.line(420.0, ITALIC, "where Si denotes the i-th example in S.");
+        let x = b.text(72.0, 396.0, BOLD, "Lemma 18");
+        b.text(x + 4.0, 396.0, ITALIC, "For any i in [m], we have");
+        b.newline();
+        b.line(
+            372.0,
+            BODY,
+            "Running text of the body after the lemmas here, set across the whole column.",
+        );
+        let mut page = b.page();
+        if displays {
+            page.set_displays(vec![([237.0, 439.0, 140.0, 35.0], None)]);
+        }
+        page
+    }
+
+    #[test]
+    fn lemma_17_takes_its_whole_display_and_the_line_after() {
+        // With the detector's display and without it: the reader takes the
+        // display's pieces beside the short first line either way.
+        for displays in [true, false] {
+            let page = lemma_17(displays);
+            let rect = link_target(&page, Some(72.0), 500.0).expect("a statement");
+            // Every piece: the lower limit, the rest of the expression.
+            assert!(
+                holds(rect, [237.0, 439.0, 357.0, 474.0]),
+                "{displays}: {rect:?}"
+            );
+            let lines = lines_in(&page, rect);
+            assert!(
+                lines.iter().any(|l| l.starts_with("where Si denotes")),
+                "{displays}: {lines:?}"
+            );
+            assert!(
+                !lines.iter().any(|l| l.starts_with("Lemma 18")),
+                "{displays}: {lines:?}"
+            );
+            assert!(super::super::settle::is_settled(&page, rect), "{rect:?}");
+        }
+    }
+
+    #[test]
+    fn a_statement_read_by_its_head_takes_its_display_whole() {
+        // The fallback reader, from the head line on, reads the same.
+        let page = lemma_17(true);
+        let head = (0..page.lines.len())
+            .find(|&i| page.line_text(i).starts_with("Lemma 17"))
+            .expect("head");
+        let region = statement_lines(&page, head, None, &mut None);
+        assert!(holds(region, [237.0, 439.0, 357.0, 474.0]), "{region:?}");
+        assert!(
+            lines_in(&page, region)
+                .iter()
+                .any(|l| l.starts_with("where Si denotes")),
+            "{region:?}"
         );
     }
 

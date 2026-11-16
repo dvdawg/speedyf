@@ -1043,7 +1043,8 @@ fn preview_at(
     let page = if y.is_some() || words.is_some() {
         let handle = state.page_handle(doc, src)?;
         let input = super::hovers::extract::extract(state.bindings, handle, page_w, page_h);
-        Some(super::hovers::page::Page::new(input))
+        let page = super::hovers::page::Page::new(input);
+        Some(with_displays(state, doc, src, page))
     } else {
         None
     };
@@ -1119,6 +1120,21 @@ fn preview_model(state: &mut WorkerState, doc: DocId, src: u32) -> Option<Arc<ho
     Some(Arc::new(hovers::prepare_page(page, Default::default())))
 }
 
+/// `page` with the display equations the equation layer finds on it, from
+/// the page's glyphs and raster (cached): what a preview's crop is settled
+/// against, and what its readers take whole.
+fn with_displays(
+    state: &mut WorkerState,
+    doc: DocId,
+    src: u32,
+    mut page: hovers::page::Page,
+) -> hovers::page::Page {
+    if let Ok(blocks) = do_equation_blocks(state, doc, src) {
+        page.set_displays(hovers::extract::displays_y_up(&blocks, page.height));
+    }
+    page
+}
+
 /// The pieces a preview of `first` on page `src` runs on into: the rest of
 /// a statement, footnote or reference at the top of the next column or
 /// page.
@@ -1133,12 +1149,14 @@ fn preview_more(
     let Some(page) = preview_model(state, doc, src) else {
         return Vec::new();
     };
+    let page = with_displays(state, doc, src, page.as_ref().clone());
     let next = if src + 1 < page_count {
         preview_model(state, doc, src + 1)
+            .map(|next| with_displays(state, doc, src + 1, next.as_ref().clone()))
     } else {
         None
     };
-    hovers::continuation::continuation(flow, &page, next.as_deref(), first)
+    hovers::continuation::continuation(flow, &page, next.as_ref(), first)
         .into_iter()
         .filter_map(|piece| {
             let at = src + u32::from(piece.next_page);
@@ -3409,12 +3427,11 @@ fn queue_hover_step(shared: &EngineShared, doc: DocId) {
 fn read_hover_page(state: &mut WorkerState, doc: DocId, src: u32) -> Option<hovers::page::Page> {
     let [w, h] = state.display_size(doc, src).ok()?;
     let handle = state.page_handle(doc, src).ok()?;
-    Some(hovers::page::Page::new(hovers::extract::extract(
-        state.bindings,
-        handle,
-        w,
-        h,
-    )))
+    let mut page = hovers::page::Page::new(hovers::extract::extract(state.bindings, handle, w, h));
+    // Its displays, what its readers take whole.
+    let displays = hovers::extract::index_displays(state.bindings, handle, &page);
+    page.set_displays(displays);
+    Some(page)
 }
 
 /// Read pages of the index for a bounded time, then yield to whatever else
@@ -3565,28 +3582,13 @@ fn do_hover_preview(
         [x0, y0, (x1 - x0).max(1.0), (y1 - y0).max(1.0)]
     };
     let mut rect = clamp(region);
-    if kind == "equation" {
-        if let Ok(blocks) = do_equation_blocks(state, doc, src) {
-            for block in blocks {
-                // top-left origin to y-up
-                let b = [
-                    block.bbox[0],
-                    h - block.bbox[1] - block.bbox[3],
-                    block.bbox[2],
-                    block.bbox[3],
-                ];
-                let shared_h = (b[1] + b[3]).min(rect[1] + rect[3]) - b[1].max(rect[1]);
-                let shared_w = (b[0] + b[2]).min(rect[0] + rect[2]) - b[0].max(rect[0]);
-                if shared_w > 0.0 && shared_h >= 0.5 * b[3].min(rect[3]) {
-                    let x0 = rect[0].min(b[0] - 2.0);
-                    let y0 = rect[1].min(b[1] - 2.0);
-                    let x1 = (rect[0] + rect[2]).max(b[0] + b[2] + 2.0);
-                    let y1 = (rect[1] + rect[3]).max(b[1] + b[3] + 2.0);
-                    if y1 - y0 <= 220.0 {
-                        rect = clamp([x0, y0, x1 - x0, y1 - y0]);
-                    }
-                }
-            }
+    // The region the index found, settled against the displays the
+    // equation layer finds on the page: a display it touches is in it
+    // whole, a line it touches too.
+    if !matches!(kind, "figure" | "table" | "algorithm") {
+        if let Some(model) = preview_model(state, doc, src) {
+            let page = with_displays(state, doc, src, model.as_ref().clone());
+            rect = clamp(hovers::settle::settle(&page, rect));
         }
     }
     let flow = match kind {

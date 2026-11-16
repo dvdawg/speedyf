@@ -135,6 +135,11 @@ pub struct Page {
     /// non-mathematical characters.
     pub body_size: f32,
     pub body_font: u16,
+    /// The page's display equations (`glyphs::page_equation_blocks`),
+    /// `[x, bottom, w, h]` in the lines' y-up space, each with its number
+    /// when one is set level with it: a unit no preview cuts through and a
+    /// reader takes whole. Empty until `set_displays`.
+    pub displays: Vec<[f32; 4]>,
 }
 
 /// What one PDFium character becomes in the normalised text.
@@ -492,6 +497,77 @@ impl Page {
         self.raw_of.pop();
         self.script.pop();
         self.line_of.pop();
+    }
+
+    /// Take the page's display equations: `[x, bottom, w, h]` y-up, with
+    /// the number the detector read, which it leaves outside the box - the
+    /// line carrying "(n)" level with the display, to its right, joins it.
+    pub fn set_displays(&mut self, blocks: Vec<([f32; 4], Option<String>)>) {
+        self.displays = blocks
+            .into_iter()
+            .filter(|(b, _)| b.iter().all(|v| v.is_finite()) && b[2] > 0.0 && b[3] > 0.0)
+            .map(|(mut b, number)| {
+                let Some(number) = number else { return b };
+                let tag = format!("({number})");
+                let (bottom, top) = (b[1], b[1] + b[3]);
+                for (i, l) in self.lines.iter().enumerate() {
+                    let centre = (l.top + l.bottom) / 2.0;
+                    // A line of its own at the margin, or the display's
+                    // row ending in it.
+                    if centre >= bottom - 2.0
+                        && centre <= top + 2.0
+                        && l.x1 >= b[0] + b[2]
+                        && l.x0 <= b[0] + b[2] + 0.5 * self.width
+                        && (l.x0 >= b[0] + 0.5 * b[2] || l.x0 <= b[0] + b[2])
+                        && self.line_text(i).trim_end().ends_with(&tag)
+                    {
+                        let x1 = l.x1.max(b[0] + b[2]);
+                        let y0 = l.bottom.min(b[1]);
+                        let y1 = l.top.max(b[1] + b[3]);
+                        b = [b[0], y0, x1 - b[0], y1 - y0];
+                        break;
+                    }
+                }
+                b
+            })
+            .map(|b| self.clear_of_prose(b))
+            .collect();
+    }
+
+    /// A display's box kept off the lines above and below it that are no
+    /// part of it: the detector's box can reach a point or two into the
+    /// line over it, which would tie that line to the display. Never less
+    /// than the display's own lines.
+    fn clear_of_prose(&self, b: [f32; 4]) -> [f32; 4] {
+        let (x0, x1) = (b[0], b[0] + b[2]);
+        let (b0, t0) = (b[1], b[1] + b[3]);
+        let (mut bottom, mut top) = (b0, t0);
+        let member = |l: &Line| {
+            let (cx, cy) = ((l.x0 + l.x1) / 2.0, (l.top + l.bottom) / 2.0);
+            cx >= x0 - 1.0 && cx <= x1 + 1.0 && cy >= b0 - 1.0 && cy <= t0 + 1.0
+        };
+        let own: Vec<&Line> = self
+            .lines
+            .iter()
+            .filter(|l| !l.flags.furniture && member(l))
+            .collect();
+        let own_top = own.iter().map(|l| l.top).fold(f32::MIN, f32::max);
+        let own_bottom = own.iter().map(|l| l.bottom).fold(f32::MAX, f32::min);
+        for l in &self.lines {
+            if l.flags.furniture || member(l) || l.x1.min(x1) - l.x0.max(x0) <= 3.0 {
+                continue;
+            }
+            let centre = (l.top + l.bottom) / 2.0;
+            if centre > top && l.bottom < top {
+                top = l.bottom.max(own_top).min(top);
+            } else if centre < bottom && l.top > bottom {
+                bottom = l.top.min(own_bottom).max(bottom);
+            }
+        }
+        if top <= bottom {
+            return b;
+        }
+        [b[0], bottom, b[2], top - bottom]
     }
 
     /// The text of one line.

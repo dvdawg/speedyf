@@ -88,6 +88,36 @@ pub fn column_extent(page: &Page, line: &Line) -> (f32, f32) {
     (column_left(page, line), right)
 }
 
+/// The text column `line` is set in, read off the lines of that column
+/// under it (what follows; above may be a single-column title block): the
+/// edges most of them reach (one full-width caption or
+/// display nearby does not make the column the page's width).
+/// Where the lines of a statement opening there may lie: a display set out
+/// across the column can lie wholly beside a short first line.
+pub fn text_column(page: &Page, line: &Line) -> (f32, f32) {
+    let near: Vec<&Line> = page
+        .lines
+        .iter()
+        .filter(|l| {
+            !l.flags.furniture
+                && same_column(l, line)
+                && l.top <= line.top + 2.0
+                && line.top - l.top < 200.0
+                && l.x1 - l.x0 > 0.5 * (line.x1 - line.x0).max(1.0)
+        })
+        .collect();
+    // Most lines reach the column's edges; a paragraph's last line, a
+    // display, an indent do not, and a lone caption reaches past them.
+    let rank = |mut v: Vec<f32>, at: f32| {
+        v.sort_by(f32::total_cmp);
+        let i = ((v.len() as f32 - 1.0) * at).round().max(0.0) as usize;
+        v.get(i).copied()
+    };
+    let left = rank(near.iter().map(|l| l.x0).collect(), 0.2).unwrap_or(line.x0);
+    let right = rank(near.iter().map(|l| l.x1).collect(), 0.8).unwrap_or(line.x1);
+    (left.min(line.x0), right.max(line.x1))
+}
+
 fn prose(l: &Line) -> bool {
     !l.is_display() && l.math_share < 0.2
 }
@@ -126,7 +156,19 @@ impl Reader {
         j: usize,
         another: &dyn Fn(usize) -> bool,
     ) -> bool {
-        let l = &page.lines[j];
+        self.takes_line(page, previous, &page.lines[j], j, another)
+    }
+
+    /// `takes` for a line that may stand for several: a display taken
+    /// whole (`settle::display_line`), `j` its first line.
+    pub fn takes_line(
+        &mut self,
+        page: &Page,
+        previous: &Line,
+        l: &Line,
+        j: usize,
+        another: &dyn Fn(usize) -> bool,
+    ) -> bool {
         let text = page.line_text(j);
         let text = text.trim_start();
         if text.starts_with("Proof") || text.starts_with("PROOF") {
