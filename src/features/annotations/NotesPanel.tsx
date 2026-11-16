@@ -69,7 +69,10 @@ export default function NotesPanel() {
       if (row.srcPage !== srcPage || row.annot.kind !== 'highlight') continue;
       const runs = runsUnderQuads(row.annot.quads ?? [], layout.runs);
       if (runs.length === 0) continue;
-      setQuotes(row.annot.id, smartCopyText(runs.map((run) => ({ ...run, page: srcPage }))));
+      setQuotes(
+        row.annot.id,
+        smartCopyText(runs.map((run, order) => ({ ...run, page: srcPage, order })))
+      );
     }
   };
 

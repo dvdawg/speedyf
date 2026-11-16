@@ -147,7 +147,7 @@ export default function TextLayer(props: Props) {
         }}
       >
         <For each={props.runs}>
-          {(run) => {
+          {(run, index) => {
             const fontPx = () => Math.max(1, run.h * props.zoom * 0.88);
             const scaleX = () => {
               const natural = (measureAt100px(run.text) * fontPx()) / 100;
@@ -155,7 +155,7 @@ export default function TextLayer(props: Props) {
             };
             return (
               <span
-                ref={(el) => registerCopyRun(el, { ...run, page: props.page })}
+                ref={(el) => registerCopyRun(el, { ...run, page: props.page, order: index() })}
                 style={{
                   left: `${run.x * props.zoom}px`,
                   top: `${(props.pageHeightPt - run.y - run.h) * props.zoom}px`,

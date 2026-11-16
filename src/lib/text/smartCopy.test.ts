@@ -111,6 +111,18 @@ describe('smartCopyText', () => {
     expect(smartCopyText([b, a])).toBe('first second');
   });
 
+  it('follows the text layer order where the runs know it', () => {
+    // A stream that drew the right column's line first.
+    const right = run('right', 320, 700, { start: 10, w: 30 });
+    const left = run('left', 60, 120, { start: 20, w: 30 });
+    expect(
+      smartCopyText([
+        { ...right, order: 1 },
+        { ...left, order: 0 },
+      ])
+    ).toBe('left right');
+  });
+
   it('returns empty for an empty selection', () => {
     expect(smartCopyText([])).toBe('');
   });
