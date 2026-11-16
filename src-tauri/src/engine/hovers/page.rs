@@ -734,7 +734,12 @@ pub mod build {
 
         /// One line of `style` text at the left margin, then a break.
         pub fn line(&mut self, y: f32, style: Style, text: &str) -> f32 {
-            let end = self.text(72.0, y, style, text);
+            self.line_at(72.0, y, style, text)
+        }
+
+        /// One line of `style` text from `x`, then a break.
+        pub fn line_at(&mut self, x: f32, y: f32, style: Style, text: &str) -> f32 {
+            let end = self.text(x, y, style, text);
             self.newline();
             end
         }
