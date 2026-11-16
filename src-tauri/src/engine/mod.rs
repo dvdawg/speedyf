@@ -11,6 +11,7 @@ pub mod annots;
 pub mod bubbles;
 pub mod citation;
 pub mod figures;
+pub mod floats;
 pub mod formal;
 pub mod forms;
 pub mod glyphs;

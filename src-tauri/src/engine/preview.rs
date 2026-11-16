@@ -566,6 +566,16 @@ pub fn crop_rect(input: &CropInput<'_>) -> [f32; 4] {
     let page_h = input.page_h_pt.max(1.0);
     let anchor_y = input.dest_y.unwrap_or(page_h).clamp(0.0, page_h);
 
+    // A figure or table: the float itself, artwork and whole caption, at
+    // whatever height it takes - the popover scales a tall one down.
+    if input.dest_y.is_some() {
+        if let Some(rect) =
+            super::floats::float_for_anchor(input.runs, page_w, page_h, input.dest_x, anchor_y)
+        {
+            return rect;
+        }
+    }
+
     let area = target_area(input.runs, page_w, anchor_y, input.dest_x);
     let column = area.bounds;
     // In one column of several, a row reaching into the next column belongs
