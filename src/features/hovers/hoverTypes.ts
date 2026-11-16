@@ -28,6 +28,9 @@ export interface HoverTarget {
   region: HoverRect | null;
   /** A footnote that runs on onto the next page. */
   continues: boolean;
+  /** The linked row of a multi-line display whose region is the whole
+   * display; absent otherwise. */
+  mark?: HoverRect | null;
   terms: HoverTermEntry[];
 }
 

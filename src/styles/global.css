@@ -1776,6 +1776,48 @@ html.is-dragging-tab * {
   height: 220px;
 }
 
+/* A preview's pieces: the target, then where it runs on at the top of the
+   next column or page, one under the other. */
+.citation-preview-stack {
+  max-width: none;
+  margin: 0 auto;
+}
+
+.citation-preview-piece {
+  position: relative;
+}
+
+.citation-preview-viewport.is-scrollable .citation-preview-piece .citation-preview-image {
+  margin: 0;
+  max-width: none;
+}
+
+/* Between two pieces: a hairline with a little paper either side, 9px in
+   all (previewLayout's SEAM_HEIGHT). */
+.citation-preview-seam {
+  height: 9px;
+  background: linear-gradient(var(--border), var(--border)) center / 100% 1px no-repeat;
+}
+
+/* On inverted pages the card's paper is dark: its page number and note
+   take the theme's dim text, not ink meant for white paper. */
+:root[data-invert-pages='on'] :is(.citation-preview-page-number, .citation-preview-note) {
+  color: var(--text-dim);
+}
+
+/* The linked row of a multi-line display. */
+.citation-preview-mark {
+  position: absolute;
+  border-radius: 2px;
+  background: var(--accent-soft);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.citation-preview-mark.is-loaded {
+  opacity: 1;
+}
+
 .citation-preview-caption {
   display: flex;
   align-items: baseline;

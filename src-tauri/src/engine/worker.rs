@@ -542,8 +542,9 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
             src,
             kind,
             region,
+            mark,
             respond,
-        } => respond(do_hover_preview(state, doc, src, &kind, region)),
+        } => respond(do_hover_preview(state, doc, src, &kind, region, mark)),
         Work::ImageSize { path, respond } => respond(
             image::image_dimensions(&path)
                 .map(|(w, h)| [w, h])
@@ -1027,7 +1028,7 @@ fn do_preview_rect(
     } else {
         None
     };
-    let rect = super::hovers::targets::link_crop(
+    let target = super::hovers::targets::link_preview(
         page.as_ref(),
         &layout.runs,
         page_w,
@@ -1036,7 +1037,13 @@ fn do_preview_rect(
         y,
         words.as_ref(),
     );
+    let rect = target.rect;
     let tile = preview::rect_to_tile(rect, page_h, PREVIEW_SCALE_MILLI);
+    let more = match target.flow {
+        Some(flow) if page.is_some() => preview_more(state, doc, src, flow, rect),
+        _ => Vec::new(),
+    };
+    let mark = target.mark.map(|mark| mark_band(rect, mark));
     let [crop_x, crop_y, crop_w, crop_h] = rect;
     let mut preview_text = layout
         .runs
@@ -1058,7 +1065,60 @@ fn do_preview_rect(
         tile,
         scale_milli: PREVIEW_SCALE_MILLI,
         text: preview_text,
+        more,
+        mark,
     })
+}
+
+/// A page read the way the hover index reads it, for a preview: from the
+/// index's cache when it holds it.
+fn preview_model(state: &mut WorkerState, doc: DocId, src: u32) -> Option<Arc<hovers::page::Page>> {
+    if let Some(page) = state.hovers.get_mut(&doc).and_then(|h| h.model(src)) {
+        return Some(page);
+    }
+    let page = read_hover_page(state, doc, src)?;
+    Some(Arc::new(hovers::prepare_page(page, Default::default())))
+}
+
+/// The pieces a preview of `first` on page `src` runs on into: the rest of
+/// a statement, footnote or reference at the top of the next column or
+/// page.
+fn preview_more(
+    state: &mut WorkerState,
+    doc: DocId,
+    src: u32,
+    flow: hovers::targets::Flow,
+    first: [f32; 4],
+) -> Vec<PreviewPartDto> {
+    let page_count = state.doc(doc).map(|d| d.page_count).unwrap_or(0);
+    let Some(page) = preview_model(state, doc, src) else {
+        return Vec::new();
+    };
+    let next = if src + 1 < page_count {
+        preview_model(state, doc, src + 1)
+    } else {
+        None
+    };
+    hovers::continuation::continuation(flow, &page, next.as_deref(), first)
+        .into_iter()
+        .filter_map(|piece| {
+            let at = src + u32::from(piece.next_page);
+            let [_, h] = state.display_size(doc, at).ok()?;
+            Some(PreviewPartDto {
+                src: at,
+                tile: preview::rect_to_tile(piece.rect, h, PREVIEW_SCALE_MILLI),
+            })
+        })
+        .collect()
+}
+
+/// A display's linked row as a band across the preview of `rect`: its
+/// top and height as fractions of the crop's, from the top-left corner.
+fn mark_band(rect: [f32; 4], row: [f32; 4]) -> [f32; 4] {
+    let height = rect[3].max(1.0);
+    let top = ((rect[1] + rect[3]) - (row[1] + row[3])).clamp(0.0, height);
+    let bottom = ((rect[1] + rect[3]) - row[1]).clamp(top, height);
+    [0.0, top / height, 1.0, (bottom - top) / height]
 }
 
 fn do_index_next(
@@ -2331,6 +2391,8 @@ fn resolved_library_document(
             tile,
             scale_milli: PREVIEW_SCALE_MILLI,
             text,
+            more: Vec::new(),
+            mark: None,
         },
     })
 }
@@ -3449,6 +3511,7 @@ fn do_hover_preview(
     src: u32,
     kind: &str,
     region: [f32; 4],
+    mark: Option<[f32; 4]>,
 ) -> AppResult<PreviewSpecDto> {
     let [w, h] = state.display_size(doc, src)?;
     if !region.iter().all(|v| v.is_finite()) || region[2] <= 0.0 || region[3] <= 0.0 {
@@ -3486,12 +3549,23 @@ fn do_hover_preview(
             }
         }
     }
+    let flow = match kind {
+        "theorem" => Some(hovers::targets::Flow::Statement),
+        "footnote" => Some(hovers::targets::Flow::Footnote),
+        _ => None,
+    };
+    let more = flow.map_or_else(Vec::new, |flow| preview_more(state, doc, src, flow, rect));
+    let mark = mark
+        .filter(|m| m.iter().all(|v| v.is_finite()) && m[3] > 0.0)
+        .map(|m| mark_band(rect, m));
     Ok(PreviewSpecDto {
         doc_id: doc,
         src,
         tile: preview::rect_to_tile(rect, h, PREVIEW_SCALE_MILLI),
         scale_milli: PREVIEW_SCALE_MILLI,
         text: String::new(),
+        more,
+        mark,
     })
 }
 

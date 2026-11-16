@@ -90,5 +90,6 @@ export function hoverPreview(docId: number, span: HoverSpan): Promise<PreviewSpe
     src: span.target.page,
     kind: span.kind,
     region: span.target.region,
+    mark: span.target.mark ?? null,
   });
 }

@@ -287,6 +287,9 @@ pub struct Definition {
     pub label_range: (usize, usize),
     /// What a preview shows, y-up page space.
     pub region: Rect,
+    /// An equation's own row, when its region is a block holding other
+    /// numbered rows: what the preview marks.
+    pub row: Option<Rect>,
     /// Where a click lands: the top of the definition.
     pub jump: (f32, f32),
     /// The opening words of what the label introduces, letters and digits
@@ -1491,43 +1494,55 @@ fn starts_another(page: &Page, line: usize) -> bool {
         || section_head(page, line).is_some()
 }
 
-fn opens_proof(page: &Page, line: usize) -> bool {
-    let text = page.line_text(line);
-    text.starts_with("Proof") || text.starts_with("PROOF") || text.starts_with("Proof.")
-}
-
 /// A theorem's statement: from its label down to "Proof", the next labelled
-/// block, a gap, or - for a statement set in a face of its own (amsthm's
-/// italic `plain` style) - the first prose line back in the body face: the
-/// paragraph after it, which LaTeX sets only a little apart. The region,
-/// and the lines in it in reading order.
+/// block, a heading, or the paragraph after it (`statement::Reader`): set
+/// apart, or - for a statement set in a face of its own (amsthm's italic
+/// `plain` style) - back in the body face. Its displays and enumerations
+/// are its own. The region, and the lines in it in reading order.
 fn statement_region(page: &Page, head: &Head) -> (Rect, Vec<usize>) {
     let line = &page.lines[head.line];
     let top = line.top;
     let mut region = line_rect(line);
     let mut lines = vec![head.line];
-    let prose = |i: usize| {
+    // The face the statement's words are set in: the head line's own,
+    // after its label and any name in parentheses, when it has words there.
+    let mut from = head.label_range.1;
+    while from < line.end && matches!(page.text[from], ' ' | '.' | ':') {
+        from += 1;
+    }
+    if page.text.get(from) == Some(&'(') {
+        // A name running on to the next line leaves no words of the
+        // statement here.
+        from = (from..line.end)
+            .find(|&i| page.text[i] == ')')
+            .map_or(line.end, |close| close + 1);
+    }
+    let words = (from..line.end)
+        .filter(|&i| page.text[i].is_alphabetic())
+        .count();
+    let italic = (words >= 3 && !line.is_display())
+        .then(|| font_after(page, head.line, from))
+        .flatten()
+        .map(|font| font != page.body_font);
+    let mut reader =
+        super::statement::Reader::new(page, super::statement::column_left(page, line), italic);
+    let another = |i: usize| starts_another(page, i);
+    let mut previous = head.line;
+    for i in following_lines(page, head.line, 3.0, |_| true) {
         let l = &page.lines[i];
-        !l.is_display() && l.math_share < 0.2
-    };
-    // The face the statement's words are set in: its first prose line's.
-    let mut own_face: Option<bool> = None;
-    for i in following_lines(page, head.line, 1.6, |i| {
-        !opens_proof(page, i) && !starts_another(page, i)
-    }) {
-        let l = &page.lines[i];
-        if top - l.bottom > 260.0 {
+        if top - l.bottom > 320.0 {
             break;
         }
-        if prose(i) {
-            match own_face {
-                None => own_face = Some(l.font != page.body_font),
-                Some(true) if l.font == page.body_font => break,
-                _ => {}
-            }
+        if !reader.takes(page, &page.lines[previous], i, &another) {
+            break;
         }
         region = union(region, line_rect(l));
         lines.push(i);
+        // Read on from the lowest line so far: the pieces of a display
+        // come in no reading order.
+        if l.bottom < page.lines[previous].bottom {
+            previous = i;
+        }
     }
     (pad(region, 3.0, page), lines)
 }
@@ -1635,7 +1650,7 @@ fn prose_words(page: &Page, line: &Line) -> usize {
 
 /// The page's lines as text runs, for the crop helpers shared with the
 /// figure panel and link previews.
-fn runs_of(page: &Page) -> Vec<TextRun> {
+pub(crate) fn runs_of(page: &Page) -> Vec<TextRun> {
     page.lines
         .iter()
         .enumerate()
@@ -1725,18 +1740,21 @@ fn crosses_gutter(columns: &[Interval], l: &Line) -> bool {
 
 /// A display around its tag: the tagged line, the mathematics level with it
 /// in its column (the lines of an `align` whose tag sits between them), and
-/// the mathematics set close above and below. On a multi-column page, a
-/// display with a line reaching across the gutter close by is a full-width
-/// display: its preview is the full text width, whichever column the tag
-/// fell in.
-fn equation_region(page: &Page, line: usize, tagged: &[bool]) -> Rect {
+/// the mathematics set close above and below - the other rows of an
+/// `align`, `gather` or `eqnarray` too, numbered or not: a link to one row
+/// previews the whole block. On a multi-column page, a display with a line
+/// reaching across the gutter close by is a full-width display: its
+/// preview is the full text width, whichever column the tag fell in. The
+/// block, and - when it holds other numbered rows - the linked row.
+fn equation_region(page: &Page, line: usize, tagged: &[bool]) -> (Rect, Option<Rect>) {
     let tag_line = &page.lines[line];
     let em = tag_line.em();
     let (column, full) = display_column(page, tag_line);
-    let region = display_region(page, line, tagged, column);
+    let found = display_region(page, line, tagged, column);
     let Some(full) = full.filter(|full| *full != column) else {
-        return region;
+        return found;
     };
+    let region = found.0;
     let columns = page_columns(&runs_of(page), page.width);
     let wide_nearby = page.lines.iter().any(|l| {
         !l.flags.furniture
@@ -1748,11 +1766,20 @@ fn equation_region(page: &Page, line: usize, tagged: &[bool]) -> Rect {
     if wide_nearby {
         display_region(page, line, tagged, full)
     } else {
-        region
+        found
     }
 }
 
-fn display_region(page: &Page, line: usize, tagged: &[bool], column: Interval) -> Rect {
+/// The most a display block grows to: past this it is running text dense
+/// with mathematics, not one display.
+const DISPLAY_BLOCK_MAX: f32 = 240.0;
+
+fn display_region(
+    page: &Page,
+    line: usize,
+    tagged: &[bool],
+    column: Interval,
+) -> (Rect, Option<Rect>) {
     let tag_line = &page.lines[line];
     let em = tag_line.em();
     let width = (column.end - column.start).max(1.0);
@@ -1766,26 +1793,27 @@ fn display_region(page: &Page, line: usize, tagged: &[bool], column: Interval) -
             && prose_words(page, l) >= 2;
         inside && (!prose || l == tag_line)
     };
-    let mut region = line_rect(tag_line);
-    // Another tagged line is another equation: it is never part of this
-    // one's preview, so an `align` numbered line by line previews one line.
-    let own = |index: usize| index == line || !tagged.get(index).copied().unwrap_or(false);
+    let is_tagged = |index: usize| tagged.get(index).copied().unwrap_or(false);
+    // The row: the tagged line and the mathematics level with it.
+    let mut row = line_rect(tag_line);
     for (index, other) in page.lines.iter().enumerate() {
         let centre = (other.top + other.bottom) / 2.0;
-        if own(index)
+        if (index == line || !is_tagged(index))
             && !other.flags.furniture
             && other.is_display()
             && in_column(other)
             && centre >= tag_line.bottom - 0.5 * em
             && centre <= tag_line.top + 0.5 * em
         {
-            region = union(region, line_rect(other));
+            row = union(row, line_rect(other));
         }
     }
+    let mut region = row;
+    let mut other_rows = false;
     loop {
         let mut grew = false;
         for (index, other) in page.lines.iter().enumerate() {
-            if other.flags.furniture || index == line || !own(index) || !in_column(other) {
+            if other.flags.furniture || index == line || !in_column(other) {
                 continue;
             }
             let inside =
@@ -1798,10 +1826,18 @@ fn display_region(page: &Page, line: usize, tagged: &[bool], column: Interval) -
             } else {
                 other.bottom - (region[1] + region[3])
             };
-            if gap <= 0.9 * em && other.is_display() {
+            // Another numbered row is the block's when it is set as close
+            // as the rows of one display are.
+            let close = if is_tagged(index) {
+                0.75 * em
+            } else {
+                0.9 * em
+            };
+            if gap <= close && other.is_display() {
                 let next = union(region, line_rect(other));
-                if next[3] <= 180.0 {
+                if next[3] <= DISPLAY_BLOCK_MAX {
                     region = next;
+                    other_rows |= is_tagged(index);
                     grew = true;
                 }
             }
@@ -1810,7 +1846,8 @@ fn display_region(page: &Page, line: usize, tagged: &[bool], column: Interval) -
             break;
         }
     }
-    pad(region, 4.0, page)
+    let row = other_rows.then(|| pad(row, 1.5, page));
+    (pad(region, 4.0, page), row)
 }
 
 /// The first words after a label, past a parenthesised name: what tells a
@@ -1883,6 +1920,7 @@ pub fn find_definitions(page: &Page, regions: &Regions, src: u32) -> Vec<Definit
                 part,
                 label_range: head.label_range,
                 region,
+                row: None,
                 jump: (l.x0, l.top),
                 signature,
                 title,
@@ -1891,7 +1929,9 @@ pub fn find_definitions(page: &Page, regions: &Regions, src: u32) -> Vec<Definit
             continue;
         }
         for (label, range) in line_tags.iter().cloned() {
-            let region = equation_region(page, line, &tagged);
+            let (region, row) = equation_region(page, line, &tagged);
+            // A click lands on the row, where the anchor is.
+            let at = row.unwrap_or(region);
             out.push(Definition {
                 kind: Kind::Equation,
                 label,
@@ -1899,8 +1939,9 @@ pub fn find_definitions(page: &Page, regions: &Regions, src: u32) -> Vec<Definit
                 order: range.0,
                 part,
                 label_range: range,
-                jump: (region[0], region[1] + region[3]),
+                jump: (region[0], at[1] + at[3]),
                 region,
+                row,
                 signature: String::new(),
                 title: None,
                 text: String::new(),
@@ -2351,6 +2392,57 @@ mod tests {
         assert_eq!(found, vec!["A3", "4"]);
     }
 
+    #[test]
+    fn a_row_of_an_align_previews_the_whole_block_and_marks_its_row() {
+        let (_, defs) = definitions(|b| {
+            b.line(
+                720.0,
+                BODY,
+                "We have the relations below for every point here.",
+            );
+            for (i, tag) in ["(5)", "(6)", "(7)"].iter().enumerate() {
+                let y = 696.0 - 12.0 * i as f32;
+                b.text(200.0, y, MATH, "a+b=c+d+e");
+                b.text(500.0, y, BODY, tag);
+                b.newline();
+            }
+            b.line(
+                640.0,
+                BODY,
+                "and the rest of the argument follows from them.",
+            );
+        });
+        let six = defs.iter().find(|d| d.label == "6").expect("(6)");
+        let region = six.region;
+        // The block: all three rows, none of the prose around them.
+        assert!(
+            region[1] < 684.0 - 0.5 && region[1] + region[3] > 703.0,
+            "{region:?}"
+        );
+        assert!(
+            region[1] + region[3] < 720.0 && region[1] > 647.5,
+            "{region:?}"
+        );
+        // The mark: row (6) alone.
+        let row = six.row.expect("a marked row");
+        assert!(row[1] > 680.0 && row[1] + row[3] < 696.0, "{row:?}");
+        // A click lands on the row.
+        assert!((six.jump.1 - (row[1] + row[3])).abs() < 0.5);
+        // A lone equation has no row to mark.
+        let (_, lone) = definitions(|b| {
+            b.line(
+                720.0,
+                BODY,
+                "We have the relation below for every point here.",
+            );
+            b.text(200.0, 696.0, MATH, "a+b=c+d+e");
+            b.text(500.0, 696.0, BODY, "(8)");
+            b.newline();
+            b.line(670.0, BODY, "and the rest of the argument follows from it.");
+        });
+        assert_eq!(lone[0].row, None);
+    }
+
     fn def(kind: Kind, label: &str, page: u32, part: u32) -> Definition {
         Definition {
             kind,
@@ -2360,6 +2452,7 @@ mod tests {
             part,
             label_range: (0, 0),
             region: [0.0; 4],
+            row: None,
             jump: (0.0, 0.0),
             signature: String::new(),
             title: None,

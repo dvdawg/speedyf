@@ -210,6 +210,22 @@ pub struct PreviewSpecDto {
     pub tile: TileRect,
     pub scale_milli: u32,
     pub text: String,
+    /// The pieces after the first, in reading order: a statement, footnote
+    /// or reference running on at the top of the next column or page.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub more: Vec<PreviewPartDto>,
+    /// The linked row of a multi-line display, `[x, y, w, h]` as fractions
+    /// of the first tile from its top-left corner.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mark: Option<[f32; 4]>,
+}
+
+/// One further piece of a stitched preview.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewPartDto {
+    pub src: u32,
+    pub tile: TileRect,
 }
 
 #[derive(Serialize, Clone, Debug)]

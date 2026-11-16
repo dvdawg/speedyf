@@ -118,12 +118,24 @@ export interface PageBubbles {
   bubbles: Bubble[];
 }
 
+/** A further piece of a preview that runs on: the rest of a statement,
+ * footnote or reference at the top of the next column or page. */
+export interface PreviewPart {
+  src: number;
+  tile: { x: number; y: number; w: number; h: number };
+}
+
 export interface PreviewSpec {
   docId: number;
   src: number;
   tile: { x: number; y: number; w: number; h: number };
   scaleMilli: number;
   text: string;
+  /** The pieces after the first, in reading order, drawn under it. */
+  more?: PreviewPart[];
+  /** The linked row of a multi-line display, as `[x, y, w, h]` fractions
+   * of the first tile from its top-left corner. */
+  mark?: [number, number, number, number] | null;
 }
 
 export interface ResolvedCitation {

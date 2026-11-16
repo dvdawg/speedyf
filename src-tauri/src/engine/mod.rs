@@ -305,6 +305,7 @@ pub enum Work {
         src: u32,
         kind: String,
         region: [f32; 4],
+        mark: Option<[f32; 4]>,
         respond: Respond<PreviewSpecDto>,
     },
 }

@@ -19,10 +19,12 @@
 //!
 //! Everything but `extract` is PDFium-free.
 
+pub mod continuation;
 pub mod extract;
 pub mod footnotes;
 pub mod page;
 pub mod regions;
+pub mod statement;
 pub mod targets;
 pub mod terms;
 pub mod xref;
@@ -67,6 +69,10 @@ pub struct HoverTargetDto {
     pub region: Option<Rect>,
     /// A footnote that runs on onto the next page.
     pub continues: bool,
+    /// The linked row of a multi-line display whose region is the whole
+    /// display: what the preview marks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mark: Option<Rect>,
     /// A term's definitions.
     pub terms: Vec<TermEntryDto>,
 }
@@ -200,7 +206,8 @@ impl IndexBuilder {
                 title: d.title.clone(),
                 page: src,
                 label_rects: page.rects(d.label_range.0, d.label_range.1),
-                region: d.region,
+                // An equation is quoted by its own row, not its block.
+                region: d.row.unwrap_or(d.region),
                 text: d.text.clone(),
             });
         }
@@ -254,6 +261,7 @@ impl IndexBuilder {
                     y: d.jump.1,
                     region: Some(d.region),
                     continues: false,
+                    mark: d.row,
                     terms: Vec::new(),
                 },
             });
@@ -292,6 +300,7 @@ fn footnote_spans(page: &Page, next: Option<&Page>, src: u32) -> Vec<HoverSpanDt
                 y: f.jump.1,
                 region: Some(f.region),
                 continues: f.continues,
+                mark: None,
                 terms: Vec::new(),
             },
         })
@@ -382,6 +391,7 @@ pub fn page_spans(
                     },
                     region: None,
                     continues: false,
+                    mark: None,
                     terms: entries,
                 },
             });
@@ -745,3 +755,5 @@ mod tests {
 mod eval;
 #[cfg(test)]
 mod eval_links;
+#[cfg(test)]
+mod geometry_tests;

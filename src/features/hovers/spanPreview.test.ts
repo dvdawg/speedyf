@@ -63,6 +63,7 @@ describe('span previews in the citation popover', () => {
       src: 3,
       kind: 'equation',
       region: [72, 450, 400, 60],
+      mark: null,
     });
     expect(store.state.hover.result?.kind).toBe('span');
   });

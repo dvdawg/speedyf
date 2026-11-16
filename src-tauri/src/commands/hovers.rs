@@ -75,6 +75,7 @@ pub async fn get_hover_preview(
     src: u32,
     kind: String,
     region: [f32; 4],
+    mark: Option<[f32; 4]>,
 ) -> AppResult<PreviewSpecDto> {
     state
         .0
@@ -84,6 +85,7 @@ pub async fn get_hover_preview(
                 src,
                 kind,
                 region,
+                mark,
                 respond,
             }
         })

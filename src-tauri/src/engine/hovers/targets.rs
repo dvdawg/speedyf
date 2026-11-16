@@ -14,8 +14,39 @@
 
 use super::page::{same_column, Line, Page};
 use super::regions::{classify, RegionState};
+use super::statement::{column_left, leading_gap, Reader};
 use super::xref::{find_definitions, Kind};
 use super::Rect;
+
+/// How a target runs on past a column or page break, when it does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Flow {
+    /// A theorem-like statement.
+    Statement,
+    Footnote,
+    /// A bibliography entry.
+    Reference,
+}
+
+/// What a link destination previews: the region, how it may run on, and
+/// the row to mark when it is a display block holding several numbered
+/// rows.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Target {
+    pub rect: Rect,
+    pub flow: Option<Flow>,
+    pub mark: Option<Rect>,
+}
+
+impl Target {
+    fn plain(rect: Rect) -> Target {
+        Target {
+            rect,
+            flow: None,
+            mark: None,
+        }
+    }
+}
 
 /// How far above a definition's top its anchor may sit: hyperref raises a
 /// heading's anchor by the skip above it.
@@ -23,7 +54,7 @@ const ANCHOR_ABOVE_PT: f32 = 28.0;
 /// ...and how far below: an anchor at a heading's baseline.
 const ANCHOR_BELOW_PT: f32 = 8.0;
 
-fn pad(rect: Rect, by: f32, page: &Page) -> Rect {
+pub(crate) fn pad(rect: Rect, by: f32, page: &Page) -> Rect {
     let x0 = (rect[0] - by).max(0.0);
     let y0 = (rect[1] - by).max(0.0);
     let x1 = (rect[0] + rect[2] + by).min(page.width.max(1.0));
@@ -31,7 +62,7 @@ fn pad(rect: Rect, by: f32, page: &Page) -> Rect {
     [x0, y0, (x1 - x0).max(1.0), (y1 - y0).max(1.0)]
 }
 
-fn union(a: Rect, b: Rect) -> Rect {
+pub(crate) fn union(a: Rect, b: Rect) -> Rect {
     let x0 = a[0].min(b[0]);
     let y0 = a[1].min(b[1]);
     let x1 = (a[0] + a[2]).max(b[0] + b[2]);
@@ -39,7 +70,7 @@ fn union(a: Rect, b: Rect) -> Rect {
     [x0, y0, x1 - x0, y1 - y0]
 }
 
-fn line_rect(l: &Line) -> Rect {
+pub(crate) fn line_rect(l: &Line) -> Rect {
     [l.x0, l.bottom, (l.x1 - l.x0).max(1.0), l.height()]
 }
 
@@ -68,10 +99,21 @@ pub(crate) fn clear_of_neighbours(rect: Rect, page: &Page) -> Rect {
 /// has a target there; None for anything else (running text, a float -
 /// which `floats` reads - or a page with no text).
 pub fn link_target(page: &Page, x: Option<f32>, y: f32) -> Option<Rect> {
-    target_at(page, x, y).map(|rect| clear_of_neighbours(rect, page))
+    found_at(page, x, y).map(|target| target.rect)
 }
 
-fn target_at(page: &Page, x: Option<f32>, y: f32) -> Option<Rect> {
+fn found_at(page: &Page, x: Option<f32>, y: f32) -> Option<Target> {
+    target_at(page, x, y).map(|target| Target {
+        rect: clear_of_neighbours(target.rect, page),
+        ..target
+    })
+}
+
+fn statement_flow(kind: Kind) -> Option<Flow> {
+    kind.is_statement().then_some(Flow::Statement)
+}
+
+fn target_at(page: &Page, x: Option<f32>, y: f32) -> Option<Target> {
     let mut page = page.clone();
     let regions = classify(&mut page, &mut RegionState::default());
     let near_x = |rect: Rect| x.is_none_or(|x| x >= rect[0] - 40.0 && x <= rect[0] + rect[2] + 2.0);
@@ -86,15 +128,35 @@ fn target_at(page: &Page, x: Option<f32>, y: f32) -> Option<Rect> {
         })
         .min_by(|a, b| (a.jump.1 - y).abs().total_cmp(&(b.jump.1 - y).abs()));
     if let Some(d) = best {
-        return Some(d.region);
+        return Some(Target {
+            rect: d.region,
+            flow: statement_flow(d.kind),
+            mark: d.row,
+        });
     }
     for note in super::footnotes::find_footnotes(&page, None) {
         let top = note.jump.1;
         if y >= top - ANCHOR_BELOW_PT && y <= top + 14.0 && near_x(note.region) {
-            return Some(note.region);
+            return Some(Target {
+                rect: note.region,
+                flow: Some(Flow::Footnote),
+                mark: None,
+            });
         }
     }
-    statement_at(&page, x, y).or_else(|| bibliography_entry(&page, x, y))
+    statement_at(&page, x, y)
+        .map(|rect| Target {
+            rect,
+            flow: Some(Flow::Statement),
+            mark: None,
+        })
+        .or_else(|| {
+            bibliography_entry(&page, x, y).map(|rect| Target {
+                rect,
+                flow: Some(Flow::Reference),
+                mark: None,
+            })
+        })
 }
 
 /// Words that open a numbered statement.
@@ -152,9 +214,9 @@ fn opens_section(text: &str) -> bool {
 }
 
 /// A statement the hover index did not read as one (a head split by a
-/// ligature, a kind it does not know): from its numbered head to the
-/// proof, the next statement or heading, the paragraph after it (set apart,
-/// or back in the body face after an italic statement), or a column's end.
+/// ligature, a kind it does not know): from its numbered head on, as far
+/// as `statement::Reader` reads it - to the proof, the next statement or
+/// heading, or the paragraph after it - or the column's end.
 fn statement_at(page: &Page, x: Option<f32>, y: f32) -> Option<Rect> {
     let lines = &page.lines;
     let head = (0..lines.len())
@@ -171,47 +233,56 @@ fn statement_at(page: &Page, x: Option<f32>, y: f32) -> Option<Rect> {
                 .abs()
                 .total_cmp(&(lines[b].top - y).abs())
         })?;
-    let gap0 = leading_gap(page);
     let first = &lines[head];
-    let mut region = line_rect(first);
-    let mut italic: Option<bool> = None;
-    let mut previous = head;
+    let region = statement_lines(page, head, None, &mut None);
+    Some(pad(union(line_rect(first), region), 3.0, page))
+}
+
+/// A line opening something of its own, read by its words: a numbered
+/// statement or heading.
+pub(crate) fn opens_another(page: &Page, i: usize) -> bool {
+    let text = page.line_text(i);
+    opens_statement(&text) || opens_section(&text)
+}
+
+/// The lines of a statement from `first` down its column, `first` included
+/// unless it already ended (`italic` the statement's face, when known; it
+/// is updated as the lines say). The region they cover, unpadded.
+pub(crate) fn statement_lines(
+    page: &Page,
+    first: usize,
+    italic: Option<bool>,
+    face: &mut Option<bool>,
+) -> Rect {
+    let lines = &page.lines;
+    let column = &lines[first];
+    let mut reader = Reader::new(page, column_left(page, column), italic);
+    let another = |i: usize| opens_another(page, i);
+    let mut region = line_rect(column);
+    // The last whole line taken, and where reading has got to: a piece of
+    // a row is taken without being the line the next is read against.
+    let mut previous = first;
+    let mut cursor = first;
     let mut count = 0;
     while count < 40 {
-        let Some(j) = next_line(page, previous) else {
+        let Some(j) = next_line(page, cursor) else {
             break;
         };
+        cursor = j;
         let l = &lines[j];
         let p = &lines[previous];
-        // Pieces of the same row (a ligature splits lines) belong to it.
-        let same_row = (l.top + l.bottom) / 2.0 > p.bottom && (l.top + l.bottom) / 2.0 < p.top;
-        let text = page.line_text(j);
-        let display = l.is_display() || p.is_display();
-        if !same_row {
+        if !same_row(p, l) {
             let below = l.top < p.top;
-            let gap = p.bottom - l.top;
-            let face = l.font != page.body_font;
-            let prose = !l.is_display() && l.math_share < 0.2;
-            let ends = !below
-                || !same_column(l, first)
-                || text.starts_with("Proof")
-                || text.starts_with("PROOF")
-                || opens_statement(&text)
-                || opens_section(&text)
-                || (!display && gap > gap0 + 3.5)
-                || (prose && italic == Some(true) && !face);
-            if ends {
+            if !below || !same_column(l, column) || !reader.takes(page, p, j, &another) {
                 break;
             }
-            if prose && italic.is_none() {
-                italic = Some(face);
-            }
+            previous = j;
         }
         region = union(region, line_rect(l));
-        previous = j;
         count += 1;
     }
-    Some(pad(region, 3.0, page))
+    *face = reader.italic;
+    region
 }
 
 /// A link's own words and the words just before it on its line: what
@@ -386,7 +457,12 @@ fn locate_named(
     page: &Page,
     runs: &[crate::engine::types::TextRun],
     named: &Named,
-) -> Option<Rect> {
+) -> Option<Target> {
+    let reference = |rect: Rect| Target {
+        rect,
+        flow: Some(Flow::Reference),
+        mark: None,
+    };
     match named {
         Named::Statement(kind, number) => {
             let mut page = page.clone();
@@ -400,7 +476,11 @@ fn locate_named(
                                 && d.kind.is_statement()
                                 && *kind == Kind::Theorem))
                 })
-                .map(|d| d.region)
+                .map(|d| Target {
+                    rect: d.region,
+                    flow: statement_flow(d.kind),
+                    mark: d.row,
+                })
         }
         Named::Float(key) => {
             let (word, number) = key.split_once(' ')?;
@@ -417,13 +497,14 @@ fn locate_named(
                 block.x,
                 block.top - 1.0,
             )
+            .map(Target::plain)
         }
         Named::NumberedCitation(number) => {
             let label = format!("[{number}]");
             let line = (0..page.lines.len())
                 .find(|&i| page.line_text(i).trim_start().starts_with(&label))?;
             let l = &page.lines[line];
-            bibliography_entry(page, Some(l.x0), l.top)
+            bibliography_entry(page, Some(l.x0), l.top).map(reference)
         }
         Named::AuthorYear(surname, year) => {
             // An entry whose first line names the author, with the year in
@@ -453,7 +534,7 @@ fn locate_named(
                 .into_iter()
                 .filter_map(entry)
                 .find(with_year)
-                .map(|(_, rect)| rect)
+                .map(|(_, rect)| reference(rect))
         }
     }
 }
@@ -472,9 +553,12 @@ fn answers_to(page: &Page, rect: Rect, named: &Named) -> bool {
         .collect::<Vec<_>>()
         .join(" ");
     match named {
+        // The year can be past a column break, in the entry's next piece:
+        // an entry opening with the author's name answers to it too.
         Named::AuthorYear(surname, year) => {
             text.contains(surname.as_str())
-                && year.as_ref().is_none_or(|y| text.contains(y.as_str()))
+                && (year.as_ref().is_none_or(|y| text.contains(y.as_str()))
+                    || text.trim_start().starts_with(surname.as_str()))
         }
         Named::NumberedCitation(key) => text.contains(&format!("[{key}]")),
         _ => false,
@@ -499,6 +583,19 @@ pub fn link_crop(
     y: Option<f32>,
     text: Option<&LinkText>,
 ) -> Rect {
+    link_preview(page, runs, page_w_pt, page_h_pt, x, y, text).rect
+}
+
+/// `link_crop`, with how the target runs on and the row it marks.
+pub fn link_preview(
+    page: Option<&Page>,
+    runs: &[crate::engine::types::TextRun],
+    page_w_pt: f32,
+    page_h_pt: f32,
+    x: Option<f32>,
+    y: Option<f32>,
+    text: Option<&LinkText>,
+) -> Target {
     let input = crate::engine::preview::CropInput {
         page_w_pt,
         page_h_pt,
@@ -508,11 +605,15 @@ pub fn link_crop(
     };
     let by_anchor = y.and_then(|y| {
         crate::engine::floats::float_for_anchor(runs, page_w_pt, page_h_pt, x, y)
-            .or_else(|| page.and_then(|page| link_target(page, x, y)))
+            .map(Target::plain)
+            .or_else(|| page.and_then(|page| found_at(page, x, y)))
     });
     let named = text.and_then(named);
     let by_words = page.zip(named.as_ref()).and_then(|(page, named)| {
-        locate_named(page, runs, named).map(|r| clear_of_neighbours(r, page))
+        locate_named(page, runs, named).map(|t| Target {
+            rect: clear_of_neighbours(t.rect, page),
+            ..t
+        })
     });
     // What the anchor found already answers to the words (two entries by
     // the same author in the same year): the anchor is the finer.
@@ -522,15 +623,19 @@ pub fn link_crop(
     };
     match (by_anchor, by_words) {
         // They disagree: the destination is coarse, the words are not.
-        (Some(anchor), Some(words)) if !overlaps(anchor, words) && !answers(anchor) => words,
+        (Some(anchor), Some(words))
+            if !overlaps(anchor.rect, words.rect) && !answers(anchor.rect) =>
+        {
+            words
+        }
         (Some(anchor), _) => anchor,
         (None, Some(words)) => words,
-        (None, None) => crate::engine::preview::crop_rect(&input),
+        (None, None) => Target::plain(crate::engine::preview::crop_rect(&input)),
     }
 }
 
 /// The text after the first line's label: "[12] Author" -> "Author".
-fn labelled(text: &str) -> bool {
+pub(crate) fn labelled(text: &str) -> bool {
     let t = text.trim_start();
     // A review copy's line number before it: "351 [12] ...".
     let t = match t.split_once(' ') {
@@ -546,22 +651,16 @@ fn labelled(text: &str) -> bool {
     close > 0 && close <= 12 && rest[..close].chars().any(|c| c.is_alphanumeric())
 }
 
-/// The gap a page leaves between the lines of a paragraph: the commonest
-/// one between lines that follow each other in a column.
-fn leading_gap(page: &Page) -> f32 {
-    let mut gaps: Vec<f32> = page
-        .lines
-        .windows(2)
-        .filter(|w| same_column(&w[0], &w[1]) && w[0].bottom > w[1].top)
-        .map(|w| w[0].bottom - w[1].top)
-        .filter(|g| *g < 24.0)
-        .collect();
-    gaps.sort_by(f32::total_cmp);
-    gaps.get(gaps.len() / 2).copied().unwrap_or(3.0)
+/// Whether `l` is a piece of the row `p` is on: a ligature splits a line in
+/// the page's text, and an accent or a script over a letter sits a little
+/// above it.
+pub(crate) fn same_row(p: &Line, l: &Line) -> bool {
+    let centre = (l.top + l.bottom) / 2.0;
+    centre > p.bottom && centre < p.top + 0.5 * p.em()
 }
 
 /// The next line in reading order, past running heads and feet.
-fn next_line(page: &Page, i: usize) -> Option<usize> {
+pub(crate) fn next_line(page: &Page, i: usize) -> Option<usize> {
     (i + 1..page.lines.len()).find(|&j| !page.lines[j].flags.furniture)
 }
 
@@ -633,12 +732,19 @@ fn bibliography_entry(page: &Page, x: Option<f32>, y: f32) -> Option<Rect> {
     }
     let mut region = line_rect(head);
     let mut previous = first;
+    let mut cursor = first;
     let mut count = 1;
-    while count < 14 {
-        let Some(j) = next_line(page, previous) else {
+    while count < 20 {
+        let Some(j) = next_line(page, cursor) else {
             break;
         };
+        cursor = j;
         let l = &lines[j];
+        // A piece of the row before (a ligature splits a line) is its.
+        if same_row(&lines[previous], l) {
+            region = union(region, line_rect(l));
+            continue;
+        }
         let text = page.line_text(j);
         let new_entry = labelled(&text) || (hanging && l.x0 <= head.x0 + 1.5);
         let in_column = same_column(l, head) && close(&lines[previous], l);

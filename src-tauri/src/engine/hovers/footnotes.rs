@@ -446,6 +446,65 @@ pub fn find_footnotes(page: &Page, next: Option<&Page>) -> Vec<Footnote> {
     out
 }
 
+/// Where a note runs on past its column's foot: the foot of the next
+/// column, which opens with no mark of its own, or - the page's last note -
+/// the next page's footnote zone. Whether that is the next page, and the
+/// region there.
+pub fn note_continuation(page: &Page, next: Option<&Page>, region: Rect) -> Option<(bool, Rect)> {
+    let lines = zone(page);
+    let inside = |i: usize| {
+        let l = &page.lines[i];
+        let centre = (l.top + l.bottom) / 2.0;
+        centre >= region[1]
+            && centre <= region[1] + region[3]
+            && l.x1.min(region[0] + region[2]) - l.x0.max(region[0]) > 0.5 * (l.x1 - l.x0)
+    };
+    let at = lines.iter().rposition(|&i| inside(i))?;
+    let last = &page.lines[lines[at]];
+    // The note's further lines, from `from` in a zone's stream order: no
+    // mark, one column, set close.
+    let run_on = |page: &Page, zone_lines: &[usize], from: usize| -> Option<Rect> {
+        let first = *zone_lines.get(from)?;
+        if note_start(page, first).is_some() {
+            return None;
+        }
+        let mut taken = vec![first];
+        for &i in &zone_lines[from + 1..] {
+            let previous = &page.lines[*taken.last().unwrap_or(&first)];
+            let current = &page.lines[i];
+            let close = previous.bottom - current.top <= 1.2 * current.em()
+                && previous.bottom > current.bottom;
+            if note_start(page, i).is_some()
+                || !super::page::same_column(current, &page.lines[first])
+                || !close
+            {
+                break;
+            }
+            taken.push(i);
+        }
+        Some(super::targets::clear_of_neighbours(
+            note_region(page, &taken),
+            page,
+        ))
+    };
+    match lines.get(at + 1) {
+        // The next column's foot.
+        Some(&following) => {
+            let other = &page.lines[following];
+            let elsewhere = !super::page::same_column(other, last) && other.top > last.top;
+            if !elsewhere {
+                return None;
+            }
+            run_on(page, &lines, at + 1).map(|rect| (false, rect))
+        }
+        None => {
+            let next = next?;
+            let lines = zone(next);
+            run_on(next, &lines, 0).map(|rect| (true, rect))
+        }
+    }
+}
+
 /// Whether the next page's footnote zone opens mid-note.
 fn continues_on(next: &Page) -> bool {
     let lines = zone(next);
