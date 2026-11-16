@@ -46,7 +46,7 @@ fn line_rect(l: &Line) -> Rect {
 /// `rect`, its padding pulled back off any line just outside it: set
 /// tight, the next line's top sits inside the usual 3pt and would show
 /// as a sliver.
-fn clear_of_neighbours(rect: Rect, page: &Page) -> Rect {
+pub(crate) fn clear_of_neighbours(rect: Rect, page: &Page) -> Rect {
     let (x0, x1) = (rect[0], rect[0] + rect[2]);
     let (mut y0, mut y1) = (rect[1], rect[1] + rect[3]);
     for l in &page.lines {

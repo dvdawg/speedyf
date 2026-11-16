@@ -461,10 +461,10 @@ fn truth(page: &Page, target: &Target, anchor: Option<(Option<f32>, f32)>) -> Op
             while out.len() < 12 {
                 let Some(j) = next_line(page, i) else { break };
                 let t = text_of(page, j);
-                let next_mark = t
-                    .split_whitespace()
-                    .next()
-                    .is_some_and(|w| w.len() <= 2 && w.chars().all(|c| c.is_ascii_digit()));
+                // The next note: a line opening with a mark, set apart
+                // ("2 Concentrated") or run on ("2Concentrated").
+                let next_mark = t.starts_with(|c: char| c.is_ascii_digit())
+                    && t.chars().take_while(char::is_ascii_digit).count() <= 2;
                 if (lines[j].size - size).abs() > 0.5 || next_mark || gap(i, j) > 4.0 {
                     break;
                 }

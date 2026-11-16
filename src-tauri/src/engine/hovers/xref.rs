@@ -1907,6 +1907,11 @@ pub fn find_definitions(page: &Page, regions: &Regions, src: u32) -> Vec<Definit
             });
         }
     }
+    // Tight leading puts the next line inside a region's padding: a sliver
+    // of it would show at the preview's edge.
+    for d in &mut out {
+        d.region = super::targets::clear_of_neighbours(d.region, page);
+    }
     out
 }
 
