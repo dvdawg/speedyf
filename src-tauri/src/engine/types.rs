@@ -218,6 +218,19 @@ pub struct PreviewSpecDto {
     /// of the first tile from its top-left corner.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mark: Option<[f32; 4]>,
+    /// Where the link really goes, when its own destination does not carry
+    /// the number its words name (a duplicate anchor): a click follows it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goto: Option<PreviewGotoDto>,
+}
+
+/// A corrected link destination: a page in the file and a point on it.
+#[derive(Serialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewGotoDto {
+    pub page: u32,
+    pub x: Option<f32>,
+    pub y: Option<f32>,
 }
 
 /// One further piece of a stitched preview.

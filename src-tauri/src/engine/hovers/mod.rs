@@ -128,6 +128,9 @@ pub struct IndexResult {
     pub spans: HashMap<u32, Vec<HoverSpanDto>>,
     /// Every formal statement and numbered equation, in document order.
     pub statements: Vec<StatementDto>,
+    /// Every numbered definition by kind and label, for a link whose own
+    /// destination does not carry the number its words name.
+    pub labels: targets::Labels,
     pub starts: Vec<RegionState>,
     pub indexed: u32,
 }
@@ -277,9 +280,17 @@ impl IndexBuilder {
                 }
             }
         }
+        let mut labels = targets::Labels::new();
+        for d in &self.definitions {
+            labels
+                .entry((d.kind, d.label.clone()))
+                .or_default()
+                .push((d.page, d.jump.0, d.jump.1));
+        }
         IndexResult {
             spans,
             statements: self.statements,
+            labels,
             starts: self.starts,
             indexed: self.next,
         }

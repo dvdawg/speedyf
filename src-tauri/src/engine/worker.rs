@@ -1006,7 +1006,6 @@ fn do_preview_rect(
     y: Option<f32>,
     from: Option<(u32, [f32; 4])>,
 ) -> AppResult<PreviewSpecDto> {
-    let [page_w, page_h] = state.display_size(doc, src)?;
     // The link's words, from its own page: what it names, for a
     // destination that is only a page or that many links share.
     let words = match from {
@@ -1019,6 +1018,24 @@ fn do_preview_rect(
         }
         _ => None,
     };
+    preview_at(state, shared, doc, src, x, y, words.as_ref(), true)
+}
+
+/// The preview of a link destination on page `src`, read with the link's
+/// words; `correct` lets a destination that does not carry the number the
+/// words name give way to the one definition that does.
+#[allow(clippy::too_many_arguments)]
+fn preview_at(
+    state: &mut WorkerState,
+    shared: &EngineShared,
+    doc: DocId,
+    src: u32,
+    x: Option<f32>,
+    y: Option<f32>,
+    words: Option<&super::hovers::targets::LinkText>,
+    correct: bool,
+) -> AppResult<PreviewSpecDto> {
+    let [page_w, page_h] = state.display_size(doc, src)?;
     let layout = ensure_text_layout(state, shared, doc, src)?;
     // The page read the way the hover index reads it, for what the
     // destination points at: a statement, a display, a heading, a
@@ -1037,9 +1054,28 @@ fn do_preview_rect(
         page_h,
         x,
         y,
-        words.as_ref(),
+        words,
     );
     let rect = target.rect;
+    if correct {
+        let labels = state.hovers.get(&doc).and_then(|h| h.result.clone());
+        let page_count = state.doc(doc)?.page_count;
+        let corrected = labels
+            .zip(page.as_ref())
+            .zip(words)
+            .and_then(|((index, page), words)| {
+                super::hovers::targets::corrected_target(&index.labels, page, src, rect, words)
+            });
+        if let Some((to, cx, cy)) = corrected.filter(|c| c.0 < page_count) {
+            let mut spec = preview_at(state, shared, doc, to, Some(cx), Some(cy), None, false)?;
+            spec.goto = Some(PreviewGotoDto {
+                page: to,
+                x: Some(cx),
+                y: Some(cy),
+            });
+            return Ok(spec);
+        }
+    }
     let tile = preview::rect_to_tile(rect, page_h, PREVIEW_SCALE_MILLI);
     let more = match target.flow {
         Some(flow) if page.is_some() => preview_more(state, doc, src, flow, rect),
@@ -1069,6 +1105,7 @@ fn do_preview_rect(
         text: preview_text,
         more,
         mark,
+        goto: None,
     })
 }
 
@@ -2395,6 +2432,7 @@ fn resolved_library_document(
             text,
             more: Vec::new(),
             mark: None,
+            goto: None,
         },
     })
 }
@@ -3568,6 +3606,7 @@ fn do_hover_preview(
         text: String::new(),
         more,
         mark,
+        goto: None,
     })
 }
 

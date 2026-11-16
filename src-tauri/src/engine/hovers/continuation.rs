@@ -112,6 +112,7 @@ fn lines_in(page: &Page, rect: Rect) -> Vec<usize> {
 fn last_line(page: &Page, rect: Rect) -> Option<usize> {
     lines_in(page, rect)
         .into_iter()
+        .filter(|&i| !folio(page, i))
         .min_by(|&a, &b| page.lines[a].bottom.total_cmp(&page.lines[b].bottom))
 }
 
@@ -126,7 +127,14 @@ fn statement_face(page: &Page, rect: Rect) -> Option<bool> {
         .filter(|l| !l.is_display() && l.math_share < 0.2 && l.x1 - l.x0 > 40.0)
         .collect();
     if prose.is_empty() {
-        return None;
+        // No line of prose past the head: the face its lines are set in,
+        // the head's words with them - a short statement ending in a
+        // display or a list.
+        let own = lines
+            .iter()
+            .filter(|&&i| page.lines[i].font != page.body_font)
+            .count();
+        return (!lines.is_empty()).then(|| 2 * own > lines.len());
     }
     let own = prose.iter().filter(|l| l.font != page.body_font).count();
     Some(2 * own > prose.len())

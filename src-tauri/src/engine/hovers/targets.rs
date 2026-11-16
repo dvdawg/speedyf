@@ -14,7 +14,7 @@
 
 use super::page::{same_column, Line, Page};
 use super::regions::{classify, RegionState};
-use super::statement::{column_left, leading_gap, Reader};
+use super::statement::{leading_gap, Reader};
 use super::xref::{find_definitions, Kind};
 use super::Rect;
 
@@ -256,7 +256,8 @@ pub(crate) fn statement_lines(
 ) -> Rect {
     let lines = &page.lines;
     let column = &lines[first];
-    let mut reader = Reader::new(page, column_left(page, column), italic);
+    let extent = super::statement::column_extent(page, column);
+    let mut reader = Reader::new(page, extent.0, italic);
     let another = |i: usize| opens_another(page, i);
     let mut region = line_rect(column);
     // The last whole line taken, and where reading has got to: a piece of
@@ -271,12 +272,27 @@ pub(crate) fn statement_lines(
         cursor = j;
         let l = &lines[j];
         let p = &lines[previous];
+        // A display's pieces come in no reading order: one set above the
+        // last line read but below the statement's top (a fraction's
+        // numerator) is the display's, not a new column's.
+        let within = l.top <= region[1] + region[3]
+            && l.top >= p.top
+            && l.x0 >= extent.0 - 2.0
+            && l.x1 <= extent.1 + 2.0;
+        if within {
+            region = union(region, line_rect(l));
+            count += 1;
+            continue;
+        }
         if !same_row(p, l) {
             let below = l.top < p.top;
             if !below || !same_column(l, column) || !reader.takes(page, p, j, &another) {
                 break;
             }
-            previous = j;
+            // Read on from the lowest line so far.
+            if l.bottom < p.bottom {
+                previous = j;
+            }
         }
         region = union(region, line_rect(l));
         count += 1;
@@ -374,7 +390,7 @@ fn kind_of(word: &str) -> Option<Kind> {
         .unwrap_or(&word);
     Some(match word {
         "eq" | "equation" => Kind::Equation,
-        "section" | "sec" | "appendix" | "chapter" | "\u{a7}" => Kind::Section,
+        "section" | "sec" | "appendix" | "appendice" | "chapter" | "\u{a7}" => Kind::Section,
         "theorem" | "thm" => Kind::Theorem,
         "lemma" => Kind::Lemma,
         "proposition" | "prop" => Kind::Proposition,
@@ -537,6 +553,79 @@ fn locate_named(
                 .map(|(_, rect)| reference(rect))
         }
     }
+}
+
+/// Every numbered definition of a document - its sections, statements,
+/// equations - by kind and label: the page and the point a click lands on.
+pub type Labels = std::collections::HashMap<(Kind, String), Vec<(u32, f32, f32)>>;
+
+/// The number a link's words name, with its kind: "Theorem 8", "Section
+/// 3.1", "appendices A.1, A.2", "(12)".
+pub fn named_number(text: &LinkText) -> Option<(Kind, String)> {
+    match named(text)? {
+        Named::Statement(kind, number) => Some((kind, number)),
+        _ => None,
+    }
+}
+
+/// Whether the lines in `rect` carry `number` as printed: "A.2" in "A.2
+/// Proofs", "8" in "Theorem 8", "(12)" beside an equation.
+pub fn carries(page: &Page, rect: Rect, kind: Kind, number: &str) -> bool {
+    (0..page.lines.len())
+        .filter(|&i| {
+            let l = &page.lines[i];
+            let centre = (l.top + l.bottom) / 2.0;
+            centre >= rect[1]
+                && centre <= rect[1] + rect[3]
+                && l.x1.min(rect[0] + rect[2]) - l.x0.max(rect[0]) > 0.0
+        })
+        .any(|i| {
+            let text = page.line_text(i);
+            if kind == Kind::Equation {
+                return text.contains(&format!("({number})"));
+            }
+            text.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | ':' | '(' | ')'))
+                .any(|token| token.trim_end_matches('.') == number)
+        })
+}
+
+/// Where a link whose words name a number really goes, when its own
+/// destination (`page`, previewing `rect`) does not carry that number - a
+/// duplicate hyperref anchor sends an appendix's "A.2" to section 1.2: the
+/// one definition in the document with that kind and number. None when
+/// the destination is right, the words name no number, or the document has
+/// no single such definition.
+pub fn corrected_target(
+    labels: &Labels,
+    page: &Page,
+    src: u32,
+    rect: Rect,
+    text: &LinkText,
+) -> Option<(u32, f32, f32)> {
+    let (kind, number) = named_number(text)?;
+    if carries(page, rect, kind, &number) {
+        return None;
+    }
+    let exact = labels.get(&(kind, number.clone()));
+    let found: Vec<(u32, f32, f32)> = match exact {
+        Some(found) => found.clone(),
+        // "Theorem 8" may be printed as a lemma's or a proposition's
+        // shared counter: any statement with that number, if only one.
+        None if kind.is_statement() => labels
+            .iter()
+            .filter(|((k, label), _)| k.is_statement() && *label == number)
+            .flat_map(|(_, found)| found.iter().copied())
+            .collect(),
+        None => Vec::new(),
+    };
+    match found.as_slice() {
+        [one] if !(one.0 == src && rect_holds(rect, one.2)) => Some(*one),
+        _ => None,
+    }
+}
+
+fn rect_holds(rect: Rect, y: f32) -> bool {
+    y >= rect[1] - 2.0 && y <= rect[1] + rect[3] + 30.0
 }
 
 /// Whether the lines in `rect` are what `named` names: an entry with that
@@ -797,6 +886,96 @@ mod tests {
         assert!(rect[1] <= 648.0 && rect[1] > 643.5, "[3]: {rect:?}");
     }
 
+    /// Bassily et al. 2018, Theorem 8: an italic statement, a display whose
+    /// pieces come out of reading order (a fraction's numerator above the
+    /// line before it, a bracket in the body face), then the statement's
+    /// last line in its own face, unindented, set apart by the display's
+    /// spacing; then the body.
+    fn statement_with_display(label: &str, face: Style, indent_after: f32) -> Page {
+        let mut b = Builder::new();
+        for y in [560.0, 548.0, 536.0, 524.0] {
+            b.line(
+                y,
+                BODY,
+                "Running text of the body before the statement here, set across the whole column.",
+            );
+        }
+        let x = b.text(72.0, 489.0, BOLD, label);
+        b.text(
+            x + 4.0,
+            489.0,
+            face,
+            "Let A be a learner that has mutual information of",
+        );
+        b.newline();
+        b.line(
+            474.0,
+            face,
+            "at most d bits, and let S be drawn. Then, for every e,",
+        );
+        b.text(190.0, 447.0, MATH, "P");
+        b.newline();
+        b.text(185.0, 439.0, SCRIPT, "A,S");
+        b.newline();
+        b.text(202.0, 445.0, BODY, "[|err (");
+        b.newline();
+        b.text(240.0, 445.0, MATH, "A(S);S)-err(A(S);D)|>e]<");
+        b.newline();
+        b.text(392.0, 454.0, MATH, "d+1");
+        b.newline();
+        b.text(383.0, 440.0, MATH, "2me2-1");
+        b.newline();
+        b.line(
+            416.0,
+            face,
+            "where the probability is taken over the sample S and",
+        );
+        b.line(404.0, face, "the randomness of A.");
+        b.line_at(
+            72.0 + indent_after,
+            384.0,
+            BODY,
+            "Our theorem states a simple and basic property here.",
+        );
+        b.line(
+            372.0,
+            BODY,
+            "Running text of the body after the statement here, set across the whole column.",
+        );
+        b.page()
+    }
+
+    #[test]
+    fn a_statement_goes_on_after_its_display_in_its_own_face() {
+        for label in ["Theorem 8", "Theorem 8."] {
+            let page = statement_with_display(label, ITALIC, 0.0);
+            let rect = link_target(&page, Some(72.0), 500.0).expect("a statement");
+            let lines = lines_in(&page, rect);
+            assert!(
+                lines.iter().any(|l| l.starts_with("the randomness of A")),
+                "{label}: {lines:?}"
+            );
+            assert!(rect[1] < 404.0 && rect[1] > 391.5, "{label}: {rect:?}");
+        }
+    }
+
+    #[test]
+    fn an_upright_statement_goes_on_after_its_display_unindented() {
+        // Definition style: the statement in the body face. Its "where"
+        // line is unindented; the paragraph after it is indented.
+        let page = statement_with_display("Definition 3.", BODY, 15.0);
+        let rect = link_target(&page, Some(72.0), 500.0).expect("a statement");
+        let lines = lines_in(&page, rect);
+        assert!(
+            lines.iter().any(|l| l.starts_with("the randomness of A")),
+            "{lines:?}"
+        );
+        assert!(
+            !lines.iter().any(|l| l.starts_with("Our theorem")),
+            "{lines:?}"
+        );
+    }
+
     #[test]
     fn running_text_is_no_target() {
         let mut b = Builder::new();
@@ -975,6 +1154,51 @@ mod tests {
         let lines = lines_in(&page, rect);
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert!(lines[0].starts_with("[BNS13]"), "{lines:?}");
+    }
+
+    /// Bassily et al. 2018: "See appendices A.1, A.2" - the appendix
+    /// reuses hyperref's anchor names, so the link to A.2 lands on section
+    /// 1.2 on page 3.
+    fn related_work_page() -> Page {
+        let mut b = Builder::new();
+        b.line(
+            700.0,
+            BODY,
+            "Running text of the introduction, wide across the page.",
+        );
+        b.line(676.0, BOLD, "1.2 Related Work");
+        b.line(
+            660.0,
+            BODY,
+            "Sample compression schemes. d-bit information learners.",
+        );
+        b.page()
+    }
+
+    #[test]
+    fn a_link_to_a_number_its_destination_lacks_goes_where_the_number_is() {
+        let page = related_work_page();
+        let text = words("See appendices A.1, ", "A.2");
+        let rect = link_target(&page, Some(72.0), 690.0).expect("the heading");
+        let mut labels = Labels::new();
+        labels.insert((Kind::Section, "1.2".into()), vec![(2, 72.0, 683.0)]);
+        labels.insert((Kind::Section, "A.2".into()), vec![(16, 72.0, 720.0)]);
+        assert_eq!(
+            corrected_target(&labels, &page, 2, rect, &text),
+            Some((16, 72.0, 720.0))
+        );
+        // The words name what the destination shows: no correction.
+        let right = words("see Section ", "1.2");
+        assert_eq!(corrected_target(&labels, &page, 2, rect, &right), None);
+        // Two definitions of A.2 (a restatement): nothing to choose.
+        labels
+            .get_mut(&(Kind::Section, "A.2".into()))
+            .unwrap()
+            .push((20, 72.0, 500.0));
+        assert_eq!(corrected_target(&labels, &page, 2, rect, &text), None);
+        // Words that name no number: nothing to check.
+        let bare = words("as discussed ", "above");
+        assert_eq!(corrected_target(&labels, &page, 2, rect, &bare), None);
     }
 
     #[test]

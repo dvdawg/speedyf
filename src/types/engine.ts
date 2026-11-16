@@ -136,6 +136,9 @@ export interface PreviewSpec {
   /** The linked row of a multi-line display, as `[x, y, w, h]` fractions
    * of the first tile from its top-left corner. */
   mark?: [number, number, number, number] | null;
+  /** Where the link really goes, when its own destination does not carry
+   * the number its words name (a duplicate anchor): a click follows it. */
+  goto?: { page: number; x: number | null; y: number | null } | null;
 }
 
 export interface ResolvedCitation {
