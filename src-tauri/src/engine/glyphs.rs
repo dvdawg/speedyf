@@ -107,7 +107,8 @@ pub struct EquationBlockDto {
     /// `[x, y, w, h]`, top-left origin, without the equation number.
     pub bbox: [f32; 4],
     /// The equation number as printed inside its parentheses ("3", "2.4",
-    /// "A.1"), when there is one.
+    /// "A.1", or a symbol tag, "*"), when there is one; for an `align`
+    /// numbered row by row, its first row's.
     pub number: Option<String>,
 }
 
@@ -804,7 +805,104 @@ fn equation_number(text: &str) -> Option<String> {
         && inner
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '\'' | '*'));
-    ok.then(|| inner.to_string())
+    // Or a symbol tag, `\tag{$\star$}`: "(*)", "(**)", "(dagger)".
+    let symbol = (1..=3).contains(&inner.chars().count())
+        && inner.chars().all(|c| {
+            matches!(
+                c,
+                '*' | '\u{22C6}' | '\u{2217}' | '\u{2020}' | '\u{2021}' | '\u{2032}' | '\''
+            )
+        });
+    (ok || symbol).then(|| inner.to_string())
+}
+
+/// A super- or subscript: letters set small ("eq" in a superscript, "max"
+/// under an operator) label mathematics, and are no words of prose.
+fn is_script(g: &GlyphDto, em: f32) -> bool {
+    g.size < 0.85 * em
+}
+
+/// Words of prose among some glyphs: runs of three or more full-size
+/// letters in the text font, set close on one baseline, that are no
+/// operator names.
+fn prose_words(glyphs: &[&GlyphDto], em: f32) -> usize {
+    let mut sorted: Vec<&GlyphDto> = glyphs.to_vec();
+    sorted.sort_by(|a, b| {
+        (a.baseline / (0.3 * em))
+            .round()
+            .total_cmp(&(b.baseline / (0.3 * em)).round())
+            .then(a.x.total_cmp(&b.x))
+    });
+    let operators = operator_letters(&sorted);
+    // Scripts against the glyphs' own text size: a footnote's words are
+    // words.
+    let main = sorted.iter().map(|g| g.size).fold(0.0, f32::max);
+    let letter = |g: &GlyphDto| {
+        !is_math_font_name(&g.font)
+            && !g.text.is_empty()
+            && g.text.chars().all(char::is_alphabetic)
+            && !is_script(g, main)
+    };
+    let mut words = 0;
+    let mut run = 0;
+    for (i, g) in sorted.iter().enumerate() {
+        let joins = i > 0 && {
+            let p = sorted[i - 1];
+            (p.baseline - g.baseline).abs() < 0.1 * em && g.x - (p.x + p.w) < 0.15 * em
+        };
+        if letter(g) && !operators[i] {
+            run = if joins { run + 1 } else { 1 };
+            if run == 3 {
+                words += 1;
+            }
+        } else {
+            run = 0;
+        }
+    }
+    words
+}
+
+/// Operator names, set upright in the text font: mathematics, not words.
+const OPERATOR_NAMES: &[&str] = &[
+    "arccos", "arcsin", "arctan", "arg", "argmax", "argmin", "cos", "cosh", "cot", "coth", "csc",
+    "deg", "det", "diag", "diam", "dim", "dist", "exp", "gcd", "hom", "inf", "ker", "lcm", "lg",
+    "lim", "liminf", "limsup", "ln", "log", "max", "min", "mod", "Pr", "sec", "sin", "sinh", "sup",
+    "supp", "tan", "tanh", "tr", "Tr", "Var", "Cov", "var", "cov", "rank", "sgn", "sign", "span",
+    "vol", "poly", "polylog", "softmax", "KL", "TV", "err", "Ber", "Bern", "Bin", "Unif", "Lap",
+];
+
+/// Which of a left-to-right run of glyphs spell an operator name: a run of
+/// text-font letters set close on one baseline, "log", "sup", "Pr".
+fn operator_letters(glyphs: &[&GlyphDto]) -> Vec<bool> {
+    let mut out = vec![false; glyphs.len()];
+    let letter = |g: &GlyphDto| {
+        !is_math_font_name(&g.font) && g.text.chars().all(char::is_alphabetic) && !g.text.is_empty()
+    };
+    let mut at = 0;
+    while at < glyphs.len() {
+        if !letter(glyphs[at]) {
+            at += 1;
+            continue;
+        }
+        let start = at;
+        let mut word = glyphs[at].text.clone();
+        while at + 1 < glyphs.len() && letter(glyphs[at + 1]) {
+            let (p, g) = (glyphs[at], glyphs[at + 1]);
+            let em = p.size.max(1.0);
+            if (p.baseline - g.baseline).abs() > 0.1 * em || g.x - (p.x + p.w) > 0.15 * em {
+                break;
+            }
+            word.push_str(&g.text);
+            at += 1;
+        }
+        at += 1;
+        if OPERATOR_NAMES.contains(&word.as_str()) {
+            for flag in &mut out[start..at] {
+                *flag = true;
+            }
+        }
+    }
+    out
 }
 
 fn classify(segment: &Segment, rules: &[&GlyphDto]) -> Kind {
@@ -818,10 +916,17 @@ fn classify(segment: &Segment, rules: &[&GlyphDto]) -> Kind {
         .iter()
         .filter(|g| is_math_font_name(&g.font))
         .count() as f32;
+    let operators = operator_letters(&segment.glyphs);
     let letters = segment
         .glyphs
         .iter()
-        .filter(|g| !is_math_font_name(&g.font) && g.text.chars().any(char::is_alphabetic))
+        .zip(&operators)
+        .filter(|(g, op)| {
+            !**op
+                && !is_math_font_name(&g.font)
+                && g.text.chars().any(char::is_alphabetic)
+                && !is_script(g, largest(segment))
+        })
         .count() as f32;
     let big = segment.glyphs.iter().any(|g| is_big_operator(g));
     let bar = rules.iter().any(|r| {
@@ -981,7 +1086,7 @@ fn rows(chars: &[&GlyphDto]) -> Vec<Vec<usize>> {
 }
 
 /// Split a row at gaps wider than 1.2 em into segments, left to right.
-fn segments<'a>(chars: &[&'a GlyphDto], row: &[usize]) -> Vec<Segment<'a>> {
+fn segments<'a>(chars: &[&'a GlyphDto], row: &[usize], gutters: &[(f32, f32)]) -> Vec<Segment<'a>> {
     let mut members: Vec<&GlyphDto> = row.iter().map(|&i| chars[i]).collect();
     members.sort_by(|a, b| a.x.total_cmp(&b.x));
     let em = median(members.iter().map(|g| g.size).collect()).max(1.0);
@@ -989,7 +1094,15 @@ fn segments<'a>(chars: &[&'a GlyphDto], row: &[usize]) -> Vec<Segment<'a>> {
     for g in members {
         let (top, bottom) = core(g);
         match out.last_mut() {
-            Some(segment) if g.x - segment.right <= 1.2 * em => {
+            // Nor across a column gutter, however narrow: a space there
+            // wider than a display's own spaces parts two columns' lines.
+            Some(segment)
+                if g.x - segment.right <= 1.2 * em
+                    && !(g.x - segment.right >= 0.5 * em
+                        && gutters
+                            .iter()
+                            .any(|&(g0, g1)| segment.right <= g1 && g.x >= g0)) =>
+            {
                 segment.glyphs.push(g);
                 segment.right = segment.right.max(g.x + g.w);
                 segment.top = segment.top.min(top);
@@ -1012,15 +1125,30 @@ fn segments<'a>(chars: &[&'a GlyphDto], row: &[usize]) -> Vec<Segment<'a>> {
 /// as two: the equation and its number.
 fn split_number<'a>(segment: Segment<'a>) -> Vec<Segment<'a>> {
     let glyphs = &segment.glyphs;
-    let at = glyphs.iter().rposition(|g| g.text == "(");
-    let Some(at) = at.filter(|&at| at > 0) else {
+    let sep = TAG_SEP_EMS * segment.em;
+    // Trailing, "... x  (27)"; or leading, "(27)  x ..." (`leqno`).
+    let trailing = glyphs
+        .iter()
+        .rposition(|g| g.text == "(")
+        .filter(|&at| at > 0)
+        .filter(|&at| {
+            let tail: String = glyphs[at..].iter().map(|g| g.text.as_str()).collect();
+            let before = glyphs[at - 1];
+            equation_number(&tail).is_some() && glyphs[at].x - (before.x + before.w) >= sep
+        });
+    let leading = glyphs
+        .iter()
+        .position(|g| g.text == ")")
+        .filter(|&close| glyphs[0].text == "(" && close + 1 < glyphs.len())
+        .filter(|&close| {
+            let head: String = glyphs[..=close].iter().map(|g| g.text.as_str()).collect();
+            let end = glyphs[close].x + glyphs[close].w;
+            equation_number(&head).is_some() && glyphs[close + 1].x - end >= sep
+        })
+        .map(|close| close + 1);
+    let Some(at) = trailing.or(leading) else {
         return vec![segment];
     };
-    let tail: String = glyphs[at..].iter().map(|g| g.text.as_str()).collect();
-    let before = glyphs[at - 1];
-    if equation_number(&tail).is_none() || glyphs[at].x - (before.x + before.w) < 0.8 * segment.em {
-        return vec![segment];
-    }
     let part = |members: &[&'a GlyphDto]| -> Option<Segment<'a>> {
         let first = members.first()?;
         let mut out = Segment {
@@ -1081,6 +1209,20 @@ fn outline_box(g: &GlyphDto) -> [f32; 4] {
     [g.x, top, g.w, bottom - top]
 }
 
+/// The most ink between the pieces of one stack (a numerator and its bar,
+/// a sum and its limits), in ems.
+const STACK_GAP_EMS: f32 = 0.6;
+/// The most ink between two rows of one display (the lines of an `align`,
+/// of a `multline`), in ems: consecutive displays are further apart, by the
+/// skips set above and below each.
+const ROW_GAP_EMS: f32 = 1.0;
+/// The same between the raster's lines, whose ink takes in descenders,
+/// tall delimiters and limits that the glyphs' outline leaves out.
+const INK_ROW_GAP_EMS: f32 = 1.0;
+/// The least space before an equation number, in ems: amsmath's
+/// `\mintagsep` is half a quad.
+const TAG_SEP_EMS: f32 = 0.45;
+
 struct Candidate {
     left: f32,
     right: f32,
@@ -1099,18 +1241,29 @@ struct Candidate {
     /// characters is a stray superscript, not a display.
     largest: f32,
     number: Option<String>,
+    /// Where its relation symbols stand: the alignment points an `align`
+    /// lines its rows up on.
+    relations: Vec<f32>,
+    /// Where its stretches after a wide space start: the columns of an
+    /// `alignat`.
+    columns: Vec<f32>,
 }
 
 impl Candidate {
     /// Whether two candidates are one equation: stacked closely with their
     /// widths overlapping (the lines of an `align`, a numerator over its
     /// bar), or level with each other a little apart (`f(x) =` beside the
-    /// fraction it equals).
-    fn joins(&self, other: &Candidate) -> bool {
+    /// fraction it equals), or on one line however far apart (the columns
+    /// of an `align` set side by side).
+    fn joins(&self, other: &Candidate, reach: f32) -> bool {
         let em = self.em.max(other.em);
         let v_gap = (other.top - self.bottom).max(self.top - other.bottom);
         let h_gap = (other.left - self.right).max(self.left - other.right);
-        (v_gap <= 1.5 * em && h_gap <= 1.0 * em) || (v_gap < 0.0 && h_gap <= 4.0 * em)
+        let level = -v_gap >= 0.6 * (self.bottom - self.top).min(other.bottom - other.top)
+            && self.chars.min(other.chars) >= 3;
+        (v_gap <= reach * em && h_gap <= 1.0 * em)
+            || (v_gap < 0.0 && h_gap <= 4.0 * em)
+            || (level && h_gap <= 15.0 * em)
     }
 
     fn absorb(&mut self, other: Candidate) {
@@ -1124,9 +1277,25 @@ impl Candidate {
         self.bare += other.bare;
         self.alnum += other.alnum;
         self.largest = self.largest.max(other.largest);
+        self.relations.extend(other.relations);
+        self.columns.extend(other.columns);
         if self.number.is_none() {
             self.number = other.number;
         }
+    }
+
+    /// Whether two candidates share an alignment point: a relation symbol
+    /// at the same place, as the rows of an `align` have.
+    fn aligned_with(&self, other: &Candidate) -> bool {
+        let near = |a: &f32, b: &f32| (a - b).abs() < 1.0;
+        self.relations
+            .iter()
+            .any(|a| other.relations.iter().any(|b| near(a, b)))
+            || self
+                .columns
+                .iter()
+                .any(|a| near(a, &other.left) || other.columns.iter().any(|b| near(a, b)))
+            || other.columns.iter().any(|b| near(b, &self.left))
     }
 }
 
@@ -1145,39 +1314,239 @@ fn separated(a: &Candidate, b: &Candidate, barriers: &[Barrier]) -> bool {
     })
 }
 
-/// Merge candidates until no two join.
-fn merge_candidates(mut pending: Vec<Candidate>, barriers: &[Barrier]) -> Vec<Candidate> {
-    let joins = |a: &Candidate, b: &Candidate| a.joins(b) && !separated(a, b, barriers);
-    let mut out: Vec<Candidate> = Vec::new();
-    while let Some(mut current) = pending.pop() {
-        while let Some(at) = pending.iter().position(|other| joins(&current, other)) {
-            current.absorb(pending.swap_remove(at));
+/// Whether a column gutter runs between two candidates: one wholly on
+/// each side of it.
+fn across_gutter(a: (f32, f32), b: (f32, f32), gutters: &[(f32, f32)]) -> bool {
+    match (
+        column_side(a.0, a.1, gutters),
+        column_side(b.0, b.1, gutters),
+    ) {
+        (Some(x), Some(y)) => x != y,
+        _ => false,
+    }
+}
+
+/// Which column a stretch from `x0` to `x1` is in, counted across the
+/// gutters; `None` for one set across a gutter, from the column before it
+/// into the column after. Reaching into a gutter is not crossing it: a
+/// display can run a little past its column's edge.
+fn column_side(x0: f32, x1: f32, gutters: &[(f32, f32)]) -> Option<usize> {
+    let mut side = 0;
+    for &(g0, g1) in gutters {
+        if x0 < g0 - 0.5 && x1 > g1 + 0.5 {
+            return None;
         }
-        // Something merged earlier may now reach this one.
-        match out.iter().position(|done| joins(done, &current)) {
-            Some(at) => pending.push(out.swap_remove(at).merged_with(current)),
-            None => out.push(current),
+        if (x0 + x1) / 2.0 >= (g0 + g1) / 2.0 {
+            side += 1;
         }
     }
+    Some(side)
+}
+
+/// How far a number stands from a row of mathematics beside it, right of
+/// it or (`leqno`) left of it; `None` when it is not beside it.
+fn tag_gap(segment: &Segment, c: &Candidate) -> Option<f32> {
+    if segment.left > c.right {
+        Some(segment.left - c.right)
+    } else if segment.right < c.left {
+        Some(c.left - segment.right)
+    } else {
+        None
+    }
+}
+
+/// An equation number's box, `(left, right, top, bottom)`.
+type Tag = (f32, f32, f32, f32);
+
+/// Whether a number set on a line of its own lies between two rows: an
+/// `align` row too long for its number pushes the number down a line,
+/// and the next row with it.
+fn bridged(a: &Candidate, b: &Candidate, reach: f32, tags: &[Tag]) -> bool {
+    let (upper, lower) = if a.top <= b.top { (a, b) } else { (b, a) };
+    let em = a.em.max(b.em);
+    let h_gap = (b.left - a.right).max(a.left - b.right);
+    h_gap <= em
+        && tags.iter().any(|&(left, _, top, bottom)| {
+            top >= upper.bottom - 0.2 * em
+                && bottom <= lower.top + 0.2 * em
+                && top - upper.bottom <= reach * em
+                && lower.top - bottom <= reach * em
+                && left > upper.left.max(lower.left)
+        })
+}
+
+/// Whether a candidate is level with a line of prose that runs across it.
+fn inline_with(c: &Candidate, barriers: &[Barrier]) -> bool {
+    barriers.iter().any(|&(left, right, top, bottom)| {
+        left <= c.left
+            && right >= c.right
+            && c.bottom.min(bottom) - c.top.max(top) > 0.3 * (c.bottom - c.top)
+    })
+}
+
+/// Merge candidates until no two join. Two candidates in different
+/// columns never join; nor do two equations each with its own number,
+/// unless they line up on a relation as the rows of an `align` do.
+fn merge_candidates(
+    mut pending: Vec<Candidate>,
+    barriers: &[Barrier],
+    gutters: &[(f32, f32)],
+    tags: &[Tag],
+    reach: f32,
+) -> Vec<Candidate> {
+    // How far apart two candidates that may join are, when they may: the
+    // nearest pair is merged first, so a sum's limits go to the sum and not
+    // to the equation set close under it.
+    let distance = |a: &Candidate, b: &Candidate| -> Option<f32> {
+        let allowed = (a.joins(b, reach) || bridged(a, b, reach, tags))
+            && !separated(a, b, barriers)
+            && !across_gutter((a.left, a.right), (b.left, b.right), gutters)
+            && !(a.number.is_some() && b.number.is_some() && !a.aligned_with(b));
+        let em = a.em.max(b.em);
+        let v_gap = (b.top - a.bottom).max(a.top - b.bottom).max(0.0);
+        let h_gap = (b.left - a.right).max(a.left - b.right).max(0.0);
+        allowed.then_some((v_gap + 0.1 * h_gap) / em)
+    };
+    let n = pending.len();
+    let mut alive: Vec<Option<Candidate>> = pending.drain(..).map(Some).collect();
+    let mut gaps: Vec<Vec<Option<f32>>> = vec![vec![None; n]; n];
+    for i in 0..n {
+        for j in i + 1..n {
+            let d = distance(
+                alive[i].as_ref().expect("alive"),
+                alive[j].as_ref().expect("alive"),
+            );
+            gaps[i][j] = d;
+            gaps[j][i] = d;
+        }
+    }
+    loop {
+        let mut best: Option<(f32, usize, usize)> = None;
+        for (i, row) in gaps.iter().enumerate() {
+            for (j, d) in row.iter().enumerate().skip(i + 1) {
+                if let Some(d) = *d {
+                    if best.is_none_or(|(b, ..)| d < b) {
+                        best = Some((d, i, j));
+                    }
+                }
+            }
+        }
+        let Some((_, i, j)) = best else { break };
+        let other = alive[j].take().expect("alive");
+        alive[i].as_mut().expect("alive").absorb(other);
+        gaps[j].fill(None);
+        for row in gaps.iter_mut() {
+            row[j] = None;
+        }
+        for k in 0..n {
+            if k == i {
+                continue;
+            }
+            let d = match (&alive[i], &alive[k]) {
+                (Some(a), Some(b)) => distance(a, b),
+                _ => None,
+            };
+            gaps[i][k] = d;
+            gaps[k][i] = d;
+        }
+    }
+    let mut out: Vec<Candidate> = alive.into_iter().flatten().collect();
     out.sort_by(|a, b| a.top.total_cmp(&b.top));
     out
 }
 
-impl Candidate {
-    fn merged_with(mut self, other: Candidate) -> Candidate {
-        self.absorb(other);
-        self
+/// The gutters between a page's text columns, `(left, right)`: stretches
+/// across the page its characters leave empty from top to bottom but for a
+/// few lines set across them (a title, a full-width display), with text on
+/// either side. None on a page of one column.
+fn gutters(chars: &[&GlyphDto], page_w: f32) -> Vec<(f32, f32)> {
+    let n = page_w.ceil().max(1.0) as usize;
+    let mut cover = vec![0f32; n];
+    // Of it, digits: a review copy's margin of line numbers.
+    let mut digits = vec![0f32; n];
+    for g in chars {
+        let a = (g.x.max(0.0) as usize).min(n);
+        let b = ((g.x + g.w).ceil().max(0.0) as usize).min(n);
+        let digit = g.text.chars().all(|c| c.is_ascii_digit()) && !g.text.is_empty();
+        for c in &mut cover[a..b] {
+            *c += g.size.max(1.0);
+        }
+        if digit {
+            for c in &mut digits[a..b] {
+                *c += g.size.max(1.0);
+            }
+        }
     }
+    let total: f32 = cover.iter().sum();
+    let mut filled: Vec<f32> = cover.iter().copied().filter(|&c| c > 0.0).collect();
+    if filled.is_empty() {
+        return Vec::new();
+    }
+    filled.sort_by(f32::total_cmp);
+    let peak = filled[filled.len() * 9 / 10];
+    let em = median(chars.iter().map(|g| g.size).collect()).max(1.0);
+    let mut out = Vec::new();
+    let mut x = 0;
+    while x < n {
+        if cover[x] > 0.2 * peak {
+            x += 1;
+            continue;
+        }
+        let start = x;
+        while x < n && cover[x] <= 0.2 * peak {
+            x += 1;
+        }
+        let width = (x - start) as f32;
+        let left: f32 = cover[..start].iter().sum();
+        let right: f32 = cover[x..].iter().sum();
+        let numbers = |range: std::ops::Range<usize>, mass: f32| {
+            mass > 0.0 && digits[range].iter().sum::<f32>() >= 0.9 * mass
+        };
+        let sides = (left >= 0.2 * total || numbers(0..start, left))
+            && (right >= 0.2 * total || numbers(x..n, right));
+        if width >= 0.5 * em && width <= 0.15 * page_w && sides {
+            out.push((start as f32, x as f32));
+        }
+    }
+    out
+}
+
+/// Relation symbols: where the rows of an `align` line up.
+fn is_relation(g: &GlyphDto) -> bool {
+    g.text.chars().count() == 1
+        && g.text.chars().all(|c| {
+            "=<>\u{2264}\u{2265}\u{2248}\u{2261}\u{221D}\u{2243}\u{2245}\u{2260}\u{226A}\u{226B}\u{227A}\u{227B}\u{2AAF}\u{2AB0}\u{2192}\u{2190}\u{21D2}\u{21D4}\u{2208}\u{2286}\u{2282}"
+                .contains(c)
+        })
+}
+
+fn relations(segment: &Segment) -> Vec<f32> {
+    segment
+        .glyphs
+        .iter()
+        .filter(|g| is_relation(g))
+        .map(|g| g.x)
+        .collect()
 }
 
 /// Display equations on a page, found from its glyphs.
 ///
 /// Conservative by design: a block is reported only for a run of rows that
 /// reads as mathematics - mostly math fonts, a big operator, or a fraction
-/// bar, without much running text - and sits centred in its text column
-/// without spanning it. A right-hand `(n)` is taken as its number. Rows a
-/// little apart (the lines of an `align`, a fraction's numerator and
-/// denominator) merge into one block.
+/// bar, without much running text (operator names and scripts are no
+/// words) - and stands apart from the prose as a display does: centred in
+/// its text column, or indented or flush with space above and below and no
+/// words in it, or as wide as the column with a number. A `(n)` at the
+/// right (or, `leqno`, the left), or on a line of its own under a row too
+/// long for it, is taken as its number.
+///
+/// Rows join in two passes, nearest first: each equation's stacks (a
+/// fraction's numerator and denominator, an operator's limits), then the
+/// rows of a display (the lines of an `align`, of a `multline`). Two
+/// equations each with its own number stay two unless they line up on a
+/// relation, as an `align` numbered line by line does; nothing joins across
+/// a column gutter; pieces level with a line of prose (its inline scripts)
+/// are dropped.
 pub fn equation_blocks(glyphs: &[GlyphDto], page_w: f32, _page_h: f32) -> Vec<EquationBlockDto> {
     let chars: Vec<&GlyphDto> = glyphs
         .iter()
@@ -1193,10 +1562,12 @@ pub fn equation_blocks(glyphs: &[GlyphDto], page_w: f32, _page_h: f32) -> Vec<Eq
         return Vec::new();
     }
 
+    let gutters = gutters(&chars, page_w);
     let all: Vec<Vec<Segment>> = rows(&chars)
         .iter()
-        .map(|row| segments(&chars, row))
+        .map(|row| segments(&chars, row, &gutters))
         .collect();
+    let page_em = median(chars.iter().map(|g| g.size).collect()).max(1.0);
 
     // Text columns, from the lines of running text: wide segments that are
     // not mathematics.
@@ -1270,12 +1641,21 @@ pub fn equation_blocks(glyphs: &[GlyphDto], page_w: f32, _page_h: f32) -> Vec<Eq
                         .rfind('(')
                         .is_some_and(|at| equation_number(&text[at..]).is_some())
                 });
-                let glyphs = line.iter().flat_map(|o| o.glyphs.iter());
-                let (n, words) = glyphs.fold((0usize, 0usize), |(n, w), g| {
-                    let word =
-                        !is_math_font_name(&g.font) && g.text.chars().any(char::is_alphabetic);
-                    (n + 1, w + usize::from(word))
-                });
+                let glyphs: Vec<&GlyphDto> =
+                    line.iter().flat_map(|o| o.glyphs.iter().copied()).collect();
+                let operators = operator_letters(&glyphs);
+                let main = glyphs.iter().map(|g| g.size).fold(0.0, f32::max);
+                let (n, words) =
+                    glyphs
+                        .iter()
+                        .zip(&operators)
+                        .fold((0usize, 0usize), |(n, w), (g, op)| {
+                            let word = !op
+                                && !is_math_font_name(&g.font)
+                                && g.text.chars().any(char::is_alphabetic)
+                                && !is_script(g, main);
+                            (n + 1, w + usize::from(word))
+                        });
                 let wordy = words as f32 / n.max(1) as f32;
                 // A line running on past its column belongs to none: an
                 // equation set across both columns of a two-column page.
@@ -1313,7 +1693,14 @@ pub fn equation_blocks(glyphs: &[GlyphDto], page_w: f32, _page_h: f32) -> Vec<Eq
                     let boxes: Vec<[f32; 4]> =
                         segment.glyphs.iter().map(|g| outline_box(g)).collect();
                     match current.as_mut() {
-                        Some(c) if segment.left - c.right <= 4.0 * segment.em => {
+                        Some(c)
+                            if segment.left - c.right <= 4.0 * segment.em
+                                && !across_gutter(
+                                    (c.left, c.right),
+                                    (segment.left, segment.right),
+                                    &gutters,
+                                ) =>
+                        {
                             c.right = segment.right;
                             c.top = c.top.min(segment.top);
                             c.bottom = c.bottom.max(segment.bottom);
@@ -1322,6 +1709,8 @@ pub fn equation_blocks(glyphs: &[GlyphDto], page_w: f32, _page_h: f32) -> Vec<Eq
                             c.bare += bare(segment);
                             c.alnum += alnum(segment);
                             c.largest = c.largest.max(largest(segment));
+                            c.relations.extend(relations(segment));
+                            c.columns.push(segment.left);
                         }
                         _ => {
                             if let Some(c) = current.take() {
@@ -1339,6 +1728,8 @@ pub fn equation_blocks(glyphs: &[GlyphDto], page_w: f32, _page_h: f32) -> Vec<Eq
                                 alnum: alnum(segment),
                                 largest: largest(segment),
                                 number: None,
+                                relations: relations(segment),
+                                columns: Vec::new(),
                             });
                         }
                     }
@@ -1360,7 +1751,6 @@ pub fn equation_blocks(glyphs: &[GlyphDto], page_w: f32, _page_h: f32) -> Vec<Eq
     // A fraction bar with characters just above and just below it is a
     // candidate of its own, even when its numerator and denominator are
     // set in a text font.
-    let page_em = median(chars.iter().map(|g| g.size).collect()).max(1.0);
     for rule in &rules {
         let stacked = |above: bool| {
             chars.iter().any(|g| {
@@ -1394,6 +1784,8 @@ pub fn equation_blocks(glyphs: &[GlyphDto], page_w: f32, _page_h: f32) -> Vec<Eq
                 alnum: 0,
                 largest: 0.0,
                 number: None,
+                relations: Vec::new(),
+                columns: Vec::new(),
             });
         }
     }
@@ -1405,7 +1797,75 @@ pub fn equation_blocks(glyphs: &[GlyphDto], page_w: f32, _page_h: f32) -> Vec<Eq
         .filter(|s| s.width() >= 6.0 * s.em)
         .map(|s| (s.left, s.right, s.top, s.bottom))
         .collect();
-    let mut merged = merge_candidates(candidates, &barriers);
+    // Pieces level with a line of prose running across them are its inline
+    // mathematics - scripts, a tall delimiter - split off its row; set
+    // close above a display, they would join it.
+    candidates.retain(|c| !inline_with(c, &barriers));
+    // A number level with a row of mathematics belongs to it from the
+    // start, so two equations each numbered stay two; one between rows (a
+    // `split` numbered in the middle) waits for the rows to merge.
+    let tags: Vec<Tag> = numbers
+        .iter()
+        .map(|t| (t.left, t.right, t.top, t.bottom))
+        .collect();
+    let mut numbers: Vec<&Segment> = numbers
+        .into_iter()
+        .filter(|segment| {
+            let middle = (segment.top + segment.bottom) / 2.0;
+            let owner = candidates
+                .iter_mut()
+                .filter(|c| {
+                    c.number.is_none()
+                        && middle >= c.top
+                        && middle <= c.bottom
+                        && tag_gap(segment, c).is_some_and(|gap| gap < 0.5 * page_w)
+                        && !across_gutter(
+                            (c.left, c.right),
+                            (segment.left, segment.right),
+                            &gutters,
+                        )
+                })
+                .min_by(|a, b| {
+                    let gap = |c| tag_gap(segment, c).unwrap_or(f32::MAX);
+                    gap(a).total_cmp(&gap(b))
+                });
+            match owner {
+                Some(c) => {
+                    c.number = equation_number(&segment.text());
+                    false
+                }
+                None => true,
+            }
+        })
+        .collect();
+    // First each equation's own stacks - numerators, limits, scripts, set
+    // close - then the rows of a display, a little further apart. Two
+    // equations one under the other are further apart still, and an
+    // equation's limits are never taken by the one below it.
+    let merged = merge_candidates(candidates, &barriers, &gutters, &[], STACK_GAP_EMS);
+    let mut merged = merge_candidates(merged, &barriers, &gutters, &tags, ROW_GAP_EMS);
+    // The space between two lines of a paragraph: a display stands further
+    // from the text above it than that (double-spaced theses set it wide).
+    let leading = {
+        let mut lines: Vec<&Barrier> = barriers.iter().collect();
+        lines.sort_by(|a, b| a.2.total_cmp(&b.2));
+        let gaps: Vec<f32> = lines
+            .iter()
+            .enumerate()
+            .filter_map(|(i, a)| {
+                lines[i + 1..]
+                    .iter()
+                    .find(|b| b.2 >= a.3 && b.0 < a.1 && b.1 > a.0)
+                    .map(|b| b.2 - a.3)
+                    .filter(|&gap| gap < 2.0 * page_em)
+            })
+            .collect();
+        if gaps.len() >= 3 {
+            median(gaps).min(1.5 * page_em)
+        } else {
+            0.1 * page_em
+        }
+    };
 
     // A short text segment hugging a candidate from above or below and
     // lying within its width is part of it: a fraction's "1" over "2".
@@ -1440,12 +1900,12 @@ pub fn equation_blocks(glyphs: &[GlyphDto], page_w: f32, _page_h: f32) -> Vec<Eq
         }
     }
     if absorbed {
-        merged = merge_candidates(merged, &barriers);
+        merged = merge_candidates(merged, &barriers, &gutters, &tags, ROW_GAP_EMS);
     }
     // A number belongs to the nearest block it sits level with, to its
     // left (on a two-column page the left column's display is level with
     // the right one's number too).
-    for segment in numbers {
+    for segment in numbers.drain(..) {
         let middle = (segment.top + segment.bottom) / 2.0;
         let owner = merged
             .iter_mut()
@@ -1454,11 +1914,38 @@ pub fn equation_blocks(glyphs: &[GlyphDto], page_w: f32, _page_h: f32) -> Vec<Eq
                     && middle >= c.top - 0.5 * c.em
                     && middle <= c.bottom + 0.5 * c.em
                     // Right of it, or of most of it: a number centred on
-                    // two lines may sit beside the shorter one.
-                    && segment.right > c.right
-                    && segment.left > (c.left + c.right) / 2.0
+                    // two lines may sit beside the shorter one; or left of
+                    // it (`leqno`).
+                    && ((segment.right > c.right && segment.left > (c.left + c.right) / 2.0)
+                        || (segment.left < c.left && segment.right < (c.left + c.right) / 2.0))
+                    && !across_gutter((c.left, c.right), (segment.left, segment.right), &gutters)
             })
             .max_by(|a, b| a.right.total_cmp(&b.right));
+        if let Some(c) = owner {
+            c.number = equation_number(&segment.text());
+            continue;
+        }
+        // A number its equation left no room for, on a line of its own:
+        // under the equation's end, or (`leqno`) over its start.
+        let owner = merged
+            .iter_mut()
+            .filter(|c| {
+                let below = segment.top >= c.bottom - 0.2 * c.em
+                    && segment.top - c.bottom <= ROW_GAP_EMS * c.em
+                    && segment.right >= c.right - 2.0 * c.em
+                    && segment.left > (c.left + c.right) / 2.0;
+                let above = segment.bottom <= c.top + 0.2 * c.em
+                    && c.top - segment.bottom <= ROW_GAP_EMS * c.em
+                    && segment.left <= c.left + c.em
+                    && segment.right < (c.left + c.right) / 2.0;
+                c.number.is_none()
+                    && (below || above)
+                    && !across_gutter((c.left, c.right), (segment.left, segment.right), &gutters)
+            })
+            .min_by(|a, b| {
+                let gap = |c: &Candidate| (segment.top - c.bottom).max(c.top - segment.bottom);
+                gap(a).total_cmp(&gap(b))
+            });
         if let Some(c) = owner {
             c.number = equation_number(&segment.text());
         }
@@ -1484,6 +1971,9 @@ pub fn equation_blocks(glyphs: &[GlyphDto], page_w: f32, _page_h: f32) -> Vec<Eq
             if c.chars - c.bare < 2 || c.alnum == 0 || c.largest < 0.8 * page_em {
                 return None;
             }
+            if inline_with(&c, &barriers) {
+                return None;
+            }
             let [x, y, w, h] = union(c.boxes.iter().copied())?;
             let (col_left, col_right) = column(x + w / 2.0);
             let col_width = (col_right - col_left).max(1.0);
@@ -1499,16 +1989,54 @@ pub fn equation_blocks(glyphs: &[GlyphDto], page_w: f32, _page_h: f32) -> Vec<Eq
             let set_apart = c.number.is_some()
                 || !barriers.iter().any(|&(left, right, _, bottom)| {
                     bottom <= c.top + 0.1 * c.em
-                        && c.top - bottom < 0.5 * c.em
+                        && c.top - bottom < leading + 0.4 * c.em
                         && left < c.right
                         && right > c.left
                 });
-            let flush_left =
-                (x - col_left).abs() < 0.05 * col_width && w < 0.9 * col_width && set_apart;
-            (centred || flush_left).then_some(EquationBlockDto {
-                bbox: [x, y, w, h],
-                number: c.number,
-            })
+            // And from the text below it.
+            let set_apart_below = c.number.is_some()
+                || !barriers.iter().any(|&(left, right, top, _)| {
+                    top >= c.bottom - 0.1 * c.em
+                        && top - c.bottom < leading + 0.4 * c.em
+                        && left < c.right
+                        && right > c.left
+                });
+            // Words of prose in it: a list item's run-in heading, a line
+            // of a paragraph indented under its item.
+            let words = prose_words(
+                &chars
+                    .iter()
+                    .copied()
+                    .filter(|g| inside(centre_of(&drawn(g)), &[x, y, w, h]))
+                    .collect::<Vec<_>>(),
+                page_em,
+            );
+            let flush_left = (x - col_left).abs() < 0.05 * col_width
+                && w < 0.9 * col_width
+                && set_apart
+                && words == 0;
+            // Indented by `fleqn`'s \mathindent, clear of the right margin.
+            let indented = set_apart
+                && words == 0
+                && x - col_left >= 0.8 * c.em
+                && x - col_left <= 6.0 * c.em
+                && col_right - (x + w) >= 2.0 * c.em;
+            // A numbered equation as wide as its column (a narrow column of
+            // a two-column page): the number says it is a display; so does
+            // space above and below an unnumbered one with no words in it.
+            let wide = x >= col_left - 0.5 * c.em && x + w <= col_right + 2.0 * c.em;
+            let numbered_wide = wide && c.number.is_some();
+            let apart_wide = wide && set_apart && set_apart_below && words == 0;
+            // A line of words that happens to sit mid-column (a list item
+            // with a formula in it) is no display; a display's words are a
+            // few: "for all", "subject to", "otherwise".
+            let centred = centred && (words < 3 || c.number.is_some());
+            (centred || flush_left || indented || numbered_wide || apart_wide).then_some(
+                EquationBlockDto {
+                    bbox: [x, y, w, h],
+                    number: c.number,
+                },
+            )
         })
         .collect()
 }
@@ -1529,6 +2057,12 @@ struct InkLine {
     mathy: bool,
     /// The median size of its glyphs.
     size: f32,
+    /// Where its relation symbols stand.
+    relations: Vec<f32>,
+    /// Set as close under the line above as a paragraph's lines are.
+    glued: bool,
+    /// Centred in its column.
+    centred: bool,
 }
 
 /// Where a glyph is drawn: its ink box when PDFium gave one, else its loose
@@ -1578,7 +2112,12 @@ fn is_math_char(c: char) -> bool {
 /// Consecutive display lines with no prose between them are one display,
 /// unless each has its own number.
 pub fn raster_displays(glyphs: &[GlyphDto], raster: &vision::PageRaster) -> Vec<EquationBlockDto> {
-    displays_from_lines(glyphs, &ink_lines(glyphs, raster))
+    let chars: Vec<&GlyphDto> = glyphs
+        .iter()
+        .filter(|g| !g.is_rule() && g.w > 0.0)
+        .collect();
+    let gutters = gutters(&chars, raster.bits.w as f32 / raster.scale);
+    displays_from_lines(glyphs, &ink_lines(glyphs, raster, &gutters))
 }
 
 /// The lines of running text the raster found, `[x, y, w, h]`.
@@ -1603,7 +2142,7 @@ fn displays_from_lines(
 ) -> Vec<EquationBlockDto> {
     let lines = lines.to_vec();
     let mut out: Vec<EquationBlockDto> = Vec::new();
-    let mut current: Option<(EquationBlockDto, f32)> = None;
+    let mut current: Option<(EquationBlockDto, f32, Vec<f32>)> = None;
     let page_em = median(
         glyphs
             .iter()
@@ -1614,27 +2153,37 @@ fn displays_from_lines(
     .max(1.0);
     for (column, column_lines) in lines {
         let _ = column;
+        let mut prose_above = false;
         for line in column_lines {
-            if !line.display {
-                if let Some((b, _)) = current.take() {
+            // An unnumbered line set close under a line of prose goes on
+            // with it: an item's second line, a paragraph's last.
+            let continues = line.glued && !line.centred && line.number.is_none() && prose_above;
+            prose_above = !line.display && !line.mathy;
+            if !line.display || continues {
+                if let Some((b, ..)) = current.take() {
                     out.push(b);
                 }
                 continue;
             }
             let bottom = line.bbox[1] + line.bbox[3];
             match current.as_mut() {
-                Some((b, prev_bottom))
-                    if line.bbox[1] - *prev_bottom <= 1.5 * page_em
-                        && !(b.number.is_some() && line.number.is_some()) =>
+                Some((b, prev_bottom, relations))
+                    if line.bbox[1] - *prev_bottom <= INK_ROW_GAP_EMS * page_em
+                        && (b.number.is_none()
+                            || line.number.is_none()
+                            || relations
+                                .iter()
+                                .any(|a| line.relations.iter().any(|r| (a - r).abs() < 1.0))) =>
                 {
                     b.bbox = union_pt(b.bbox, line.bbox);
                     if b.number.is_none() {
                         b.number = line.number.clone();
                     }
                     *prev_bottom = bottom;
+                    relations.extend(line.relations.iter().copied());
                 }
                 _ => {
-                    if let Some((b, _)) = current.take() {
+                    if let Some((b, ..)) = current.take() {
                         out.push(b);
                     }
                     current = Some((
@@ -1643,11 +2192,12 @@ fn displays_from_lines(
                             number: line.number.clone(),
                         },
                         bottom,
+                        line.relations.clone(),
                     ));
                 }
             }
         }
-        if let Some((b, _)) = current.take() {
+        if let Some((b, ..)) = current.take() {
             out.push(b);
         }
     }
@@ -1659,6 +2209,7 @@ fn displays_from_lines(
 fn ink_lines(
     glyphs: &[GlyphDto],
     raster: &vision::PageRaster,
+    gutters: &[(f32, f32)],
 ) -> Vec<(vision::PxBox, Vec<InkLine>)> {
     let chars: Vec<&GlyphDto> = glyphs
         .iter()
@@ -1756,7 +2307,30 @@ fn ink_lines(
         let wide: Vec<&vision::PxBox> = boxes.iter().filter(|b| b.w() * 10 >= widest * 6).collect();
         let col_left = median(wide.iter().map(|b| b.x0 as f32).collect()) / raster.scale;
         let col_right = median(wide.iter().map(|b| b.x1 as f32).collect()) / raster.scale;
-        let mut lines: Vec<InkLine> = Vec::new();
+        // The gutters this column of the cut runs across: where the cut
+        // failed to part two columns (their lines level, a display in each).
+        let col_pt = raster.to_pt(&column);
+        let inner: Vec<(f32, f32)> = gutters
+            .iter()
+            .copied()
+            .filter(|&(g0, g1)| g0 > col_pt[0] && g1 < col_pt[0] + col_pt[2])
+            .collect();
+        // Lines by the side of the gutters they are on; a line across one
+        // keeps to itself.
+        let mut sides: std::collections::BTreeMap<usize, Vec<InkLine>> = Default::default();
+        // The space between the lines of the column's paragraphs.
+        let leading = {
+            let gaps: Vec<f32> = boxes
+                .windows(2)
+                .map(|w| (w[1].y0 as f32 - w[0].y1 as f32) / raster.scale)
+                .filter(|&g| g > 0.0 && g < 2.0 * em)
+                .collect();
+            if gaps.len() >= 3 {
+                median(gaps).min(1.5 * em)
+            } else {
+                0.0
+            }
+        };
         for (k, b) in boxes.iter().enumerate() {
             let pt = raster.to_pt(b);
             let members: Vec<&GlyphDto> = chars
@@ -1774,16 +2348,96 @@ fn ink_lines(
             } else {
                 f32::MAX
             };
-            let has_rule = rules
-                .iter()
-                .any(|r| r.intersection_area(b) > 0 && r.w() > em_px / 2);
-            lines.push(classify_line(
-                pt, &members, has_rule, col_left, col_right, em, gap_above, gap_below,
-            ));
+            for (piece, piece_members, side) in split_at_gutters(pt, &members, &inner) {
+                let (left, right) = match side {
+                    Some(i) => (
+                        if i == 0 { col_left } else { inner[i - 1].1 },
+                        inner.get(i).map_or(col_right, |g| g.0),
+                    ),
+                    None => (col_left, col_right),
+                };
+                let piece_px = raster.to_px(piece);
+                let has_rule = rules
+                    .iter()
+                    .any(|r| r.intersection_area(&piece_px) > 0 && r.w() > em_px / 2);
+                sides
+                    .entry(side.unwrap_or(usize::MAX))
+                    .or_default()
+                    .push(classify_line(
+                        piece,
+                        &piece_members,
+                        has_rule,
+                        left,
+                        right,
+                        em,
+                        gap_above,
+                        gap_below,
+                        leading,
+                    ));
+            }
         }
-        out.push((column, lines));
+        for (_, lines) in sides {
+            out.push((column, lines));
+        }
     }
     out
+}
+
+/// A line of the raster cut at the gutters it crosses, when nothing of it
+/// runs through them: two columns' lines the cut took for one. Each piece
+/// with its glyphs and the side of the gutters it is on (`None` for a line
+/// set across them).
+fn split_at_gutters<'a>(
+    pt: [f32; 4],
+    members: &[&'a GlyphDto],
+    gutters: &[(f32, f32)],
+) -> Vec<([f32; 4], Vec<&'a GlyphDto>, Option<usize>)> {
+    let side_of = |x0: f32, x1: f32| column_side(x0, x1, gutters);
+    if let Some(side) = side_of(pt[0], pt[0] + pt[2]) {
+        return vec![(pt, members.to_vec(), Some(side))];
+    }
+    // No clear space anywhere in a gutter it crosses: a line set across
+    // the columns, not two columns' lines side by side (one of which may
+    // run a little into the gutter).
+    let em = median(members.iter().map(|g| g.size).collect()).max(1.0);
+    let crossed = gutters.iter().any(|&(g0, g1)| {
+        if !(pt[0] < g0 && pt[0] + pt[2] > g1) {
+            return false;
+        }
+        let mut inks: Vec<(f32, f32)> = members
+            .iter()
+            .map(|g| drawn(g))
+            .filter(|d| d[0] < g1 && d[0] + d[2] > g0)
+            .map(|d| (d[0].max(g0), (d[0] + d[2]).min(g1)))
+            .collect();
+        inks.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut edge = g0;
+        let mut widest = 0.0f32;
+        for (a, b) in inks {
+            widest = widest.max(a - edge);
+            edge = edge.max(b);
+        }
+        widest = widest.max(g1 - edge);
+        widest < 0.4 * em
+    });
+    if crossed || members.is_empty() {
+        return vec![(pt, members.to_vec(), None)];
+    }
+    let mut pieces: std::collections::BTreeMap<usize, Vec<&GlyphDto>> = Default::default();
+    for g in members {
+        let d = drawn(g);
+        if let Some(side) = side_of(d[0], d[0] + d[2]) {
+            pieces.entry(side).or_default().push(g);
+        }
+    }
+    pieces
+        .into_iter()
+        .filter_map(|(side, glyphs)| {
+            let ink = glyphs.iter().map(|g| drawn(g)).reduce(union_pt)?;
+            // The piece's ink across, the line's band down.
+            Some(([ink[0], pt[1], ink[2], pt[3]], glyphs, Some(side)))
+        })
+        .collect()
 }
 
 /// What a line of a column is: its ink without a trailing equation number,
@@ -1798,6 +2452,7 @@ fn classify_line(
     em: f32,
     gap_above: f32,
     gap_below: f32,
+    leading: f32,
 ) -> InkLine {
     let mut bbox = pt;
     // A trailing "(n)" set apart at the right: the number.
@@ -1814,7 +2469,10 @@ fn classify_line(
             .iter()
             .all(|g| (g.baseline - sorted[at].baseline).abs() < 0.1 * em);
         if let (Some(n), true) = (equation_number(&tail), level) {
-            if at > 0 && sorted[at].x - before >= 0.8 * em && pt[0] + pt[2] >= col_right - em {
+            if at > 0
+                && sorted[at].x - before >= TAG_SEP_EMS * em
+                && pt[0] + pt[2] >= col_right - em
+            {
                 number = Some(n);
                 let keep: Vec<[f32; 4]> = sorted[..at].iter().map(|g| drawn(g)).collect();
                 if let Some(u) = keep.into_iter().reduce(union_pt) {
@@ -1859,11 +2517,22 @@ fn classify_line(
             is_math_font_name(&g.font) || g.text.is_empty() || g.text.chars().any(is_math_char)
         })
         .count();
+    let body_glyphs: Vec<&GlyphDto> = body.iter().map(|g| **g).collect();
+    let main = body_glyphs.iter().map(|g| g.size).fold(0.0, f32::max);
+    let operators = operator_letters(&body_glyphs);
+    let operator = |g: &GlyphDto| {
+        body_glyphs
+            .iter()
+            .zip(&operators)
+            .any(|(o, op)| *op && std::ptr::eq(*o, g))
+    };
     let wordy = |g: &GlyphDto| {
         !is_math_font_name(&g.font)
             && g.text
                 .chars()
                 .any(|c| c.is_alphabetic() && !is_math_char(c))
+            && !operator(g)
+            && !is_script(g, main)
     };
     let words = body.iter().filter(|g| wordy(g)).count() as f32 / n;
     // Letters in long words (five letters or more, run together on one
@@ -1905,10 +2574,15 @@ fn classify_line(
         && prose <= if inset { 0.35 } else { 0.25 };
     // Ending in a colon, a line introduces what follows.
     let colon = body.last().is_some_and(|g| g.text == ":");
-    let apart = gap_above > 0.45 * em && gap_below > 0.45 * em;
+    // Further from its neighbours than the lines of a paragraph are.
+    let apart_by = (0.45 * em).max(leading + 0.3 * em);
+    let apart = gap_above > apart_by && gap_below > apart_by;
+    // Indented and full of words, a line is a list item: "Exact
+    // Agnostic: for all finite S, ...".
+    let item = prose_words(&body_glyphs, em) >= 3;
     let display = mathy
         && !colon
-        && (inset
+        && ((inset && !item)
             || (number.is_some() && left > -0.5 * em)
             || (apart && left.abs() < 0.5 * em && right > 3.0 * em && words <= 0.2));
     InkLine {
@@ -1917,25 +2591,79 @@ fn classify_line(
         display,
         mathy,
         size: median(body.iter().map(|g| g.size).collect()),
+        relations: body
+            .iter()
+            .filter(|g| is_relation(g))
+            .map(|g| g.x)
+            .collect(),
+        glued: gap_above <= leading + 0.15 * em,
+        centred: ((bbox[0] + bbox[2] / 2.0) - (col_left + col_right) / 2.0).abs()
+            <= 0.1 * (col_right - col_left),
     }
+}
+
+/// Whether most of a block lies inside one of a page's floats. A numbered
+/// display is never in one: a table's cells and a plot's labels carry no
+/// number at the column's edge, and a float found a little too large must
+/// not take the equation under it.
+fn in_float(block: &EquationBlockDto, floats: &[[f32; 4]]) -> bool {
+    let b = &block.bbox;
+    if block.number.is_some() {
+        return false;
+    }
+    let area = b[2].max(0.0) * b[3].max(0.0);
+    floats.iter().any(|f| {
+        let w = (b[0] + b[2]).min(f[0] + f[2]) - b[0].max(f[0]);
+        let h = (b[1] + b[3]).min(f[1] + f[3]) - b[1].max(f[1]);
+        w > 0.0 && h > 0.0 && w * h >= 0.5 * area
+    })
+}
+
+/// The display equations of a page: [`equation_blocks_with_raster`] with
+/// the page's floats (figures, tables, algorithms, found from their
+/// captions in `runs`) kept out. An axis label set as `$\tau(s)$`, a row
+/// of a table of numbers, a line of an algorithm are mathematics standing
+/// apart from the prose, and no display.
+pub fn page_equation_blocks(
+    glyphs: &[GlyphDto],
+    raster: Option<&vision::PageRaster>,
+    runs: &[crate::engine::types::TextRun],
+    page_w: f32,
+    page_h: f32,
+) -> Vec<EquationBlockDto> {
+    // y-up to top-left
+    let floats: Vec<[f32; 4]> = crate::engine::floats::float_regions(runs, page_w, page_h)
+        .into_iter()
+        .map(|[x, y, w, h]| [x, page_h - y - h, w, h])
+        .collect();
+    equation_blocks_with_raster(glyphs, raster, page_w, page_h, &floats)
 }
 
 /// Display equations of a page, from its glyphs and, when there is one,
 /// its raster. The raster's displays are taken whole: their extent comes
 /// from the ink, numerators, limits and every line of the display
-/// included. A block found from the glyphs alone is kept where the raster
-/// has no display of its own over it.
+/// included - unless that takes in a line of prose, or a second equation
+/// the glyphs found apart. A block found from the glyphs alone is kept
+/// where the raster has no display of its own over it. Blocks mostly inside
+/// one of `floats` (`[x, y, w, h]`, top-left origin) are dropped, unless
+/// numbered.
 pub fn equation_blocks_with_raster(
     glyphs: &[GlyphDto],
     raster: Option<&vision::PageRaster>,
     page_w: f32,
     page_h: f32,
+    floats: &[[f32; 4]],
 ) -> Vec<EquationBlockDto> {
-    let from_glyphs = equation_blocks(glyphs, page_w, page_h);
+    let mut from_glyphs = equation_blocks(glyphs, page_w, page_h);
+    from_glyphs.retain(|b| !in_float(b, floats));
     let Some(raster) = raster else {
         return from_glyphs;
     };
-    let lines = ink_lines(glyphs, raster);
+    let chars: Vec<&GlyphDto> = glyphs
+        .iter()
+        .filter(|g| !g.is_rule() && g.w > 0.0)
+        .collect();
+    let lines = ink_lines(glyphs, raster, &gutters(&chars, page_w));
     let page_em = median(
         glyphs
             .iter()
@@ -1946,7 +2674,12 @@ pub fn equation_blocks_with_raster(
     .max(1.0);
     let prose = text_lines(&lines, page_em);
     let mut out = displays_from_lines(glyphs, &lines);
+    out.retain(|b| !in_float(b, floats));
+    // The glyphs' blocks as found, to tell a raster display over two of
+    // them: two equations set close, which the raster took for one.
+    let found: Vec<[f32; 4]> = from_glyphs.iter().map(|b| b.bbox).collect();
     for mut b in from_glyphs {
+        let own = b.bbox;
         // A line of prose the raster saw is no part of a display: the
         // glyphs' outline is cut back from it, or dropped if inside one.
         for t in &prose {
@@ -1983,8 +2716,26 @@ pub fn equation_blocks_with_raster(
         let mut merged = b;
         let mut numbers = Vec::new();
         for r in hit {
-            merged.bbox = union_pt(merged.bbox, r.bbox);
-            numbers.push((r.bbox[1], r.number));
+            // A raster line that ran the display into the line of prose
+            // above or below it adds only its number.
+            let around = merged.bbox;
+            let outside: Vec<&GlyphDto> = chars
+                .iter()
+                .copied()
+                .filter(|g| {
+                    let c = centre_of(&drawn(g));
+                    inside(c, &r.bbox) && !inside(c, &around)
+                })
+                .collect();
+            let shared = found
+                .iter()
+                .any(|o| *o != own && overlaps_pt(o, &r.bbox) && !overlaps_pt(o, &own));
+            if prose_words(&outside, page_em) < 4 && !shared {
+                merged.bbox = union_pt(merged.bbox, r.bbox);
+            }
+            if !shared {
+                numbers.push((r.bbox[1], r.number));
+            }
         }
         if merged.number.is_none() {
             numbers.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -2849,6 +3600,295 @@ mod tests {
         assert_eq!(equation_number("(x)"), None);
         assert_eq!(equation_number("3"), None);
         assert_eq!(equation_number("(see the appendix 3)"), None);
+    }
+
+    // ---------- display regressions, modelled on real pages ----------
+
+    /// A two-column page: `lines` lines of text in each column, the left
+    /// from 54 to 290, the right from 320 to 556, from `top` down.
+    fn two_columns(top: f32, lines: usize) -> Vec<GlyphDto> {
+        let mut glyphs = Vec::new();
+        for i in 0..lines {
+            glyphs.extend(text_line(54.0, 290.0, top + 12.0 * i as f32));
+            glyphs.extend(text_line(320.0, 556.0, top + 12.0 * i as f32));
+        }
+        glyphs
+    }
+
+    #[test]
+    fn two_numbered_equations_set_close_keep_their_own_limits() {
+        // Two displays one under the other (IEEE's narrow column), each
+        // numbered; the first's limits sit closer to it than to the second
+        // equation's numerator, which used to take them and both lines.
+        let mut glyphs = Vec::new();
+        for i in 0..4 {
+            glyphs.extend(body_line(100.0 + 12.0 * i as f32));
+        }
+        glyphs.extend(set("R=", "CMMI10", 250.0, 200.0));
+        let mut sum = glyph("\u{2211}", "CMEX10", 10.0, 262.0, 200.0);
+        sum.ink = Some([262.0, 190.0, 8.0, 13.0]);
+        glyphs.push(sum);
+        glyphs.extend(set("f", "CMMI10", 272.0, 200.0));
+        glyphs.push(glyph("i=1", "CMR7", 7.0, 260.0, 209.0));
+        glyphs.extend(set("(2)", "CMR10", 525.0, 200.0));
+        glyphs.extend(set("1", "CMR10", 290.0, 222.0));
+        glyphs.push(rule_glyph(286.0, 225.0, 14.0, 0.4).unwrap());
+        glyphs.extend(set("s", "CMMI10", 290.0, 235.0));
+        glyphs.extend(set("S=2+", "CMMI10", 240.0, 229.0));
+        glyphs.extend(set("(3)", "CMR10", 525.0, 229.0));
+        for i in 0..3 {
+            glyphs.extend(body_line(260.0 + 12.0 * i as f32));
+        }
+        let blocks = equation_blocks(&glyphs, 612.0, 792.0);
+        let numbers: Vec<Option<&str>> = blocks.iter().map(|b| b.number.as_deref()).collect();
+        assert_eq!(numbers, [Some("2"), Some("3")], "{blocks:?}");
+        // The limits are the first equation's.
+        let [_, y, _, h] = blocks[0].bbox;
+        assert!(y + h >= 209.0 && y + h < 214.0, "{:?}", blocks[0].bbox);
+        assert!(blocks[1].bbox[1] > 210.0, "{:?}", blocks[1].bbox);
+    }
+
+    #[test]
+    fn rows_numbered_line_by_line_are_one_display_when_aligned() {
+        let mut glyphs = Vec::new();
+        for i in 0..4 {
+            glyphs.extend(body_line(100.0 + 12.0 * i as f32));
+        }
+        // An `align`: the second row's "=" under the first's.
+        glyphs.extend(set("x=y+z", "CMMI10", 280.0, 180.0));
+        glyphs.extend(set("=2z", "CMMI10", 285.0, 194.0));
+        glyphs.extend(set("(1)", "CMR10", 525.0, 180.0));
+        glyphs.extend(set("(2)", "CMR10", 525.0, 194.0));
+        // A `gather`: each row centred on its own.
+        glyphs.extend(set("a=b", "CMMI10", 295.0, 260.0));
+        glyphs.extend(set("cd+ef=g", "CMMI10", 285.0, 274.0));
+        glyphs.extend(set("(3)", "CMR10", 525.0, 260.0));
+        glyphs.extend(set("(4)", "CMR10", 525.0, 274.0));
+        for i in 0..3 {
+            glyphs.extend(body_line(300.0 + 12.0 * i as f32));
+        }
+        let mut text = body_line(220.0);
+        text.extend(body_line(232.0));
+        glyphs.extend(text);
+        let blocks = equation_blocks(&glyphs, 612.0, 792.0);
+        let numbers: Vec<Option<&str>> = blocks.iter().map(|b| b.number.as_deref()).collect();
+        assert_eq!(numbers, [Some("1"), Some("3"), Some("4")], "{blocks:?}");
+        let [_, y, _, h] = blocks[0].bbox;
+        assert!(y < 175.0 && y + h > 194.0, "{:?}", blocks[0].bbox);
+    }
+
+    #[test]
+    fn displays_level_in_two_columns_stay_two() {
+        let mut glyphs = two_columns(100.0, 5);
+        glyphs.extend(set("x=y+z", "CMMI10", 140.0, 172.0));
+        glyphs.extend(set("(1)", "CMR10", 275.0, 172.0));
+        glyphs.extend(set("u=v-w", "CMMI10", 410.0, 172.0));
+        glyphs.extend(set("(5)", "CMR10", 541.0, 172.0));
+        glyphs.extend(two_columns(196.0, 5));
+        let blocks = equation_blocks(&glyphs, 612.0, 792.0);
+        let numbers: Vec<Option<&str>> = blocks.iter().map(|b| b.number.as_deref()).collect();
+        assert_eq!(numbers, [Some("1"), Some("5")], "{blocks:?}");
+        assert!(blocks.iter().all(|b| b.bbox[2] < 60.0), "{blocks:?}");
+    }
+
+    #[test]
+    fn a_number_pushed_under_its_long_row_still_numbers_it() {
+        // A row as wide as its narrow column, its number on the line below
+        // (2512.24540, eq. 48).
+        let mut glyphs = two_columns(100.0, 5);
+        glyphs.extend(set(
+            "fgh=pq+rs+tu+vw+xy+ab+cd+ef+gh+ij+kl+mn+op+qr+st",
+            "CMMI10",
+            54.0,
+            172.0,
+        ));
+        glyphs.extend(set("(48)", "CMR10", 272.0, 184.0));
+        glyphs.extend(text_line(320.0, 556.0, 172.0));
+        glyphs.extend(text_line(320.0, 556.0, 184.0));
+        glyphs.extend(two_columns(208.0, 5));
+        let blocks = equation_blocks(&glyphs, 612.0, 792.0);
+        assert_eq!(blocks.len(), 1, "{blocks:?}");
+        assert_eq!(blocks[0].number.as_deref(), Some("48"));
+        let [x, y, w, h] = blocks[0].bbox;
+        assert!(x <= 55.0 && x + w > 280.0, "{:?}", blocks[0].bbox);
+        // The number is no part of the box.
+        assert!(y + h < 180.0, "{:?}", blocks[0].bbox);
+    }
+
+    #[test]
+    fn a_number_on_the_left_numbers_its_display() {
+        // `leqno`: "(6)" at the left margin, level with the equation.
+        let mut glyphs = Vec::new();
+        for i in 0..4 {
+            glyphs.extend(body_line(100.0 + 12.0 * i as f32));
+        }
+        glyphs.extend(set("(6)", "CMR10", 72.0, 180.0));
+        glyphs.extend(set("x=y+z", "CMMI10", 280.0, 180.0));
+        for i in 0..3 {
+            glyphs.extend(body_line(210.0 + 12.0 * i as f32));
+        }
+        let blocks = equation_blocks(&glyphs, 612.0, 792.0);
+        assert_eq!(blocks.len(), 1, "{blocks:?}");
+        assert_eq!(blocks[0].number.as_deref(), Some("6"));
+        assert!(blocks[0].bbox[0] >= 279.0, "{:?}", blocks[0].bbox);
+    }
+
+    #[test]
+    fn a_list_item_with_a_formula_is_no_display() {
+        // "Exact Agnostic: for all finite S, L(S) <= inf L(c)." set apart
+        // as an item, near the middle of the column (attias25a, p. 5).
+        let mut glyphs = Vec::new();
+        for i in 0..4 {
+            glyphs.extend(body_line(100.0 + 12.0 * i as f32));
+        }
+        glyphs.extend(set(
+            "Exact Agnostic: For all finite",
+            "Times-Bold",
+            140.0,
+            174.0,
+        ));
+        glyphs.extend(set("S,L(S)<=infL(c).", "CMMI10", 282.0, 174.0));
+        for i in 0..3 {
+            glyphs.extend(body_line(196.0 + 12.0 * i as f32));
+        }
+        assert!(equation_blocks(&glyphs, 612.0, 792.0).is_empty());
+    }
+
+    #[test]
+    fn scripts_split_off_a_line_of_prose_are_no_display() {
+        // An inline "A_i" lowered by a delimiter falls into a row of its own
+        // under its line; it is the line's, not a display.
+        let mut glyphs = Vec::new();
+        for i in 0..6 {
+            glyphs.extend(body_line(100.0 + 12.0 * i as f32));
+        }
+        glyphs.extend(set("A", "CMMI10", 300.0, 166.0));
+        glyphs.push(glyph("i", "CMMI7", 7.0, 306.0, 168.0));
+        glyphs.extend(set("B", "CMMI10", 320.0, 166.0));
+        glyphs.push(glyph("i", "CMMI7", 7.0, 326.0, 168.0));
+        assert!(equation_blocks(&glyphs, 612.0, 792.0).is_empty());
+    }
+
+    #[test]
+    fn upright_superscripts_and_operator_names_are_no_words() {
+        // A display set flush with the column's edge (`fleqn`, a long row),
+        // its exponent and the "eq" over each density in the text font, its
+        // "log" upright: mathematics, not a line of words.
+        let mut glyphs = Vec::new();
+        for i in 0..4 {
+            glyphs.extend(body_line(100.0 + 12.0 * i as f32));
+        }
+        let mut x = 72.0;
+        for _ in 0..4 {
+            glyphs.extend(set("p(t)=", "CMMI10", x, 180.0));
+            glyphs.extend(set("log", "CMR10", x + 26.0, 180.0));
+            glyphs.push(glyph("eq", "CMR7", 7.0, x + 42.0, 176.0));
+            glyphs.push(glyph("Lu", "CMMI7", 7.0, x + 50.0, 176.0));
+            x += 70.0;
+        }
+        glyphs.extend(set("(51)", "CMR10", 520.0, 180.0));
+        for i in 0..3 {
+            glyphs.extend(body_line(204.0 + 12.0 * i as f32));
+        }
+        let blocks = equation_blocks(&glyphs, 612.0, 792.0);
+        assert_eq!(blocks.len(), 1, "{blocks:?}");
+        assert_eq!(blocks[0].number.as_deref(), Some("51"));
+    }
+
+    #[test]
+    fn a_floats_labels_are_no_display() {
+        // "tau(s)" centred under a plot: mathematics apart from the text,
+        // inside a figure.
+        let mut glyphs = Vec::new();
+        for i in 0..4 {
+            glyphs.extend(body_line(100.0 + 12.0 * i as f32));
+        }
+        glyphs.extend(set("\u{03C4}(s)", "CMMI10", 296.0, 300.0));
+        for i in 0..3 {
+            glyphs.extend(body_line(340.0 + 12.0 * i as f32));
+        }
+        assert_eq!(
+            equation_blocks_with_raster(&glyphs, None, 612.0, 792.0, &[]).len(),
+            1
+        );
+        let figure = [72.0, 160.0, 468.0, 170.0];
+        assert!(equation_blocks_with_raster(&glyphs, None, 612.0, 792.0, &[figure]).is_empty());
+    }
+
+    #[test]
+    fn gutters_part_columns_and_margins_of_line_numbers() {
+        let glyphs = two_columns(100.0, 20);
+        let chars: Vec<&GlyphDto> = glyphs.iter().collect();
+        let found = gutters(&chars, 612.0);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].0 >= 285.0 && found[0].1 <= 325.0, "{found:?}");
+        // One column, with a review copy's line numbers in the margin.
+        let mut glyphs = Vec::new();
+        for i in 0..20 {
+            let baseline = 100.0 + 12.0 * i as f32;
+            glyphs.extend(body_line(baseline));
+            glyphs.extend(set(&format!("{}", 100 + i), "Times-Roman", 30.0, baseline));
+        }
+        let chars: Vec<&GlyphDto> = glyphs.iter().collect();
+        let found = gutters(&chars, 612.0);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].1 <= 73.0, "{found:?}");
+        // One column alone has none.
+        let glyphs: Vec<GlyphDto> = (0..20)
+            .flat_map(|i| body_line(100.0 + 12.0 * i as f32))
+            .collect();
+        let chars: Vec<&GlyphDto> = glyphs.iter().collect();
+        assert!(gutters(&chars, 612.0).is_empty());
+    }
+
+    #[test]
+    fn a_raster_line_across_two_columns_is_cut_at_the_gutter() {
+        let gutters = [(291.0, 319.0)];
+        let mut members = set("x=y", "CMMI10", 140.0, 172.0);
+        members.extend(text_line(320.0, 556.0, 172.0));
+        let refs: Vec<&GlyphDto> = members.iter().collect();
+        let pieces = split_at_gutters([140.0, 162.0, 416.0, 14.0], &refs, &gutters);
+        let sides: Vec<Option<usize>> = pieces.iter().map(|p| p.2).collect();
+        assert_eq!(sides, [Some(0), Some(1)]);
+        assert!(pieces[0].0[0] + pieces[0].0[2] < 160.0, "{:?}", pieces[0].0);
+        // A display set across both columns stays whole.
+        let wide = set(
+            "a+b+c+d+e+f+g+h+i+j+k+l+m+n+o+p+q+r+s",
+            "CMMI10",
+            200.0,
+            172.0,
+        );
+        let refs: Vec<&GlyphDto> = wide.iter().collect();
+        let pieces = split_at_gutters([200.0, 162.0, 190.0, 14.0], &refs, &gutters);
+        assert_eq!(pieces.len(), 1);
+        assert_eq!(pieces[0].2, None);
+    }
+
+    #[test]
+    fn words_are_counted_at_their_own_size() {
+        // A footnote's words are words; a superscript's letters and an
+        // operator's name are not.
+        let footnote = set("case, we can interpret it", "Times-Roman", 72.0, 700.0);
+        let small: Vec<GlyphDto> = footnote
+            .into_iter()
+            .map(|mut g| {
+                g.size = 8.0;
+                g
+            })
+            .collect();
+        let refs: Vec<&GlyphDto> = small.iter().collect();
+        assert_eq!(prose_words(&refs, 10.0), 3);
+        let mut math = set("log", "CMR10", 72.0, 200.0);
+        math.push(glyph("max", "CMR7", 7.0, 90.0, 203.0));
+        let refs: Vec<&GlyphDto> = math.iter().collect();
+        assert_eq!(prose_words(&refs, 10.0), 0);
+    }
+
+    #[test]
+    fn symbol_tags_are_numbers() {
+        assert_eq!(equation_number("(\u{22C6})").as_deref(), Some("\u{22C6}"));
+        assert_eq!(equation_number("(**)").as_deref(), Some("**"));
+        assert_eq!(equation_number("(a)"), None);
     }
 
     // ---------- through PDFium ----------

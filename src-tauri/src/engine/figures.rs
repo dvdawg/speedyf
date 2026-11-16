@@ -183,6 +183,31 @@ pub fn parse_caption(line: &str) -> Option<(String, String)> {
         }
         n += 1;
     }
+    // Or a roman numeral, as IEEE sets its tables: "TABLE IV".
+    if n == 0 {
+        let roman = bytes
+            .iter()
+            .take_while(|b| matches!(b, b'I' | b'V' | b'X' | b'L' | b'C'))
+            .count();
+        let ends = bytes.get(roman).is_none_or(|b| !b.is_ascii_alphanumeric());
+        if roman > 0 && roman <= 7 && ends {
+            n = roman;
+        }
+    }
+    // Or a supplement's or an appendix's: "FIG. S1", "Figure A.2".
+    let digit_at = |i: usize| bytes.get(i).is_some_and(u8::is_ascii_digit);
+    if n == 0
+        && bytes.first().is_some_and(u8::is_ascii_uppercase)
+        && (digit_at(1) || (bytes.get(1) == Some(&b'.') && digit_at(2)))
+    {
+        n = 1;
+        while n < bytes.len()
+            && (bytes[n].is_ascii_digit()
+                || (bytes[n] == b'.' && n + 1 < bytes.len() && bytes[n + 1].is_ascii_digit()))
+        {
+            n += 1;
+        }
+    }
     if n == 0 {
         return None;
     }
@@ -449,6 +474,29 @@ mod tests {
         assert_eq!(parse_caption("Theorem 3.1"), None);
         assert_eq!(parse_caption("Section 4: Results"), None);
         assert_eq!(parse_caption("Figure"), None);
+    }
+
+    #[test]
+    fn caption_numbers_in_roman_or_with_a_letter() {
+        // IEEE numbers its tables in capitals; supplements and appendices
+        // put a letter first.
+        assert_eq!(
+            parse_caption("TABLE IV"),
+            Some(("TABLE IV".into(), String::new()))
+        );
+        assert_eq!(
+            parse_caption("FIG. S1: Comparison of full numerical results"),
+            Some((
+                "FIG. S1".into(),
+                "Comparison of full numerical results".into()
+            ))
+        );
+        assert_eq!(
+            parse_caption("Figure A.2. Ablation"),
+            Some(("Figure A.2".into(), "Ablation".into()))
+        );
+        assert_eq!(parse_caption("Table I shows the results"), None);
+        assert_eq!(parse_caption("Figure Is"), None);
     }
 
     #[test]

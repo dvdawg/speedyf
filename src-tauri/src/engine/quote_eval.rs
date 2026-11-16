@@ -68,7 +68,7 @@ fn quote_eval_dump() {
         );
         let all = glyphs::extract_page_glyphs(b, handle, w, h);
         let raster = vision::render_raster(b, handle, w, h);
-        let blocks = glyphs::equation_blocks_with_raster(&all, raster.as_ref(), w, h);
+        let blocks = glyphs::page_equation_blocks(&all, raster.as_ref(), &runs, w, h);
         let displays = blocks
             .into_iter()
             .map(|block| Display {
