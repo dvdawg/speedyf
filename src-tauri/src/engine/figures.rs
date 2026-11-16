@@ -189,7 +189,14 @@ pub fn parse_caption(line: &str) -> Option<(String, String)> {
     let number = &rest[..n];
 
     let after = rest[n..].trim_start();
-    if !(after.is_empty() || after.starts_with([':', '.', ')', '|', '\u{2013}', '\u{2014}'])) {
+    // An algorithm box heads its title with no stop at all: "Algorithm 2
+    // A private algorithm for ..." - a capital after the number, where
+    // prose would run on in lower case ("Algorithm 2 runs ...").
+    let algorithm = word.starts_with("alg") && after.starts_with(char::is_uppercase);
+    if !(algorithm
+        || after.is_empty()
+        || after.starts_with([':', '.', ')', '|', '\u{2013}', '\u{2014}']))
+    {
         return None;
     }
 
@@ -559,6 +566,18 @@ mod tests {
             rect[1] + rect[3] <= 334.5,
             "took a slice of the caption: {rect:?}"
         );
+    }
+
+    #[test]
+    fn an_algorithm_box_title_is_a_caption_and_prose_is_not() {
+        assert_eq!(
+            parse_caption("Algorithm 2 A private algorithm for learning the subspace."),
+            Some((
+                "Algorithm 2".to_string(),
+                "A private algorithm for learning the subspace.".to_string()
+            ))
+        );
+        assert_eq!(parse_caption("Algorithm 2 runs in polynomial time."), None);
     }
 
     #[test]
