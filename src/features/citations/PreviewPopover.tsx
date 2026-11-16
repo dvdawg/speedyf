@@ -16,6 +16,7 @@ import { libraryStore } from './libraryStore';
 import {
   positionPreviewPopover,
   previewContentSize,
+  previewFitScale,
   previewPopoverSize,
   previewRasterStyle,
   type PreviewPopoverVariant,
@@ -46,10 +47,13 @@ function RasterCard(props: {
   pageNumber?: number | undefined;
   /** A line beside the page number: "Continues on the next page". */
   note?: string | undefined;
+  /** The internal card's fit: the raster's scale and the most room its
+   * viewport has before it scrolls. */
+  fit?: { scale: number; maxHeight: number } | undefined;
   activate: () => void;
 }) {
   const url = createMemo(() => urlFor(props.tab, props.preview));
-  const rasterStyle = createMemo(() => previewRasterStyle(props.preview));
+  const rasterStyle = createMemo(() => previewRasterStyle(props.preview, props.fit?.scale ?? 1));
   const [loaded, setLoaded] = createSignal(false);
   const [failed, setFailed] = createSignal(false);
   let rasterTimeout: number | undefined;
@@ -77,6 +81,11 @@ function RasterCard(props: {
       <div
         class="citation-preview-viewport"
         classList={{ 'is-scrollable': props.pageNumber !== undefined }}
+        style={
+          props.pageNumber !== undefined && props.fit
+            ? { 'max-height': `${props.fit.maxHeight}px` }
+            : undefined
+        }
       >
         <Show when={!failed()} fallback={<div class="citation-preview-text">{fallback()}</div>}>
           <Show when={!loaded()}>
@@ -185,7 +194,11 @@ function TermCard(props: { tab: TabRecord; span: HoverSpan }) {
   );
 }
 
-function PreviewContent(props: { tab: TabRecord; result: HoverPreview }) {
+function PreviewContent(props: {
+  tab: TabRecord;
+  result: HoverPreview;
+  fit?: { scale: number; maxHeight: number } | undefined;
+}) {
   return (
     <>
       <Show when={props.result.kind === 'span' ? props.result : null}>
@@ -196,6 +209,7 @@ function PreviewContent(props: { tab: TabRecord; result: HoverPreview }) {
             alt={`Preview of ${result().span.label}`}
             pageNumber={readerPage(props.tab, result().span.target.page) ?? undefined}
             note={result().span.target.continues ? 'Continues on the next page' : undefined}
+            fit={props.fit}
             activate={() => followSpan(props.tab, result().span)}
           />
         )}
@@ -210,6 +224,7 @@ function PreviewContent(props: { tab: TabRecord; result: HoverPreview }) {
             preview={result().preview}
             alt={`Preview of page ${result().page + 1}`}
             pageNumber={result().page + 1}
+            fit={props.fit}
             activate={() => {
               props.tab.citationStore.navigateInternalTarget({
                 kind: 'internal',
@@ -336,9 +351,22 @@ export default function PreviewPopover() {
     )
   );
 
+  // Border, padding and the card's margins around its raster, as in
+  // previewLayout's INTERNAL_CHROME_HEIGHT.
+  const fit = createMemo(() => {
+    const content = internalContentSize();
+    if (variant() !== 'internal' || !content) return undefined;
+    return {
+      scale: previewFitScale(viewportSize(), content),
+      maxHeight: Math.max(0, popoverSize().height - 42),
+    };
+  });
+
   const style = createMemo(() => ({
     ...position(),
-    ...(variant() === 'internal' ? { width: `${popoverSize().width}px` } : {}),
+    ...(variant() === 'internal'
+      ? { width: `${popoverSize().width}px`, 'max-height': `${popoverSize().height}px` }
+      : {}),
   }));
 
   return (
@@ -366,7 +394,7 @@ export default function PreviewPopover() {
               <div class="citation-preview-skeleton is-popover" aria-label="Loading preview" />
             </Show>
             <Show when={hover()?.result}>
-              {(result) => <PreviewContent tab={tab()} result={result()} />}
+              {(result) => <PreviewContent tab={tab()} result={result()} fit={fit()} />}
             </Show>
             <Show when={!hover()?.result && hover()?.error}>
               <div class="citation-metadata-card citation-preview-error" role="status">

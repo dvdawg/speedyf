@@ -1411,6 +1411,17 @@ fn following_lines(page: &Page, line: usize, gap: f32, keep: impl Fn(usize) -> b
 /// table below a table's, with the caption itself.
 fn caption_region(page: &Page, head: &Head) -> Rect {
     let line = &page.lines[head.line];
+    // The float as the link previews read it: artwork or table body and the
+    // whole caption, bounded by prose and by other floats' captions.
+    if let Some(rect) = crate::engine::floats::float_for_caption(
+        &runs_of(page),
+        page.width,
+        page.height,
+        line.x0,
+        line.baseline,
+    ) {
+        return rect;
+    }
     let caption_size = line.size;
     let caption_lines = following_lines(page, head.line, 1.2, |i| {
         let l = &page.lines[i];
@@ -1616,9 +1627,10 @@ fn prose_words(page: &Page, line: &Line) -> usize {
 fn runs_of(page: &Page) -> Vec<TextRun> {
     page.lines
         .iter()
-        .filter(|l| !l.flags.furniture)
-        .map(|l| TextRun {
-            text: String::new(),
+        .enumerate()
+        .filter(|(_, l)| !l.flags.furniture)
+        .map(|(i, l)| TextRun {
+            text: page.line_text(i),
             start: 0,
             x: l.x0,
             y: l.bottom,

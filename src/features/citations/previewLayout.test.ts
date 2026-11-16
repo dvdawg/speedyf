@@ -3,6 +3,7 @@ import type { AnchorRect } from './linkStore';
 import {
   positionPreviewPopover,
   previewContentSize,
+  previewFitScale,
   previewPopoverSize,
   previewRasterStyle,
 } from './previewLayout';
@@ -58,12 +59,24 @@ describe('preview popover geometry', () => {
     });
   });
 
-  it('caps tall content at the scrollable internal-card height', () => {
+  it('scales tall content down to a taller card, whole', () => {
+    // A figure with its caption: 518px of raster room, so 0.6475 of 800.
     const content = { width: 200, height: 800 };
+    expect(previewFitScale(viewport, content)).toBeCloseTo(0.6475);
     expect(previewPopoverSize(viewport, 'internal', content)).toEqual({
-      width: 226,
-      height: 384,
+      width: 156,
+      height: 560,
     });
+  });
+
+  it('scrolls rather than shrinking content past legibility', () => {
+    const content = { width: 400, height: 3_000 };
+    expect(previewFitScale(viewport, content)).toBeCloseTo(0.6);
+    expect(previewPopoverSize(viewport, 'internal', content).height).toBe(560);
+  });
+
+  it('never enlarges small content to fit', () => {
+    expect(previewFitScale(viewport, { width: 100, height: 60 })).toBe(1);
   });
 
   it('positions each variant within the lower-right viewport edge', () => {
