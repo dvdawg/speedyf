@@ -204,10 +204,14 @@ fn starts_section(text: &str) -> bool {
     let (Some(number), Some(word)) = (tokens.next(), tokens.next()) else {
         return false;
     };
+    // A heading is short and ends without a full stop; an enumerated
+    // sentence ("1. A is private.") is neither.
+    let short = text.split_whitespace().count() <= 12 && !text.trim_end().ends_with('.');
     is_number(number)
         && !number.starts_with('(')
         && word.starts_with(|c: char| c.is_uppercase())
         && word.chars().filter(|c| c.is_alphabetic()).count() >= 2
+        && short
 }
 
 /// The line `i` is followed by, in reading order, when it continues the
@@ -264,7 +268,9 @@ fn truth(page: &Page, target: &Target, anchor: Option<(Option<f32>, f32)>) -> Op
                 let t = text_of(page, j);
                 let new_column = lines[j].top > lines[i].top + 1.0;
                 let display = lines[j].is_display() || lines[i].is_display();
+                let page_number = !t.is_empty() && t.chars().all(|c| c.is_ascii_digit());
                 let ends = t.starts_with("Proof")
+                    || page_number
                     || starts_statement(&t)
                     || starts_section(&t)
                     || (!new_column && !display && gap(i, j) > gap0 + 3.5)
@@ -530,7 +536,13 @@ fn judge(page: &Page, crop: [f32; 4], truth: &Truth, tally: &mut Tally) -> Vec<S
             truth.lines.len()
         ));
     }
-    if let Some(&i) = truth.outside.iter().find(|&&i| share(&page.lines[i]) > 0.5) {
+    // A lone script or symbol line is a display's fragment, not a line.
+    let real = |i: usize| text_of(page, i).chars().count() >= 3;
+    if let Some(&i) = truth
+        .outside
+        .iter()
+        .find(|&&i| share(&page.lines[i]) > 0.5 && real(i))
+    {
         tally.leaks += 1;
         problems.push(format!("LEAKS: {:?}", text_of(page, i)));
     }
