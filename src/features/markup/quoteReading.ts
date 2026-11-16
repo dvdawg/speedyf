@@ -23,7 +23,7 @@ import {
   type DisplayPart,
   type QuotePlan,
 } from '../../lib/text/quoteParts';
-import { plausibleFormula, plausibleQuoteTex, texParses } from './quoteTexCheck';
+import { plausibleQuoteTex, texParses, trustedFormula } from './quoteTexCheck';
 
 type Rect = [number, number, number, number];
 
@@ -33,13 +33,7 @@ export interface QuoteContext {
   pageHeight: (page: number) => number | undefined;
 }
 
-/** A formula as read, when it can be trusted. */
-async function trusted(tex: string | null | undefined, display: boolean): Promise<string | null> {
-  const t = tex?.replace(/\s+/g, ' ').trim();
-  if (!t) return null;
-  if (!plausibleFormula(t)) return null;
-  return (await texParses(display ? `$$ ${t} $$` : `$${t}$`)) ? t : null;
-}
+const trusted = trustedFormula;
 
 function topLeft([x, y, w, h]: readonly number[], height: number): Rect {
   return [x!, height - y! - h!, w!, h!];
