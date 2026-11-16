@@ -13,6 +13,7 @@
  * with the same mess.
  */
 import { createSignal } from 'solid-js';
+import type { QuotePiece } from '../lib/text/copySelection';
 
 const [selectedText, setSelectedTextSignal] = createSignal<string>('');
 
@@ -31,8 +32,11 @@ export interface SelectionGeometry {
 }
 
 const [selectedGeometry, setSelectedGeometry] = createSignal<SelectionGeometry | null>(null);
+/** The selection's runs, piece by piece: what a quote of it is built from
+ * (`quoteParts`). Plain data, kept with the text. */
+const [selectedPieces, setSelectedPieces] = createSignal<readonly QuotePiece[]>([]);
 
-export { selectedText, selectedGeometry };
+export { selectedText, selectedGeometry, selectedPieces };
 
 /** True when there is something an action could be performed on. */
 export function hasSelection(): boolean {
@@ -57,7 +61,8 @@ let pending: (() => void) | null = null;
  * selection that is still being dragged is never reconstructed. */
 export function noteSelectionChanged(
   compute: () => string | null,
-  geometry?: () => SelectionGeometry | null
+  geometry?: () => SelectionGeometry | null,
+  pieces?: () => readonly QuotePiece[]
 ): void {
   clearTimeout(timer);
   const capture = () => {
@@ -71,6 +76,7 @@ export function noteSelectionChanged(
     if (text && text.length > 0) {
       setSelectedTextSignal(text);
       setSelectedGeometry(geometry?.() ?? null);
+      setSelectedPieces(pieces?.() ?? []);
     }
   };
   pending = capture;
@@ -101,6 +107,7 @@ export function clearSelection(): void {
   pending = null;
   setSelectedTextSignal('');
   setSelectedGeometry(null);
+  setSelectedPieces([]);
 }
 
 /** The geometry of selected runs, grouped onto the page holding most of them

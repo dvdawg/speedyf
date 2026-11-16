@@ -59,6 +59,10 @@ export interface Display {
   first: number;
   last: number;
   box: [number, number, number, number];
+  /** the engine's box for it, `[x, y, w, h]` y up, without its number:
+   * what an equation conversion reads */
+  block: [number, number, number, number];
+  number: string | null;
 }
 
 export interface TextModel {
@@ -161,7 +165,13 @@ export function displaysOf(runs: readonly TextRunDto[], boxes: readonly DisplayB
       box[2] = Math.max(box[2], run.x + run.w);
       box[3] = Math.max(box[3], run.y + run.h);
     }
-    out.push({ first, last, box: [box[0], box[1], box[2] - box[0], box[3] - box[1]] });
+    out.push({
+      first,
+      last,
+      box: [box[0], box[1], box[2] - box[0], box[3] - box[1]],
+      block: [b.x, b.y, b.w, b.h],
+      number: b.number,
+    });
   }
   return out.sort((a, b) => a.first - b.first);
 }
