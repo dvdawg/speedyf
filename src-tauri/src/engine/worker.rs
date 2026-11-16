@@ -13,6 +13,7 @@ use super::ocr_thread::{OcrDone, OcrRequest, OcrService, Refused};
 use super::pdfium_init;
 use super::preview::{self, PREVIEW_SCALE_MILLI};
 use super::queue::JobMeta;
+use super::reading_order;
 use super::render;
 use super::save;
 use super::text;
@@ -807,10 +808,13 @@ fn ensure_text_layout(
     // rather than on demand: by the time anyone asks, the page has already
     // been read and re-reading it would learn nothing new.
     let bubbles = bubbles::detect(&extracted.raw, &extracted.boxes, &extracted.sizes);
+    // The text layer is one span per run and a selection a range over them,
+    // so they go in the order the page reads, not the order it was drawn.
+    let runs = reading_order::in_reading_order(extracted.runs, w_pt, h_pt);
     Ok(shared.text_layouts.lock().insert(
         doc,
         src,
-        extracted.runs,
+        runs,
         extracted.boxes,
         bubbles,
         extracted.char_count,

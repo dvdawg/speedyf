@@ -60,7 +60,12 @@ fn quote_eval_dump() {
         };
         let handle = b.FPDF_LoadPage(raw, page as i32);
         assert!(!handle.is_null(), "load page");
-        let runs = text::extract_page(b, handle, w, h).runs;
+        // in the order the text layer has them
+        let runs = crate::engine::reading_order::in_reading_order(
+            text::extract_page(b, handle, w, h).runs,
+            w,
+            h,
+        );
         let all = glyphs::extract_page_glyphs(b, handle, w, h);
         let raster = vision::render_raster(b, handle, w, h);
         let blocks = glyphs::equation_blocks_with_raster(&all, raster.as_ref(), w, h);
