@@ -939,7 +939,9 @@ fn do_equation_blocks(
     }
     let (all, [w, h]) = all_page_glyphs(state, doc, src)?;
     let raster = page_raster(state, doc, src)?;
-    let blocks = glyphs::equation_blocks_with_raster(&all, raster.as_deref(), w, h);
+    let page = state.page_handle(doc, src)?;
+    let runs = text::extract_page(state.bindings, page, w, h).runs;
+    let blocks = glyphs::page_equation_blocks(&all, raster.as_deref(), &runs, w, h);
     let cache = &mut state.doc(doc)?.equation_blocks;
     if cache.len() >= EQUATION_CACHE_PAGES {
         cache.clear();
