@@ -12,6 +12,7 @@
  * them.
  */
 import type { TextRunDto } from '../../types/engine';
+import { marginNumbers } from './marginNumbers';
 
 /** A vertical move smaller than this share of the type is the same line. */
 const SAME_LINE_RATIO = 0.6;
@@ -39,10 +40,12 @@ export interface Line {
   size: number;
 }
 
-export function linesOf(runs: readonly TextRunDto[]): Line[] {
+export function linesOf(runs: readonly TextRunDto[], skip?: readonly boolean[]): Line[] {
   const lines: Line[] = [];
   let current: Line | null = null;
   runs.forEach((run, index) => {
+    // Runs outside the prose (margin line numbers) are on no line.
+    if (skip?.[index]) return;
     const h = Math.max(1, run.h);
     const top = run.y + h;
     if (current !== null) {
@@ -99,7 +102,8 @@ export function paragraphRunRange(
   index: number
 ): [number, number] | null {
   if (index < 0 || index >= runs.length) return null;
-  const lines = linesOf(runs);
+  // Margin line numbers would cut a numbered paper's paragraphs into lines.
+  const lines = linesOf(runs, marginNumbers(runs));
   const at = lines.findIndex((line) => index >= line.first && index <= line.last);
   if (at < 0) return null;
   let from = at;

@@ -17,6 +17,7 @@
  */
 import type { TextRunDto } from '../../types/engine';
 import { linesOf, type Line } from './paragraph';
+import { marginNumbers } from './marginNumbers';
 
 export interface PagePoint {
   x: number;
@@ -68,6 +69,8 @@ export interface TextModel {
   displays: readonly Display[];
   /** the display holding each run, or -1 */
   displayOfRun: readonly number[];
+  /** runs that are margin line numbers (`marginNumbers`) */
+  margin: readonly boolean[];
   /** x of each character boundary of a run, `text.length + 1` of them */
   edges(run: number): readonly number[];
 }
@@ -168,7 +171,10 @@ export function buildTextModel(
   measure: MeasureText = (text) => text.length,
   displayBoxes: readonly DisplayBox[] = []
 ): TextModel {
-  const base = linesOf(runs);
+  // Margin line numbers are no part of the text: on no line, so a press or
+  // a drag never lands on one and a selection's band never covers one.
+  const margin = marginNumbers(runs);
+  const base = linesOf(runs, margin);
   const lines: HitLine[] = base.map((line, i) => {
     let reachLeft = line.minX;
     let reachRight = line.maxX;
@@ -196,6 +202,13 @@ export function buildTextModel(
     if (hit) return hit;
     const run = runs[index];
     if (!run) return [];
+    // The engine's own: where each glyph's advance begins.
+    if (run.edges && run.edges.length === run.text.length + 1) {
+      const out = run.edges.map((e) => run.x + e);
+      cache.set(index, out);
+      return out;
+    }
+    // Else an estimate: the run's width shared out by measured widths.
     const widths: number[] = [];
     let total = 0;
     for (let k = 0; k < run.text.length; k += 1) {
@@ -222,7 +235,7 @@ export function buildTextModel(
     for (let r = d.first; r <= d.last; r += 1) displayOfRun[r] = i;
   });
 
-  return { runs, lines, lineOfRun, edges, displays, displayOfRun };
+  return { runs, lines, lineOfRun, edges, displays, displayOfRun, margin };
 }
 
 function isLowSurrogate(text: string, k: number): boolean {
@@ -263,40 +276,44 @@ export function nearestLine(
   return best;
 }
 
-/** The character boundary on line `index` nearest `x`. Left of the line is
- * its start, right of it its end. */
+/** The character boundary a press at `x` on line `index` means. On a glyph,
+ * the boundary before it in its left half and after it in its right half;
+ * on a space, or in the gap between two runs, the start of the word that
+ * follows (a drag begun just before a word takes all of it); left of the
+ * line its start, right of it its end. */
 export function positionOnLine(model: TextModel, index: number, x: number): TextPosition | null {
   const line = model.lines[index];
   if (!line) return null;
-  if (x <= line.minX) return { run: line.first, offset: 0 };
-  if (x >= line.maxX) {
-    return { run: line.last, offset: model.runs[line.last]?.text.length ?? 0 };
+  const order: number[] = [];
+  for (let r = line.first; r <= line.last; r += 1) order.push(r);
+  const left = (r: number) => model.edges(r)[0] ?? model.runs[r]!.x;
+  const right = (r: number) => {
+    const e = model.edges(r);
+    return e[e.length - 1] ?? model.runs[r]!.x + model.runs[r]!.w;
+  };
+  order.sort((a, b) => left(a) - left(b));
+  const first = order[0]!;
+  if (x <= left(first)) return { run: first, offset: 0 };
+  for (const r of order) {
+    if (x < left(r)) return { run: r, offset: 0 };
+    if (x <= right(r)) return { run: r, offset: offsetInRun(model, r, x) };
   }
-  let best = line.first;
-  let bestDistance = Infinity;
-  for (let r = line.first; r <= line.last; r += 1) {
-    const run = model.runs[r]!;
-    const d = Math.max(0, run.x - x, x - (run.x + run.w));
-    if (d < bestDistance) {
-      bestDistance = d;
-      best = r;
-    }
-  }
-  const run = model.runs[best]!;
-  if (x <= run.x) return { run: best, offset: 0 };
-  if (x >= run.x + run.w) return { run: best, offset: run.text.length };
-  const edges = model.edges(best);
-  let offset = 0;
-  let distance = Infinity;
-  edges.forEach((edge, k) => {
-    if (k > 0 && k < run.text.length && isLowSurrogate(run.text, k)) return;
-    const d = Math.abs(edge - x);
-    if (d < distance) {
-      distance = d;
-      offset = k;
-    }
-  });
-  return { run: best, offset };
+  const last = order.reduce((a, b) => (right(b) > right(a) ? b : a));
+  return { run: last, offset: model.runs[last]!.text.length };
+}
+
+/** The boundary in run `r` for a press at `x` within it. */
+function offsetInRun(model: TextModel, r: number, x: number): number {
+  const text = model.runs[r]!.text;
+  const edges = model.edges(r);
+  // the character under the pointer: the last one starting at or before x
+  let k = 0;
+  while (k + 1 < text.length && (edges[k + 1] ?? Infinity) <= x) k += 1;
+  const skip = (at: number) => (at < text.length && isLowSurrogate(text, at) ? at + 1 : at);
+  if (/\s/.test(text.charAt(k))) return skip(k + 1);
+  const start = edges[k] ?? x;
+  const end = edges[skip(k + 1)] ?? start;
+  return x < (start + end) / 2 ? k : skip(k + 1);
 }
 
 /** A selection end at `pos`, taken out to the edge of the display
@@ -375,9 +392,11 @@ export function selectionRects(
     }
     lastDisplay = -1;
     const line = model.lines[lineIndex]!;
-    const edges = from === 0 && to === run.text.length ? null : model.edges(index);
-    const left = edges ? edges[from]! : run.x;
-    const right = edges ? edges[to]! : run.x + run.w;
+    // The same boundaries a press resolves to, so the band covers exactly
+    // the characters a copy takes.
+    const edges = model.edges(index);
+    const left = edges[from] ?? run.x;
+    const right = edges[to] ?? run.x + run.w;
     const last = out.at(-1);
     if (last && lineIndex === lastLine && index === lastRun + 1) {
       const l = Math.min(last[0], left);

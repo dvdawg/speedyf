@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, fireEvent, render } from '@solidjs/testing-library';
 import TextLayer from './TextLayer';
-import { selectedRunRects } from '../../lib/text/copySelection';
+import { selectedRunRects, smartCopyForSelection } from '../../lib/text/copySelection';
 import type { TextRunDto } from '../../types/engine';
 
 afterEach(() => {
@@ -190,5 +190,48 @@ describe('display equations', () => {
     fireEvent.mouseDown(spans[1]!, { button: 0, detail: 1, clientX: 150, clientY: 115 });
     fireEvent.mouseUp(window, {});
     expect(document.getSelection()!.isCollapsed).toBe(true);
+  });
+});
+
+describe('a page with numbered lines', () => {
+  // lineno: each line's number drawn just before it, flush right at x 50
+  const numbered: TextRunDto[] = [];
+  ['the first line of it', 'and the second one', 'then the third'].forEach((text, i) => {
+    const y = 700 - i * 12;
+    numbered.push({ text: String(746 + i), start: 0, x: 38, y, w: 12, h: 8 });
+    numbered.push({ text, start: 0, x: 60, y, w: 200, h: 8 });
+  });
+
+  function mountNumbered() {
+    const { container } = render(() => (
+      <TextLayer
+        runs={numbered}
+        pageWidthPt={600}
+        pageHeightPt={800}
+        rotation={0}
+        zoom={1}
+        page={0}
+      />
+    ));
+    return { container, spans: container.querySelectorAll('.text-layer span') };
+  }
+
+  it('copies the lines without their numbers', () => {
+    const { container, spans } = mountNumbered();
+    fireEvent.mouseDown(spans[1]!, { button: 0, detail: 1, clientX: 60, clientY: 96 });
+    fireEvent.mouseMove(window, { clientX: 400, clientY: 120 });
+    fireEvent.mouseUp(window, {});
+    expect(smartCopyForSelection(document.getSelection()!, container)).toBe(
+      'the first line of it and the second one then the third'
+    );
+  });
+
+  it('never starts a selection on a line number', () => {
+    const { spans } = mountNumbered();
+    // a press right on "747"
+    fireEvent.mouseDown(spans[2]!, { button: 0, detail: 1, clientX: 44, clientY: 108 });
+    fireEvent.mouseUp(window, {});
+    expect(document.getSelection()!.anchorNode).toBe(spans[3]!.firstChild);
+    expect(document.getSelection()!.anchorOffset).toBe(0);
   });
 });

@@ -6,7 +6,7 @@
 //! indices so search matches can be mapped back to page rects.
 
 use crate::engine::types::TextRun;
-use pdfium_render::prelude::{PdfiumLibraryBindings, FPDF_PAGE, FPDF_TEXTPAGE};
+use pdfium_render::prelude::{PdfiumLibraryBindings, FPDF_PAGE, FPDF_TEXTPAGE, FS_RECTF};
 use std::os::raw::{c_int, c_ulong};
 
 const PREC: f64 = 100.0;
@@ -219,6 +219,7 @@ pub fn extract_page(
                 ch,
                 index: i as u32,
                 bbox: None,
+                advance: None,
             });
             continue;
         }
@@ -236,10 +237,35 @@ pub fn extract_page(
             boxes[i as usize] = [x, y, w, h];
             Some([x, y, w, h])
         };
+        // Where the glyph sits along the line: its advance (the loose box),
+        // which tiles a word without the gaps and overhangs of its ink.
+        let advance = bbox.map(|[x, _, w, _]| {
+            let mut loose = FS_RECTF {
+                left: 0.0,
+                top: 0.0,
+                right: 0.0,
+                bottom: 0.0,
+            };
+            let ok = b.FPDFText_GetLooseCharBox(tp, i, &mut loose) != 0
+                && loose.right > loose.left
+                && loose.top > loose.bottom;
+            if ok {
+                let (lx, _, lw, _) = mapper.map_box(
+                    loose.left as f64,
+                    loose.right as f64,
+                    loose.bottom as f64,
+                    loose.top as f64,
+                );
+                [lx, lx + lw]
+            } else {
+                [x, x + w]
+            }
+        });
         glyphs.push(Glyph {
             ch,
             index: i as u32,
             bbox,
+            advance,
         });
     }
     let runs = build_runs(&glyphs);
@@ -264,6 +290,68 @@ pub(crate) struct Glyph {
     pub index: u32,
     /// Display-space box: `[x, y_bottom, w, h]`, y-up.
     pub bbox: Option<[f32; 4]>,
+    /// Left and right of the glyph's advance along the line, display x;
+    /// `None` exactly when `bbox` is.
+    pub advance: Option<[f32; 2]>,
+}
+
+/// Where each character of a run begins, from `x0`, and where the last one
+/// ends: one entry per UTF-16 unit of the characters, plus the end. A
+/// character with no box (a space) begins where the one before it ends;
+/// characters sharing one box (a ligature PDFium split into its letters)
+/// share it out evenly; and the edges never step backwards, however a
+/// kern overlaps two glyphs.
+pub(crate) fn char_edges(chars: &[(char, Option<[f32; 2]>)], x0: f32) -> Vec<f32> {
+    let n = chars.len();
+    let mut spans: Vec<Option<[f32; 2]>> = vec![None; n];
+    let mut i = 0;
+    while i < n {
+        let Some(shared) = chars[i].1 else {
+            i += 1;
+            continue;
+        };
+        let mut j = i;
+        while j + 1 < n && chars[j + 1].1 == Some(shared) {
+            j += 1;
+        }
+        let k = (j - i + 1) as f32;
+        let [l, r] = shared;
+        for (at, span) in spans[i..=j].iter_mut().enumerate() {
+            let at = at as f32;
+            *span = Some([l + (r - l) * at / k, l + (r - l) * (at + 1.0) / k]);
+        }
+        i = j + 1;
+    }
+    if spans.iter().all(Option::is_none) {
+        return Vec::new();
+    }
+    let mut starts = Vec::with_capacity(n);
+    let mut previous_end: Option<f32> = None;
+    for (k, span) in spans.iter().enumerate() {
+        let start = match span {
+            Some([l, _]) => *l,
+            None => previous_end
+                .or_else(|| spans[k + 1..].iter().flatten().next().map(|s| s[0]))
+                .unwrap_or(x0),
+        };
+        starts.push(start);
+        if let Some([_, r]) = span {
+            previous_end = Some(*r);
+        }
+    }
+    let end = spans.iter().flatten().map(|s| s[1]).fold(x0, f32::max);
+    let round = |v: f32| ((v - x0) * 100.0).round() / 100.0;
+    let mut out = Vec::with_capacity(n + 1);
+    let mut last = f32::MIN;
+    for ((ch, _), start) in chars.iter().zip(starts) {
+        let at = round(start).max(last);
+        for _ in 0..ch.len_utf16() {
+            out.push(at);
+        }
+        last = at;
+    }
+    out.push(round(end).max(last));
+    out
 }
 
 /// Assemble a page's characters into positioned runs.
@@ -286,6 +374,8 @@ pub(crate) struct Glyph {
 pub(crate) fn build_runs(glyphs: &[Glyph]) -> Vec<TextRun> {
     struct Run {
         text: String,
+        /// each character of `text`, with its advance when it has one
+        chars: Vec<(char, Option<[f32; 2]>)>,
         start: u32,
         x0: f32,
         y0: f32,
@@ -300,16 +390,20 @@ pub(crate) fn build_runs(glyphs: &[Glyph]) -> Vec<TextRun> {
     let flush = |cur: &mut Option<Run>, runs: &mut Vec<TextRun>| {
         if let Some(r) = cur.take() {
             if !r.text.trim().is_empty() && r.x1 > r.x0 && r.y1 > r.y0 {
+                // A run's box covers its glyphs, and a trailing space has
+                // none; keeping it would put whitespace at the end of every
+                // line for consumers that join runs themselves.
+                let text = r.text.trim_end().to_string();
+                let kept = text.chars().count();
+                let edges = char_edges(&r.chars[..kept.min(r.chars.len())], r.x0);
                 runs.push(TextRun {
-                    // A run's box covers its glyphs, and a trailing space has
-                    // none; keeping it would put whitespace at the end of every
-                    // line for consumers that join runs themselves.
-                    text: r.text.trim_end().to_string(),
+                    text,
                     start: r.start,
                     x: r.x0,
                     y: r.y0,
                     w: r.x1 - r.x0,
                     h: r.y1 - r.y0,
+                    edges,
                 });
             }
         }
@@ -328,6 +422,7 @@ pub(crate) fn build_runs(glyphs: &[Glyph]) -> Vec<TextRun> {
                 if let Some(run) = cur.as_mut() {
                     if !run.text.ends_with(char::is_whitespace) {
                         run.text.push(' ');
+                        run.chars.push((' ', None));
                     }
                 }
             }
@@ -347,6 +442,7 @@ pub(crate) fn build_runs(glyphs: &[Glyph]) -> Vec<TextRun> {
             flush(&mut cur, &mut runs);
             cur = Some(Run {
                 text: String::new(),
+                chars: Vec::new(),
                 start: glyph.index,
                 x0: x,
                 y0: y,
@@ -358,6 +454,8 @@ pub(crate) fn build_runs(glyphs: &[Glyph]) -> Vec<TextRun> {
         }
         let run = cur.as_mut().unwrap();
         run.text.push(glyph.ch);
+        run.chars
+            .push((glyph.ch, glyph.advance.or(Some([x, x + w]))));
         run.x0 = run.x0.min(x);
         run.y0 = run.y0.min(y);
         run.x1 = run.x1.max(x + w);
@@ -437,6 +535,7 @@ mod tests {
             ch,
             index,
             bbox: Some([x, 700.0, 9.0, 9.0]),
+            advance: Some([x, x + 9.0]),
         }
     }
 
@@ -446,6 +545,7 @@ mod tests {
             ch,
             index,
             bbox: None,
+            advance: None,
         }
     }
 
@@ -517,6 +617,46 @@ mod tests {
         let runs = build_runs(&[glyph('a', 0, 50.0), inkless(' ', 1), glyph('b', 2, 62.0)]);
         assert_eq!(runs[0].x, 50.0);
         assert_eq!(runs[0].w, 21.0);
+    }
+
+    /// The edges are the glyphs' own: a space with no box starts where the
+    /// letter before it ends, and the run ends where its last glyph does.
+    #[test]
+    fn a_run_carries_where_each_character_begins() {
+        let runs = build_runs(&[glyph('a', 0, 50.0), inkless(' ', 1), glyph('b', 2, 62.0)]);
+        assert_eq!(runs[0].edges, vec![0.0, 9.0, 12.0, 21.0]);
+    }
+
+    /// A ligature PDFium split into two letters on one box: each letter
+    /// gets half of it, so a selection can end between them.
+    #[test]
+    fn letters_sharing_a_box_share_it_out() {
+        let edges = char_edges(
+            &[('f', Some([10.0, 20.0])), ('i', Some([10.0, 20.0]))],
+            10.0,
+        );
+        assert_eq!(edges, vec![0.0, 5.0, 10.0]);
+    }
+
+    /// The webview counts in UTF-16 units: a mathematical italic letter is
+    /// two of them, both at its start.
+    #[test]
+    fn an_astral_character_takes_two_units() {
+        let edges = char_edges(
+            &[('\u{1D465}', Some([0.0, 6.0])), ('y', Some([6.0, 11.0]))],
+            0.0,
+        );
+        assert_eq!(edges, vec![0.0, 0.0, 6.0, 11.0]);
+    }
+
+    /// A kern that pulls a glyph's advance back over the one before never
+    /// makes an edge go backwards.
+    #[test]
+    fn edges_never_step_back() {
+        let edges = char_edges(&[('A', Some([0.0, 7.0])), ('V', Some([6.0, 13.0]))], 0.0);
+        assert_eq!(edges, vec![0.0, 6.0, 13.0]);
+        let kerned = char_edges(&[('T', Some([0.0, 7.0])), ('o', Some([-1.0, 5.0]))], 0.0);
+        assert_eq!(kerned, vec![0.0, 0.0, 7.0]);
     }
 
     #[test]

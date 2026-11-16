@@ -7,26 +7,51 @@ import IconButton from '../../components/IconButton';
 import { IconEdit, IconTrash } from '../../components/icons';
 import CommentEditor, { KindSelect, type EditorResult } from './CommentEditor';
 import { quoteHtml, renderBody } from './bodyHtml';
+import QuoteCrop from './QuoteCrop';
+import { plausibleQuoteTex } from './quoteTexCheck';
 import { labelParts } from './labels';
 import { mathRenderer } from './mathHtml';
 import { shortQuote, type Entry } from './model';
 import { citeIndex, flashed } from './markupStore';
 import { KIND_LABEL, type Anchor, type CommentKind } from './types';
 
-/** The words a comment is about: with their math typeset when it was read
- * as LaTeX (`quoteTex`), else as the page gave them. */
-function Quote(props: { anchor: Anchor }) {
+/** The words a comment is about, as text: with their math typeset when a
+ * trustworthy LaTeX reading of them was kept, else as the page gave them. */
+function TextQuote(props: { anchor: Anchor }) {
+  const tex = () => {
+    const t = props.anchor.quoteTex;
+    return t && plausibleQuoteTex(t, props.anchor.quote) ? t : null;
+  };
   return (
     <Show
-      when={props.anchor.quoteTex}
-      fallback={<div class="mk-card-quote">{shortQuote(props.anchor.quote, 160)}</div>}
+      when={tex()}
+      fallback={
+        <Show
+          when={props.anchor.quote.trim()}
+          fallback={<div class="mk-card-quote is-region">Region on the page</div>}
+        >
+          <div class="mk-card-quote">{shortQuote(props.anchor.quote, 160)}</div>
+        </Show>
+      }
     >
-      {(tex) => (
+      {(t) => (
         // Escaped text and KaTeX output (bodyHtml.ts).
         // eslint-disable-next-line solid/no-innerhtml
-        <div class="mk-card-quote is-tex" innerHTML={quoteHtml(tex(), { math: mathRenderer() })} />
+        <div class="mk-card-quote is-tex" innerHTML={quoteHtml(t(), { math: mathRenderer() })} />
       )}
     </Show>
+  );
+}
+
+/** The words a comment is about as they are printed: a crop of the page,
+ * which is faithful to any formula; the text when there is no page. */
+function Quote(props: { anchor: Anchor }) {
+  return (
+    <QuoteCrop
+      anchor={props.anchor}
+      alt={props.anchor.quote.trim() || 'Region on the page'}
+      fallback={<TextQuote anchor={props.anchor} />}
+    />
   );
 }
 
@@ -139,11 +164,8 @@ export default function CommentCard(props: Props) {
                 </Show>
               </div>
             </Show>
-            <Show when={!typoFix() && c().anchor.quote.trim()}>
+            <Show when={!typoFix() && (c().anchor.quote.trim() || c().anchor.rect)}>
               <Quote anchor={c().anchor} />
-            </Show>
-            <Show when={!typoFix() && c().anchor.rect}>
-              <div class="mk-card-quote is-region">Region on the page</div>
             </Show>
             <Show when={body()}>
               {(html) => (
@@ -158,7 +180,7 @@ export default function CommentCard(props: Props) {
           </div>
         }
       >
-        <Show when={!typoFix() && c().anchor.quote.trim()}>
+        <Show when={!typoFix() && (c().anchor.quote.trim() || c().anchor.rect)}>
           <Quote anchor={c().anchor} />
         </Show>
         <CommentEditor

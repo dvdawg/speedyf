@@ -20,7 +20,7 @@ import {
 import type { TextRunDto } from '../../types/engine';
 import type { Rotation } from '../../types/model';
 import type { EquationBlock } from '../extensions/EquationLayer';
-import { registerCopyRun, setSpanDisplay } from '../../lib/text/copySelection';
+import { registerCopyRun, setSpanDisplay, setSpanMargin } from '../../lib/text/copySelection';
 import { buildTextModel, selectionRects } from '../../lib/text/textHit';
 import { toolState } from '../annotations/toolStore';
 import {
@@ -96,6 +96,7 @@ export default function TextLayer(props: Props) {
     for (let i = 0; i < spans.length; i += 1) {
       const display = m.displays[m.displayOfRun[i] ?? -1];
       setSpanDisplay(spans[i]!, display ? display.box : null);
+      setSpanMargin(spans[i]!, m.margin[i] === true);
     }
     untrack(repaint);
   });

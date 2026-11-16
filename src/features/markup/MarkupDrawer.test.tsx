@@ -144,6 +144,29 @@ describe('MarkupDrawer', () => {
     expect(cards()).toHaveLength(3);
   });
 
+  it('shows the quoted words as the page prints them, and their text if it cannot', async () => {
+    stored = JSON.stringify({
+      version: 1,
+      summary: '',
+      comments: [
+        comment('a', 1, 100, { anchor: { ...comment('a', 1, 100).anchor, quoteTex: '$q$ 746' } }),
+      ],
+    });
+    await open();
+    const card = screen.getByRole('article', { name: 'Comment 1' });
+    const img = card.querySelector('.mk-crop img') as HTMLImageElement;
+    expect(img.alt).toBe('q a');
+    expect(img.src).toContain('src=1');
+    expect(img.src).toContain('kind=preview');
+    // the render fails, again and again: the text instead (an untrustworthy
+    // reading of it dropped)
+    for (let i = 0; i < 3; i += 1) {
+      fireEvent.error(card.querySelector('.mk-crop img')!);
+    }
+    expect(card.querySelector('.mk-crop')).toBeNull();
+    expect(card.querySelector('.mk-card-quote')?.textContent).toBe('q a');
+  });
+
   it('goes to a comment on the page from its label line', async () => {
     stored = JSON.stringify({ version: 1, summary: '', comments: [comment('a', 1, 100)] });
     await open();

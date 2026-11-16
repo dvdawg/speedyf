@@ -19,6 +19,10 @@ export interface TextRunDto {
   y: number;
   w: number;
   h: number;
+  /** Where each character begins, from `x`, in points (one per UTF-16
+   * unit, then where the run ends), from the glyphs' own advances. Absent
+   * when the engine could not place them. */
+  edges?: number[];
 }
 
 /** One document that matched a library-wide search. Carries the file, not a

@@ -173,13 +173,27 @@ describe('writing comments', () => {
     converted = { local: 'by $\\mathcal{K}$', exact: 'by $\\mathcal{C}$' };
     await loaded();
     store.beginComment('comment');
-    await vi.advanceTimersByTimeAsync(0);
-    expect(store.draft()!.anchor.quoteTex).toBe('by $\\mathcal{K}$');
+    await vi.waitFor(() => expect(store.draft()!.anchor.quoteTex).toBe('by $\\mathcal{K}$'));
     store.commitDraft({ body: 'Why?', kind: 'comment', quickmark: null, replacement: null });
+    await vi.waitFor(() => expect(resolveExact).toHaveLength(1));
     resolveExact.splice(0).forEach((resolve) => resolve());
+    await vi.waitFor(() =>
+      expect(store.reviewFor(PATH)!.doc.comments[0]!.anchor.quoteTex).toBe('by $\\mathcal{C}$')
+    );
     await vi.advanceTimersByTimeAsync(600);
-    expect(store.reviewFor(PATH)!.doc.comments[0]!.anchor.quoteTex).toBe('by $\\mathcal{C}$');
     expect(JSON.parse(saved.at(-1)!).comments[0].anchor.quoteTex).toBe('by $\\mathcal{C}$');
+    converted = { local: null, exact: null };
+  });
+
+  it('keeps no reading that cannot be trusted', async () => {
+    // words of the passage spread through the formulas, a margin number
+    converted = { local: 'bcy $\\frac{1}{2$ omtpacness 746', exact: null };
+    await loaded();
+    store.beginComment('comment');
+    await vi.advanceTimersByTimeAsync(50);
+    await vi.waitFor(() => expect(resolveExact).toHaveLength(1));
+    expect(store.draft()!.anchor.quoteTex).toBeUndefined();
+    resolveExact.splice(0).forEach((resolve) => resolve());
     converted = { local: null, exact: null };
   });
 
@@ -202,8 +216,7 @@ describe('writing comments', () => {
     expect(d.anchor.quote).toBe('Equation (3)');
     expect(d.anchor.quads).toHaveLength(1);
     expect(d.anchor.quads![0]).toMatchObject({ x1: 100, y1: 592, x2: 400, y3: 552 });
-    await vi.advanceTimersByTimeAsync(0);
-    expect(store.draft()!.anchor.quoteTex).toBe('$$ a^2 $$');
+    await vi.waitFor(() => expect(store.draft()!.anchor.quoteTex).toBe('$$ a^2 $$'));
     store.cancelDraft();
     resolveExact.splice(0).forEach((resolve) => resolve());
     converted = { local: null, exact: null };

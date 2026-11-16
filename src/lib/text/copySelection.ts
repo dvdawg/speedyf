@@ -28,6 +28,16 @@ export function setSpanDisplay(
   else displayForSpan.delete(element);
 }
 
+/** Spans that are margin line numbers (`marginNumbers`): selected along
+ * with the lines beside them, since the DOM range runs through them, but
+ * never part of what the selection says or where it is. */
+const marginSpans = new WeakSet<Element>();
+
+export function setSpanMargin(element: Element, margin: boolean): void {
+  if (margin) marginSpans.add(element);
+  else marginSpans.delete(element);
+}
+
 /** Collect the selected runs, trimming the two partially-selected spans at
  * the ends so copying half a word does not paste the whole one. */
 export function selectedCopyRuns(selection: Selection, root: ParentNode): CopyRun[] {
@@ -38,13 +48,14 @@ export function selectedCopyRuns(selection: Selection, root: ParentNode): CopyRu
   const runs: CopyRun[] = [];
 
   for (const span of root.querySelectorAll('.text-layer span')) {
-    if (!selection.containsNode(span, true)) continue;
+    if (marginSpans.has(span) || !selection.containsNode(span, true)) continue;
     const run = runForSpan.get(span);
     if (!run) continue;
     const from = startsInText && span.contains(range.startContainer) ? range.startOffset : 0;
     const to = endsInText && span.contains(range.endContainer) ? range.endOffset : run.text.length;
     const text = run.text.slice(from, to);
-    if (text.length > 0) runs.push({ ...run, text });
+    const display = displayForSpan.get(span);
+    if (text.length > 0) runs.push({ ...run, text, ...(display ? { display } : {}) });
   }
   return runs;
 }
@@ -64,7 +75,7 @@ export function selectedRunRects(
   const out: { page: number; rect: [number, number, number, number] }[] = [];
   const displays = new Set<readonly number[]>();
   for (const span of root.querySelectorAll('.text-layer span')) {
-    if (!selection.containsNode(span, true)) continue;
+    if (marginSpans.has(span) || !selection.containsNode(span, true)) continue;
     const run = runForSpan.get(span);
     if (!run || run.text.length === 0) continue;
     const from = startsInText && span.contains(range.startContainer) ? range.startOffset : 0;
