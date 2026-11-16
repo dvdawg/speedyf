@@ -818,8 +818,327 @@ fn dump_page_columns() {
                 runs: &extracted.runs,
             });
             eprintln!("crop {crop:?}");
+            for block in crate::engine::floats::caption_blocks(&extracted.runs) {
+                eprintln!("caption {block:?}");
+            }
         }
         b.FPDF_ClosePage(handle);
         b.FPDF_CloseDocument(raw);
     }
+}
+
+/// What a link's text names: ("figure" or "table", its number), read from
+/// the link and the words just before it ("Fig.~[11]", "Table [3]").
+fn float_reference(before: &str, inside: &str) -> Option<(&'static str, String)> {
+    let number: String = inside
+        .split(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .rfind(|t| t.chars().any(|c| c.is_ascii_digit()))?
+        .trim_matches('.')
+        .to_string();
+    let words = format!("{before} {inside}").to_lowercase();
+    let head = words
+        .trim_end()
+        .trim_end_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ')' || c == ']');
+    let head = head.trim_end().trim_end_matches(['~', '(', '[']).trim_end();
+    let kind = if ["fig.", "figure", "figs.", "figures", "fig"]
+        .iter()
+        .any(|w| head.ends_with(w))
+    {
+        "figure"
+    } else if ["table", "tables", "tab."]
+        .iter()
+        .any(|w| head.ends_with(w))
+    {
+        "table"
+    } else {
+        return None;
+    };
+    Some((kind, number))
+}
+
+/// A caption on a page: its lines, head first.
+fn caption_lines(page: &Page, head: usize) -> Vec<usize> {
+    let mut out = vec![head];
+    let first = &page.lines[head];
+    let em = first.em();
+    while out.len() < 20 {
+        let previous = &page.lines[*out.last().unwrap_or(&head)];
+        let next = (0..page.lines.len())
+            .filter(|&i| {
+                let l = &page.lines[i];
+                !out.contains(&i)
+                    && l.top <= previous.bottom + 0.6 * em
+                    && l.top > previous.bottom - 0.6 * em
+                    && l.top < previous.top
+                    && super::page::same_column(l, first)
+                    && (l.size - first.size).abs() <= 0.15 * first.size.max(1.0)
+                    && crate::engine::figures::parse_caption(&page.line_text(i)).is_none()
+            })
+            .max_by(|&a, &b| page.lines[a].top.total_cmp(&page.lines[b].top));
+        match next {
+            Some(i) => out.push(i),
+            None => break,
+        }
+    }
+    out
+}
+
+/// Words, mostly: a sentence, not a table row of numbers and short heads.
+fn reads_as_prose(text: &str) -> bool {
+    let words = text
+        .split_whitespace()
+        .filter(|w| w.chars().filter(|c| c.is_alphabetic()).count() >= 3)
+        .count();
+    let digits = text.chars().filter(char::is_ascii_digit).count();
+    words >= 6 && digits * 5 < text.chars().count()
+}
+
+#[derive(Default)]
+struct FloatTally {
+    checked: usize,
+    caption_missing: usize,
+    other_caption: usize,
+    prose: usize,
+    cut: usize,
+    no_artwork: usize,
+}
+
+impl FloatTally {
+    fn add(&mut self, t: &FloatTally) {
+        self.checked += t.checked;
+        self.caption_missing += t.caption_missing;
+        self.other_caption += t.other_caption;
+        self.prose += t.prose;
+        self.cut += t.cut;
+        self.no_artwork += t.no_artwork;
+    }
+
+    fn line(&self, name: &str) -> String {
+        format!(
+            "{name:<40} checked {:>4}  caption-cut {:>3}  other-caption {:>3}  prose {:>3}  cut-line {:>3}  no-artwork {:>3}",
+            self.checked, self.caption_missing, self.other_caption, self.prose, self.cut, self.no_artwork
+        )
+    }
+}
+
+/// Judge a float preview: it holds the whole matching caption and some
+/// artwork, and no other caption, prose line or half a line.
+fn judge_float(
+    page: &Page,
+    crop: [f32; 4],
+    caption: &[usize],
+    check_prose: bool,
+    tally: &mut FloatTally,
+) -> Vec<String> {
+    tally.checked += 1;
+    let mut problems = Vec::new();
+    let (cx0, cy0, cx1, cy1) = (crop[0], crop[1], crop[0] + crop[2], crop[1] + crop[3]);
+    let inside = |l: &super::page::Line| {
+        l.x0 >= cx0 - 2.0 && l.x1 <= cx1 + 2.0 && l.bottom >= cy0 - 1.5 && l.top <= cy1 + 1.5
+    };
+    if let Some(&i) = caption.iter().find(|&&i| !inside(&page.lines[i])) {
+        tally.caption_missing += 1;
+        problems.push(format!("CAPTION cut: {:?}", page.line_text(i)));
+    }
+    let mut other = None;
+    let mut prose = None;
+    let mut cut = None;
+    for (i, l) in page.lines.iter().enumerate() {
+        if l.flags.furniture || caption.contains(&i) || l.x1.min(cx1) - l.x0.max(cx0) <= 3.0 {
+            continue;
+        }
+        let share = ((l.top.min(cy1) - l.bottom.max(cy0)) / l.height()).max(0.0);
+        if share > 0.5 {
+            if crate::engine::figures::parse_caption(&page.line_text(i)).is_some() {
+                other.get_or_insert(i);
+            } else if check_prose
+                && !l.is_display()
+                && l.font == page.body_font
+                && (l.size - page.body_size).abs() < 0.3
+                && l.x1 - l.x0 >= 150.0
+                && l.x0 >= cx0 - 2.0
+                && l.x1 <= cx1 + 2.0
+                && reads_as_prose(&page.line_text(i))
+            {
+                prose.get_or_insert(i);
+            }
+        }
+        // A lone script or a rotated label's letter is no line to cut.
+        if share > 0.15 && share < 0.85 && page.line_text(i).trim().chars().count() >= 3 {
+            cut.get_or_insert(i);
+        }
+    }
+    if let Some(i) = other {
+        tally.other_caption += 1;
+        problems.push(format!("OTHER caption: {:?}", page.line_text(i)));
+    }
+    if let Some(i) = prose {
+        tally.prose += 1;
+        problems.push(format!("PROSE: {:?}", page.line_text(i)));
+    }
+    if let Some(i) = cut {
+        tally.cut += 1;
+        problems.push(format!("CUTS line: {:?}", page.line_text(i)));
+    }
+    let top = caption
+        .iter()
+        .map(|&i| page.lines[i].top)
+        .fold(f32::MIN, f32::max);
+    let bottom = caption
+        .iter()
+        .map(|&i| page.lines[i].bottom)
+        .fold(f32::MAX, f32::min);
+    if crop[3] < top - bottom + 25.0 {
+        tally.no_artwork += 1;
+        problems.push("NO artwork".into());
+    }
+    problems
+}
+
+type FloatLinks = Vec<([f32; 4], Option<f32>, Option<f32>, u32)>;
+
+/// Every link to a figure or table, by the number its text names, checked
+/// against the float the preview crop shows. Same list format as above.
+#[test]
+#[ignore]
+fn evaluate_float_previews() {
+    let Ok(list) = std::env::var("SPEEDYF_HOVER_EVAL") else {
+        return;
+    };
+    let out_path = std::env::var("SPEEDYF_HOVER_OUT").unwrap_or_else(|_| "float-eval.txt".into());
+    let paths: Vec<String> = std::fs::read_to_string(list)
+        .expect("list")
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(String::from)
+        .collect();
+    let pdfium = Pdfium::new(pdfium_init::init_bindings(&[]).expect("pdfium"));
+    let b = pdfium.bindings();
+    let mut report = String::new();
+    let mut detail = String::new();
+    let mut total = FloatTally::default();
+    for path in paths {
+        let Ok(raw) = render::open_document(b, &path, None) else {
+            continue;
+        };
+        let count = (b.FPDF_GetPageCount(raw).max(0) as u32).min(60);
+        let name = std::path::Path::new(&path)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let mut pages: Vec<Option<Page>> = Vec::new();
+        let mut runs: Vec<Vec<crate::engine::types::TextRun>> = Vec::new();
+        let mut sizes: Vec<[f32; 2]> = Vec::new();
+        let mut links_of: Vec<FloatLinks> = Vec::new();
+        for src in 0..count {
+            let size = render::page_display_size(b, raw, src as i32);
+            let handle = b.FPDF_LoadPage(raw, src as i32);
+            match (size, handle.is_null()) {
+                (Some([w, h]), false) => {
+                    let input = extract::extract(b, handle, w, h);
+                    let extracted = text::extract_page(b, handle, w, h);
+                    let tp = b.FPDFText_LoadPage(handle);
+                    let found =
+                        links::extract_links(b, raw, handle, tp, [w, h], &extracted.boxes, count);
+                    if !tp.is_null() {
+                        b.FPDFText_ClosePage(tp);
+                    }
+                    links_of.push(
+                        found
+                            .into_iter()
+                            .filter_map(|l| match l.target {
+                                LinkTarget::Internal { page, x, y } => Some((l.rect, x, y, page)),
+                                _ => None,
+                            })
+                            .collect(),
+                    );
+                    runs.push(extracted.runs);
+                    sizes.push([w, h]);
+                    pages.push(Some(super::prepare_page(
+                        Page::new(input),
+                        Default::default(),
+                    )));
+                }
+                _ => {
+                    links_of.push(Vec::new());
+                    runs.push(Vec::new());
+                    sizes.push([0.0, 0.0]);
+                    pages.push(None);
+                }
+            }
+            if !handle.is_null() {
+                b.FPDF_ClosePage(handle);
+            }
+        }
+        let mut tally = FloatTally::default();
+        let mut seen = std::collections::HashSet::new();
+        for (src, links_here) in links_of.iter().enumerate() {
+            let Some(source) = pages[src].as_ref() else {
+                continue;
+            };
+            for &(rect, x, y, to) in links_here {
+                let Some((start, end)) = locate(source, rect) else {
+                    continue;
+                };
+                let before: String = source.text[start.saturating_sub(14)..start]
+                    .iter()
+                    .collect();
+                let inside: String = source.text[start..end].iter().collect();
+                let Some((kind, number)) = float_reference(&before, &inside) else {
+                    continue;
+                };
+                let Some(Some(page)) = pages.get(to as usize) else {
+                    continue;
+                };
+                let head = (0..page.lines.len()).find(|&i| {
+                    crate::engine::figures::parse_caption(&page.line_text(i)).is_some_and(
+                        |(label, _)| {
+                            let lower = label.to_lowercase();
+                            lower.starts_with(&kind[..3])
+                                && lower.rsplit(' ').next() == Some(number.as_str())
+                        },
+                    )
+                });
+                let Some(head) = head else { continue };
+                if !seen.insert((to, head, x.map(f32::to_bits), y.map(f32::to_bits))) {
+                    continue;
+                }
+                let [w, h] = sizes[to as usize];
+                let crop = crate::engine::preview::crop_rect(&crate::engine::preview::CropInput {
+                    page_w_pt: w,
+                    page_h_pt: h,
+                    dest_x: x,
+                    dest_y: y,
+                    runs: &runs[to as usize],
+                });
+                let caption = caption_lines(page, head);
+                // A table's rows can read as prose to this check: only a
+                // figure's crop is held to it.
+                let problems = judge_float(page, crop, &caption, kind == "figure", &mut tally);
+                if !problems.is_empty() {
+                    let _ = writeln!(
+                        detail,
+                        "{name} {kind} {number} p{}->p{} x={x:?} y={y:?} crop [{:.0},{:.0},{:.0},{:.0}]\n    {}",
+                        src + 1,
+                        to + 1,
+                        crop[0],
+                        crop[1],
+                        crop[0] + crop[2],
+                        crop[1] + crop[3],
+                        problems.join("\n    ")
+                    );
+                }
+            }
+        }
+        if tally.checked > 0 {
+            let _ = writeln!(report, "{}", tally.line(&name));
+        }
+        total.add(&tally);
+        b.FPDF_CloseDocument(raw);
+    }
+    let _ = writeln!(report, "\n{}", total.line("TOTAL"));
+    let _ = writeln!(report, "\nPROBLEMS\n{detail}");
+    std::fs::write(&out_path, &report).expect("write report");
+    eprintln!("wrote {out_path}");
 }
