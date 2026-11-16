@@ -146,6 +146,8 @@ pub enum Work {
         src: u32,
         x: Option<f32>,
         y: Option<f32>,
+        /// The link's own page and rectangle, for its words.
+        from: Option<(u32, [f32; 4])>,
         respond: Respond<PreviewSpecDto>,
     },
     ResolveCitation {

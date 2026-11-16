@@ -116,11 +116,16 @@ export interface EngineApi {
   /** Bubbles and checkboxes the page draws as glyphs rather than declares as
    * form fields, for the shading tool. */
   getPageBubbles(docId: number, src: number): Promise<Bubble[]>;
+  /** The crop a link's destination previews. `from` - the link's own page
+   * and rectangle - lets the engine read the link's words ("Theorem 2",
+   * "[12]") for a destination that is only a page or that many links
+   * share. */
   getPreviewRect(
     docId: number,
     src: number,
     x: number | null,
-    y: number | null
+    y: number | null,
+    from?: { src: number; rect: [number, number, number, number] }
   ): Promise<PreviewSpec>;
   resolveCitation(id: CitationId): Promise<ResolvedCitation | null>;
   /** Adds a folder to the library, or removes one. */
@@ -310,7 +315,15 @@ export const engine: EngineApi = {
   getPageLinks: (docId, src) => invoke('get_page_links', { docId, src }),
   getPageBubbles: async (docId, src) =>
     (await invoke<PageBubbles>('get_page_bubbles', { docId, src })).bubbles,
-  getPreviewRect: (docId, src, x, y) => invoke('get_preview_rect', { docId, src, x, y }),
+  getPreviewRect: (docId, src, x, y, from) =>
+    invoke('get_preview_rect', {
+      docId,
+      src,
+      x,
+      y,
+      fromSrc: from?.src ?? null,
+      fromRect: from?.rect ?? null,
+    }),
   resolveCitation: (id) => invoke('resolve_citation', { id }),
   changeLibraryRoot: (path, add) => invoke('change_library_root', { path, add }),
   librarySearch: (query, caseSensitive, projectId) =>

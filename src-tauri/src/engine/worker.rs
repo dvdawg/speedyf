@@ -11,7 +11,7 @@ use super::links;
 use super::ocr::{self, OcrLine};
 use super::ocr_thread::{OcrDone, OcrRequest, OcrService, Refused};
 use super::pdfium_init;
-use super::preview::{self, CropInput, PREVIEW_SCALE_MILLI};
+use super::preview::{self, PREVIEW_SCALE_MILLI};
 use super::queue::JobMeta;
 use super::render;
 use super::save;
@@ -447,8 +447,9 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
             src,
             x,
             y,
+            from,
             respond,
-        } => respond(do_preview_rect(state, shared, doc, src, x, y)),
+        } => respond(do_preview_rect(state, shared, doc, src, x, y, from)),
         Work::ClassifyDocument { doc, respond } => respond(do_classify_document(state, doc)),
         Work::ResolveCitation {
             id,
@@ -996,16 +997,41 @@ fn do_preview_rect(
     src: u32,
     x: Option<f32>,
     y: Option<f32>,
+    from: Option<(u32, [f32; 4])>,
 ) -> AppResult<PreviewSpecDto> {
     let [page_w, page_h] = state.display_size(doc, src)?;
+    // The link's words, from its own page: what it names, for a
+    // destination that is only a page or that many links share.
+    let words = match from {
+        Some((from_src, rect)) if rect.iter().all(|v| v.is_finite()) => {
+            let source = ensure_text_layout(state, shared, doc, from_src)?;
+            Some(super::hovers::targets::LinkText::from_runs(
+                &source.runs,
+                rect,
+            ))
+        }
+        _ => None,
+    };
     let layout = ensure_text_layout(state, shared, doc, src)?;
-    let rect = preview::crop_rect(&CropInput {
-        page_w_pt: page_w,
-        page_h_pt: page_h,
-        dest_x: x,
-        dest_y: y,
-        runs: &layout.runs,
-    });
+    // The page read the way the hover index reads it, for what the
+    // destination points at: a statement, a display, a heading, a
+    // reference.
+    let page = if y.is_some() || words.is_some() {
+        let handle = state.page_handle(doc, src)?;
+        let input = super::hovers::extract::extract(state.bindings, handle, page_w, page_h);
+        Some(super::hovers::page::Page::new(input))
+    } else {
+        None
+    };
+    let rect = super::hovers::targets::link_crop(
+        page.as_ref(),
+        &layout.runs,
+        page_w,
+        page_h,
+        x,
+        y,
+        words.as_ref(),
+    );
     let tile = preview::rect_to_tile(rect, page_h, PREVIEW_SCALE_MILLI);
     let [crop_x, crop_y, crop_w, crop_h] = rect;
     let mut preview_text = layout
@@ -4241,6 +4267,7 @@ mod tests {
             src: 0,
             x: None,
             y: None,
+            from: None,
             respond: Box::new(|_| {}),
         }));
         assert!(!is_generation_cancellable(&Work::PageLinks {

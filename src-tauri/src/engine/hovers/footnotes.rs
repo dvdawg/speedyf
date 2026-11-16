@@ -437,7 +437,7 @@ pub fn find_footnotes(page: &Page, next: Option<&Page>) -> Vec<Footnote> {
                 mark: mark.clone(),
                 range: *range,
                 rects: padded_rects(page, range.0, range.1),
-                region: note_region(page, &lines),
+                region: super::targets::clear_of_neighbours(note_region(page, &lines), page),
                 jump: (first.x0, first.top),
                 continues,
             });

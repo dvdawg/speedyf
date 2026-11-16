@@ -1587,10 +1587,21 @@ fn section_region(page: &Page, head: &Head) -> Rect {
     let line = &page.lines[head.line];
     let top = line.top;
     let mut region = line_rect(line);
-    for i in following_lines(page, head.line, 2.5, |i| !section_head_quick(page, i)) {
+    // A heading opening straight onto a subsection's heading ("C", then
+    // "C.1 Proof of Lemma 3.2") shows that one and its first lines too:
+    // the next heading ends the preview only once some text is in it.
+    let mut text_lines = 0;
+    for i in following_lines(page, head.line, 2.5, |_| true) {
         let l = &page.lines[i];
         if top - l.bottom > 140.0 {
             break;
+        }
+        if section_head_quick(page, i) {
+            if text_lines > 0 {
+                break;
+            }
+        } else {
+            text_lines += 1;
         }
         region = union(region, line_rect(l));
     }
@@ -1895,6 +1906,11 @@ pub fn find_definitions(page: &Page, regions: &Regions, src: u32) -> Vec<Definit
                 text: String::new(),
             });
         }
+    }
+    // Tight leading puts the next line inside a region's padding: a sliver
+    // of it would show at the preview's edge.
+    for d in &mut out {
+        d.region = super::targets::clear_of_neighbours(d.region, page);
     }
     out
 }

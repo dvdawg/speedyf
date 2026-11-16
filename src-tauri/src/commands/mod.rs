@@ -177,6 +177,8 @@ pub async fn get_preview_rect(
     src: u32,
     x: Option<f32>,
     y: Option<f32>,
+    from_src: Option<u32>,
+    from_rect: Option<[f32; 4]>,
 ) -> AppResult<PreviewSpecDto> {
     state
         .0
@@ -186,6 +188,7 @@ pub async fn get_preview_rect(
                 src,
                 x,
                 y,
+                from: from_src.zip(from_rect),
                 respond,
             }
         })
