@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { AnchorRect } from './linkStore';
 import {
+  LEGIBLE_SCALE,
+  SEAM_HEIGHT,
   positionPreviewPopover,
   previewContentSize,
   previewFitScale,
@@ -73,6 +75,20 @@ describe('preview popover geometry', () => {
     const content = { width: 400, height: 3_000 };
     expect(previewFitScale(viewport, content)).toBeCloseTo(0.6);
     expect(previewPopoverSize(viewport, 'internal', content).height).toBe(560);
+  });
+
+  it('stacks the pieces of a stitched preview, a seam between each two', () => {
+    const tile = { x: 0, y: 0, w: 480, h: 200 };
+    const size = previewContentSize({
+      tile,
+      scaleMilli: 2_000,
+      more: [{ src: 4, tile: { x: 0, y: 0, w: 460, h: 100 } }],
+    });
+    expect(size).toEqual({ width: 240, height: 100 + 50 + SEAM_HEIGHT });
+  });
+
+  it('keeps very wide content legible and scrolls it across', () => {
+    expect(previewFitScale(viewport, { width: 1_200, height: 200 })).toBe(LEGIBLE_SCALE);
   });
 
   it('never enlarges small content to fit', () => {

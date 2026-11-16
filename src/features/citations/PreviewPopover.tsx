@@ -3,7 +3,7 @@ import { Portal } from 'solid-js/web';
 import { renderUrl } from '../../lib/rendering/renderSource';
 import { citationActions, runExtensionAction } from '../extensions/extensionStore';
 import { pagesInverted } from '../../stores/settings';
-import type { CitationId, PreviewSpec } from '../../types/engine';
+import type { CitationId, PreviewPart, PreviewSpec } from '../../types/engine';
 import { openInNewTabOrFocus } from '../document/tabsController';
 import { activeTab } from '../../stores/tabsStore';
 import type { TabRecord } from '../../stores/tabsStore';
@@ -22,18 +22,30 @@ import {
   type PreviewPopoverVariant,
 } from './previewLayout';
 
-function urlFor(tab: TabRecord, preview: PreviewSpec): string {
+function urlFor(tab: TabRecord, preview: PreviewSpec, part?: PreviewPart): string {
   const doc = tab.documentStore.state;
   return renderUrl({
     docId: preview.docId,
-    srcIndex: preview.src,
+    srcIndex: part?.src ?? preview.src,
     rotation: 0,
     scaleMilli: preview.scaleMilli,
     generation: preview.docId === doc.docId ? doc.generation : 0,
     kind: 'preview',
-    tile: preview.tile,
+    tile: part?.tile ?? preview.tile,
     invert: pagesInverted(),
   });
+}
+
+/** The tint band behind a display's linked row, from the engine's
+ * fractions of the first piece. */
+function markStyle(mark: [number, number, number, number]): Record<string, string> {
+  const pct = (value: number) => `${Math.max(0, Math.min(100, value * 100))}%`;
+  return {
+    left: pct(mark[0]),
+    top: pct(mark[1]),
+    width: pct(mark[2]),
+    height: pct(mark[3]),
+  };
 }
 
 function RasterCard(props: {
@@ -52,9 +64,16 @@ function RasterCard(props: {
   fit?: { scale: number; maxHeight: number } | undefined;
   activate: () => void;
 }) {
-  const url = createMemo(() => urlFor(props.tab, props.preview));
-  const rasterStyle = createMemo(() => previewRasterStyle(props.preview, props.fit?.scale ?? 1));
-  const [loaded, setLoaded] = createSignal(false);
+  // Every piece of the preview: the target, then where it runs on.
+  const parts = createMemo(() => [
+    { src: props.preview.src, tile: props.preview.tile },
+    ...(props.pageNumber !== undefined ? (props.preview.more ?? []) : []),
+  ]);
+  const urls = createMemo(() =>
+    parts().map((part, index) => urlFor(props.tab, props.preview, index === 0 ? undefined : part))
+  );
+  const [loadedCount, setLoadedCount] = createSignal(0);
+  const loaded = () => loadedCount() >= parts().length;
   const [failed, setFailed] = createSignal(false);
   let rasterTimeout: number | undefined;
   const clearRasterTimeout = () => {
@@ -62,14 +81,25 @@ function RasterCard(props: {
     rasterTimeout = undefined;
   };
   createEffect(() => {
-    void url();
-    setLoaded(false);
+    void urls();
+    setLoadedCount(0);
     setFailed(false);
     clearRasterTimeout();
     rasterTimeout = window.setTimeout(() => setFailed(true), 5_000);
     onCleanup(clearRasterTimeout);
   });
   const fallback = () => props.preview.text.trim() || props.detail || 'Preview unavailable.';
+  const onLoad = () => {
+    setLoadedCount((count) => count + 1);
+    if (loaded()) clearRasterTimeout();
+  };
+  const onError = () => {
+    clearRasterTimeout();
+    setFailed(true);
+    setLoadedCount(0);
+  };
+  const stackWidth = () =>
+    `${previewContentSize({ ...props.preview, more: parts().slice(1) }).width * (props.fit?.scale ?? 1)}px`;
 
   return (
     <button
@@ -94,25 +124,61 @@ function RasterCard(props: {
               aria-label="Loading preview"
             />
           </Show>
-          <img
-            class="citation-preview-image"
-            classList={{ 'is-full-page': props.fullPage === true, 'is-loaded': loaded() }}
-            style={props.pageNumber !== undefined ? rasterStyle() : undefined}
-            width={props.preview.tile.w}
-            height={props.preview.tile.h}
-            src={url()}
-            alt={props.alt}
-            draggable={false}
-            onLoad={() => {
-              clearRasterTimeout();
-              setLoaded(true);
-            }}
-            onError={() => {
-              clearRasterTimeout();
-              setFailed(true);
-              setLoaded(false);
-            }}
-          />
+          <Show
+            when={props.pageNumber !== undefined}
+            fallback={
+              <img
+                class="citation-preview-image"
+                classList={{ 'is-full-page': props.fullPage === true, 'is-loaded': loaded() }}
+                width={props.preview.tile.w}
+                height={props.preview.tile.h}
+                src={urls()[0]}
+                alt={props.alt}
+                draggable={false}
+                onLoad={onLoad}
+                onError={onError}
+              />
+            }
+          >
+            <div class="citation-preview-stack" style={{ width: stackWidth() }}>
+              <For each={parts()}>
+                {(part, index) => (
+                  <>
+                    <Show when={index() > 0}>
+                      <div class="citation-preview-seam" aria-hidden="true" />
+                    </Show>
+                    <div class="citation-preview-piece">
+                      <img
+                        class="citation-preview-image"
+                        classList={{ 'is-loaded': loaded() }}
+                        style={previewRasterStyle(
+                          { tile: part.tile, scaleMilli: props.preview.scaleMilli },
+                          props.fit?.scale ?? 1
+                        )}
+                        width={part.tile.w}
+                        height={part.tile.h}
+                        src={urls()[index()]}
+                        alt={index() === 0 ? props.alt : ''}
+                        draggable={false}
+                        onLoad={onLoad}
+                        onError={onError}
+                      />
+                      <Show when={index() === 0 && props.preview.mark ? props.preview.mark : null}>
+                        {(mark) => (
+                          <div
+                            class="citation-preview-mark"
+                            classList={{ 'is-loaded': loaded() }}
+                            style={markStyle(mark())}
+                            aria-hidden="true"
+                          />
+                        )}
+                      </Show>
+                    </div>
+                  </>
+                )}
+              </For>
+            </div>
+          </Show>
         </Show>
       </div>
       <Show when={props.pageNumber !== undefined}>
@@ -208,7 +274,11 @@ function PreviewContent(props: {
             preview={result().preview}
             alt={`Preview of ${result().span.label}`}
             pageNumber={readerPage(props.tab, result().span.target.page) ?? undefined}
-            note={result().span.target.continues ? 'Continues on the next page' : undefined}
+            note={
+              result().span.target.continues && !result().preview.more?.length
+                ? 'Continues on the next page'
+                : undefined
+            }
             fit={props.fit}
             activate={() => followSpan(props.tab, result().span)}
           />
