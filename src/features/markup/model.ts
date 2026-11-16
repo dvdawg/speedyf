@@ -2,6 +2,7 @@
  * grouped by section, repeats folded together, counted, and written out as
  * a plain-text letter. Pure. */
 import { numberComments } from './geometry';
+import { plausibleQuoteTex } from './quoteTexCheck';
 import { labelText, type CommentLabel } from './labels';
 import { quickmarkById } from './quickmarks';
 import {
@@ -53,6 +54,13 @@ function readRect(v: unknown): Rect | null {
   return x === null || y === null || w === null || h === null ? null : { x, y, w, h };
 }
 
+/** What a saved reading is held to: the quote, or nothing for a comment on
+ * an equation on its own (quoted "Equation (3)"). */
+function quoteBasis(o: Record<string, unknown>): string {
+  const quote = str(o.quote);
+  return /^Equation( \([^)]*\))?$/.test(quote) ? '' : quote;
+}
+
 function readAnchor(v: unknown): Anchor | null {
   if (!v || typeof v !== 'object') return null;
   const o = v as Record<string, unknown>;
@@ -68,7 +76,11 @@ function readAnchor(v: unknown): Anchor | null {
     quads: quads && quads.length > 0 ? quads : null,
     rect,
     quote: str(o.quote),
-    ...(typeof o.quoteTex === 'string' && o.quoteTex.trim() ? { quoteTex: o.quoteTex } : {}),
+    // A reading saved before readings were checked is checked now: one that
+    // fails is dropped, and the page's own text stands.
+    ...(typeof o.quoteTex === 'string' && plausibleQuoteTex(o.quoteTex, quoteBasis(o))
+      ? { quoteTex: o.quoteTex }
+      : {}),
   };
 }
 
@@ -253,7 +265,9 @@ export function shortMathQuote(text: string, max = 140): string {
 /** What a comment quotes, for the letter: its words with their math as
  * LaTeX when that was read, else as the page gave them. */
 export function anchorQuote(anchor: Anchor, max = 140): string {
-  return anchor.quoteTex ? shortMathQuote(anchor.quoteTex, max) : shortQuote(anchor.quote, max);
+  return anchor.quoteTex && plausibleQuoteTex(anchor.quoteTex, quoteBasis({ quote: anchor.quote }))
+    ? shortMathQuote(anchor.quoteTex, max)
+    : shortQuote(anchor.quote, max);
 }
 
 /** Every `[@key]` citation in a body, in order of first appearance. */

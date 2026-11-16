@@ -22,6 +22,7 @@ import {
   type ConvertMode,
 } from '../extensions/extensionStore';
 import { equationToken } from '../extensions/editorHost';
+import { plausibleQuoteTex, texParses } from './quoteTexCheck';
 import { closeReaderPane } from '../extensions/surfaces';
 import { docStatements } from '../extensions/paperDocs';
 import { pickRegion } from '../extensions/regionCapture';
@@ -308,7 +309,7 @@ export function beginComment(mode: DraftMode): boolean {
     });
   });
   if (token && mode === 'comment') {
-    void readQuoteMath(path, anchor, async (m) => {
+    void readQuoteMath(path, anchor, text, async (m) => {
       const answer = await convertSelection(token, m);
       const markdown = answer?.markdown.trim() ?? '';
       return markdown.includes('$') ? markdown : null;
@@ -348,7 +349,7 @@ export function beginEquationComment(target: {
   });
   const ref = { docId: doc.docId, page: target.page, bbox: target.bbox, number: target.number };
   const token = equationToken(ref);
-  void readQuoteMath(path, anchor, async (m) => {
+  void readQuoteMath(path, anchor, '', async (m) => {
     const answer = await convertEquation(token, ref, m);
     const latex = answer?.latex.trim() ?? '';
     return latex ? `$$ ${latex.replace(/\s*\n\s*/g, ' ')} $$` : null;
@@ -359,17 +360,23 @@ export function beginEquationComment(target: {
 /** Read a quote's math as LaTeX, into its anchor: from the page itself at
  * once, then, when that found math, quietly from an exact source if the
  * converter has one (which goes online only when its extension is
- * enabled, the user's consent to it). Nothing happens without a converter. */
+ * enabled, the user's consent to it). Nothing happens without a converter,
+ * and a reading is kept only when it can be trusted (`quoteTexCheck`). */
 async function readQuoteMath(
   path: string,
   anchor: Anchor,
+  /** the words the page itself gives, which a reading must agree with
+   * (empty for an equation on its own) */
+  plain: string,
   read: (mode: ConvertMode) => Promise<string | null>
 ): Promise<void> {
+  const trusted = async (tex: string | null) =>
+    tex !== null && plausibleQuoteTex(tex, plain) && (await texParses(tex));
   const local = await read('local').catch(() => null);
   if (!local) return;
-  setQuoteTex(path, anchor, local);
+  if (await trusted(local)) setQuoteTex(path, anchor, local);
   const exact = await read('exact').catch(() => null);
-  if (exact && exact !== local) setQuoteTex(path, anchor, exact);
+  if (exact && exact !== local && (await trusted(exact))) setQuoteTex(path, anchor, exact);
 }
 
 /** Put a quote's LaTeX on its anchor: the draft's, while it is being
