@@ -1799,6 +1799,12 @@ html.is-dragging-tab * {
   background: linear-gradient(var(--border), var(--border)) center / 100% 1px no-repeat;
 }
 
+/* On inverted pages the card's paper is dark: its page number and note
+   take the theme's dim text, not ink meant for white paper. */
+:root[data-invert-pages='on'] :is(.citation-preview-page-number, .citation-preview-note) {
+  color: var(--text-dim);
+}
+
 /* The linked row of a multi-line display. */
 .citation-preview-mark {
   position: absolute;
