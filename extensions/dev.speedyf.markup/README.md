@@ -24,6 +24,9 @@ It works on any PDF you open, in your library or not.
 - **Region**: press **R** (or the dashed box in the drawer's head) and drag
   a box round a figure, a diagram or an equation.
 
+All of these work on a turned page too, whether the PDF turns it or you
+did in the reader.
+
 In a comment:
 
 - `/` at the start lists the **QuickMarks** - gap ("Gap in the argument"),
@@ -86,12 +89,14 @@ margin strip. Nothing is added before or after it.
   comment's colour (a strike-through and caret for a fix, a box for a
   region), as real PDF annotations holding the numbered comment, so any PDF
   reader lists them. A small number in the same colour sits just after the
-  phrase (at the top-right corner of a region), matching its note.
+  phrase (at the top-right corner of a region), matching its note; click
+  it to go to the note.
 - **In the margin**, each note is its number and its words - a fix reads as
   the struck words and what replaces them, a citation as its short label,
-  math typeset. Notes sit level with what they are about; where two would
-  collide they share the move, one up and one down, keeping their order,
-  over the whole height of the page. Your Overall paragraph, if you wrote
+  math typeset, a web or mail address (http, https, mailto) a link. A
+  note's number goes back to its phrase. Notes sit level with what they
+  are about; where two would collide they share the move, one up and one
+  down, keeping their order, over the whole height of the page. Your Overall paragraph, if you wrote
   one, heads the first page's margin. A crowded page is set a little
   smaller.
 - **Only as a last resort**, when a page has more to say than its margin
@@ -103,4 +108,5 @@ margin strip. Nothing is added before or after it.
 email: the Overall paragraph, the comments grouped by section with their
 labels, the typos as a list, and the library items cited.
 
-Export needs macOS for now: the margin is set by the system's web view.
+The margin is set by the system's web view: WebKit on macOS and Linux,
+WebView2 on Windows.

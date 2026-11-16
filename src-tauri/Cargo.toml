@@ -80,6 +80,17 @@ block2 = "0.6"
 [target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2"
 
+# Markup export (markup_capture.rs): the comment sheets are printed to PDF by
+# the system web view, through the crates Tauri's own runtime already uses,
+# at the versions it uses.
+[target.'cfg(target_os = "windows")'.dependencies]
+webview2-com = "0.38"
+windows = "0.61"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = { version = "2", features = ["v2_40"] }
+gtk = { version = "0.18", features = ["v3_24"] }
+
 [profile.release]
 lto = "thin"
 strip = true

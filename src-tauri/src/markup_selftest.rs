@@ -4,7 +4,8 @@
 //!
 //! Once the app is up it copies `src.pdf` into a temp folder, exports it with
 //! two margin sheets and two feedback sheets (plain text, KaTeX inline and
-//! display math pre-rendered by the katex package, a link, long wrapped text),
+//! display math pre-rendered by the katex package, an internal link and a web
+//! link, long wrapped text),
 //! writes `out.pdf`, logs the result and exits (status 0 on success). The
 //! source is only ever read. Compiled into debug builds only.
 
@@ -45,6 +46,7 @@ fn sheet_html(marker: &str, wide: bool) -> String {
          <p style=\"margin:0 0 6px\">Inline math {KATEX_INLINE} in a sentence.</p>\
          <div style=\"margin:0 0 6px\">{KATEX_DISPLAY}</div>\
          <p style=\"margin:0 0 6px\"><a href=\"#\" style=\"color:#0645ad\">See feedback page</a></p>\
+         <p style=\"margin:0 0 6px\"><a href=\"https://arxiv.org/abs/2401.00001\">https://arxiv.org/abs/2401.00001</a></p>\
          <p style=\"margin:0\">{LONG}</p>\
          <div style=\"position:absolute;left:0;bottom:0;width:20px;height:20px;background:#c00\"></div>\
          </div>"
@@ -101,6 +103,7 @@ fn request(src: &str, dest: &str, page_w: f32, page_h: f32) -> MarkupExportReque
             }),
             color: "#ffd400".into(),
             contents: "1. Self-test comment".into(),
+            target: None,
         }],
         sheets: vec![
             margin(0, MARKERS[0]),
@@ -174,7 +177,9 @@ async fn run_frontend(
 ) -> Result<String, String> {
     let dir = std::env::temp_dir().join("speedyf-markup-selftest");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let copy = dir.join("frontend-source.pdf");
+    // A name of its own per run: a tab restored from an earlier run on the
+    // same name would otherwise be focused, with the old file's pages.
+    let copy = dir.join(format!("frontend-source-{}.pdf", std::process::id()));
     std::fs::copy(src, &copy).map_err(|e| format!("copy source: {e}"))?;
     let dest = sibling(out, "frontend", "pdf");
     let _ = std::fs::remove_file(&dest);
@@ -193,6 +198,7 @@ async fn run_frontend(
     .map_err(|e| e.to_string())?;
     let report = tokio::time::timeout(Duration::from_secs(120), rx.recv()).await;
     app.unlisten(id);
+    let _ = std::fs::remove_file(&copy);
     let report = match report {
         Ok(Some(report)) => report,
         _ => return Err("no report from the main window".into()),

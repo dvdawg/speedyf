@@ -410,6 +410,7 @@ export default function PageView(props: Props) {
             src={srcIndex()!}
             generation={doc.generation}
             zoom={vp.state.zoom}
+            geom={props.geom}
           />
         </Show>
         <Show when={srcIndex() !== null}>

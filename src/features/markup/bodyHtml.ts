@@ -14,6 +14,9 @@ export interface BodyOptions {
   math?: ((tex: string, display: boolean) => string) | null;
   /** Cite key -> its label without brackets ("Jar97"), null when unknown. */
   cite?: (key: string) => string | null;
+  /** Web and mail addresses (http, https, mailto) as links: for the
+   * exported pages, where a reader can follow them. */
+  links?: boolean;
 }
 
 export function escapeHtml(text: string): string {
@@ -24,8 +27,35 @@ export function escapeHtml(text: string): string {
     .replace(/"/g, '&quot;');
 }
 
-/** Escaped prose with **bold**, *italic* and `code`. */
-function marks(text: string): string {
+const ADDRESS = /\b(?:https?:\/\/|mailto:)[^\s<>"'`]+/gi;
+
+/** An address as written, less the punctuation that ends the sentence
+ * around it (a closing bracket only when it opens none). */
+function trimAddress(raw: string): string {
+  let url = raw.replace(/[.,;:!?*_]+$/, '');
+  while (url.endsWith(')') && !url.includes('('))
+    url = url.slice(0, -1).replace(/[.,;:!?*_]+$/, '');
+  return url;
+}
+
+/** Escaped prose with **bold**, *italic*, `code` and, when asked, web
+ * addresses as links. An address is never read for marks: its underscores
+ * and asterisks are its own. */
+function marks(text: string, links = false): string {
+  let out = '';
+  let at = 0;
+  for (const m of text.matchAll(ADDRESS)) {
+    const url = trimAddress(m[0]);
+    if (!/^(?:https?:\/\/[^/?#\s]+|mailto:\S+)/i.test(url)) continue;
+    out += proseMarks(text.slice(at, m.index));
+    const shown = escapeHtml(url);
+    out += links ? `<a href="${shown}">${shown}</a>` : shown;
+    at = m.index + url.length;
+  }
+  return out + proseMarks(text.slice(at));
+}
+
+function proseMarks(text: string): string {
   let html = escapeHtml(text);
   html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>');
   html = html.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
@@ -41,7 +71,7 @@ function inlineText(text: string, opts: BodyOptions): string {
   let out = '';
   let at = 0;
   for (const m of text.matchAll(CITATION)) {
-    out += marks(text.slice(at, m.index));
+    out += marks(text.slice(at, m.index), opts.links);
     const label = opts.cite ? citationsAsText(m[0], opts.cite) : m[0];
     out +=
       label !== m[0]
@@ -49,7 +79,7 @@ function inlineText(text: string, opts: BodyOptions): string {
         : `<span class="mk-cite is-unknown">${escapeHtml(m[0])}</span>`;
     at = m.index + m[0].length;
   }
-  return out + marks(text.slice(at));
+  return out + marks(text.slice(at), opts.links);
 }
 
 /** One line of text with math in it. */

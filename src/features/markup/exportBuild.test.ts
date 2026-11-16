@@ -130,6 +130,42 @@ describe('marks', () => {
     expect(request.marginPt).toBe(180);
   });
 
+  it('links each number by its phrase to its note, and the note back', async () => {
+    const list = [
+      comment({ anchor: anchor(0, 100, 'a'), body: 'First.' }),
+      comment({ anchor: anchor(0, 400, 'b'), body: 'Second.' }),
+      comment({ anchor: anchor(1, 250, 'c'), body: 'Third.' }),
+    ];
+    const request = await buildExportRequest(input(list));
+    const labels = request.marks.filter((m) => m.kind === 'label');
+    const margins = request.sheets.filter((s) => s.kind === 'margin');
+    for (const [i, mark] of labels.entries()) {
+      const sheet = margins.find((s) => s.page === mark.page)!;
+      const tops = topsOf(sheet.html);
+      const k = labels.filter((m, j) => j < i && m.page === mark.page).length;
+      // Same page, just above where its note is set in the strip.
+      expect(mark.target).toEqual({ kind: 'page', page: mark.page, y: Math.round(tops[k]! - 12) });
+    }
+    // The badges: back to their phrase, a little above its line.
+    const back = margins.flatMap((s) => s.links!.map((l) => [s.page, l.target]));
+    expect(back).toEqual([
+      [0, { kind: 'page', page: 0, y: 76 }],
+      [0, { kind: 'page', page: 0, y: 376 }],
+      [1, { kind: 'page', page: 1, y: 226 }],
+    ]);
+  });
+
+  it('carries web addresses into the exported notes as links', async () => {
+    const c = comment({
+      anchor: anchor(0, 100, 'a'),
+      body: 'See https://arxiv.org/abs/1234.5678.',
+    });
+    const request = await buildExportRequest(input([c]));
+    expect(request.sheets[0]!.html).toContain(
+      '<a href="https://arxiv.org/abs/1234.5678">https://arxiv.org/abs/1234.5678</a>.'
+    );
+  });
+
   it('writes plain contents with citations as labels', () => {
     const c = comment({ anchor: anchor(0, 1, 'x'), body: 'Compare  [@jar97]\nand more.' });
     expect(plainContents(4, c, input([c]))).toBe('4. Compare [Jar97] and more.');
@@ -148,7 +184,7 @@ describe('the margin', () => {
       ['margin', 1, 180, 792],
     ]);
     const all = request.sheets.map((s) => s.html).join('');
-    expect(all).toContain('<span class="mk-badge mk-k-comment">1</span>');
+    expect(all).toContain('<a class="mk-badge mk-k-comment" data-link="back">1</a>');
     expect(all).toContain('Add motivation here. See <span class="mk-cite">[Jar97]</span>.');
     expect(all).toContain('<span class="mk-del">teh</span> <span class="mk-ins">the</span>');
     // No letter, labels, pointers or kind tags.
@@ -236,9 +272,11 @@ describe('continuation, the last resort', () => {
     expect(margin.html).toContain('is-stub');
     // The paper has two pages, so the continuation prints as page 3.
     expect(margin.html).toContain('(cont. p. 3)');
-    expect(margin.links!.length).toBeGreaterThan(0);
-    for (const link of margin.links!)
-      expect(link.target).toMatchObject({ kind: 'sheet', sheet: 0 });
+    const onward = margin.links!.filter((l) => l.target.kind === 'sheet');
+    expect(onward.length).toBe(margin.html.split('(cont. p. 3)').length - 1);
+    for (const link of onward) expect(link.target).toMatchObject({ kind: 'sheet', sheet: 0 });
+    // Every badge, cut or not, still goes back to its phrase.
+    expect(margin.links!.filter((l) => l.target.kind === 'page')).toHaveLength(24);
     expect(added[0]!.html).toContain('Notes continued from p. 1');
     expect(added[0]!.html).not.toContain('Short.');
     for (const link of added[0]!.links!)

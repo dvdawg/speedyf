@@ -5,7 +5,9 @@
 //!
 //!   1. every page is widened on the right by `margin_pt`, in display space;
 //!   2. each margin sheet (a one-page PDF captured from HTML, see
-//!      `markup_capture`) is placed into its page's new strip as a form XObject;
+//!      `markup_capture`) is placed into its page's new strip as a form XObject,
+//!      and the web and mail links the capture put on it are written again as
+//!      URI links over where they now sit (a form XObject has no annotations);
 //!   3. comment marks become real annotations (highlight, strikeout, square),
 //!      and each comment's number is drawn into the page by its phrase
 //!      (`MarkKind::Label`: a filled pill and the number, page content, so it
@@ -16,7 +18,8 @@
 //!      (`save::save_incremental`), so the original bytes are kept verbatim
 //!      at the start of the output;
 //!   6. a second incremental update, written with lopdf, adds what PDFium's API
-//!      cannot express: internal GoTo links carrying a /Dest, and Caret
+//!      cannot express: internal GoTo links carrying a /Dest (sheet links, and
+//!      each label's link to its note in the strip), and Caret
 //!      annotations. If that pass fails the export still succeeds, without
 //!      links and with carets downgraded to text notes.
 //!
@@ -58,6 +61,7 @@ const LABEL_TEXT_SHARE: f32 = 0.78;
 const HELVETICA_CAP: f32 = 0.718;
 
 const ANNOT_TEXT: c_int = 1;
+const ANNOT_LINK: c_int = 2;
 const ANNOT_SQUARE: c_int = 5;
 const ANNOT_HIGHLIGHT: c_int = 9;
 const ANNOT_STRIKEOUT: c_int = 12;
@@ -149,6 +153,10 @@ pub struct MarkupMark {
     pub color: String,
     #[serde(default)]
     pub contents: String,
+    /// Where a click on a label goes: its note in the margin strip. Only
+    /// labels carry one; the link covers the pill.
+    #[serde(default)]
+    pub target: Option<LinkTarget>,
 }
 
 #[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -283,8 +291,12 @@ pub fn validate(req: &MarkupExportRequest) -> AppResult<()> {
     if html_bytes > MAX_HTML_BYTES {
         return bad("sheets too large");
     }
+    let target_ok = |target: &LinkTarget| match *target {
+        LinkTarget::Sheet { sheet, y } => sheet < req.sheets.len() && y.is_finite(),
+        LinkTarget::Page { y, .. } => y.is_finite(),
+    };
     let mut margin_pages = HashSet::new();
-    let mut links = 0usize;
+    let mut links = req.marks.iter().filter(|m| m.target.is_some()).count();
     for sheet in &req.sheets {
         let size_ok = |v: f32| (1.0..=MAX_SHEET_PT).contains(&v);
         if !size_ok(sheet.width_pt) || !size_ok(sheet.height_pt) {
@@ -303,17 +315,8 @@ pub fn validate(req: &MarkupExportRequest) -> AppResult<()> {
             if !rect_ok(&link.rect) {
                 return bad("bad link rectangle");
             }
-            match link.target {
-                LinkTarget::Sheet { sheet, y } => {
-                    if sheet >= req.sheets.len() || !y.is_finite() {
-                        return bad("link to a sheet that does not exist");
-                    }
-                }
-                LinkTarget::Page { y, .. } => {
-                    if !y.is_finite() {
-                        return bad("bad link target");
-                    }
-                }
+            if !target_ok(&link.target) {
+                return bad("bad link target");
             }
         }
     }
@@ -345,6 +348,11 @@ pub fn validate(req: &MarkupExportRequest) -> AppResult<()> {
                 || !mark.contents.chars().all(|c| c.is_ascii_graphic()))
         {
             return bad("a label needs a rect and a short ASCII text");
+        }
+        if let Some(target) = &mark.target {
+            if mark.kind != MarkKind::Label || !target_ok(target) {
+                return bad("only a label links, to a page or a sheet");
+            }
         }
     }
     Ok(())
@@ -423,7 +431,6 @@ impl Affine {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn apply(&self, x: f32, y: f32) -> (f32, f32) {
         (
             self.a * x + self.c * y + self.e,
@@ -749,6 +756,9 @@ fn decorate_page(
             mx.f as f64,
         );
         b.FPDFPage_InsertObject(page, form);
+        for (uri, r) in sheet_uris(b, sheet_doc) {
+            add_uri_link(b, page, map_bounds(&mx, r), &uri)?;
+        }
     }
     let rule = geo.rect_to_user(&RectDto {
         x: geo.content_w,
@@ -784,11 +794,31 @@ pub(crate) fn keeps_sheet_uri(uri: &str) -> bool {
         || host == "[::1]")
 }
 
+/// The URI a link annotation opens, or "" for any other kind of link.
+fn annot_uri(b: &dyn PdfiumLibraryBindings, doc: FPDF_DOCUMENT, annot: FPDF_ANNOTATION) -> String {
+    let link = b.FPDFAnnot_GetLink(annot);
+    let action = if link.is_null() {
+        std::ptr::null_mut()
+    } else {
+        b.FPDFLink_GetAction(link)
+    };
+    if action.is_null() {
+        return String::new();
+    }
+    let len = b.FPDFAction_GetURIPath(doc, action, std::ptr::null_mut(), 0) as usize;
+    let mut buf = vec![0u8; len];
+    if len > 0 {
+        b.FPDFAction_GetURIPath(doc, action, buf.as_mut_ptr() as *mut c_void, len as c_ulong);
+    }
+    String::from_utf8_lossy(&buf)
+        .trim_end_matches('\0')
+        .to_string()
+}
+
 /// Remove the link annotations of an appended sheet page that point back
 /// into the app (see `keeps_sheet_uri`). The sheet's own links come from the
 /// request and are written by the lopdf pass.
 fn drop_capture_links(b: &dyn PdfiumLibraryBindings, doc: FPDF_DOCUMENT, page: FPDF_PAGE) {
-    const ANNOT_LINK: c_int = 2;
     let count = b.FPDFPage_GetAnnotCount(page);
     for index in (0..count).rev() {
         let annot = b.FPDFPage_GetAnnot(page, index);
@@ -799,34 +829,79 @@ fn drop_capture_links(b: &dyn PdfiumLibraryBindings, doc: FPDF_DOCUMENT, page: F
         if b.FPDFAnnot_GetSubtype(guard.annot) != ANNOT_LINK {
             continue;
         }
-        let link = b.FPDFAnnot_GetLink(guard.annot);
-        let action = if link.is_null() {
-            std::ptr::null_mut()
-        } else {
-            b.FPDFLink_GetAction(link)
-        };
-        let uri = if action.is_null() {
-            String::new()
-        } else {
-            let len = b.FPDFAction_GetURIPath(doc, action, std::ptr::null_mut(), 0) as usize;
-            let mut buf = vec![0u8; len];
-            if len > 0 {
-                b.FPDFAction_GetURIPath(
-                    doc,
-                    action,
-                    buf.as_mut_ptr() as *mut c_void,
-                    len as c_ulong,
-                );
-            }
-            String::from_utf8_lossy(&buf)
-                .trim_end_matches('\0')
-                .to_string()
-        };
+        let uri = annot_uri(b, doc, guard.annot);
         drop(guard);
         if !keeps_sheet_uri(&uri) {
             b.FPDFPage_RemoveAnnot(page, index);
         }
     }
+}
+
+/// The web and mail links of a captured margin sheet (`keeps_sheet_uri`),
+/// as (URI, rect in the sheet's user space). A form XObject carries no
+/// annotations, so these are written again on the page the sheet lands on.
+fn sheet_uris(b: &dyn PdfiumLibraryBindings, sheet_doc: FPDF_DOCUMENT) -> Vec<(String, Bounds)> {
+    let Ok(page) = load_page(b, sheet_doc, 0) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for index in 0..b.FPDFPage_GetAnnotCount(page.page) {
+        let annot = b.FPDFPage_GetAnnot(page.page, index);
+        if annot.is_null() {
+            continue;
+        }
+        let guard = AnnotGuard { b, annot };
+        if b.FPDFAnnot_GetSubtype(guard.annot) != ANNOT_LINK {
+            continue;
+        }
+        let uri = annot_uri(b, sheet_doc, guard.annot);
+        let mut r = FS_RECTF {
+            left: 0.0,
+            top: 0.0,
+            right: 0.0,
+            bottom: 0.0,
+        };
+        if !keeps_sheet_uri(&uri) || b.FPDFAnnot_GetRect(guard.annot, &mut r) == 0 {
+            continue;
+        }
+        let v = [
+            r.left.min(r.right),
+            r.bottom.min(r.top),
+            r.left.max(r.right),
+            r.bottom.max(r.top),
+        ];
+        if finite(&v) {
+            out.push((uri.trim().to_string(), v));
+        }
+    }
+    out
+}
+
+/// Bounds of a user-space box after an affine map.
+fn map_bounds(m: &Affine, r: Bounds) -> Bounds {
+    let corners = [(r[0], r[1]), (r[2], r[1]), (r[0], r[3]), (r[2], r[3])];
+    let mut out = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
+    for (x, y) in corners {
+        let (x, y) = m.apply(x, y);
+        out = [out[0].min(x), out[1].min(y), out[2].max(x), out[3].max(y)];
+    }
+    out
+}
+
+/// A borderless link annotation opening `uri`, in user space.
+fn add_uri_link(
+    b: &dyn PdfiumLibraryBindings,
+    page: FPDF_PAGE,
+    rect: Bounds,
+    uri: &str,
+) -> AppResult<()> {
+    let a = create_annot(b, page, ANNOT_LINK)?;
+    set_rect(b, a.annot, rect);
+    if b.FPDFAnnot_SetURI(a.annot, uri) == 0 {
+        return Err(AppError::Internal("cannot write a web link".into()));
+    }
+    b.FPDFAnnot_SetBorder(a.annot, 0.0, 0.0, 0.0);
+    Ok(())
 }
 
 fn create_annot<'b>(
@@ -1104,13 +1179,17 @@ fn pdfium_pass(
         return Err(AppError::Malformed("the document has no pages".into()));
     }
     let in_range = |p: u32| (p as usize) < page_count;
-    if req.marks.iter().any(|m| !in_range(m.page))
+    let target_in_range = |t: &LinkTarget| match *t {
+        LinkTarget::Page { page, .. } => in_range(page),
+        LinkTarget::Sheet { .. } => true,
+    };
+    if req
+        .marks
+        .iter()
+        .any(|m| !in_range(m.page) || !m.target.as_ref().is_none_or(target_in_range))
         || req.sheets.iter().any(|s| {
             (s.kind == SheetKind::Margin && !s.page.is_some_and(in_range))
-                || s.links.iter().any(|l| match l.target {
-                    LinkTarget::Page { page, .. } => !in_range(page),
-                    LinkTarget::Sheet { .. } => false,
-                })
+                || s.links.iter().any(|l| !target_in_range(&l.target))
         })
     {
         return Err(AppError::Unsupported(
@@ -1145,6 +1224,8 @@ fn pdfium_pass(
 
     let mut geos: Vec<PageGeo> = Vec::with_capacity(page_count);
     let mut carets = Vec::new();
+    // (page, user-space rect, target) of each label that links to its note.
+    let mut label_links: Vec<(usize, Bounds, LinkTarget)> = Vec::new();
     for index in 0..page_count {
         let page = load_page(b, doc.0, index)?;
         let geo = widen_page(b, page.page, req.margin_pt)?;
@@ -1161,6 +1242,9 @@ fn pdfium_pass(
                 carets_as_notes,
                 &mut carets,
             )?;
+            if let (MarkKind::Label, Some(r), Some(target)) = (mark.kind, &mark.rect, mark.target) {
+                label_links.push((index, geo.rect_to_user(r), target));
+            }
         }
         if b.FPDFPage_GenerateContent(page.page) == 0 {
             return Err(AppError::Internal(format!(
@@ -1191,8 +1275,26 @@ fn pdfium_pass(
     }
     drop(sheet_docs);
 
-    // Links: rect on the sheet's output page, destination wherever it points.
+    // Links: rect on the sheet's output page (or over a label), destination
+    // wherever it points.
+    let resolve = |target: LinkTarget| match target {
+        LinkTarget::Page { page, y } => Some((page as usize, y)),
+        LinkTarget::Sheet { sheet, y } => out_page_of_sheet.get(&sheet).map(|&p| (p, y)),
+    };
     let mut links = Vec::new();
+    for (page, rect, target) in label_links {
+        let Some((dest_page, y)) = resolve(target) else {
+            continue;
+        };
+        let (left, top) = geos[dest_page].xyz(y);
+        links.push(PendingLink {
+            page,
+            rect,
+            dest_page,
+            left,
+            top,
+        });
+    }
     for (i, sheet) in req.sheets.iter().enumerate() {
         let Some(&from) = out_page_of_sheet.get(&i) else {
             continue;
@@ -1204,12 +1306,8 @@ fn pdfium_pass(
             0.0
         };
         for link in &sheet.links {
-            let (dest_page, y) = match link.target {
-                LinkTarget::Page { page, y } => (page as usize, y),
-                LinkTarget::Sheet { sheet, y } => match out_page_of_sheet.get(&sheet) {
-                    Some(&p) => (p, y),
-                    None => continue,
-                },
+            let Some((dest_page, y)) = resolve(link.target) else {
+                continue;
             };
             let (left, top) = geos[dest_page].xyz(y);
             links.push(PendingLink {

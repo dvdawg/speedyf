@@ -38,7 +38,7 @@ import { docStatements } from '../extensions/paperDocs';
 import { pickRegion } from '../extensions/regionCapture';
 import { jumpToAnchor, layoutIndexOf } from '../outline/jumpToAnchor';
 import { outlineAsEntries } from '../../lib/structure/context';
-import { anchorStart, quadsFromRects, rectFromBox, revealRects } from './geometry';
+import { anchorStart, quadsFromRects, rectFromViewBox, revealRects } from './geometry';
 import {
   EMPTY_CONTEXT,
   labelFor,
@@ -540,10 +540,6 @@ export async function beginRegion(): Promise<boolean> {
   const page = doc.pages[picked.page];
   const geom = tab.zoom.pagesGeom()[picked.page];
   if (!page || page.srcIndex === null || !geom) return false;
-  if (geom.rotation !== 0) {
-    flashStatus('Regions can be marked on unrotated pages only');
-    return false;
-  }
   ensureLoaded(path);
   batch(() => {
     setEditing(null);
@@ -553,7 +549,9 @@ export async function beginRegion(): Promise<boolean> {
       anchor: {
         page: page.srcIndex!,
         quads: null,
-        rect: rectFromBox(picked.box, page.heightPt),
+        // The box was dragged on the page as turned on screen; the anchor
+        // is in the page's own space, like a text selection's.
+        rect: rectFromViewBox(picked.box, geom),
         quote: '',
       },
       kind: 'comment',
