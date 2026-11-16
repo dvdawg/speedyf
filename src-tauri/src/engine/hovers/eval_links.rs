@@ -466,9 +466,8 @@ fn statement_truth(pages: &[&Page], head: usize) -> Truth {
             // The body face again: an item's further lines, or the
             // paragraph after.
             in_list && indented
-        } else if !apart || display || prev_display {
-            true
-        } else if in_list && indented {
+        } else if !apart || display || prev_display || (in_list && indented) {
+            // Close by, a display, or an item's further lines.
             true
         } else if in_list {
             in_list = false;
