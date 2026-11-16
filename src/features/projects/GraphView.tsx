@@ -110,7 +110,7 @@ import { citedWithLabel, citedWithText, withGhostId } from './CitedWith';
 import ViewMenu from './GraphViewMenu';
 
 /** Room around the drawing when it is fitted, in pixels: the notes and the
- * controls sit along the top, the chip and the time hint along the bottom.
+ * controls sit along the top, the chip along the bottom.
  * Label widths are part of what is fitted, so this is clear space. */
 const PAD = { top: 44, right: 32, bottom: 36, left: 32 };
 /** What the canvas is taken to be before it has been measured, or where
@@ -575,9 +575,6 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
     ...loose().map((n) => n.id),
     ...withGhosts().map((w) => withGhostId(w.key)),
   ]);
-  const yearCount = createMemo(
-    () => new Set(shown().flatMap((n) => (n.year === null ? [] : [n.year]))).size
-  );
   /** The loose items' places: rows under the layout, in list order. */
   const loosePlaces = createMemo(() => {
     const map = new Map<string, Point>();
@@ -1628,14 +1625,6 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
               </g>
             </g>
           </svg>
-          <Show when={yearCount() >= 2}>
-            <div class="graph-time-hint is-start" aria-hidden="true">
-              <MathText text="$\leftarrow$ older" />
-            </div>
-            <div class="graph-time-hint is-end" aria-hidden="true">
-              <MathText text="newer $\rightarrow$" />
-            </div>
-          </Show>
           <Show when={focusId()}>
             <div class="graph-legend" aria-hidden="true">
               <span class="graph-legend-row">

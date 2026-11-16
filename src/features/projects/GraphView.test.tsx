@@ -174,15 +174,12 @@ describe('GraphView', () => {
         expect(overlap).toBe(false);
       }
     }
-    // No year bands or axis; a quiet time hint instead.
+    // No year bands, axis or older / newer hints: time is a quiet bias in
+    // the layout, nothing drawn.
     expect(container.querySelector('.graph-band')).toBeNull();
     expect(container.querySelector('.graph-axis-label')).toBeNull();
-    // Arrows are TeX, typeset by KaTeX once it has loaded.
-    const hints = () => Array.from(container.querySelectorAll('.graph-time-hint'));
-    expect(hints()).toHaveLength(2);
-    await waitFor(() => expect(hints().every((h) => h.querySelector('.katex'))).toBe(true));
-    expect(hints()[0]!.textContent).toMatch(/older$/);
-    expect(hints()[1]!.textContent).toMatch(/^newer /);
+    expect(container.querySelector('.graph-time-hint')).toBeNull();
+    expect(container.textContent).not.toMatch(/older|newer/);
   });
 
   it('counts items with no citations in a chip that leads to the list', async () => {

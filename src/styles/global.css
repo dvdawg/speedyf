@@ -5953,24 +5953,6 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 
 /* "older" and "newer" in the bottom corners: a hint that time leans left
  * to right, quiet enough to ignore. */
-.graph-time-hint {
-  position: absolute;
-  bottom: 6px;
-  left: 12px;
-  color: var(--text-dim);
-  opacity: 0.55;
-  font-size: 10px;
-  line-height: 1;
-  pointer-events: none;
-  -webkit-user-select: none;
-  user-select: none;
-}
-
-.graph-time-hint.is-end {
-  left: auto;
-  right: 12px;
-}
-
 .graph-skeleton {
   position: absolute;
   inset: 0;
@@ -6219,7 +6201,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .graph-legend {
   position: absolute;
   right: 8px;
-  bottom: 30px;
+  bottom: 8px;
   display: flex;
   flex-direction: column;
   gap: 2px;
