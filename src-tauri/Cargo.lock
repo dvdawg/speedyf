@@ -3979,6 +3979,7 @@ dependencies = [
  "env_logger",
  "flate2",
  "futures-util",
+ "gtk",
  "image",
  "libc",
  "log",
@@ -4008,6 +4009,9 @@ dependencies = [
  "unicode-normalization",
  "url",
  "uuid",
+ "webkit2gtk",
+ "webview2-com",
+ "windows",
  "zip",
 ]
 

@@ -9,6 +9,19 @@
 //! (or has failed) it calls `markup_print_finish`. The window is destroyed on
 //! every path out, including the timeout.
 //!
+//! The capture itself is the system web view's:
+//!   - macOS: WKWebView `createPDF` of the sheet's rectangle (1 CSS px is
+//!     1 pt there);
+//!   - Windows: WebView2 `PrintToPdf` to a temporary file, the paper the
+//!     sheet's size, no margins, scaled 96/72 so 1 CSS px is again 1 pt
+//!     (Chromium prints 96 px to the inch);
+//!   - Linux: a WebKitGTK print operation to "Print to File", a PDF at a
+//!     temporary URI, the paper the sheet's size, no margins (WebKit prints
+//!     1 CSS px to the point).
+//!
+//! Only the first page of each capture is used, so a sheet that spills onto
+//! a blank second page does no harm.
+//!
 //! Sits beside `engine`, like `printing`: nothing here touches PDFium. The
 //! captured pages go to `engine::markup_export` on the worker thread.
 
@@ -29,11 +42,18 @@ const ENTRY: &str = "markup-print.html";
 /// Base allowance for the whole capture, plus a little per sheet.
 const BASE_TIMEOUT: Duration = Duration::from_secs(20);
 const PER_SHEET: Duration = Duration::from_millis(500);
-/// One createPDF call.
-#[cfg(target_os = "macos")]
+/// One sheet's capture.
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 const SHEET_TIMEOUT: Duration = Duration::from_secs(15);
 
-pub const NEEDS_MACOS: &str = "Markup export needs macOS for now";
+/// Whether this build can capture sheets at all.
+const CAN_CAPTURE: bool = cfg!(any(
+    target_os = "macos",
+    target_os = "windows",
+    target_os = "linux"
+));
+
+pub const NO_CAPTURE: &str = "Markup export is not available on this system";
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -128,8 +148,8 @@ pub async fn capture_sheets(
     if req.sheets.is_empty() {
         return Ok(Vec::new());
     }
-    if !cfg!(target_os = "macos") {
-        return Err(AppError::Unsupported(NEEDS_MACOS.into()));
+    if !CAN_CAPTURE {
+        return Err(AppError::Unsupported(NO_CAPTURE.into()));
     }
     use tauri::Manager;
     let payload = PrintPayload::from_request(req);
@@ -311,7 +331,179 @@ mod native {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+/// A fresh path for one capture's temporary PDF.
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+fn temp_pdf() -> std::path::PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    std::env::temp_dir().join(format!(
+        "speedyf-markup-{}-{}.pdf",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+/// Wait for a print-to-file capture to report, then take its file.
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+async fn take_printed(
+    path: &std::path::Path,
+    mut rx: tauri::async_runtime::Receiver<Result<(), String>>,
+    engine: &str,
+) -> AppResult<Vec<u8>> {
+    let outcome = tokio::time::timeout(SHEET_TIMEOUT, rx.recv()).await;
+    let result = match outcome {
+        Ok(Some(Ok(()))) => match std::fs::read(path) {
+            Ok(bytes) if !bytes.is_empty() => Ok(bytes),
+            Ok(_) => Err(AppError::Internal(format!(
+                "{engine} produced an empty PDF"
+            ))),
+            Err(e) => Err(AppError::Internal(format!("{engine} wrote no PDF: {e}"))),
+        },
+        Ok(Some(Err(message))) => Err(AppError::Internal(format!("{engine}: {message}"))),
+        Ok(None) => Err(AppError::Internal(format!("{engine} did not answer"))),
+        Err(_) => Err(AppError::Internal(format!("{engine} took too long"))),
+    };
+    let _ = std::fs::remove_file(path);
+    result
+}
+
+#[cfg(target_os = "windows")]
+mod native {
+    use crate::errors::{AppError, AppResult};
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        ICoreWebView2Environment6, ICoreWebView2PrintSettings2, ICoreWebView2_7,
+        COREWEBVIEW2_PRINT_ORIENTATION_PORTRAIT,
+    };
+    use webview2_com::PrintToPdfCompletedHandler;
+    use windows::core::{Interface, HSTRING};
+
+    type Reply = tauri::async_runtime::Sender<Result<(), String>>;
+
+    /// Chromium lays out 96 CSS px to the inch when it prints; the sheets
+    /// are set 1 px to the point.
+    const PX_PER_PT: f64 = 96.0 / 72.0;
+
+    /// The sheet the print window shows, `w` x `h` pt, as a PDF whose first
+    /// page is that sheet.
+    pub async fn create_pdf(window: &tauri::WebviewWindow, w: f64, h: f64) -> AppResult<Vec<u8>> {
+        let path = super::temp_pdf();
+        let target = path.clone();
+        let (tx, rx) = tauri::async_runtime::channel::<Result<(), String>>(1);
+        window
+            .with_webview(move |webview| {
+                let fail = tx.clone();
+                // SAFETY: Tauri runs this on the UI thread, where WebView2
+                // must be called; the controller and environment are live.
+                if let Err(e) = unsafe { start(&webview, &target, w, h, tx) } {
+                    let _ = fail.try_send(Err(e.to_string()));
+                }
+            })
+            .map_err(|e| AppError::Internal(format!("print view unavailable: {e}")))?;
+        super::take_printed(&path, rx, "WebView2").await
+    }
+
+    /// # Safety
+    /// UI thread only.
+    unsafe fn start(
+        webview: &tauri::webview::PlatformWebview,
+        path: &std::path::Path,
+        w: f64,
+        h: f64,
+        tx: Reply,
+    ) -> windows::core::Result<()> {
+        // SAFETY: plain COM calls on live interfaces, on the UI thread.
+        unsafe {
+            let core: ICoreWebView2_7 = webview.controller().CoreWebView2()?.cast()?;
+            let environment: ICoreWebView2Environment6 = webview.environment().cast()?;
+            let settings = environment.CreatePrintSettings()?;
+            settings.SetOrientation(COREWEBVIEW2_PRINT_ORIENTATION_PORTRAIT)?;
+            settings.SetPageWidth(w / 72.0)?;
+            settings.SetPageHeight(h / 72.0)?;
+            settings.SetMarginTop(0.0)?;
+            settings.SetMarginBottom(0.0)?;
+            settings.SetMarginLeft(0.0)?;
+            settings.SetMarginRight(0.0)?;
+            settings.SetScaleFactor(PX_PER_PT)?;
+            settings.SetShouldPrintBackgrounds(true)?;
+            settings.SetShouldPrintHeaderAndFooter(false)?;
+            // Older runtimes have no page ranges; only page 1 is read anyway.
+            if let Ok(ranges) = settings.cast::<ICoreWebView2PrintSettings2>() {
+                let _ = ranges.SetPageRanges(&HSTRING::from("1"));
+            }
+            let handler = PrintToPdfCompletedHandler::create(Box::new(move |result, ok| {
+                let reply = match result {
+                    Ok(()) if ok => Ok(()),
+                    Ok(()) => Err("printing to PDF failed".to_string()),
+                    Err(e) => Err(e.to_string()),
+                };
+                let _ = tx.try_send(reply);
+                Ok(())
+            }));
+            core.PrintToPdf(&HSTRING::from(path), &settings, &handler)
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod native {
+    use crate::errors::{AppError, AppResult};
+    use std::cell::RefCell;
+    use webkit2gtk::{PrintOperation, PrintOperationExt};
+
+    type Reply = tauri::async_runtime::Sender<Result<(), String>>;
+
+    /// The sheet the print window shows, `w` x `h` pt, as a PDF whose first
+    /// page is that sheet.
+    pub async fn create_pdf(window: &tauri::WebviewWindow, w: f64, h: f64) -> AppResult<Vec<u8>> {
+        let path = super::temp_pdf();
+        let uri = url::Url::from_file_path(&path)
+            .map_err(|_| AppError::Internal("no temporary file for the print".into()))?
+            .to_string();
+        let (tx, rx) = tauri::async_runtime::channel::<Result<(), String>>(1);
+        window
+            .with_webview(move |webview| start(&webview.inner(), &uri, w, h, tx))
+            .map_err(|e| AppError::Internal(format!("print view unavailable: {e}")))?;
+        super::take_printed(&path, rx, "WebKitGTK").await
+    }
+
+    /// Runs on the GTK main thread, where Tauri calls `with_webview`.
+    fn start(view: &webkit2gtk::WebView, uri: &str, w: f64, h: f64, tx: Reply) {
+        let paper = gtk::PaperSize::new_custom("speedyf-sheet", "Sheet", w, h, gtk::Unit::Points);
+        let settings = gtk::PrintSettings::new();
+        settings.set_printer("Print to File");
+        settings.set(gtk::PRINT_SETTINGS_OUTPUT_FILE_FORMAT, Some("pdf"));
+        settings.set(gtk::PRINT_SETTINGS_OUTPUT_URI, Some(uri));
+        settings.set_paper_size(&paper);
+        settings.set_orientation(gtk::PageOrientation::Portrait);
+        settings.set_print_pages(gtk::PrintPages::Ranges);
+        settings.set_page_ranges(&[gtk::PageRange::new(0, 0)]);
+        let setup = gtk::PageSetup::new();
+        setup.set_paper_size(&paper);
+        setup.set_orientation(gtk::PageOrientation::Portrait);
+        setup.set_top_margin(0.0, gtk::Unit::Points);
+        setup.set_bottom_margin(0.0, gtk::Unit::Points);
+        setup.set_left_margin(0.0, gtk::Unit::Points);
+        setup.set_right_margin(0.0, gtk::Unit::Points);
+
+        let operation = PrintOperation::new(view);
+        operation.set_print_settings(&settings);
+        operation.set_page_setup(&setup);
+        let failed = tx.clone();
+        operation.connect_failed(move |_, error| {
+            let _ = failed.try_send(Err(error.to_string()));
+        });
+        // Held until the operation is over, in case WebKit keeps no
+        // reference of its own for the whole print. `finished` also follows
+        // `failed`, whose reply then stands.
+        let keep = RefCell::new(Some(operation.clone()));
+        operation.connect_finished(move |_| {
+            let _ = tx.try_send(Ok(()));
+            keep.borrow_mut().take();
+        });
+        operation.print();
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 mod native {
     use crate::errors::{AppError, AppResult};
 
@@ -320,7 +512,7 @@ mod native {
         _w: f64,
         _h: f64,
     ) -> AppResult<Vec<u8>> {
-        Err(AppError::Unsupported(super::NEEDS_MACOS.into()))
+        Err(AppError::Unsupported(super::NO_CAPTURE.into()))
     }
 }
 
