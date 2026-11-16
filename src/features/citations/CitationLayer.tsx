@@ -60,14 +60,7 @@ export default function CitationLayer(props: Props) {
           let pointerFocus = false;
           const enter = (element: HTMLButtonElement, keyboard: boolean) => {
             setHovered(key);
-            citationStore.enter(
-              props.docId,
-              props.src,
-              link.target,
-              element,
-              keyboard,
-              link.rect
-            );
+            citationStore.enter(props.docId, props.src, link.target, element, keyboard, link.rect);
           };
           const leave = () => {
             // Only the link that set it may clear it, or moving between two
