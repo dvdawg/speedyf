@@ -310,6 +310,7 @@ fn validation_refuses_bad_requests() {
         rect: None,
         color: "#ffcc00".into(),
         contents: String::new(),
+        target: None,
     });
     assert!(validate(&r).is_err(), "mark with no geometry");
 
@@ -394,6 +395,7 @@ fn export_fixture(pdfium: &Pdfium) -> Exported {
             rect: None,
             color: "#ffd400".into(),
             contents: "1. Justify this step".into(),
+            target: None,
         },
         MarkupMark {
             page: 1,
@@ -402,6 +404,7 @@ fn export_fixture(pdfium: &Pdfium) -> Exported {
             rect: Some(rect(30.0, 100.0, 80.0, 14.0)),
             color: "#cc0000".into(),
             contents: "2. teh -> the".into(),
+            target: None,
         },
         MarkupMark {
             page: 2,
@@ -410,6 +413,7 @@ fn export_fixture(pdfium: &Pdfium) -> Exported {
             rect: Some(rect(50.0, 60.0, 30.0, 12.0)),
             color: "#0055cc".into(),
             contents: "3. Insert: \u{00e9}tude".into(),
+            target: None,
         },
         MarkupMark {
             page: 3,
@@ -418,6 +422,7 @@ fn export_fixture(pdfium: &Pdfium) -> Exported {
             rect: Some(rect(20.0, 20.0, 100.0, 60.0)),
             color: "#008800".into(),
             contents: "4. Figure unclear".into(),
+            target: None,
         },
     ];
     let sheets = vec![
@@ -862,6 +867,7 @@ fn markup_export_real_paper() {
             rect: Some(rect(72.0, h - 120.0, 200.0, 12.0)),
             color: "#ffb000".into(),
             contents: format!("{}. A comment", i + 1),
+            target: None,
         });
     }
     let (w0, h0) = sizes[0];
@@ -1115,6 +1121,7 @@ fn label_mark(page: u32, r: RectDto, text: &str) -> MarkupMark {
         rect: Some(r),
         color: "#694fe3".into(),
         contents: text.into(),
+        target: None,
     }
 }
 
@@ -1244,4 +1251,242 @@ fn labels_need_a_rect_and_a_short_ascii_number() {
     assert!(validate(&req).is_err());
     req.marks = vec![label_mark(0, rect(1.0, 1.0, 8.0, 6.0), "42")];
     assert!(validate(&req).is_ok());
+}
+
+/// The display rect of each annotation of `subtype` on an exported page.
+fn annot_display_rects(
+    b: &dyn PdfiumLibraryBindings,
+    page: FPDF_PAGE,
+    subtype: c_int,
+) -> Vec<[f32; 4]> {
+    let space = page_geo(b, page).unwrap().space();
+    let mut out = Vec::new();
+    for i in 0..b.FPDFPage_GetAnnotCount(page) {
+        let annot = b.FPDFPage_GetAnnot(page, i);
+        if b.FPDFAnnot_GetSubtype(annot) == subtype {
+            let mut r = FS_RECTF {
+                left: 0.0,
+                top: 0.0,
+                right: 0.0,
+                bottom: 0.0,
+            };
+            b.FPDFAnnot_GetRect(annot, &mut r);
+            let (x1, y1) = space.user_to_disp(r.left, r.bottom);
+            let (x2, y2) = space.user_to_disp(r.right, r.top);
+            out.push([x1.min(x2), y1.min(y2), x1.max(x2), y1.max(y2)]);
+        }
+        b.FPDFPage_CloseAnnot(annot);
+    }
+    out
+}
+
+/// The link at a display point, as its destination page and the display
+/// distance of its /XYZ top below that page's top.
+fn link_at_display(
+    b: &dyn PdfiumLibraryBindings,
+    doc: FPDF_DOCUMENT,
+    page: FPDF_PAGE,
+    x: f32,
+    y: f32,
+) -> Option<(i32, f32)> {
+    let space = page_geo(b, page).unwrap().space();
+    let (ux, uy) = space.disp_to_user(x, y);
+    let link = b.FPDFLink_GetLinkAtPoint(page, ux as f64, uy as f64);
+    if link.is_null() {
+        return None;
+    }
+    let dest = b.FPDFLink_GetDest(doc, link);
+    if dest.is_null() {
+        return None;
+    }
+    let index = b.FPDFDest_GetDestPageIndex(doc, dest);
+    let (mut has_x, mut has_y, mut has_z) = (0, 0, 0);
+    let (mut lx, mut ly, mut lz) = (0.0f32, 0.0f32, 0.0f32);
+    b.FPDFDest_GetLocationInPage(
+        dest, &mut has_x, &mut has_y, &mut has_z, &mut lx, &mut ly, &mut lz,
+    );
+    let target = load_page(b, doc, index as usize).unwrap();
+    let geo = page_geo(b, target.page).unwrap();
+    let (_, top) = geo.space().user_to_disp(lx, ly);
+    Some((index, geo.h - top))
+}
+
+/// Text, typo, region and equation comments on every rotation: their marks
+/// and their numbers land where the display-space request put them, and a
+/// click on the number goes to its note in the strip.
+#[test]
+fn marks_labels_and_their_links_follow_every_rotation() {
+    let _guard = pdfium_init::test_guard();
+    let pdfium = test_pdfium();
+    let b = pdfium.bindings();
+    let dir = scratch();
+    let src = dir.path().join("paper.pdf");
+    let dest = dir.path().join("out.pdf");
+    source_fixture(&src);
+    let mut req = request(&src, &dest);
+    // A phrase at display (40..120, 150..162) and a region (60..160,
+    // 40..100) on each of the four pages (rotations 0, 90, 180, 270).
+    let quad = MarkupQuad {
+        x1: 40.0,
+        y1: 162.0,
+        x2: 120.0,
+        y2: 162.0,
+        x3: 40.0,
+        y3: 150.0,
+        x4: 120.0,
+        y4: 150.0,
+    };
+    let mark = |page: u32, kind: MarkKind, quads: Option<Vec<MarkupQuad>>, r: Option<RectDto>| {
+        MarkupMark {
+            page,
+            kind,
+            quads,
+            rect: r,
+            color: "#694fe3".into(),
+            contents: "1. A comment".into(),
+            target: None,
+        }
+    };
+    for page in 0..4u32 {
+        req.marks
+            .push(mark(page, MarkKind::Highlight, Some(vec![quad]), None));
+        req.marks
+            .push(mark(page, MarkKind::Strikeout, Some(vec![quad]), None));
+        req.marks.push(mark(
+            page,
+            MarkKind::Square,
+            None,
+            Some(rect(60.0, 40.0, 100.0, 60.0)),
+        ));
+        let mut label = label_mark(page, rect(121.0, 158.0, 8.0, 6.2), "1");
+        label.target = Some(LinkTarget::Page { page, y: 30.0 });
+        req.marks.push(label);
+    }
+    let result = export(&pdfium, &req, &[]).expect("export");
+    assert_eq!(result.links, 4);
+
+    let doc = render::open_document(b, dest.to_str().unwrap(), None).unwrap();
+    let close = |a: [f32; 4], want: [f32; 4]| a.iter().zip(want).all(|(x, y)| (x - y).abs() <= 0.6);
+    for page in 0..4usize {
+        let p = load_page(b, doc, page).unwrap();
+        let rot = page_rotation(b, p.page);
+        let highlights = annot_display_rects(b, p.page, ANNOT_HIGHLIGHT);
+        let strikes = annot_display_rects(b, p.page, ANNOT_STRIKEOUT);
+        let squares = annot_display_rects(b, p.page, ANNOT_SQUARE);
+        assert!(
+            close(highlights[0], [40.0, 150.0, 120.0, 162.0]),
+            "rot {rot}: highlight at {:?}",
+            highlights[0]
+        );
+        assert!(
+            close(strikes[0], [40.0, 150.0, 120.0, 162.0]),
+            "rot {rot}: strikeout at {:?}",
+            strikes[0]
+        );
+        assert!(
+            close(squares[0], [60.0, 40.0, 160.0, 100.0]),
+            "rot {rot}: square at {:?}",
+            squares[0]
+        );
+        // The number's link: over its pill, to its own page, 30 pt down.
+        let (to, top) = link_at_display(b, doc, p.page, 125.0, 161.0)
+            .unwrap_or_else(|| panic!("rot {rot}: no link on the label"));
+        assert_eq!(to as usize, page, "rot {rot}");
+        assert!(
+            (top - 30.0).abs() < 0.6,
+            "rot {rot}: lands {top} from the top"
+        );
+        // Nothing links off the pill.
+        assert!(link_at_display(b, doc, p.page, 80.0, 156.0).is_none());
+    }
+    b.FPDF_CloseDocument(doc);
+}
+
+/// A margin sheet as WebKit captures one: a page with link annotations, one
+/// out to the web, one to mail and one back into the print page.
+fn sheet_with_links(pdfium: &Pdfium, w: f32, h: f32) -> Vec<u8> {
+    let mut document = pdfium.create_new_pdf().unwrap();
+    let mut page = document
+        .pages_mut()
+        .create_page_at_end(PdfPagePaperSize::Custom(
+            PdfPoints::new(w),
+            PdfPoints::new(h),
+        ))
+        .unwrap();
+    // (uri, [left, bottom, right, top] in the sheet's own space, y-up)
+    let links = [
+        (
+            "https://arxiv.org/abs/1234.5678",
+            [10.0, h - 40.0, 90.0, h - 30.0],
+        ),
+        ("mailto:author@example.org", [10.0, h - 60.0, 70.0, h - 50.0]),
+        (
+            "http://localhost:1420/markup-print.html#",
+            [10.0, h - 80.0, 50.0, h - 70.0],
+        ),
+    ];
+    for (uri, [l, bo, r, t]) in links {
+        let mut link = page.annotations_mut().create_link_annotation(uri).unwrap();
+        link.set_bounds(PdfRect::new_from_values(bo, l, t, r))
+            .unwrap();
+    }
+    drop(page);
+    document.save_to_bytes().unwrap()
+}
+
+#[test]
+fn web_links_in_a_margin_note_survive_on_every_rotation() {
+    let _guard = pdfium_init::test_guard();
+    let pdfium = test_pdfium();
+    let b = pdfium.bindings();
+    let dir = scratch();
+    let src = dir.path().join("paper.pdf");
+    let dest = dir.path().join("out.pdf");
+    source_fixture(&src);
+    let mut req = request(&src, &dest);
+    let mut sheets = Vec::new();
+    // Display heights of the four fixture pages.
+    let heights = [400.0f32, 380.0, 420.0, 350.0];
+    for (page, &h) in heights.iter().enumerate() {
+        req.sheets
+            .push(sheet(SheetKind::Margin, Some(page as u32), 180.0, h));
+        sheets.push(sheet_with_links(&pdfium, 180.0, h));
+    }
+    export(&pdfium, &req, &sheets).expect("export");
+
+    let document = pdfium.load_pdf_from_file(&dest, None).unwrap();
+    let doc = render::open_document(b, dest.to_str().unwrap(), None).unwrap();
+    for (index, &h) in heights.iter().enumerate() {
+        let page = document.pages().get(index as u16).unwrap();
+        let mut uris: Vec<String> = page
+            .links()
+            .iter()
+            .filter_map(|l| l.action())
+            .filter_map(|a| a.as_uri_action().and_then(|u| u.uri().ok()))
+            .collect();
+        uris.sort();
+        assert_eq!(
+            uris,
+            vec![
+                "https://arxiv.org/abs/1234.5678".to_string(),
+                "mailto:author@example.org".to_string(),
+            ],
+            "page {index}"
+        );
+        // The web link sits where its words were drawn: 30..40 pt below the
+        // strip's top, 10..90 pt into it, in display space.
+        let p = load_page(b, doc, index).unwrap();
+        let geo = page_geo(b, p.page).unwrap();
+        assert!((geo.h - h).abs() < 0.5, "page {index}: height {}", geo.h);
+        let strip = geo.content_w - 180.0;
+        let links = annot_display_rects(b, p.page, ANNOT_LINK);
+        let want = [strip + 10.0, h - 40.0, strip + 90.0, h - 30.0];
+        assert!(
+            links
+                .iter()
+                .any(|r| r.iter().zip(want).all(|(a, w)| (a - w).abs() < 0.6)),
+            "page {index}: links at {links:?}, want {want:?}"
+        );
+    }
+    b.FPDF_CloseDocument(doc);
 }
