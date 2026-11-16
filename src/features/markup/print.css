@@ -72,6 +72,15 @@ body {
   text-decoration: none;
 }
 
+/* A web or mail address the reviewer wrote: a link in the PDF, marked by
+ * a thin rule so it reads as one. */
+.mk-sheet a[href] {
+  text-decoration: underline;
+  text-decoration-color: #5c6570;
+  text-decoration-thickness: 0.5px;
+  text-underline-offset: 1.2px;
+}
+
 .mk-sheet code {
   font-family: Menlo, 'SF Mono', Consolas, monospace;
   font-size: 0.88em;

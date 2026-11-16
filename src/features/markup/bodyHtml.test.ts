@@ -5,6 +5,24 @@ const math = (tex: string, display: boolean) => `<k${display ? ' d' : ''}>${tex}
 const cite = (key: string) => (key === 'jar97' ? 'Jar97' : null);
 
 describe('comment bodies as HTML', () => {
+  it('makes web and mail addresses links when asked, and keeps them whole', () => {
+    expect(
+      renderBody('See https://doi.org/10.1/a_b_c. Or mail mailto:x@y.org', { links: true })
+    ).toBe(
+      '<p>See <a href="https://doi.org/10.1/a_b_c">https://doi.org/10.1/a_b_c</a>. ' +
+        'Or mail <a href="mailto:x@y.org">mailto:x@y.org</a></p>'
+    );
+    // In brackets, the closing one is the sentence's.
+    expect(inlineHtml('(see http://ex.org/p?q=1&r=2)', { links: true })).toBe(
+      '(see <a href="http://ex.org/p?q=1&amp;r=2">http://ex.org/p?q=1&amp;r=2</a>)'
+    );
+    // In the drawer: the same text, no link, and no italics read into it.
+    expect(inlineHtml('at https://ex.org/_a_ now')).toBe('at https://ex.org/_a_ now');
+    expect(inlineHtml('a "javascript:x" and http:// alone', { links: true })).toBe(
+      'a &quot;javascript:x&quot; and http:// alone'
+    );
+  });
+
   it("escapes the reviewer's text", () => {
     expect(escapeHtml('<b>"x" & y</b>')).toBe('&lt;b&gt;&quot;x&quot; &amp; y&lt;/b&gt;');
     expect(renderBody('<script>alert(1)</script>')).toBe(
