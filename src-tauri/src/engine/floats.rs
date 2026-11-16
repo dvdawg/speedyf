@@ -128,6 +128,7 @@ pub fn caption_blocks(runs: &[TextRun]) -> Vec<CaptionBlock> {
             w: run.w,
             h: run.h,
             edges: Vec::new(),
+            math: Vec::new(),
         };
         loop {
             let end = head.x + head.w;
@@ -240,6 +241,36 @@ impl Page<'_> {
         area
     }
 
+    /// The words of a row, from the runs in it.
+    fn row_text(&self, row: &TextRun) -> String {
+        let text: Vec<&str> = self
+            .runs
+            .iter()
+            .filter(|r| same_row(r, row) && r.x >= row.x - 0.5 && r.x + r.w <= row.x + row.w + 0.5)
+            .map(|r| r.text.as_str())
+            .collect();
+        text.join(" ")
+    }
+
+    /// A numbered heading: "3 Method", "4.2. Results", "M. Encoder details".
+    fn is_heading(&self, row: &TextRun) -> bool {
+        let text = self.row_text(row);
+        let mut parts = text.split_whitespace();
+        let (Some(number), Some(word)) = (parts.next(), parts.next()) else {
+            return false;
+        };
+        let number = number.trim_end_matches('.');
+        let numbered = !number.is_empty()
+            && number.split('.').all(|piece| {
+                !piece.is_empty()
+                    && (piece.chars().all(|c| c.is_ascii_digit())
+                        || (piece.len() == 1 && piece.chars().all(|c| c.is_ascii_uppercase())))
+            });
+        numbered
+            && word.starts_with(|c: char| c.is_uppercase())
+            && word.chars().filter(|c| c.is_alphabetic()).count() >= 3
+    }
+
     /// A line of running text, read from its words: at least `ratio` of
     /// the column wide, and `words` words or more rather than a table row's
     /// numbers or a diagram's labels.
@@ -247,13 +278,7 @@ impl Page<'_> {
         if row.w < ratio * (area.end - area.start) {
             return false;
         }
-        let text: Vec<&str> = self
-            .runs
-            .iter()
-            .filter(|r| same_row(r, row) && r.x >= row.x - 0.5 && r.x + r.w <= row.x + row.w + 0.5)
-            .map(|r| r.text.as_str())
-            .collect();
-        let text = text.join(" ");
+        let text = self.row_text(row);
         let found = text
             .split_whitespace()
             .filter(|w| w.chars().filter(|c| c.is_alphabetic()).count() >= 3)
@@ -474,19 +499,24 @@ pub fn float_for_anchor(
         .min_by(|a, b| off(a).total_cmp(&off(b)))?;
     let area = page.area(block);
     let body_h = page.body_h();
-    let only_artwork = page
+    // Text between the anchor and the caption - prose, another caption, a
+    // heading (larger than the text at the column's margin, or numbered
+    // as one at the anchor) - says the anchor is not the float's top.
+    let text_between = page
         .rows_in(area)
         .filter(|r| r.y + r.h <= anchor_y + 2.0 && r.y >= block.top)
-        .all(|r| {
-            !page.is_prose(r, area, ARTWORK_ROW_RATIO, 5)
-                && !page.in_other_caption(block, r)
-                // a heading: larger than the text, at the column's margin
-                && !(r.h >= 1.15 * body_h && (r.x - area.start).abs() < 3.0)
+        .any(|r| {
+            let at_margin = (r.x - area.start).abs() < 3.0;
+            let at_anchor = dest_x.is_some_and(|x| (r.x - x).abs() < 3.0);
+            page.is_prose(r, area, ARTWORK_ROW_RATIO, 5)
+                || page.in_other_caption(block, r)
+                || (r.h >= 1.15 * body_h && at_margin)
+                || (page.is_heading(r) && (at_margin || at_anchor))
         });
     // A table's caption usually heads it: the float's top is the caption,
     // and the table runs on below.
     let top = (!block.table_like).then_some(anchor_y + 2.0);
-    only_artwork.then(|| page.float(block, top))
+    (!text_between).then(|| page.float(block, top))
 }
 
 /// The float of the caption whose first line starts at (`x`, `baseline`).
@@ -517,6 +547,7 @@ mod tests {
             w,
             h,
             edges: Vec::new(),
+            math: Vec::new(),
         }
     }
 
@@ -645,5 +676,52 @@ mod tests {
         let rect = float_for_caption(&figure_page(), 612.0, 792.0, 58.6, 386.8).expect("float");
         assert!(contains(rect, 375.8, 507.2), "{rect:?}");
         assert!(rect[1] + rect[3] < 523.9 + 0.5, "{rect:?}");
+    }
+
+    #[test]
+    fn an_anchor_on_the_captions_first_line_previews_its_float() {
+        // revtex sets the anchor at the caption's baseline.
+        let rect =
+            float_for_anchor(&figure_page(), 612.0, 792.0, Some(58.5), 387.0).expect("a float");
+        assert!(contains(rect, 375.8, 507.2), "{rect:?}");
+    }
+
+    #[test]
+    fn a_heading_over_a_float_is_the_headings_destination() {
+        // A section opening straight onto a figure: its anchor is over the
+        // heading, not the float.
+        let mut runs = Vec::new();
+        runs.push(run("M.", 58.5, 700.0, 9.0, 8.0));
+        runs.push(run("Encoder details", 71.0, 700.0, 70.0, 8.0));
+        runs.push(run("0.5", 140.0, 650.0, 12.0, 6.0));
+        caption(&mut runs, "Figure 3.", 58.5, 553.0, 600.0, 2);
+        for line in 0..10 {
+            prose(&mut runs, 58.5, 553.0, 560.0 - 12.0 * line as f32);
+        }
+        assert_eq!(
+            float_for_anchor(&runs, 612.0, 792.0, Some(58.5), 710.0),
+            None
+        );
+    }
+
+    #[test]
+    fn floats_side_by_side_each_keep_their_half() {
+        // Two minipages under one anchor; the anchor's x picks the float.
+        let mut runs = Vec::new();
+        for y in [740.0, 728.0] {
+            prose(&mut runs, 72.0, 540.0, y);
+        }
+        runs.push(run("0.5", 120.0, 650.0, 12.0, 6.0));
+        runs.push(run("0.5", 380.0, 650.0, 12.0, 6.0));
+        caption(&mut runs, "Figure 6:", 72.0, 290.0, 600.0, 1);
+        caption(&mut runs, "Figure 7:", 322.0, 540.0, 600.0, 1);
+        for line in 0..10 {
+            prose(&mut runs, 72.0, 540.0, 560.0 - 12.0 * line as f32);
+        }
+        let left = float_for_anchor(&runs, 612.0, 792.0, Some(80.0), 715.0).expect("float");
+        assert!(left[0] + left[2] < 322.0, "{left:?}");
+        let right = float_for_anchor(&runs, 612.0, 792.0, Some(400.0), 715.0).expect("float");
+        assert!(right[0] > 290.0, "{right:?}");
+        assert!(contains(right, 600.0, 656.0), "{right:?}");
     }
 }
