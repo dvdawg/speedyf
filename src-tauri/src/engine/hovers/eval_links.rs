@@ -462,10 +462,19 @@ fn statement_truth(pages: &[&Page], head: usize) -> Truth {
         let take = if item {
             in_list = true;
             true
-        } else if prose(l) && italic == Some(true) && !own_face && t.chars().count() >= 4 {
-            // The body face again: an item's further lines, or the
-            // paragraph after.
+        } else if prose(l)
+            && italic == Some(true)
+            && !own_face
+            && t.chars().count() >= 4
+            && l.x0 <= margin + 25.0
+        {
+            // The body face again, at the margin (not a display's piece in
+            // that face): an item's further lines, or the paragraph after.
             in_list && indented
+        } else if apart && prev_display && !display && italic != Some(true) {
+            // After a display an upright statement goes on unindented
+            // ("where ..."), or mid-sentence; a new paragraph is not its.
+            !indented || t.starts_with(char::is_lowercase)
         } else if !apart || display || prev_display || (in_list && indented) {
             // Close by, a display, or an item's further lines.
             true
@@ -786,6 +795,8 @@ struct Tally {
     cut: usize,
     /// Targets over a column or page break.
     split: usize,
+    /// Targets whose text after a display - "where ..." - is cut.
+    after_display: usize,
 }
 
 impl Tally {
@@ -797,12 +808,20 @@ impl Tally {
         self.leaks += t.leaks;
         self.cut += t.cut;
         self.split += t.split;
+        self.after_display += t.after_display;
     }
 
     fn line(&self, name: &str) -> String {
         format!(
-            "{name:<22} checked {:>5}  target-cut {:>4}  head-missing {:>4}  leaks {:>4}  cut-line {:>4}  (split {}, no truth {})",
-            self.checked, self.missing, self.start_cut, self.leaks, self.cut, self.split, self.no_truth
+            "{name:<22} checked {:>5}  target-cut {:>4}  head-missing {:>4}  leaks {:>4}  cut-line {:>4}  (split {}, after-display cut {}, no truth {})",
+            self.checked,
+            self.missing,
+            self.start_cut,
+            self.leaks,
+            self.cut,
+            self.split,
+            self.after_display,
+            self.no_truth
         )
     }
 }
@@ -843,6 +862,17 @@ fn judge(pages: &[&Page], crops: &Crops, truth: &Truth, tally: &mut Tally) -> Ve
     if !inside(head) {
         tally.start_cut += 1;
         problems.push(format!("HEAD missing: {:?}", text(head)));
+    }
+    // A line of text straight after a display, left out.
+    let display = |(p, i): At| {
+        let l = &pages[p].lines[i];
+        l.is_display() || l.math_share >= 0.2 || !real((p, i))
+    };
+    if let Some(w) = truth.lines.windows(2).find(|w| {
+        display(w[0]) && !display(w[1]) && text(w[1]).chars().count() >= 12 && !inside(w[1])
+    }) {
+        tally.after_display += 1;
+        problems.push(format!("AFTER DISPLAY cut: {:?}", text(w[1])));
     }
     if let Some(&at) = truth.lines.iter().find(|&&at| !inside(at) && real(at)) {
         tally.missing += 1;
