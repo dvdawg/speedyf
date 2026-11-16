@@ -4,7 +4,7 @@
  * the kind chip changes its kind. */
 import { createEffect, createMemo, For, on, Show } from 'solid-js';
 import IconButton from '../../components/IconButton';
-import { IconEdit, IconTrash } from '../../components/icons';
+import { IconEdit, IconRefresh, IconTrash } from '../../components/icons';
 import CommentEditor, { KindSelect, type EditorResult } from './CommentEditor';
 import { quoteHtml, renderBody } from './bodyHtml';
 import QuoteCrop from './QuoteCrop';
@@ -12,7 +12,7 @@ import { plausibleQuoteTex } from './quoteTexCheck';
 import { labelParts } from './labels';
 import { mathRenderer } from './mathHtml';
 import { shortQuote, type Entry } from './model';
-import { citeIndex, flashed, quoteReading } from './markupStore';
+import { citeIndex, flashed, quoteReading, quotesText } from './markupStore';
 import { KIND_LABEL, type Anchor, type CommentKind } from './types';
 
 /** The words a comment is about, as text: with their math typeset when a
@@ -74,6 +74,8 @@ interface Props {
   onOpen: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  /** Read the quote's math again from the page. */
+  onReread?: () => void;
   onKind: (kind: CommentKind) => void;
   onSave: (result: EditorResult) => void;
   onCancel: () => void;
@@ -149,6 +151,15 @@ export default function CommentCard(props: Props) {
         >
           <KindSelect value={c().kind} onChange={(k) => props.onKind(k)} />
           <span class="mk-card-actions">
+            <Show when={props.onReread && !props.draft && quotesText(c())}>
+              <IconButton
+                label="Re-read math"
+                disabled={quoteReading(c().anchor)}
+                onClick={() => props.onReread?.()}
+              >
+                <IconRefresh />
+              </IconButton>
+            </Show>
             <IconButton label="Edit" onClick={() => props.onEdit()}>
               <IconEdit />
             </IconButton>
