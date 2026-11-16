@@ -13,15 +13,25 @@ import { engine } from '../../lib/transport/engine';
 import { activeTab } from '../../stores/tabsStore';
 import { flashStatus } from '../../stores/statusMessage';
 import { revealPlace } from '../../stores/revealStore';
-import { selectedGeometry, selectedText, settleSelectionNow } from '../../stores/selectionStore';
+import {
+  selectedGeometry,
+  selectedPieces,
+  selectedText,
+  settleSelectionNow,
+} from '../../stores/selectionStore';
+import { planQuote } from '../../lib/text/quoteParts';
+import { readQuote } from './quoteReading';
 import {
   convertEquation,
-  convertSelection,
+  registerSnapshot,
   extensionUsable,
   snapshotSelection,
   type ConvertMode,
 } from '../extensions/extensionStore';
 import { equationToken } from '../extensions/editorHost';
+import { equationBlocksFor } from '../extensions/equationBlocks';
+import { piecesUnderQuads } from '../../lib/text/piecesUnder';
+import { quadBox } from './quoteBackfill';
 import { plausibleQuoteTex, texParses } from './quoteTexCheck';
 import { closeReaderPane } from '../extensions/surfaces';
 import { docStatements } from '../extensions/paperDocs';
@@ -293,11 +303,15 @@ export function beginComment(mode: DraftMode): boolean {
   const quads = quadsFromRects(geometry.rects, page.heightPt);
   if (quads.length === 0) return false;
   ensureLoaded(path);
-  // Taken while the selection is still the one the text came from: what a
-  // math converter reads the quote's formulas from.
+  // Taken while the selection is still the one the text came from: what the
+  // exact source of the passage is looked for by.
   const token = snapshotSelection(selectedText());
+  // The quote's parts: prose, formulas, displays (`quoteParts`).
+  const pieces = selectedPieces();
+  const plan = mode === 'comment' && pieces.length > 0 ? planQuote(pieces) : null;
   document.getSelection()?.removeAllRanges();
-  const anchor: Anchor = { page: page.srcIndex!, quads, rect: null, quote: text };
+  const quote = plan?.plain.replace(/\s+/g, ' ').trim() || text;
+  const anchor: Anchor = { page: page.srcIndex!, quads, rect: null, quote };
   batch(() => {
     setEditing(null);
     setDraft({
@@ -308,14 +322,39 @@ export function beginComment(mode: DraftMode): boolean {
       quickmark: mode === 'typo' ? 'typo' : null,
     });
   });
-  if (token && mode === 'comment') {
-    void readQuoteMath(path, anchor, text, async (m) => {
-      const answer = await convertSelection(token, m);
-      const markdown = answer?.markdown.trim() ?? '';
-      return markdown.includes('$') ? markdown : null;
-    });
+  if (plan && (plan.inline.length > 0 || plan.displays.length > 0)) {
+    const docId = doc.docId;
+    setReading(anchor, true);
+    void readQuote(
+      plan,
+      { docId, pageHeight: (p) => tab.documentStore.state.pages[p]?.heightPt },
+      token,
+      (tex) => {
+        setReading(anchor, false);
+        if (tex) setQuoteTex(path, anchor, tex);
+      }
+    ).finally(() => setReading(anchor, false));
   }
   return true;
+}
+
+/** Quotes whose math is being read: their cards show the plain text,
+ * marked as still coming. */
+const [reading, setReadingSet] = createSignal<ReadonlySet<Anchor>>(new Set());
+
+function setReading(anchor: Anchor, on: boolean): void {
+  const now = untrack(reading);
+  if (now.has(anchor) === on) return;
+  const next = new Set(now);
+  if (on) next.add(anchor);
+  else next.delete(anchor);
+  setReadingSet(next);
+}
+
+/** Whether the math of `anchor`'s quote is still being read. */
+export function quoteReading(anchor: Anchor): boolean {
+  for (const a of reading()) if (a === anchor || a === unwrap(anchor)) return true;
+  return false;
 }
 
 /** Start a comment on a display equation (its button on the page): the
@@ -349,11 +388,14 @@ export function beginEquationComment(target: {
   });
   const ref = { docId: doc.docId, page: target.page, bbox: target.bbox, number: target.number };
   const token = equationToken(ref);
+  setReading(anchor, true);
   void readQuoteMath(path, anchor, '', async (m) => {
     const answer = await convertEquation(token, ref, m);
-    const latex = answer?.latex.trim() ?? '';
-    return latex ? `$$ ${latex.replace(/\s*\n\s*/g, ' ')} $$` : null;
-  });
+    if (m === 'local') setReading(anchor, false);
+    let latex = answer?.latex.replace(/\s+/g, ' ').trim() ?? '';
+    if (latex && target.number && !latex.includes('\\tag')) latex += ` \\tag{${target.number}}`;
+    return latex ? `$$ ${latex} $$` : null;
+  }).finally(() => setReading(anchor, false));
   return true;
 }
 
@@ -393,6 +435,95 @@ function setQuoteTex(path: string, anchor: Anchor, tex: string): void {
   change(path, (doc) => {
     for (const c of doc.comments) if (unwrap(c.anchor) === anchor) c.anchor.quoteTex = tex;
   });
+}
+
+/** Change a kept comment's anchor, found by identity. */
+function patchAnchor(
+  path: string,
+  anchor: Anchor,
+  patch: { [K in keyof Anchor]?: Anchor[K] | undefined }
+): void {
+  const entry = untrack(() => reviews[path]);
+  if (!entry?.doc.comments.some((c) => unwrap(c.anchor) === anchor)) return;
+  change(path, (doc) => {
+    for (const c of doc.comments) {
+      if (unwrap(c.anchor) !== anchor) continue;
+      for (const [key, value] of Object.entries(patch)) {
+        if (value === undefined) delete (c.anchor as unknown as Record<string, unknown>)[key];
+        else (c.anchor as unknown as Record<string, unknown>)[key] = value;
+      }
+    }
+  });
+}
+
+/** Whether a kept comment quotes words whose math can be read: a text
+ * anchor, not a typo fix (whose words are struck as printed). */
+export function quotesText(comment: MarkupComment): boolean {
+  return (
+    comment.kind !== 'typo' &&
+    !!comment.anchor.quads?.length &&
+    !comment.anchor.rect &&
+    comment.anchor.quote.trim() !== ''
+  );
+}
+
+/** Read a kept comment's quote again from the page under its quads: its
+ * plain text rebuilt clean (margin line numbers gone, lines joined, in
+ * reading order) and its math read as a new comment's is. For quotes kept
+ * before their math could be read, and for one whose reading is wrong.
+ * Only while its document is the one on screen. */
+export async function rereadQuote(path: string, comment: MarkupComment): Promise<void> {
+  const tab = activeTab();
+  const doc = tab?.documentStore.state;
+  if (!tab || !doc?.loaded || doc.path !== path || !quotesText(comment)) return;
+  const anchor = unwrap(comment.anchor);
+  const pageIndex = doc.pages.findIndex((p) => p.srcIndex === anchor.page);
+  const page = doc.pages[pageIndex];
+  if (!page || pageIndex < 0) return;
+  const height = page.heightPt;
+  const docId = doc.docId;
+  setReading(anchor, true);
+  try {
+    const [layout, blocks] = await Promise.all([
+      engine.getTextLayout(docId, anchor.page),
+      equationBlocksFor(docId, anchor.page, 0),
+    ]);
+    const rects = anchor.quads!.map(quadBox);
+    const pieces = piecesUnderQuads(
+      layout.runs,
+      rects,
+      blocks.map(({ bbox: [x, y, w, h], number }) => ({ x, y: height - y - h, w, h, number })),
+      pageIndex,
+      anchor.quote
+    );
+    if (pieces.length === 0) return;
+    const plan = planQuote(pieces);
+    const plain = plan.plain.replace(/\s+/g, ' ').trim();
+    if (plain && plain !== anchor.quote) patchAnchor(path, anchor, { quote: plain });
+    if (plan.inline.length === 0 && plan.displays.length === 0) {
+      if (anchor.quoteTex) patchAnchor(path, anchor, { quoteTex: undefined });
+      return;
+    }
+    const whole = registerSnapshot({
+      docId,
+      page: pageIndex,
+      rects: rects.map(([x, y, w, h]) => [x, height - y - h, w, h]),
+      text: plain,
+    });
+    let first = true;
+    await readQuote(plan, { docId, pageHeight: (p) => doc.pages[p]?.heightPt }, whole, (tex) => {
+      setReading(anchor, false);
+      // the first answer replaces whatever reading there was; a later one
+      // only ever improves it
+      if (tex) patchAnchor(path, anchor, { quoteTex: tex });
+      else if (first) patchAnchor(path, anchor, { quoteTex: undefined });
+      first = false;
+    });
+  } catch {
+    // the page could not be read: the quote stands as it was
+  } finally {
+    setReading(anchor, false);
+  }
 }
 
 /** Drag a box on a page for a figure, an equation, a diagram. */

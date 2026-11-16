@@ -129,21 +129,43 @@ export function renderBody(text: string, opts: BodyOptions = {}): string {
     .join('');
 }
 
-/** Markdown's backslash escapes, which a converter's quote carries in its
- * prose, undone: a quote is shown, not parsed further. */
-function unescapeMarkdown(text: string): string {
-  return text.replace(/\\([\\`*_{}[\]()#+\-.!|>~])/g, '$1');
+/** A quote's prose as HTML: escaped, with `*...*` (a formula that could
+ * not be read, as its plain text) set in italics. */
+function proseHtml(text: string): string {
+  let out = '';
+  let plain = '';
+  let italic = false;
+  const flush = () => {
+    if (!plain) return;
+    out += italic ? `<em class="mk-math-plain">${escapeHtml(plain)}</em>` : escapeHtml(plain);
+    plain = '';
+  };
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i]!;
+    if (c === '\\' && i + 1 < text.length) {
+      plain += text[i + 1];
+      i += 1;
+    } else if (c === '*') {
+      flush();
+      italic = !italic;
+    } else {
+      plain += c;
+    }
+  }
+  flush();
+  return out;
 }
 
 /** A quote with its math as LaTeX (an anchor's `quoteTex`), as HTML on a
- * few lines: prose escaped, `$...$` inline, `$$ ... $$` set as a display.
+ * few lines: prose escaped, `$...$` inline, `$$ ... $$` set as a display,
+ * and a formula that could not be read in italics.
  * No marks or citations: the words are the paper's, not the reviewer's. */
 export function quoteHtml(text: string, opts: BodyOptions = {}): string {
   const flat = text.replace(/\s+/g, ' ').trim();
   const inline = (part: string) =>
     splitMath(part)
       .map((segment) => {
-        if (segment.kind === 'text') return escapeHtml(unescapeMarkdown(segment.text));
+        if (segment.kind === 'text') return proseHtml(segment.text);
         if (!opts.math) return `<span class="mk-math-raw">${escapeHtml(segment.raw)}</span>`;
         return `<span class="mk-math">${opts.math(segment.src, segment.display)}</span>`;
       })

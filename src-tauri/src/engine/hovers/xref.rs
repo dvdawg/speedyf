@@ -1637,6 +1637,7 @@ fn runs_of(page: &Page) -> Vec<TextRun> {
             w: l.x1 - l.x0,
             h: l.height(),
             edges: Vec::new(),
+            math: Vec::new(),
         })
         .collect()
 }

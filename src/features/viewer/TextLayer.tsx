@@ -95,7 +95,7 @@ export default function TextLayer(props: Props) {
     const spans = layer.children;
     for (let i = 0; i < spans.length; i += 1) {
       const display = m.displays[m.displayOfRun[i] ?? -1];
-      setSpanDisplay(spans[i]!, display ? display.box : null);
+      setSpanDisplay(spans[i]!, display ?? null);
       setSpanMargin(spans[i]!, m.margin[i] === true);
     }
     untrack(repaint);

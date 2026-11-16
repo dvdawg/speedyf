@@ -50,6 +50,9 @@ const PARAGRAPH_INDENT_RATIO = 0.6;
 function normalizeGlyphs(text: string): string {
   let out = '';
   for (const ch of text) {
+    // a variation selector (a font's hint about the glyph before it)
+    const cp = ch.codePointAt(0)!;
+    if (cp >= 0xfe00 && cp <= 0xfe0f) continue;
     const expanded = LIGATURES.get(ch);
     out += expanded ?? ch;
   }

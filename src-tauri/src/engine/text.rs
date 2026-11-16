@@ -246,6 +246,7 @@ pub fn extract_page(
                 index: i as u32,
                 bbox: None,
                 advance: None,
+                math: false,
             });
             continue;
         }
@@ -292,6 +293,7 @@ pub fn extract_page(
             index: i as u32,
             bbox,
             advance,
+            math: math[i as usize],
         });
     }
     let runs = build_runs(&glyphs);
@@ -319,6 +321,27 @@ pub(crate) struct Glyph {
     /// Left and right of the glyph's advance along the line, display x;
     /// `None` exactly when `bbox` is.
     pub advance: Option<[f32; 2]>,
+    /// Set in a math font (`is_math_font`).
+    pub math: bool,
+}
+
+/// The stretches of a run's characters set in a math font, as `[from, to)`
+/// in UTF-16 units of its text: where the reader can tell a formula from
+/// the prose around it.
+pub(crate) fn math_ranges(chars: &[(char, Option<[f32; 2]>)], math: &[bool]) -> Vec<[u32; 2]> {
+    let mut out: Vec<[u32; 2]> = Vec::new();
+    let mut at = 0u32;
+    for (k, (ch, _)) in chars.iter().enumerate() {
+        let units = ch.len_utf16() as u32;
+        if math.get(k).copied().unwrap_or(false) {
+            match out.last_mut() {
+                Some(last) if last[1] == at => last[1] = at + units,
+                _ => out.push([at, at + units]),
+            }
+        }
+        at += units;
+    }
+    out
 }
 
 /// Where each character of a run begins, from `x0`, and where the last one
@@ -402,6 +425,8 @@ pub(crate) fn build_runs(glyphs: &[Glyph]) -> Vec<TextRun> {
         text: String,
         /// each character of `text`, with its advance when it has one
         chars: Vec<(char, Option<[f32; 2]>)>,
+        /// whether each of `chars` is set in a math font
+        math: Vec<bool>,
         start: u32,
         x0: f32,
         y0: f32,
@@ -421,7 +446,9 @@ pub(crate) fn build_runs(glyphs: &[Glyph]) -> Vec<TextRun> {
                 // line for consumers that join runs themselves.
                 let text = r.text.trim_end().to_string();
                 let kept = text.chars().count();
-                let edges = char_edges(&r.chars[..kept.min(r.chars.len())], r.x0);
+                let kept = kept.min(r.chars.len());
+                let edges = char_edges(&r.chars[..kept], r.x0);
+                let math = math_ranges(&r.chars[..kept], &r.math[..kept.min(r.math.len())]);
                 runs.push(TextRun {
                     text,
                     start: r.start,
@@ -430,6 +457,7 @@ pub(crate) fn build_runs(glyphs: &[Glyph]) -> Vec<TextRun> {
                     w: r.x1 - r.x0,
                     h: r.y1 - r.y0,
                     edges,
+                    math,
                 });
             }
         }
@@ -438,6 +466,10 @@ pub(crate) fn build_runs(glyphs: &[Glyph]) -> Vec<TextRun> {
     for glyph in glyphs {
         if glyph.ch == '\n' || glyph.ch == '\r' {
             flush(&mut cur, &mut runs);
+            continue;
+        }
+        // part of the character before it, not one of its own
+        if crate::engine::glyphs::is_variation_selector(glyph.ch as u32) {
             continue;
         }
         let Some([x, y, w, h]) = glyph.bbox else {
@@ -449,6 +481,7 @@ pub(crate) fn build_runs(glyphs: &[Glyph]) -> Vec<TextRun> {
                     if !run.text.ends_with(char::is_whitespace) {
                         run.text.push(' ');
                         run.chars.push((' ', None));
+                        run.math.push(false);
                     }
                 }
             }
@@ -469,6 +502,7 @@ pub(crate) fn build_runs(glyphs: &[Glyph]) -> Vec<TextRun> {
             cur = Some(Run {
                 text: String::new(),
                 chars: Vec::new(),
+                math: Vec::new(),
                 start: glyph.index,
                 x0: x,
                 y0: y,
@@ -482,6 +516,7 @@ pub(crate) fn build_runs(glyphs: &[Glyph]) -> Vec<TextRun> {
         run.text.push(glyph.ch);
         run.chars
             .push((glyph.ch, glyph.advance.or(Some([x, x + w]))));
+        run.math.push(glyph.math);
         run.x0 = run.x0.min(x);
         run.y0 = run.y0.min(y);
         run.x1 = run.x1.max(x + w);
@@ -589,6 +624,7 @@ mod tests {
             index,
             bbox: Some([x, 700.0, 9.0, 9.0]),
             advance: Some([x, x + 9.0]),
+            math: false,
         }
     }
 
@@ -599,6 +635,7 @@ mod tests {
             index,
             bbox: None,
             advance: None,
+            math: false,
         }
     }
 
@@ -678,6 +715,33 @@ mod tests {
     fn a_run_carries_where_each_character_begins() {
         let runs = build_runs(&[glyph('a', 0, 50.0), inkless(' ', 1), glyph('b', 2, 62.0)]);
         assert_eq!(runs[0].edges, vec![0.0, 9.0, 12.0, 21.0]);
+    }
+
+    /// The characters set in a math font, by UTF-16 unit: "where x_i is"
+    /// with its x and i from CMMI.
+    #[test]
+    fn a_run_marks_its_math() {
+        let mut glyphs = Vec::new();
+        for (k, ch) in "where".chars().enumerate() {
+            glyphs.push(glyph(ch, k as u32, 50.0 + 9.0 * k as f32));
+        }
+        glyphs.push(inkless(' ', 5));
+        let mut x = glyph('x', 6, 98.0);
+        x.math = true;
+        let mut i = glyph('\u{1D456}', 7, 107.0);
+        i.math = true;
+        glyphs.push(x);
+        glyphs.push(i);
+        let runs = build_runs(&glyphs);
+        assert_eq!(runs[0].math, vec![[6, 9]]);
+    }
+
+    /// A variation selector after a sum sign is no character of the run.
+    #[test]
+    fn a_variation_selector_is_dropped() {
+        let runs = build_runs(&[glyph('\u{2211}', 0, 50.0), glyph('\u{FE01}', 1, 50.0)]);
+        assert_eq!(runs[0].text, "\u{2211}");
+        assert_eq!(runs[0].edges, vec![0.0, 9.0]);
     }
 
     /// A ligature PDFium split into two letters on one box: each letter

@@ -23,6 +23,9 @@ export interface TextRunDto {
    * unit, then where the run ends), from the glyphs' own advances. Absent
    * when the engine could not place them. */
   edges?: number[];
+  /** The stretches of `text` set in a math font, `[from, to)` in UTF-16
+   * units. Absent when there are none. */
+  math?: [number, number][];
 }
 
 /** One document that matched a library-wide search. Carries the file, not a

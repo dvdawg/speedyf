@@ -4,7 +4,7 @@
  * the kind chip changes its kind. */
 import { createEffect, createMemo, For, on, Show } from 'solid-js';
 import IconButton from '../../components/IconButton';
-import { IconEdit, IconTrash } from '../../components/icons';
+import { IconEdit, IconRefresh, IconTrash } from '../../components/icons';
 import CommentEditor, { KindSelect, type EditorResult } from './CommentEditor';
 import { quoteHtml, renderBody } from './bodyHtml';
 import QuoteCrop from './QuoteCrop';
@@ -12,7 +12,7 @@ import { plausibleQuoteTex } from './quoteTexCheck';
 import { labelParts } from './labels';
 import { mathRenderer } from './mathHtml';
 import { shortQuote, type Entry } from './model';
-import { citeIndex, flashed } from './markupStore';
+import { citeIndex, flashed, quoteReading, quotesText } from './markupStore';
 import { KIND_LABEL, type Anchor, type CommentKind } from './types';
 
 /** The words a comment is about, as text: with their math typeset when a
@@ -30,7 +30,13 @@ function TextQuote(props: { anchor: Anchor }) {
           when={props.anchor.quote.trim()}
           fallback={<div class="mk-card-quote is-region">Region on the page</div>}
         >
-          <div class="mk-card-quote">{shortQuote(props.anchor.quote, 160)}</div>
+          <div
+            class="mk-card-quote"
+            classList={{ 'is-pending': quoteReading(props.anchor) }}
+            aria-busy={quoteReading(props.anchor) ? 'true' : undefined}
+          >
+            {shortQuote(props.anchor.quote, 160)}
+          </div>
         </Show>
       }
     >
@@ -43,15 +49,20 @@ function TextQuote(props: { anchor: Anchor }) {
   );
 }
 
-/** The words a comment is about as they are printed: a crop of the page,
- * which is faithful to any formula; the text when there is no page. */
+/** The words a comment is about: as text, with their math typeset. A
+ * region, which has no words, is shown as the page draws it. */
 function Quote(props: { anchor: Anchor }) {
   return (
-    <QuoteCrop
-      anchor={props.anchor}
-      alt={props.anchor.quote.trim() || 'Region on the page'}
+    <Show
+      when={props.anchor.rect && !props.anchor.quote.trim()}
       fallback={<TextQuote anchor={props.anchor} />}
-    />
+    >
+      <QuoteCrop
+        anchor={props.anchor}
+        alt="Region on the page"
+        fallback={<TextQuote anchor={props.anchor} />}
+      />
+    </Show>
   );
 }
 
@@ -63,6 +74,8 @@ interface Props {
   onOpen: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  /** Read the quote's math again from the page. */
+  onReread?: () => void;
   onKind: (kind: CommentKind) => void;
   onSave: (result: EditorResult) => void;
   onCancel: () => void;
@@ -138,6 +151,15 @@ export default function CommentCard(props: Props) {
         >
           <KindSelect value={c().kind} onChange={(k) => props.onKind(k)} />
           <span class="mk-card-actions">
+            <Show when={props.onReread && !props.draft && quotesText(c())}>
+              <IconButton
+                label="Re-read math"
+                disabled={quoteReading(c().anchor)}
+                onClick={() => props.onReread?.()}
+              >
+                <IconRefresh />
+              </IconButton>
+            </Show>
             <IconButton label="Edit" onClick={() => props.onEdit()}>
               <IconEdit />
             </IconButton>

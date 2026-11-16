@@ -26,6 +26,8 @@ pub mod outline_gen;
 pub mod pdfium_init;
 pub mod preview;
 pub mod queue;
+#[cfg(test)]
+mod quote_eval;
 pub mod render;
 pub mod save;
 pub mod tagged;
