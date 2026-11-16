@@ -173,10 +173,19 @@ pub fn caption_blocks(runs: &[TextRun]) -> Vec<CaptionBlock> {
                     let top = row.y + row.h;
                     top <= previous.y + 0.5 * h
                         && previous.y - top <= 1.1 * h
-                        && row.x >= run.x - 2.0 * h
+                        // Under the head, or centred under it and wider (IEEE
+                        // sets "TABLE I" over a centred line of its title).
+                        && (row.x >= run.x - 2.0 * h
+                            || (row.x + row.w / 2.0 - (head.x + head.w / 2.0)).abs() <= 2.0 * h)
                         && row.x < span_end - 1.0
                         && (row.h - h).abs() <= 0.5 * h
                         && !is_head(row)
+                        // A line of the caption runs most of its width, or
+                        // starts at its left edge, or is centred under it;
+                        // a table's first cells under its caption do none.
+                        && (row.w >= 0.5 * head.w
+                            || (row.x - run.x).abs() <= 2.0 * h
+                            || (row.x + row.w / 2.0 - (head.x + head.w / 2.0)).abs() <= 2.0 * h)
                 })
                 .max_by(|a, b| (a.y + a.h).total_cmp(&(b.y + b.h)));
             let Some(next) = next else { break };
@@ -519,6 +528,15 @@ pub fn float_for_anchor(
     (!text_between).then(|| page.float(block, top))
 }
 
+/// Every float on a page, each `[x, y, w, h]` y-up: its artwork (or table
+/// body) and its caption. What lies inside one is no part of the running
+/// text: an axis label set as `$\tau(s)$`, a table cell, an algorithm's
+/// line.
+pub fn float_regions(runs: &[TextRun], page_w_pt: f32, page_h_pt: f32) -> Vec<[f32; 4]> {
+    let page = Page::new(runs, page_w_pt, page_h_pt);
+    page.blocks.iter().map(|b| page.float(b, None)).collect()
+}
+
 /// The float of the caption whose first line starts at (`x`, `baseline`).
 pub fn float_for_caption(
     runs: &[TextRun],
@@ -723,5 +741,87 @@ mod tests {
         let right = float_for_anchor(&runs, 612.0, 792.0, Some(400.0), 715.0).expect("float");
         assert!(right[0] > 290.0, "{right:?}");
         assert!(contains(right, 600.0, 656.0), "{right:?}");
+    }
+    /// A table's runs: rows of cells from `top` down, `rows` of them.
+    fn table(runs: &mut Vec<TextRun>, x0: f32, y: f32, rows: usize) {
+        for row in 0..rows {
+            let y = y - 13.0 * row as f32;
+            runs.push(run("SGD", x0, y, 22.0, 8.0));
+            for (i, cell) in ["12.4", "8.1", "5.3"].iter().enumerate() {
+                runs.push(run(cell, x0 + 90.0 + 50.0 * i as f32, y, 18.0, 7.0));
+            }
+        }
+    }
+
+    #[test]
+    fn a_tables_cells_are_no_line_of_its_caption() {
+        // The first cells sit under the caption, but as cells: indented
+        // from it and narrow. Taking them as its lines once let the table
+        // run on over the display set after it.
+        let mut runs = Vec::new();
+        caption(&mut runs, "Table 1:", 159.0, 452.0, 710.0, 1);
+        table(&mut runs, 198.0, 692.0, 5);
+        runs.push(run(
+            "A long equation is broken with multline:",
+            72.0,
+            585.0,
+            199.0,
+            10.0,
+        ));
+        runs.push(run(
+            "J(theta) = E log D(x) + E log(1 - D(G(z)))",
+            82.0,
+            556.0,
+            251.0,
+            13.0,
+        ));
+        runs.push(run(
+            "+ lambda E (grad D - 1)^2 + mu theta^2.",
+            338.0,
+            532.0,
+            177.0,
+            13.0,
+        ));
+        for line in 0..8 {
+            prose(&mut runs, 72.0, 540.0, 500.0 - 12.0 * line as f32);
+        }
+        let blocks = caption_blocks(&runs);
+        assert_eq!(blocks.len(), 1);
+        assert!(blocks[0].bottom > 700.0, "{:?}", blocks[0]);
+        let regions = float_regions(&runs, 612.0, 792.0);
+        assert_eq!(regions.len(), 1);
+        let [_, y, _, _] = regions[0];
+        assert!(y > 569.0, "the display under the table: {:?}", regions[0]);
+    }
+
+    #[test]
+    fn an_ieee_table_title_centred_under_its_head_is_its_caption() {
+        // "TABLE I" over a centred, wider line of small capitals, then the
+        // table: the float runs over the table's rows.
+        let mut runs = Vec::new();
+        for y in [760.0, 748.0] {
+            prose(&mut runs, 49.0, 300.0, y);
+        }
+        runs.push(run("TABLE I", 159.0, 733.0, 30.0, 5.0));
+        runs.push(run(
+            "TEST ERROR (%) OF EACH METHOD ON THREE BENCHMARKS.",
+            70.0,
+            723.0,
+            209.0,
+            7.0,
+        ));
+        table(&mut runs, 88.0, 705.0, 4);
+        for line in 0..10 {
+            prose(&mut runs, 49.0, 300.0, 620.0 - 12.0 * line as f32);
+            prose(&mut runs, 312.0, 563.0, 760.0 - 12.0 * line as f32);
+        }
+        let regions = float_regions(&runs, 612.0, 792.0);
+        assert_eq!(regions.len(), 1, "{regions:?}");
+        assert!(contains(regions[0], 666.0, 738.0), "{:?}", regions[0]);
+        assert!(
+            regions[0][1] > 628.0,
+            "the prose under it: {:?}",
+            regions[0]
+        );
     }
 }
