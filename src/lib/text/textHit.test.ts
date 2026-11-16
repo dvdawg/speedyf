@@ -195,13 +195,13 @@ describe('display equations', () => {
   });
 });
 
-/** "Wiﬁ in" in a serif face, as the engine places it: glyph advances of
+/** "Wi\ufb01 in" in a serif face, as the engine places it: glyph advances of
  * different widths ("W" wide, "i" narrow), a ligature as one character, an
  * inkless word space, and a run whose ink starts a little right of its
  * first advance. Edges from `x` (60). */
 function serifRun(): TextRunDto {
   return {
-    text: 'Wiﬁ in',
+    text: 'Wi\ufb01 in',
     start: 0,
     x: 60,
     y: 700,
