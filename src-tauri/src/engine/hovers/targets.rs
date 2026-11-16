@@ -256,7 +256,8 @@ pub(crate) fn statement_lines(
 ) -> Rect {
     let lines = &page.lines;
     let column = &lines[first];
-    let mut reader = Reader::new(page, column_left(page, column), italic);
+    let extent = super::statement::column_extent(page, column);
+    let mut reader = Reader::new(page, extent.0, italic);
     let another = |i: usize| opens_another(page, i);
     let mut region = line_rect(column);
     // The last whole line taken, and where reading has got to: a piece of
@@ -271,12 +272,27 @@ pub(crate) fn statement_lines(
         cursor = j;
         let l = &lines[j];
         let p = &lines[previous];
+        // A display's pieces come in no reading order: one set above the
+        // last line read but below the statement's top (a fraction's
+        // numerator) is the display's, not a new column's.
+        let within = l.top <= region[1] + region[3]
+            && l.top >= p.top
+            && l.x0 >= extent.0 - 2.0
+            && l.x1 <= extent.1 + 2.0;
+        if within {
+            region = union(region, line_rect(l));
+            count += 1;
+            continue;
+        }
         if !same_row(p, l) {
             let below = l.top < p.top;
             if !below || !same_column(l, column) || !reader.takes(page, p, j, &another) {
                 break;
             }
-            previous = j;
+            // Read on from the lowest line so far.
+            if l.bottom < p.bottom {
+                previous = j;
+            }
         }
         region = union(region, line_rect(l));
         count += 1;
@@ -795,6 +811,96 @@ mod tests {
         let top = rect[1] + rect[3];
         assert!((691.5..696.0).contains(&top), "[1]'s last line: {rect:?}");
         assert!(rect[1] <= 648.0 && rect[1] > 643.5, "[3]: {rect:?}");
+    }
+
+    /// Bassily et al. 2018, Theorem 8: an italic statement, a display whose
+    /// pieces come out of reading order (a fraction's numerator above the
+    /// line before it, a bracket in the body face), then the statement's
+    /// last line in its own face, unindented, set apart by the display's
+    /// spacing; then the body.
+    fn statement_with_display(label: &str, face: Style, indent_after: f32) -> Page {
+        let mut b = Builder::new();
+        for y in [560.0, 548.0, 536.0, 524.0] {
+            b.line(
+                y,
+                BODY,
+                "Running text of the body before the statement here, set across the whole column.",
+            );
+        }
+        let x = b.text(72.0, 489.0, BOLD, label);
+        b.text(
+            x + 4.0,
+            489.0,
+            face,
+            "Let A be a learner that has mutual information of",
+        );
+        b.newline();
+        b.line(
+            474.0,
+            face,
+            "at most d bits, and let S be drawn. Then, for every e,",
+        );
+        b.text(190.0, 447.0, MATH, "P");
+        b.newline();
+        b.text(185.0, 439.0, SCRIPT, "A,S");
+        b.newline();
+        b.text(202.0, 445.0, BODY, "[|err (");
+        b.newline();
+        b.text(240.0, 445.0, MATH, "A(S);S)-err(A(S);D)|>e]<");
+        b.newline();
+        b.text(392.0, 454.0, MATH, "d+1");
+        b.newline();
+        b.text(383.0, 440.0, MATH, "2me2-1");
+        b.newline();
+        b.line(
+            416.0,
+            face,
+            "where the probability is taken over the sample S and",
+        );
+        b.line(404.0, face, "the randomness of A.");
+        b.line_at(
+            72.0 + indent_after,
+            384.0,
+            BODY,
+            "Our theorem states a simple and basic property here.",
+        );
+        b.line(
+            372.0,
+            BODY,
+            "Running text of the body after the statement here, set across the whole column.",
+        );
+        b.page()
+    }
+
+    #[test]
+    fn a_statement_goes_on_after_its_display_in_its_own_face() {
+        for label in ["Theorem 8", "Theorem 8."] {
+            let page = statement_with_display(label, ITALIC, 0.0);
+            let rect = link_target(&page, Some(72.0), 500.0).expect("a statement");
+            let lines = lines_in(&page, rect);
+            assert!(
+                lines.iter().any(|l| l.starts_with("the randomness of A")),
+                "{label}: {lines:?}"
+            );
+            assert!(rect[1] < 404.0 && rect[1] > 391.5, "{label}: {rect:?}");
+        }
+    }
+
+    #[test]
+    fn an_upright_statement_goes_on_after_its_display_unindented() {
+        // Definition style: the statement in the body face. Its "where"
+        // line is unindented; the paragraph after it is indented.
+        let page = statement_with_display("Definition 3.", BODY, 15.0);
+        let rect = link_target(&page, Some(72.0), 500.0).expect("a statement");
+        let lines = lines_in(&page, rect);
+        assert!(
+            lines.iter().any(|l| l.starts_with("the randomness of A")),
+            "{lines:?}"
+        );
+        assert!(
+            !lines.iter().any(|l| l.starts_with("Our theorem")),
+            "{lines:?}"
+        );
     }
 
     #[test]

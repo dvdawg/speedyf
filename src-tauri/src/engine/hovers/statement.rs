@@ -72,6 +72,22 @@ pub fn column_left(page: &Page, line: &Line) -> f32 {
         .fold(line.x0, f32::min)
 }
 
+/// The column's left and right edges around `line`: its lines' extent.
+pub fn column_extent(page: &Page, line: &Line) -> (f32, f32) {
+    let right = page
+        .lines
+        .iter()
+        .filter(|l| {
+            !l.flags.furniture
+                && same_column(l, line)
+                && (l.top - line.top).abs() < 200.0
+                && l.x1 - l.x0 > 0.5 * (line.x1 - line.x0).max(1.0)
+        })
+        .map(|l| l.x1)
+        .fold(line.x1, f32::max);
+    (column_left(page, line), right)
+}
+
 fn prose(l: &Line) -> bool {
     !l.is_display() && l.math_share < 0.2
 }
@@ -143,7 +159,11 @@ impl Reader {
             self.in_list = true;
             return true;
         }
-        if prose(l) && !fragment(l) {
+        // A line of the statement's text, from the column's margin (or a
+        // paragraph's indent) - not a piece of a display set out across the
+        // column, which may be in the body face: "[|err(".
+        let text_line = prose(l) && !fragment(l) && l.x0 <= self.left + 25.0;
+        if text_line {
             match self.italic {
                 None => self.italic = Some(own_face),
                 Some(true) if !own_face => {
@@ -155,11 +175,21 @@ impl Reader {
             }
         }
         let apart = gap > self.gap0 + 3.5;
-        if !apart || display {
-            if !indented && prose(l) && !fragment(l) {
+        if !apart || !text_line {
+            if !indented && text_line {
                 self.in_list = false;
             }
             return true;
+        }
+        if !prose(previous) || fragment(previous) {
+            // After a display, set apart by its spacing: the statement goes
+            // on in its own face ("where the probability is taken ...");
+            // an upright one goes on unindented or mid-sentence, not with a
+            // new paragraph.
+            if self.italic == Some(true) {
+                return true;
+            }
+            return !indented || text.starts_with(|c: char| c.is_lowercase());
         }
         // Set apart, in prose: a list's end and the statement going on, or
         // the paragraph after the statement.
