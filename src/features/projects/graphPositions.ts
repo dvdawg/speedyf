@@ -1,8 +1,8 @@
 /** Where the user dragged graph nodes, kept across sessions.
  *
  * Per scope (a project id, or "all"), a map from paper id to a position in
- * layout space (pixels at zoom 1), so zoom, pan and the window's size do
- * not matter. One versioned localStorage key holds every scope; v2 since
+ * layout space (pixels at zoom 1, before the spread that fills the canvas,
+ * graphFit.ts), so zoom, pan and the window's size do not matter. One versioned localStorage key holds every scope; v2 since
  * layout space stopped being the unit square, so v1 positions are not
  * misread as pixels. Storage can be
  * missing, full or broken: every read and write is wrapped, and the graph
