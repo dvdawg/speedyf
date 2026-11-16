@@ -1,0 +1,21 @@
+% Marks every display for evaluation: display k's ink in RGB (k,0,0),
+% its tag in (k,0,40). Prose and inline math stay black.
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{evalmark}
+\RequirePackage{xcolor}
+\RequirePackage{amsmath}
+\makeatletter
+\newcounter{dispid}
+\newcommand{\evalmarkcolour}{\stepcounter{dispid}\color[RGB]{\the\value{dispid},0,0}}
+\renewcommand\[{\begin{equation*}}
+\renewcommand\]{\end{equation*}}
+\@for\evalmark@env:=equation,equation*,align,align*,gather,gather*,multline,multline*,flalign,flalign*,alignat,alignat*,eqnarray,eqnarray*\do{\expandafter\AddToHook\expandafter{\expandafter e\expandafter n\expandafter v\expandafter/\evalmark@env/begin}{\evalmarkcolour}}
+\AddToHook{env/algorithm/begin}{\color{black}}
+\AddToHook{env/figure/begin}{\color{black}}
+\AddToHook{env/table/begin}{\color{black}}
+\AddToHook{env/figure*/begin}{\color{black}}
+\AddToHook{env/table*/begin}{\color{black}}
+\def\tagform@#1{\maketag@@@{\color[RGB]{\the\value{dispid},0,40}(\ignorespaces#1\unskip\@@italiccorr)}}
+\def\@eqnnum{{\normalfont\color[RGB]{\the\value{dispid},0,40}(\theequation)}}
+\renewcommand{\eqref}[1]{\textup{(\ref{#1})}}
+\makeatother

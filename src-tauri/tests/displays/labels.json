@@ -1,0 +1,331 @@
+[
+  {
+    "set": "tuning",
+    "file": "2512.24540v3.pdf",
+    "page": 8,
+    "displays": [
+      { "bbox": [54.4, 140.4, 243.9, 27.6], "number": "48" },
+      { "bbox": [144.4, 213.4, 63.3, 28.9], "number": "49" },
+      { "bbox": [109.8, 350.3, 396.3, 23.9], "number": "52" },
+      { "bbox": [134.3, 466.9, 84.8, 28.9], "number": "53" },
+      { "bbox": [55.1, 542.4, 253.9, 27.7], "number": "54" },
+      { "bbox": [67.0, 603.4, 201.0, 22.1], "number": "55" },
+      { "bbox": [387.4, 73.9, 104.0, 28.7], "number": "50" },
+      { "bbox": [317.4, 212.6, 245.1, 39.8], "number": "51" },
+      { "bbox": [358.5, 426.0, 161.8, 28.3], "number": "56" },
+      { "bbox": [317.4, 524.7, 249.0, 103.0], "number": "57" },
+      { "bbox": [326.9, 662.7, 224.9, 50.5], "number": "58" }
+    ]
+  },
+  {
+    "set": "tuning",
+    "file": "mot.pdf",
+    "page": 2,
+    "displays": [
+      { "bbox": [132.2, 108.4, 346.7, 19.6], "number": null },
+      { "bbox": [225.8, 236.2, 159.1, 10.9], "number": "1" },
+      { "bbox": [88.7, 297.2, 419.9, 13.0], "number": "2" },
+      { "bbox": [111.8, 386.8, 387.6, 28.5], "number": "3" },
+      { "bbox": [205.2, 465.4, 201.1, 10.9], "number": null },
+      { "bbox": [177.1, 589.5, 257.3, 25.8], "number": null },
+      { "bbox": [207.7, 652.0, 195.8, 26.2], "number": null }
+    ]
+  },
+  {
+    "set": "tuning",
+    "file": "mot.pdf",
+    "page": 4,
+    "displays": [
+      { "bbox": [172.4, 157.4, 266.8, 32.7], "number": null },
+      { "bbox": [238.0, 240.2, 135.2, 11.4], "number": null },
+      { "bbox": [267.2, 286.7, 77.3, 22.2], "number": "7" },
+      { "bbox": [90.5, 342.4, 430.4, 26.5], "number": "8" },
+      { "bbox": [161.1, 435.1, 289.2, 12.4], "number": null },
+      { "bbox": [124.5, 481.8, 361.7, 61.1], "number": "9" },
+      { "bbox": [174.7, 598.4, 262.1, 28.5], "number": null },
+      { "bbox": [173.1, 665.5, 265.4, 37.6], "number": "10" }
+    ]
+  },
+  { "set": "tuning", "file": "2107.05673v3.pdf", "page": 5, "displays": [] },
+  {
+    "set": "tuning",
+    "file": "2512.24540v3.pdf",
+    "page": 3,
+    "displays": [
+      { "bbox": [122.9, 107.0, 369.8, 30.4], "number": "17" },
+      { "bbox": [382.8, 301.9, 113.1, 10.7], "number": "20" },
+      { "bbox": [377.1, 357.1, 124.3, 11.5], "number": "21" },
+      { "bbox": [92.8, 438.0, 167.0, 24.6], "number": "18" },
+      { "bbox": [340.4, 450.7, 180.3, 27.7], "number": "22" },
+      { "bbox": [357.0, 534.8, 164.7, 13.0], "number": "23" },
+      { "bbox": [132.3, 539.7, 88.3, 11.8], "number": "19" },
+      { "bbox": [124.1, 625.8, 369.1, 42.8], "number": "24" }
+    ]
+  },
+  {
+    "set": "tuning",
+    "file": "2107.05673v3.pdf",
+    "page": 3,
+    "displays": [
+      { "bbox": [400.9, 568.3, 77.0, 21.2], "number": "22" },
+      { "bbox": [95.1, 584.4, 162.6, 72.2], "number": "19" }
+    ]
+  },
+  { "set": "tuning", "file": "2107.05673v3.pdf", "page": 12, "displays": [] },
+  {
+    "set": "tuning",
+    "file": "2404.01286v4.pdf",
+    "page": 3,
+    "displays": [
+      { "bbox": [61.9, 76.3, 229.1, 24.0], "number": "17" },
+      { "bbox": [54.2, 139.3, 511.8, 26.6], "number": "18" },
+      { "bbox": [78.6, 450.2, 178.0, 10.5], "number": "19" },
+      { "bbox": [116.6, 509.4, 119.6, 11.2], "number": "20" },
+      { "bbox": [76.3, 593.8, 181.9, 15.3], "number": "21" },
+      { "bbox": [104.1, 643.6, 144.3, 23.9], "number": "22" },
+      { "bbox": [98.8, 703.6, 155.1, 22.1], "number": "23" },
+      { "bbox": [374.2, 713.0, 130.7, 11.2], "number": "24" }
+    ]
+  },
+  {
+    "set": "tuning",
+    "file": "2404.01286v4.pdf",
+    "page": 5,
+    "displays": [
+      { "bbox": [63.9, 105.7, 470.6, 23.9], "number": "27" },
+      { "bbox": [100.2, 184.5, 152.0, 23.9], "number": "28" },
+      { "bbox": [378.2, 259.2, 122.4, 11.2], "number": "30" },
+      { "bbox": [359.0, 301.9, 160.7, 10.0], "number": "31" },
+      { "bbox": [360.4, 353.8, 158.2, 29.2], "number": "32" },
+      { "bbox": [339.5, 439.1, 182.0, 15.3], "number": "33" },
+      { "bbox": [354.7, 512.5, 169.3, 17.9], "number": "34" },
+      { "bbox": [59.7, 519.4, 233.3, 25.4], "number": "29" },
+      { "bbox": [337.3, 559.3, 186.6, 25.6], "number": "35" }
+    ]
+  },
+  {
+    "set": "tuning",
+    "file": "moitra_thesis.pdf",
+    "page": 35,
+    "displays": [
+      { "bbox": [228.5, 203.7, 154.2, 27.9], "number": null },
+      { "bbox": [265.2, 360.7, 81.2, 12.4], "number": null }
+    ]
+  },
+  {
+    "set": "tuning",
+    "file": "moitra_thesis.pdf",
+    "page": 80,
+    "displays": [
+      { "bbox": [210.1, 111.7, 191.8, 82.2], "number": null },
+      { "bbox": [210.1, 426.9, 191.8, 103.9], "number": null }
+    ]
+  },
+  {
+    "set": "tuning",
+    "file": "bassily18a.pdf",
+    "page": 2,
+    "displays": [{ "bbox": [271.5, 115.0, 67.2, 26.2], "number": null }]
+  },
+  {
+    "set": "tuning",
+    "file": "mixtillation.pdf",
+    "page": 2,
+    "displays": [
+      { "bbox": [343.2, 589.5, 183.9, 12.1], "number": "1" },
+      { "bbox": [367.5, 655.8, 135.0, 13.6], "number": "2" }
+    ]
+  },
+  {
+    "set": "tuning",
+    "file": "mixtillation.pdf",
+    "page": 3,
+    "displays": [
+      { "bbox": [63.8, 273.3, 225.0, 46.7], "number": "3" },
+      { "bbox": [73.5, 410.6, 194.2, 17.9], "number": "4" },
+      { "bbox": [88.2, 599.6, 176.0, 11.9], "number": "5" },
+      { "bbox": [105.4, 654.0, 142.0, 28.4], "number": "6" },
+      { "bbox": [382.7, 644.7, 105.0, 12.9], "number": "7" }
+    ]
+  },
+  {
+    "set": "tuning",
+    "file": "nim.pdf",
+    "page": 3,
+    "displays": [
+      { "bbox": [37.8, 373.9, 71.3, 24.3], "number": "2" },
+      { "bbox": [37.9, 462.1, 64.9, 16.5], "number": "3" },
+      { "bbox": [306.9, 492.3, 86.5, 8.2], "number": "7" },
+      { "bbox": [307.3, 534.4, 157.0, 22.1], "number": "8" },
+      { "bbox": [38.0, 578.6, 49.4, 7.4], "number": "4" },
+      { "bbox": [37.9, 626.6, 127.2, 17.0], "number": "5" },
+      { "bbox": [307.3, 629.4, 80.5, 19.1], "number": "9" },
+      { "bbox": [37.9, 713.4, 176.1, 31.9], "number": "6" }
+    ]
+  },
+  {
+    "set": "tuning",
+    "file": "nim.pdf",
+    "page": 2,
+    "displays": [{ "bbox": [306.9, 635.8, 107.6, 22.2], "number": "1" }]
+  },
+  { "set": "second", "file": "2303.04288v2.pdf", "page": 6, "displays": [] },
+  {
+    "set": "second",
+    "file": "attias25a.pdf",
+    "page": 4,
+    "displays": [{ "bbox": [147.8, 694.7, 316.3, 10.9], "number": null }]
+  },
+  {
+    "set": "second",
+    "file": "attias25a.pdf",
+    "page": 7,
+    "displays": [{ "bbox": [143.0, 523.5, 325.7, 11.8], "number": null }]
+  },
+  {
+    "set": "second",
+    "file": "di-gennaro26a.pdf",
+    "page": 5,
+    "displays": [
+      { "bbox": [342.3, 313.8, 179.3, 11.9], "number": null },
+      { "bbox": [343.0, 358.9, 177.3, 27.2], "number": null },
+      { "bbox": [63.5, 433.1, 236.6, 40.3], "number": "5" },
+      { "bbox": [98.9, 528.6, 161.7, 27.2], "number": null }
+    ]
+  },
+  {
+    "set": "second",
+    "file": "2606.13614v1.pdf",
+    "page": 3,
+    "displays": [
+      { "bbox": [126.8, 135.3, 357.6, 55.3], "number": null },
+      { "bbox": [178.9, 225.1, 253.8, 19.7], "number": null },
+      { "bbox": [240.8, 279.5, 129.6, 19.7], "number": "4" },
+      { "bbox": [165.5, 349.0, 280.8, 11.1], "number": "5" },
+      { "bbox": [145.1, 423.7, 321.0, 28.5], "number": null },
+      { "bbox": [95.6, 488.4, 420.0, 11.3], "number": null },
+      { "bbox": [144.6, 536.1, 322.0, 28.5], "number": "6" },
+      { "bbox": [227.1, 599.5, 157.5, 28.5], "number": null },
+      { "bbox": [132.1, 661.6, 347.7, 26.2], "number": null }
+    ]
+  },
+  {
+    "set": "second",
+    "file": "13429_A_Theory_of_Saddle_Escap.pdf",
+    "page": 4,
+    "displays": [
+      { "bbox": [188.1, 104.2, 235.9, 28.6], "number": "7" },
+      { "bbox": [143.5, 453.1, 325.0, 29.9], "number": "8" },
+      { "bbox": [188.7, 580.2, 234.1, 33.0], "number": "9" },
+      { "bbox": [188.5, 646.8, 234.4, 33.0], "number": "10" }
+    ]
+  },
+  {
+    "set": "second",
+    "file": "1201.4166v2.pdf",
+    "page": 2,
+    "displays": [
+      { "bbox": [55.2, 74.2, 242.3, 26.5], "number": "9" },
+      { "bbox": [81.7, 205.2, 173.7, 29.9], "number": "10" },
+      { "bbox": [59.2, 300.6, 216.3, 26.2], "number": "11" },
+      { "bbox": [65.5, 381.6, 198.4, 50.5], "number": "12a" },
+      { "bbox": [80.7, 521.5, 173.3, 26.2], "number": "13" },
+      { "bbox": [357.6, 664.2, 163.7, 11.9], "number": "14" }
+    ]
+  },
+  {
+    "set": "second",
+    "file": "block26b.pdf",
+    "page": 5,
+    "displays": [
+      { "bbox": [89.6, 92.0, 165.0, 10.0], "number": "10" },
+      { "bbox": [355.5, 96.6, 138.0, 27.2], "number": null },
+      { "bbox": [122.0, 148.9, 100.3, 10.0], "number": "11" },
+      { "bbox": [315.7, 305.1, 200.0, 63.7], "number": null },
+      { "bbox": [70.5, 462.8, 203.2, 27.2], "number": null },
+      { "bbox": [309.7, 505.3, 229.5, 24.1], "number": null },
+      { "bbox": [76.4, 536.3, 175.9, 27.2], "number": "12" }
+    ]
+  },
+  {
+    "set": "second",
+    "file": "13429_A_Theory_of_Saddle_Escap.pdf",
+    "page": 6,
+    "displays": [{ "bbox": [247.1, 491.1, 117.9, 27.7], "number": null }]
+  },
+  { "set": "second", "file": "2303.04288v2.pdf", "page": 3, "displays": [] },
+  { "set": "second", "file": "iverson26a.pdf", "page": 4, "displays": [] },
+  { "set": "second", "file": "di-gennaro26a.pdf", "page": 8, "displays": [] },
+  { "set": "second", "file": "2005.11818v1.pdf", "page": 3, "displays": [] },
+  {
+    "set": "holdout",
+    "file": "hanneke25e.pdf",
+    "page": 2,
+    "displays": [
+      { "bbox": [213.0, 135.3, 185.6, 27.1], "number": null },
+      { "bbox": [198.7, 303.1, 213.8, 14.2], "number": null },
+      { "bbox": [219.7, 403.3, 171.0, 45.8], "number": null },
+      { "bbox": [272.1, 509.4, 67.4, 26.6], "number": null }
+    ]
+  },
+  { "set": "holdout", "file": "2111.11320v3.pdf", "page": 2, "displays": [] },
+  {
+    "set": "holdout",
+    "file": "2502.09496v2.pdf",
+    "page": 4,
+    "displays": [
+      { "bbox": [170.6, 435.7, 267.1, 29.9], "number": "1" },
+      { "bbox": [114.9, 688.5, 371.0, 30.4], "number": "2" }
+    ]
+  },
+  {
+    "set": "holdout",
+    "file": "2605.01288v4.pdf",
+    "page": 5,
+    "displays": [
+      { "bbox": [204.3, 151.9, 203.2, 22.7], "number": null },
+      { "bbox": [180.7, 211.7, 250.4, 22.5], "number": "2" },
+      { "bbox": [144.3, 281.0, 322.7, 26.2], "number": null },
+      { "bbox": [90.8, 354.8, 430.3, 22.5], "number": null },
+      { "bbox": [150.1, 423.9, 311.1, 13.7], "number": null },
+      { "bbox": [120.5, 472.5, 370.9, 22.5], "number": null },
+      { "bbox": [192.5, 686.9, 226.9, 11.7], "number": null }
+    ]
+  },
+  {
+    "set": "holdout",
+    "file": "2608.06363v1.pdf",
+    "page": 4,
+    "displays": [
+      { "bbox": [251.1, 122.2, 110.1, 26.1], "number": null },
+      { "bbox": [260.8, 216.9, 90.8, 23.0], "number": null },
+      { "bbox": [227.0, 287.0, 158.3, 24.1], "number": null },
+      { "bbox": [260.3, 397.1, 118.9, 10.9], "number": null },
+      { "bbox": [257.7, 478.0, 124.1, 24.1], "number": null },
+      { "bbox": [246.8, 645.3, 146.1, 29.3], "number": null }
+    ]
+  },
+  { "set": "holdout", "file": "2609.24260v1.pdf", "page": 3, "displays": [] },
+  {
+    "set": "holdout",
+    "file": "2304.09167v1.pdf",
+    "page": 3,
+    "displays": [
+      { "bbox": [249.0, 316.4, 113.7, 27.4], "number": null },
+      { "bbox": [247.1, 404.1, 117.4, 21.2], "number": "1" },
+      { "bbox": [265.6, 520.2, 80.6, 12.5], "number": null }
+    ]
+  },
+  {
+    "set": "holdout",
+    "file": "2403.08831v1.pdf",
+    "page": 2,
+    "displays": [
+      { "bbox": [188.4, 439.7, 234.7, 26.2], "number": null },
+      { "bbox": [125.9, 690.4, 359.5, 26.2], "number": null }
+    ]
+  },
+  { "set": "holdout", "file": "mot_tmlr.pdf", "page": 5, "displays": [] },
+  { "set": "holdout", "file": "epjconf-nd2016_04042.pdf", "page": 2, "displays": [] },
+  { "set": "holdout", "file": "25-2745.pdf", "page": 4, "displays": [] }
+]

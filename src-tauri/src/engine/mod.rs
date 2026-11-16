@@ -10,6 +10,8 @@
 pub mod annots;
 pub mod bubbles;
 pub mod citation;
+#[cfg(test)]
+mod display_eval;
 pub mod figures;
 pub mod floats;
 pub mod formal;
