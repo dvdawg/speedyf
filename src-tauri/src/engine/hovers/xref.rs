@@ -1410,6 +1410,37 @@ fn following_lines(page: &Page, line: usize, gap: f32, keep: impl Fn(usize) -> b
     out
 }
 
+/// Lines below `line` in its column `extent` (most of each inside it - a
+/// display set out across the column may lie wholly beside a short first
+/// line), top down, while they stay close: up to the first gap of more than
+/// `gap` ems.
+fn following_in_column(page: &Page, line: usize, extent: (f32, f32), gap: f32) -> Vec<usize> {
+    let anchor = &page.lines[line];
+    let mut candidates: Vec<usize> = (0..page.lines.len())
+        .filter(|&i| {
+            let l = &page.lines[i];
+            i != line
+                && l.top <= anchor.bottom + 0.5 * anchor.em()
+                && !l.flags.furniture
+                && (super::targets::in_extent(l, extent)
+                    || super::targets::display_unit(page, i)
+                        .is_some_and(|(unit, _)| super::targets::display_in(&unit, extent)))
+        })
+        .collect();
+    candidates.sort_by(|a, b| page.lines[*b].top.total_cmp(&page.lines[*a].top));
+    let mut out = Vec::new();
+    let mut bottom = anchor.bottom;
+    for index in candidates {
+        let l = &page.lines[index];
+        if bottom - l.top > gap * anchor.em() {
+            break;
+        }
+        out.push(index);
+        bottom = bottom.min(l.bottom);
+    }
+    out
+}
+
 /// What a caption's preview shows: the artwork above a figure's caption, the
 /// table below a table's, with the caption itself.
 fn caption_region(page: &Page, head: &Head) -> Rect {
@@ -1526,22 +1557,46 @@ fn statement_region(page: &Page, head: &Head) -> (Rect, Vec<usize>) {
         .map(|font| font != page.body_font);
     let mut reader =
         super::statement::Reader::new(page, super::statement::column_left(page, line), italic);
+    let extent = super::statement::text_column(page, line);
     let another = |i: usize| starts_another(page, i);
-    let mut previous = head.line;
-    for i in following_lines(page, head.line, 3.0, |_| true) {
+    // The lowest line taken so far - a display taken whole stands as one:
+    // its pieces come in no reading order.
+    let mut previous = line.clone();
+    let mut taken = vec![false; page.lines.len()];
+    taken[head.line] = true;
+    for i in following_in_column(page, head.line, extent, 3.0) {
+        // A mark goes with the line it sits on, taken or not.
+        if taken[i] || super::settle::is_mark(page, i) {
+            continue;
+        }
         let l = &page.lines[i];
         if top - l.bottom > 320.0 {
             break;
         }
-        if !reader.takes(page, &page.lines[previous], i, &another) {
+        if let Some((unit, pieces)) = super::targets::display_unit(page, i) {
+            if !reader.takes_line(page, &previous, &unit, i, &another) {
+                break;
+            }
+            region = union(region, line_rect(&unit));
+            for piece in pieces {
+                if !taken[piece] {
+                    taken[piece] = true;
+                    lines.push(piece);
+                }
+            }
+            if unit.bottom < previous.bottom {
+                previous = unit;
+            }
+            continue;
+        }
+        if !reader.takes(page, &previous, i, &another) {
             break;
         }
         region = union(region, line_rect(l));
         lines.push(i);
-        // Read on from the lowest line so far: the pieces of a display
-        // come in no reading order.
-        if l.bottom < page.lines[previous].bottom {
-            previous = i;
+        taken[i] = true;
+        if l.bottom < previous.bottom {
+            previous = l.clone();
         }
     }
     (pad(region, 3.0, page), lines)
@@ -1606,10 +1661,24 @@ fn section_region(page: &Page, head: &Head) -> Rect {
     // "C.1 Proof of Lemma 3.2") shows that one and its first lines too:
     // the next heading ends the preview only once some text is in it.
     let mut text_lines = 0;
-    for i in following_lines(page, head.line, 2.5, |_| true) {
+    let mut taken = vec![false; page.lines.len()];
+    let extent = super::statement::text_column(page, line);
+    for i in following_in_column(page, head.line, extent, 2.5) {
+        if taken[i] || super::settle::is_mark(page, i) {
+            continue;
+        }
         let l = &page.lines[i];
         if top - l.bottom > 140.0 {
             break;
+        }
+        // A display is taken whole, its pieces in whatever order.
+        if let Some((unit, pieces)) = super::targets::display_unit(page, i) {
+            for piece in pieces {
+                taken[piece] = true;
+            }
+            text_lines += 1;
+            region = union(region, line_rect(&unit));
+            continue;
         }
         if section_head_quick(page, i) {
             if text_lines > 0 {
@@ -1950,8 +2019,12 @@ pub fn find_definitions(page: &Page, regions: &Regions, src: u32) -> Vec<Definit
     }
     // Tight leading puts the next line inside a region's padding: a sliver
     // of it would show at the preview's edge.
+    // Then the region cuts through no display and no line.
     for d in &mut out {
         d.region = super::targets::clear_of_neighbours(d.region, page);
+        if !matches!(d.kind, Kind::Figure | Kind::Table | Kind::Algorithm) {
+            d.region = super::settle::settle(page, d.region);
+        }
     }
     out
 }
