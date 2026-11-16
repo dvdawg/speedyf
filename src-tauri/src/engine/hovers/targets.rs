@@ -328,6 +328,7 @@ fn named(text: &LinkText) -> Option<Named> {
     if let Some(number) = &number {
         // The kind word: in the link or just before it.
         for word in words.iter().rev().skip(1).take(2) {
+            let word = word.trim_end_matches(['(', '~']);
             let lower = word.to_lowercase();
             let lower = lower.trim_end_matches(['.', '~']);
             if matches!(lower, "fig" | "figs" | "figure" | "figures") {
@@ -340,7 +341,10 @@ fn named(text: &LinkText) -> Option<Named> {
                 return Some(Named::Statement(kind, number.clone()));
             }
         }
-        if inside.starts_with('(') && inside.ends_with(')') {
+        // "(29)", or "29" linked inside the parentheses of "(29)".
+        let parenthesised = inside.starts_with('(') && inside.ends_with(')')
+            || before.ends_with('(') && !inside.contains(char::is_alphabetic);
+        if parenthesised {
             return Some(Named::Statement(Kind::Equation, number.clone()));
         }
     }
