@@ -115,3 +115,31 @@ describe('smartCopyText', () => {
     expect(smartCopyText([])).toBe('');
   });
 });
+
+describe('visual order', () => {
+  const at = (text: string, start: number, x: number, y: number, w: number, h = 8): CopyRun => ({
+    text,
+    start,
+    x,
+    y,
+    w,
+    h,
+    page: 0,
+  });
+
+  it('reads a line left to right whatever order it was drawn in', () => {
+    // "x" then its subscript and superscript drawn after the rest of the line
+    const runs = [at('x', 0, 60, 700, 6), at('= y', 3, 72, 700, 20), at('i', 1, 66, 697, 3, 5)];
+    expect(smartCopyText(runs)).toBe('xi = y');
+  });
+
+  it('reads a display row by row', () => {
+    const box = [100, 660, 60, 30];
+    const runs = [
+      { ...at('c', 0, 120, 662, 6), display: box },
+      { ...at('a + b', 1, 110, 678, 30), display: box },
+      { ...at('f =', 2, 100, 670, 10), display: box },
+    ];
+    expect(smartCopyText(runs)).toBe('a + b f = c');
+  });
+});

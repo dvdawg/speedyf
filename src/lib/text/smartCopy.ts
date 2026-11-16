@@ -13,6 +13,9 @@ import type { TextRunDto } from '../../types/engine';
  * within a page, since PDF coordinates restart on each one. */
 export interface CopyRun extends TextRunDto {
   page: number;
+  /** The box of the display equation the run is part of, if any: its runs
+   * are read row by row rather than in the order the PDF drew them. */
+  display?: readonly number[];
 }
 
 /** Glyphs PDFs store as single characters that nobody wants in their notes. */
@@ -122,6 +125,56 @@ function groupLines(runs: readonly CopyRun[], medianH: number): Line[] {
   return lines;
 }
 
+/** The runs in the order they read on the page, where the PDF drew them in
+ * another: within a line, left to right (a superscript or a formula's
+ * pieces drawn after the text beside them), and a display equation row by
+ * row, top to bottom. Lines, columns and pages keep the extractor's order,
+ * which is reading order already. */
+export function visualOrder(runs: readonly CopyRun[], medianH: number): CopyRun[] {
+  const out: CopyRun[] = [];
+  let i = 0;
+  while (i < runs.length) {
+    const first = runs[i]!;
+    let j = i + 1;
+    if (first.display) {
+      while (j < runs.length && sameBox(runs[j]!.display, first.display)) j += 1;
+      out.push(...byRows(runs.slice(i, j), medianH));
+    } else {
+      let bottom = first.y;
+      let top = first.y + first.h;
+      while (j < runs.length) {
+        const run = runs[j]!;
+        const centre = run.y + run.h / 2;
+        if (run.display || run.page !== first.page || centre < bottom || centre > top) break;
+        if (run.h <= 1.5 * medianH) {
+          bottom = Math.min(bottom, run.y);
+          top = Math.max(top, run.y + run.h);
+        }
+        j += 1;
+      }
+      out.push(...runs.slice(i, j).sort((a, b) => a.x - b.x));
+    }
+    i = j;
+  }
+  return out;
+}
+
+function sameBox(a: readonly number[] | undefined, b: readonly number[]): boolean {
+  return a !== undefined && (a === b || a.every((v, k) => v === b[k]));
+}
+
+/** A display's runs as rows, top first, each left to right. */
+function byRows(runs: readonly CopyRun[], medianH: number): CopyRun[] {
+  const rows: CopyRun[][] = [];
+  const centre = (r: CopyRun) => r.y + r.h / 2;
+  for (const run of [...runs].sort((a, b) => centre(b) - centre(a))) {
+    const row = rows.at(-1);
+    if (row && centre(row[0]!) - centre(run) <= 0.5 * medianH) row.push(run);
+    else rows.push([run]);
+  }
+  return rows.flatMap((row) => row.sort((a, b) => a.x - b.x));
+}
+
 /** True when `previous` ends mid-word and `next` finishes that word. */
 function isWrappedWord(previous: string, next: string): boolean {
   const trimmed = previous.trimEnd();
@@ -151,8 +204,11 @@ function startsParagraph(previous: Line, next: Line, medianH: number): boolean {
  */
 export function smartCopyText(runs: readonly CopyRun[]): string {
   if (runs.length === 0) return '';
-  const ordered = [...runs].sort((a, b) => a.page - b.page || a.start - b.start);
-  const medianH = medianHeight(ordered);
+  const medianH = medianHeight(runs);
+  const ordered = visualOrder(
+    [...runs].sort((a, b) => a.page - b.page || a.start - b.start),
+    medianH
+  );
   const lines = groupLines(ordered, medianH);
   if (lines.length === 0) return '';
 
