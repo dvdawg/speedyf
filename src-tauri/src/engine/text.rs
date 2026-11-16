@@ -122,6 +122,32 @@ impl DispMapper {
         (dx as f32, self.disp_h - dy as f32)
     }
 
+    /// A destination naming only one coordinate (`/FitH top`, `/FitV left`)
+    /// -> the display coordinates it fixes. The other is unknown, so a
+    /// display coordinate is mapped only where it does not depend on it -
+    /// the y of a `/FitH` on an upright page, its x on a page turned a
+    /// quarter. Mapping a lone coordinate as if the other were 0 would be
+    /// wrong whenever the crop box is offset or the page rotated.
+    pub(crate) fn map_partial(
+        &self,
+        ux: Option<f64>,
+        uy: Option<f64>,
+    ) -> (Option<f32>, Option<f32>) {
+        const EPS: f64 = 1e-6;
+        let determined = |x_coeff: f64, y_coeff: f64| {
+            (ux.is_some() || x_coeff.abs() < EPS) && (uy.is_some() || y_coeff.abs() < EPS)
+        };
+        let (x, y) = (ux.unwrap_or(0.0), uy.unwrap_or(0.0));
+        let dx = self.origin.0 + x * self.x_axis.0 + y * self.y_axis.0;
+        let dy = self.origin.1 + x * self.x_axis.1 + y * self.y_axis.1;
+        // Nothing known is nothing mapped, even where the axes would allow it.
+        let any = ux.is_some() || uy.is_some();
+        (
+            (any && determined(self.x_axis.0, self.y_axis.0)).then_some(dx as f32),
+            (any && determined(self.x_axis.1, self.y_axis.1)).then_some(self.disp_h - dy as f32),
+        )
+    }
+
     /// user-space direction -> display-normalized (y-up) direction: where a
     /// step of (`ux`, `uy`) in user space goes on the displayed page.
     pub(crate) fn map_vector(&self, ux: f64, uy: f64) -> (f32, f32) {
@@ -499,6 +525,33 @@ pub fn merge_match_rects(boxes: &[[f32; 4]], start: u32, len: u32) -> Vec<[f32; 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_lone_destination_coordinate_maps_only_where_it_is_determined() {
+        // An upright page whose crop box starts 30pt up and 20pt in: user
+        // (x, y) shows at (x - 20, y - 30), y-up, on a 792pt-tall display.
+        let offset = DispMapper {
+            origin: (-20.0, 822.0),
+            x_axis: (1.0, 0.0),
+            y_axis: (0.0, -1.0),
+            disp_h: 792.0,
+        };
+        assert_eq!(offset.map_partial(None, Some(700.0)), (None, Some(670.0)));
+        assert_eq!(offset.map_partial(Some(320.0), None), (Some(300.0), None));
+        assert_eq!(offset.map_partial(None, None), (None, None));
+        // A page turned a quarter: user y runs along the display's x.
+        let turned = DispMapper {
+            origin: (0.0, 0.0),
+            x_axis: (0.0, 1.0),
+            y_axis: (1.0, 0.0),
+            disp_h: 612.0,
+        };
+        assert_eq!(turned.map_partial(None, Some(100.0)), (Some(100.0), None));
+        assert_eq!(
+            DispMapper::identity(792.0).map_partial(None, Some(500.0)),
+            (None, Some(500.0))
+        );
+    }
 
     #[test]
     fn recognizes_the_families_tex_sets_mathematics_in() {

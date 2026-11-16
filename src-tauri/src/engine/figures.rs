@@ -13,7 +13,7 @@
 //! PDFium-free, like `preview`, so the heuristics are ordinary unit tests.
 
 use super::formal::PageLine;
-use super::preview::column_bounds;
+use super::preview::{column_bounds, segments};
 use super::types::TextRun;
 
 /// Scale for panel thumbnails. Small on purpose: these are browsing aids, and
@@ -48,7 +48,19 @@ pub fn figure_crop_rect(input: &FigureCropInput<'_>) -> [f32; 4] {
     let page_w = input.page_w_pt.max(1.0);
     let page_h = input.page_h_pt.max(1.0);
     let caption_y = input.caption_y.clamp(0.0, page_h);
-    let column = column_bounds(input.runs, page_w, caption_y, input.caption_x);
+    // The column is the one under the caption's first line, so ask from
+    // just over its top: from its baseline, that line is not yet "below".
+    let caption_line_top = input
+        .runs
+        .iter()
+        .filter(|run| {
+            run.h > 0.0
+                && (run.y - caption_y).abs() <= 3.0
+                && input.caption_x.is_none_or(|x| (run.x - x).abs() <= 3.0)
+        })
+        .map(|run| run.y + run.h)
+        .fold(caption_y + 1.0, f32::max);
+    let column = column_bounds(input.runs, page_w, caption_line_top + 0.5, input.caption_x);
     let column_w = (column.end - column.start).max(1.0);
 
     // Top edge of the caption block: everything the caption occupies at or
@@ -69,10 +81,13 @@ pub fn figure_crop_rect(input: &FigureCropInput<'_>) -> [f32; 4] {
 
     // Walk upward from the caption. Narrow runs are treated as part of the
     // artwork and stepped over; the first run wide enough to be prose is the
-    // ceiling, and the figure ends at that run's baseline.
+    // ceiling, and the figure ends at that run's baseline. Rows, not runs:
+    // PDFium splits a line at its word spaces often enough that a prose line
+    // can be all narrow runs, and the walk would climb straight through it
+    // (or through a full-width caption above a column figure).
+    let rows = segments(input.runs);
     let mut ceiling = page_h;
-    let mut above: Vec<&TextRun> = input
-        .runs
+    let mut above: Vec<&TextRun> = rows
         .iter()
         .filter(|run| {
             run.w > 0.0
@@ -83,15 +98,25 @@ pub fn figure_crop_rect(input: &FigureCropInput<'_>) -> [f32; 4] {
         })
         .collect();
     above.sort_by(|left, right| left.y.total_cmp(&right.y));
+    // A line reaching out of the column (a full-width caption above a column
+    // float) is a hard ceiling: the crop never takes a slice of it, even to
+    // reach its minimum height.
+    let mut hard_ceiling = false;
     for run in above {
-        if run.w >= BODY_WIDTH_RATIO * column_w {
+        let outside = run.x < column.start - 6.0 || run.x + run.w > column.end + 6.0;
+        if run.w >= BODY_WIDTH_RATIO * column_w || (outside && run.w >= 0.25 * column_w) {
             ceiling = run.y;
+            hard_ceiling = outside;
             break;
         }
     }
 
     let max_h = (MAX_HEIGHT_RATIO * page_h).min(page_h);
-    let min_h = MIN_HEIGHT_PT.min(page_h);
+    let min_h = if hard_ceiling {
+        1.0
+    } else {
+        MIN_HEIGHT_PT.min(page_h)
+    };
     let mut height = (ceiling - caption_top).clamp(min_h, max_h);
     // A caption near the top of its column leaves no room above it; pin the
     // crop inside the page rather than letting it run off the edge.
@@ -491,5 +516,64 @@ mod tests {
             vec![("Figure 2", 60.0), ("Table 1", 307.0)]
         );
         assert_eq!(captions[0].title, "The thing itself");
+    }
+
+    /// A two-column page: word runs (PDFium breaks lines at word spaces)
+    /// filling both columns, 54-298 and 314-558, downward from `top`.
+    fn two_columns(top: f32, lines: usize) -> Vec<TextRun> {
+        let mut runs = Vec::new();
+        for i in 0..lines {
+            let y = top - i as f32 * 12.0;
+            for (x0, x1) in [(54.0, 298.0), (314.0, 558.0)] {
+                let mut x: f32 = x0;
+                while x < x1 - 1.0 {
+                    let w = 24.0_f32.min(x1 - x);
+                    runs.push(run(x, y, w, 7.0));
+                    x += w + 3.5;
+                }
+            }
+        }
+        runs
+    }
+
+    #[test]
+    fn a_full_width_caption_above_a_column_float_is_a_hard_ceiling() {
+        // A `figure*` caption across the page; its short last line sits in
+        // the left half only. Under it, in the right column, a table's
+        // caption. The minimum height used to push the crop up into the
+        // full-width caption.
+        let mut runs = two_columns(250.0, 15);
+        runs.push(run(54.0, 334.0, 504.0, 8.0));
+        runs.push(run(54.0, 322.0, 84.0, 8.0));
+        runs.push(run(314.0, 283.0, 244.0, 8.0));
+        let rect = figure_crop_rect(&FigureCropInput {
+            page_w_pt: 612.0,
+            page_h_pt: 792.0,
+            caption_y: 283.0,
+            caption_x: Some(314.0),
+            runs: &runs,
+        });
+        assert!(rect[0] > 300.0, "{rect:?}");
+        assert!(
+            rect[1] + rect[3] <= 334.5,
+            "took a slice of the caption: {rect:?}"
+        );
+    }
+
+    #[test]
+    fn a_word_split_prose_line_still_ends_the_crop() {
+        // The prose above a column figure, broken into word runs: no run is
+        // prose-wide, and the crop climbed through the paragraph.
+        let mut runs = two_columns(700.0, 10);
+        runs.push(run(54.0, 400.0, 244.0, 8.0));
+        let rect = figure_crop_rect(&FigureCropInput {
+            page_w_pt: 612.0,
+            page_h_pt: 792.0,
+            caption_y: 400.0,
+            caption_x: Some(54.0),
+            runs: &runs,
+        });
+        assert!(rect[0] + rect[2] < 310.0, "{rect:?}");
+        assert!(rect[1] + rect[3] <= 700.0 - 9.0 * 12.0 + 1.0, "{rect:?}");
     }
 }
