@@ -14,7 +14,7 @@
 
 use super::page::{same_column, Line, Page};
 use super::regions::{classify, RegionState};
-use super::statement::{column_left, leading_gap, Reader};
+use super::statement::{leading_gap, Reader};
 use super::xref::{find_definitions, Kind};
 use super::Rect;
 
@@ -390,7 +390,7 @@ fn kind_of(word: &str) -> Option<Kind> {
         .unwrap_or(&word);
     Some(match word {
         "eq" | "equation" => Kind::Equation,
-        "section" | "sec" | "appendix" | "chapter" | "\u{a7}" => Kind::Section,
+        "section" | "sec" | "appendix" | "appendice" | "chapter" | "\u{a7}" => Kind::Section,
         "theorem" | "thm" => Kind::Theorem,
         "lemma" => Kind::Lemma,
         "proposition" | "prop" => Kind::Proposition,
@@ -553,6 +553,79 @@ fn locate_named(
                 .map(|(_, rect)| reference(rect))
         }
     }
+}
+
+/// Every numbered definition of a document - its sections, statements,
+/// equations - by kind and label: the page and the point a click lands on.
+pub type Labels = std::collections::HashMap<(Kind, String), Vec<(u32, f32, f32)>>;
+
+/// The number a link's words name, with its kind: "Theorem 8", "Section
+/// 3.1", "appendices A.1, A.2", "(12)".
+pub fn named_number(text: &LinkText) -> Option<(Kind, String)> {
+    match named(text)? {
+        Named::Statement(kind, number) => Some((kind, number)),
+        _ => None,
+    }
+}
+
+/// Whether the lines in `rect` carry `number` as printed: "A.2" in "A.2
+/// Proofs", "8" in "Theorem 8", "(12)" beside an equation.
+pub fn carries(page: &Page, rect: Rect, kind: Kind, number: &str) -> bool {
+    (0..page.lines.len())
+        .filter(|&i| {
+            let l = &page.lines[i];
+            let centre = (l.top + l.bottom) / 2.0;
+            centre >= rect[1]
+                && centre <= rect[1] + rect[3]
+                && l.x1.min(rect[0] + rect[2]) - l.x0.max(rect[0]) > 0.0
+        })
+        .any(|i| {
+            let text = page.line_text(i);
+            if kind == Kind::Equation {
+                return text.contains(&format!("({number})"));
+            }
+            text.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | ':' | '(' | ')'))
+                .any(|token| token.trim_end_matches('.') == number)
+        })
+}
+
+/// Where a link whose words name a number really goes, when its own
+/// destination (`page`, previewing `rect`) does not carry that number - a
+/// duplicate hyperref anchor sends an appendix's "A.2" to section 1.2: the
+/// one definition in the document with that kind and number. None when
+/// the destination is right, the words name no number, or the document has
+/// no single such definition.
+pub fn corrected_target(
+    labels: &Labels,
+    page: &Page,
+    src: u32,
+    rect: Rect,
+    text: &LinkText,
+) -> Option<(u32, f32, f32)> {
+    let (kind, number) = named_number(text)?;
+    if carries(page, rect, kind, &number) {
+        return None;
+    }
+    let exact = labels.get(&(kind, number.clone()));
+    let found: Vec<(u32, f32, f32)> = match exact {
+        Some(found) => found.clone(),
+        // "Theorem 8" may be printed as a lemma's or a proposition's
+        // shared counter: any statement with that number, if only one.
+        None if kind.is_statement() => labels
+            .iter()
+            .filter(|((k, label), _)| k.is_statement() && *label == number)
+            .flat_map(|(_, found)| found.iter().copied())
+            .collect(),
+        None => Vec::new(),
+    };
+    match found.as_slice() {
+        [one] if !(one.0 == src && rect_holds(rect, one.2)) => Some(*one),
+        _ => None,
+    }
+}
+
+fn rect_holds(rect: Rect, y: f32) -> bool {
+    y >= rect[1] - 2.0 && y <= rect[1] + rect[3] + 30.0
 }
 
 /// Whether the lines in `rect` are what `named` names: an entry with that
@@ -1081,6 +1154,51 @@ mod tests {
         let lines = lines_in(&page, rect);
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert!(lines[0].starts_with("[BNS13]"), "{lines:?}");
+    }
+
+    /// Bassily et al. 2018: "See appendices A.1, A.2" - the appendix
+    /// reuses hyperref's anchor names, so the link to A.2 lands on section
+    /// 1.2 on page 3.
+    fn related_work_page() -> Page {
+        let mut b = Builder::new();
+        b.line(
+            700.0,
+            BODY,
+            "Running text of the introduction, wide across the page.",
+        );
+        b.line(676.0, BOLD, "1.2 Related Work");
+        b.line(
+            660.0,
+            BODY,
+            "Sample compression schemes. d-bit information learners.",
+        );
+        b.page()
+    }
+
+    #[test]
+    fn a_link_to_a_number_its_destination_lacks_goes_where_the_number_is() {
+        let page = related_work_page();
+        let text = words("See appendices A.1, ", "A.2");
+        let rect = link_target(&page, Some(72.0), 690.0).expect("the heading");
+        let mut labels = Labels::new();
+        labels.insert((Kind::Section, "1.2".into()), vec![(2, 72.0, 683.0)]);
+        labels.insert((Kind::Section, "A.2".into()), vec![(16, 72.0, 720.0)]);
+        assert_eq!(
+            corrected_target(&labels, &page, 2, rect, &text),
+            Some((16, 72.0, 720.0))
+        );
+        // The words name what the destination shows: no correction.
+        let right = words("see Section ", "1.2");
+        assert_eq!(corrected_target(&labels, &page, 2, rect, &right), None);
+        // Two definitions of A.2 (a restatement): nothing to choose.
+        labels
+            .get_mut(&(Kind::Section, "A.2".into()))
+            .unwrap()
+            .push((20, 72.0, 500.0));
+        assert_eq!(corrected_target(&labels, &page, 2, rect, &text), None);
+        // Words that name no number: nothing to check.
+        let bare = words("as discussed ", "above");
+        assert_eq!(corrected_target(&labels, &page, 2, rect, &bare), None);
     }
 
     #[test]
