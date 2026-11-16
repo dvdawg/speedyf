@@ -48,6 +48,8 @@ export interface HoverRequest {
   sourceSrc: number;
   target: HoverableTarget;
   anchor: AnchorRect;
+  /** The hovered link's rectangle on its page, for its words. */
+  linkRect?: [number, number, number, number] | undefined;
 }
 
 export type HoverPreview =
@@ -288,7 +290,8 @@ export interface CitationStore {
     sourceSrc: number,
     target: HoverableTarget,
     element: HTMLElement,
-    keyboard?: boolean
+    keyboard?: boolean,
+    linkRect?: [number, number, number, number]
   ): void;
   leave(): void;
   enterPopover(): void;
@@ -314,7 +317,16 @@ export function createCitationStore(doc: DocumentStore, vp: ViewportStore): Cita
     }
     if (request.target.kind === 'internal') {
       const target = request.target;
-      const preview = await engine.getPreviewRect(request.docId, target.page, target.x, target.y);
+      const from = request.linkRect
+        ? { src: request.sourceSrc, rect: request.linkRect }
+        : undefined;
+      const preview = await engine.getPreviewRect(
+        request.docId,
+        target.page,
+        target.x,
+        target.y,
+        from
+      );
       return { kind: 'internal', preview, page: target.page, x: target.x, y: target.y };
     }
     const { uri, citation } = request.target;
@@ -396,15 +408,23 @@ export function createCitationStore(doc: DocumentStore, vp: ViewportStore): Cita
       sourceSrc: number,
       target: HoverableTarget,
       element: HTMLElement,
-      keyboard = false
+      keyboard = false,
+      linkRect?: [number, number, number, number]
     ): void {
+      // Links sharing a destination (a page, the top of a reference list)
+      // can preview different targets: their words tell them apart.
+      const key =
+        target.kind === 'internal' && linkRect
+          ? `${targetKey(docId, target)}:${sourceSrc}:${linkRect.join(',')}`
+          : targetKey(docId, target);
       machine.enter(
         {
-          key: targetKey(docId, target),
+          key,
           docId,
           sourceSrc,
           target,
           anchor: toAnchorRect(element),
+          linkRect,
         },
         keyboard
       );
