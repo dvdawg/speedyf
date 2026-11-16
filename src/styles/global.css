@@ -8534,6 +8534,37 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   font-style: normal;
 }
 
+/* A quote as it is printed: a crop of the page beside the same rule as a
+   text quote, its top shown and the rest faded when it is long. */
+.mk-crop-wrap {
+  margin: 2px 0 3px;
+  padding-left: 7px;
+  border-left: 2px solid color-mix(in srgb, var(--mk-ink) 45%, transparent);
+}
+
+.mk-crop-wrap > .mk-card-quote {
+  margin: 0;
+  padding-left: 0;
+  border-left: 0;
+}
+
+.mk-crop {
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.mk-crop.is-clipped {
+  -webkit-mask-image: linear-gradient(to bottom, #000 72%, transparent);
+  mask-image: linear-gradient(to bottom, #000 72%, transparent);
+}
+
+.mk-crop img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 2px;
+}
+
 /* A quote with its math typeset: a few lines, displays centred. */
 .mk-card-quote.is-tex {
   display: block;
