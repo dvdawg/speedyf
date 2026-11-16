@@ -329,14 +329,17 @@ body {
    the raster, figures keep their hues, and the text, search and annotation
    layers above keep their own colours. Blank and loading sheets dim with
    them; the preview inside a loading sheet is dimmed once, by its sheet.
-   Every other picture of a page dims too: hover previews, figure and tab
-   thumbnails, first pages in the library, page crops in notes and reviews. */
+   Every other picture of a page dims too: figure and tab thumbnails, first
+   pages in the library, page crops in notes and reviews. A hover preview
+   dims as a whole sheet - the picture, its stitched pieces and the paper
+   around them under one filter - so the paper always matches the picture. */
 :root[data-theme='dark'][data-dim-pages='on']
   :is(.page-img, .page-tile, .page-blank, .page-loading),
 :root[data-theme='dark'][data-dim-pages='on'] :is(.thumb-btn img, .thumb-blank),
 :root[data-theme='dark'][data-dim-pages='on']
   :is(
-    .citation-preview-image,
+    .citation-preview-action.is-internal,
+    .note-preview-image,
     .figure-thumb,
     .tab-preview-page,
     .paper-preview-image,
@@ -344,16 +347,6 @@ body {
     .mk-crop img
   ) {
   filter: brightness(0.85) sepia(0.08);
-}
-
-/* The paper around a dimmed preview: the same filter worked out for white
-   (brightness 0.85, a touch of sepia), so the card and its picture match. */
-:root {
-  --preview-paper: var(--page-bg);
-}
-
-:root[data-theme='dark'][data-dim-pages='on'] {
-  --preview-paper: #d9d9d7;
 }
 
 :root[data-theme='dark'][data-dim-pages='on'] .page-loading .page-img {
@@ -1709,7 +1702,7 @@ html.is-dragging-tab * {
 .citation-preview-action.is-internal {
   position: relative;
   padding: 8px 8px 24px;
-  background: var(--preview-paper);
+  background: var(--page-bg);
 }
 
 .citation-preview-viewport {
@@ -1720,7 +1713,7 @@ html.is-dragging-tab * {
   max-height: min(342px, calc(100vh - 58px));
   overflow: auto;
   overscroll-behavior: contain;
-  background: var(--preview-paper);
+  background: var(--page-bg);
 }
 
 .citation-preview-skeleton {
@@ -1758,7 +1751,7 @@ html.is-dragging-tab * {
   width: 100%;
   max-height: 232px;
   object-fit: contain;
-  background: var(--preview-paper);
+  background: var(--page-bg);
   opacity: 0;
 }
 
