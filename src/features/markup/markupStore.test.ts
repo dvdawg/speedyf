@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SelectionGeometry } from '../../stores/selectionStore';
 import type { QuotePiece } from '../../lib/text/copySelection';
+import type { TextRunDto } from '../../types/engine';
 
 let usable = true;
 /** What the math converter answers: for an equation, by mode; for a
@@ -44,11 +45,14 @@ vi.mock('../extensions/regionCapture', () => ({
 }));
 vi.mock('../../lib/transport/engine', () => ({
   engine: {
-    getTextLayout: async () => ({ src: 0, runs: [], charCount: 0 }),
+    getTextLayout: async () => ({ src: 0, runs: layoutRuns, charCount: 0 }),
     libraryPapers: async () => ({ rows: [], total: 0 }),
     onLibraryChanged: async () => () => {},
   },
 }));
+/** The page's text runs, as the engine would give them. */
+let layoutRuns: TextRunDto[] = [];
+vi.mock('../extensions/equationBlocks', () => ({ equationBlocksFor: async () => [] }));
 let geometry: SelectionGeometry | null = null;
 let text = '';
 let pieces: QuotePiece[] = [];
@@ -319,5 +323,59 @@ describe('writing comments', () => {
     setActiveId(null);
     await vi.advanceTimersByTimeAsync(0);
     expect(store.draft()).toBeNull();
+  });
+});
+
+describe('reading a kept quote again', () => {
+  // a line of the page, its K in a math font, and a comment kept on it
+  // before quotes were read part by part: a line number in its words
+  const words = 'the bound K holds';
+  const kept = (quote: string, kind = 'comment') => ({
+    id: 'c_old',
+    kind,
+    anchor: {
+      page: 0,
+      quads: [{ x1: 60, y1: 710, x2: 145, y2: 710, x3: 60, y3: 700, x4: 145, y4: 700 }],
+      rect: null,
+      quote,
+    },
+    body: 'Why?',
+    replacement: null,
+    quickmark: null,
+    created: 1,
+  });
+
+  beforeEach(() => {
+    layoutRuns = [{ text: words, start: 0, x: 60, y: 700, w: 85, h: 10, math: [[10, 11]] }];
+    formulas = { K: '$\\mathcal{K}$' };
+  });
+
+  it('rebuilds its words clean, reads its math, and keeps both', async () => {
+    stored = JSON.stringify({ version: 1, summary: '', comments: [kept('the bound 746 K holds')] });
+    await loaded();
+    const comment = store.reviewFor(PATH)!.doc.comments[0]!;
+    const reading = store.rereadQuote(PATH, comment);
+    expect(store.quoteReading(comment.anchor)).toBe(true);
+    await reading;
+    const after = store.reviewFor(PATH)!.doc.comments[0]!.anchor;
+    expect(after.quote).toBe('the bound K holds');
+    expect(after.quoteTex).toBe('the bound $\\mathcal{K}$ holds');
+    expect(store.quoteReading(after)).toBe(false);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(JSON.parse(saved.at(-1)!).comments[0].anchor).toMatchObject({
+      quote: 'the bound K holds',
+      quoteTex: 'the bound $\\mathcal{K}$ holds',
+    });
+  });
+
+  it('leaves a typo fix as it was', async () => {
+    stored = JSON.stringify({
+      version: 1,
+      summary: '',
+      comments: [kept('the bound 746 K holds', 'typo')],
+    });
+    await loaded();
+    await store.rereadQuote(PATH, store.reviewFor(PATH)!.doc.comments[0]!);
+    expect(store.reviewFor(PATH)!.doc.comments[0]!.anchor.quote).toBe('the bound 746 K holds');
   });
 });

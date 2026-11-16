@@ -13,15 +13,11 @@
  * enabled, to start fetching the paper's exact source.
  */
 import { createMemo, createResource, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
-import { invoke } from '@tauri-apps/api/core';
 import { equationActions, prefetchEquationSource, runEquationAction } from './extensionStore';
 import { beginEquationComment, reviewing } from '../markup/markupStore';
+import { equationBlocksFor } from './equationBlocks';
 
-export interface EquationBlock {
-  /** `[x, y, w, h]`, page points from the displayed page's top-left. */
-  bbox: [number, number, number, number];
-  number: string | null;
-}
+export { equationBlocksFor, type EquationBlock } from './equationBlocks';
 
 interface Props {
   docId: number;
@@ -31,27 +27,6 @@ interface Props {
   src: number;
   generation: number;
   zoom: number;
-}
-
-/** Blocks already asked for, per document page and generation, so a page that
- * scrolls back into view does not ask again. Bounded: a long session reading
- * many documents must not keep every page's answer. */
-const cache = new Map<string, Promise<EquationBlock[]>>();
-const CACHE_LIMIT = 512;
-
-export function equationBlocksFor(
-  docId: number,
-  src: number,
-  generation: number
-): Promise<EquationBlock[]> {
-  const key = `${docId}:${src}:${generation}`;
-  let hit = cache.get(key);
-  if (!hit) {
-    hit = invoke<EquationBlock[]>('get_equation_blocks', { docId, src }).catch(() => []);
-    if (cache.size >= CACHE_LIMIT) cache.clear();
-    cache.set(key, hit);
-  }
-  return hit;
 }
 
 /** Resolve once the browser has a moment, so detection never competes with

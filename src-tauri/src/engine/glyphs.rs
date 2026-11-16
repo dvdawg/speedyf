@@ -172,6 +172,12 @@ pub fn extract_page_glyphs(
     out
 }
 
+/// A variation selector (U+FE00 to U+FE0F): which form of the character
+/// before it to draw, never a character of its own.
+pub fn is_variation_selector(value: u32) -> bool {
+    (0xFE00..=0xFE0F).contains(&value)
+}
+
 fn char_glyphs(
     b: &dyn PdfiumLibraryBindings,
     tp: FPDF_TEXTPAGE,
@@ -202,6 +208,12 @@ fn char_glyphs(
         }
         let ch = char::from_u32(value);
         if matches!(ch, Some('\n' | '\r')) && !unmapped {
+            continue;
+        }
+        // A variation selector a font's ToUnicode adds to a glyph's text
+        // ("\u{2211}\u{FE01}"): PDFium gives it the glyph's box as if it
+        // were a glyph of its own, which it is not.
+        if is_variation_selector(value) {
             continue;
         }
         let mut loose = FS_RECTF {

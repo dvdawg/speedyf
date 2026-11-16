@@ -12,7 +12,7 @@ import type { TextRunDto } from '../../types/engine';
 import type { QuotePiece } from '../../lib/text/copySelection';
 import { buildTextModel } from '../../lib/text/textHit';
 import { fillQuote, oneFormula, planQuote, prosy } from '../../lib/text/quoteParts';
-import { plausibleFormula, plausibleQuoteTex, texParses } from './quoteTexCheck';
+import { plausibleQuoteTex, trustedFormula } from './quoteTexCheck';
 
 interface Glyph {
   text: string;
@@ -73,11 +73,7 @@ function inRects(glyphs: Glyph[], rects: number[][]): Glyph[] {
   );
 }
 
-async function trusted(tex: string | null, display: boolean): Promise<string | null> {
-  if (!tex) return null;
-  const wrapped = display ? `$$ ${tex} $$` : `$${tex}$`;
-  return plausibleFormula(tex) && (await texParses(wrapped)) ? tex : null;
-}
+const trusted = trustedFormula;
 
 /** Quote runs `first..last` of a dumped page, both ways. */
 export async function quote(dump: Dump, first: number, last: number) {
@@ -94,6 +90,12 @@ export async function quote(dump: Dump, first: number, last: number) {
     const d = model.displays[model.displayOfRun[i] ?? -1];
     pieces.push({ run: { ...run, page: 0 }, from: 0, to: run.text.length, display: d ?? null });
   }
+  return quotePieces(dump, pieces);
+}
+
+/** Quote `pieces` of a dumped page, both ways. */
+export async function quotePieces(dump: Dump, pieces: QuotePiece[]) {
+  const H = dump.size[1];
   const topLeft = ([x, y, w, h]: number[]) => [x!, H - y! - h!, w!, h!];
 
   // before: the whole selection's glyphs at once
@@ -103,10 +105,13 @@ export async function quote(dump: Dump, first: number, last: number) {
 
   // after: each part on its own
   const tex = new Map<string, string | null>();
+  const misread: string[] = [];
   for (const part of plan.inline) {
     const glyphs = inRects(dump.glyphs, part.rects.map(topLeft));
     const read = ext.selectionMarkdown(glyphs, { text: part.text });
-    tex.set(part.key, await trusted(oneFormula(read?.markdown), false));
+    const t = await trusted(oneFormula(read?.markdown), false);
+    if (!t) misread.push(`${part.text} => ${read?.markdown ?? 'null'}`);
+    tex.set(part.key, t);
   }
   for (const part of plan.displays) {
     const found = dump.displays.find(
@@ -127,6 +132,7 @@ export async function quote(dump: Dump, first: number, last: number) {
   }
   const after = fillQuote(plan, tex);
   return {
+    misread,
     plain: plan.plain,
     before: before?.markdown ?? null,
     beforeTrusted: before ? plausibleQuoteTex(before.markdown, plan.plain) : false,

@@ -22,8 +22,12 @@ export interface InlinePart {
   /** what the page says there */
   text: string;
   page: number;
-  /** where it is, `[x, y, w, h]` per run it spans, page points y up */
+  /** where it is, `[x, y, w, h]` per run it spans, page points y up, at
+   * the height of its line: what a converter reads it from (a minus sign's
+   * own box is a sliver no glyph centre falls in) */
   rects: [number, number, number, number][];
+  /** the box of its own ink: where it sits against a formula beside it */
+  ink: [number, number, number, number];
 }
 
 export interface DisplayPart {
@@ -72,7 +76,7 @@ export function isMathSymbol(cp: number): boolean {
 /** Function names set upright in a formula ("log", "exp"): words, but the
  * formula's, when they stand among its symbols. */
 const FUNCTIONS = new Set(
-  'log ln exp sin cos tan sec csc cot sinh cosh tanh arcsin arccos arctan lim liminf limsup max min sup inf argmax argmin det dim ker deg gcd arg Pr tr diag sgn sign var cov poly'.split(
+  'log ln exp sin cos tan sec csc cot sinh cosh tanh arcsin arccos arctan lim liminf limsup max min sup inf argmax argmin det dim ker deg gcd arg Pr tr diag sgn sign var cov poly const'.split(
     ' '
   )
 );
@@ -94,12 +98,47 @@ interface Token {
 /** Whether a code point is an operator or a relation: what binds the
  * numbers beside it into a formula. */
 function isOperator(cp: number): boolean {
+  // not a big operator (a sum, an integral): one of those opens a formula
+  // rather than joining a number to one
+  const big =
+    (cp >= 0x220f && cp <= 0x2211) ||
+    (cp >= 0x222b && cp <= 0x2233) ||
+    (cp >= 0x22c0 && cp <= 0x22c3) ||
+    (cp >= 0x2a00 && cp <= 0x2a0c);
   return (
-    '=<>+*/'.includes(String.fromCodePoint(cp)) ||
-    cp === MINUS ||
-    (cp >= 0x2190 && cp <= 0x22ff) ||
-    (cp >= 0x2a00 && cp <= 0x2aff)
+    !big &&
+    ('=<>+*/'.includes(String.fromCodePoint(cp)) ||
+      cp === MINUS ||
+      (cp >= 0x2190 && cp <= 0x22ff) ||
+      (cp >= 0x2a00 && cp <= 0x2aff))
   );
+}
+
+/** Variation selectors: a font's hint about which form of the glyph
+ * before it to draw ("\u2211\ufe01"), nothing a reader sees. */
+export function isIgnorable(cp: number): boolean {
+  return cp >= 0xfe00 && cp <= 0xfe0f;
+}
+
+/** Accents a formula puts over a letter ("p" and its bar), drawn as
+ * characters of their own. */
+function isAccent(cp: number): boolean {
+  return (
+    cp === 0xaf ||
+    cp === 0xa8 ||
+    cp === 0xb4 ||
+    cp === 0x2d9 ||
+    cp === 0x2dc ||
+    (cp >= 0x2c6 && cp <= 0x2c7) ||
+    (cp >= 0x300 && cp <= 0x36f)
+  );
+}
+
+/** Text without its variation selectors. */
+export function withoutIgnorable(text: string): string {
+  let out = '';
+  for (const ch of text) if (!isIgnorable(ch.codePointAt(0)!)) out += ch;
+  return out;
 }
 
 function inRanges(k: number, ranges: readonly (readonly [number, number])[]): boolean {
@@ -130,7 +169,11 @@ export function mathChunks(
       const cp = text.codePointAt(k)!;
       const units = cp > 0xffff ? 2 : 1;
       const ch = text.slice(k, k + units);
-      if (inRanges(k, ranges) || isMathSymbol(cp)) {
+      if (isIgnorable(cp)) {
+        k += units;
+        continue;
+      }
+      if (inRanges(k, ranges) || isMathSymbol(cp) || isAccent(cp)) {
         math = true;
         glueOnly = false;
       } else if (/\p{L}/u.test(ch)) {
@@ -148,14 +191,19 @@ export function mathChunks(
       k += units;
     }
     if (word) words.push(word);
-    // "log(1/x)", "exp(-q)": its words are function names, among symbols
-    if (prose && (math || bracket) && words.every((w) => FUNCTIONS.has(w))) {
+    // "log(1/x)", "exp(-q)", "KL(q||p)": its words are function or
+    // operator names, among symbols
+    const named = (w: string) => FUNCTIONS.has(w) || (math && /^[A-Z]{1,3}$/.test(w));
+    if (prose && (math || bracket) && words.every(named)) {
       prose = false;
       math = true;
     }
     const token = text.slice(start, k);
     let kind: TokenKind;
-    if (prose) kind = 'prose';
+    // "log" on its own, between symbols: the formula's, at its ends not
+    if (prose && words.length === 1 && FUNCTIONS.has(words[0]!) && token === words[0]) {
+      kind = 'glue';
+    } else if (prose) kind = 'prose';
     else if (math) kind = 'math';
     else if (glueOnly && (OPERATOR.test(token) || token.includes(String.fromCharCode(MINUS))))
       kind = 'op';
@@ -245,14 +293,21 @@ export function planQuote(pieces: readonly QuotePiece[]): QuotePlan {
     return (k: number) =>
       run.edges && run.edges.length === n + 1 ? run.x + run.edges[k]! : run.x + (run.w * k) / n;
   };
+  let turn: (run: CopyRun) => number = () => 0;
   const centreIn = (a: CopyRun, b: CopyRun) => a.y + a.h / 2 >= b.y && a.y + a.h / 2 <= b.y + b.h;
+  // an accent (a bar, a hat) drawn as a mark of its own, just over or
+  // under a letter of the line
+  const accentOf = (a: CopyRun, b: CopyRun) =>
+    a.h < 0.35 * b.h && a.y + a.h / 2 >= b.y - 0.6 * b.h && a.y + a.h / 2 <= b.y + 1.6 * b.h;
   // overlapping by half, or a script whose centre is within the line
   const sameLine = (a: Piece, b: Piece) =>
     a.run.page === b.run.page &&
     (Math.min(a.run.y + a.run.h, b.run.y + b.run.h) - Math.max(a.run.y, b.run.y) >
       0.5 * Math.min(a.run.h, b.run.h) ||
       centreIn(a.run, b.run) ||
-      centreIn(b.run, a.run));
+      centreIn(b.run, a.run) ||
+      accentOf(a.run, b.run) ||
+      accentOf(b.run, a.run));
   const flushLine = () => {
     const group = [...lineGroup].sort((p, q) => edgeOf(p.run)(p.from) - edgeOf(q.run)(q.from));
     lineGroup = [];
@@ -283,6 +338,13 @@ export function planQuote(pieces: readonly QuotePiece[]): QuotePlan {
       }
     });
     const inFormula = group.map((p) => new Array<boolean>(p.run.text.length).fill(false));
+    // the line's band, from its ordinary runs (not a tall sum sign)
+    const heights = group.map((p) => p.run.h).sort((x, y) => x - y);
+    const typical = heights[heights.length >> 1]!;
+    const body = group.filter((p) => p.run.h <= 1.5 * typical && p.run.h >= 0.5 * typical);
+    const banded = body.length > 0 ? body : group;
+    const bandBottom = Math.min(...banded.map((p) => p.run.y)) - 0.25 * typical;
+    const bandTop = Math.max(...banded.map((p) => p.run.y + p.run.h)) + 0.25 * typical;
     for (const [a, b] of mathChunks(text, ranges)) {
       const spans = new Map<number, [number, number]>();
       for (let c = a; c < b; c += 1) {
@@ -295,27 +357,36 @@ export function planQuote(pieces: readonly QuotePiece[]): QuotePlan {
       }
       if (spans.size === 0) continue;
       const rects: [number, number, number, number][] = [];
+      const own: [number, number, number, number][] = [];
       for (const [i, [ka, kb]] of spans) {
         const run = group[i]!.run;
         const edge = edgeOf(run);
-        rects.push([edge(ka), run.y, Math.max(0, edge(kb) - edge(ka)), run.h]);
+        const w = Math.max(0, edge(kb) - edge(ka));
+        rects.push([edge(ka), bandBottom, w, bandTop - bandBottom]);
+        own.push([edge(ka), run.y, w, run.h]);
       }
+      const inkLeft = Math.min(...own.map((r) => r[0]));
+      const inkBottom = Math.min(...own.map((r) => r[1]));
+      const inkRight = Math.max(...own.map((r) => r[0] + r[2]));
+      const inkTop = Math.max(...own.map((r) => r[1] + r[3]));
       const key = newKey();
-      const part: InlinePart = { key, text: text.slice(a, b), page: group[0]!.run.page, rects };
+      const part: InlinePart = {
+        key,
+        text: text.slice(a, b),
+        page: group[0]!.run.page,
+        rects,
+        ink: [inkLeft, inkBottom, inkRight - inkLeft, inkTop - inkBottom],
+      };
       inline.push(part);
       keyFor.set(key, part);
       const [firstPiece, [firstK]] = [...spans][0]!;
-      const left = Math.min(...rects.map((r) => r[0]));
-      const right = Math.max(...rects.map((r) => r[0] + r[2]));
-      const bottom = Math.min(...rects.map((r) => r[1]));
-      const top = Math.max(...rects.map((r) => r[1] + r[3]));
       sub.push({
         text: key,
-        start: group[firstPiece]!.run.start + firstK / 1000,
-        x: left,
-        y: bottom,
-        w: right - left,
-        h: top - bottom,
+        start: turn(group[firstPiece]!.run) + firstK / 10000,
+        x: inkLeft,
+        y: inkBottom,
+        w: inkRight - inkLeft,
+        h: inkTop - inkBottom,
         page: part.page,
       });
     }
@@ -332,7 +403,7 @@ export function planQuote(pieces: readonly QuotePiece[]): QuotePlan {
         while (k < p.to && !inFormula[i]![k]) k += 1;
         sub.push({
           text: p.run.text.slice(a, k),
-          start: p.run.start + a / 1000,
+          start: turn(p.run) + a / 10000,
           x: edge(a),
           y: p.run.y,
           w: Math.max(0, edge(k) - edge(a)),
@@ -343,7 +414,25 @@ export function planQuote(pieces: readonly QuotePiece[]): QuotePlan {
     });
   };
 
-  for (const { run, from, to, display } of pieces) {
+  // A run drawn out of its line's turn - a tall sum sign of the next line
+  // emitted among the words of this one - goes to the line it sits on.
+  const inTurn: QuotePiece[] = [...pieces];
+  for (let i = 1; i + 1 < inTurn.length; i += 1) {
+    const [before, it, after] = [inTurn[i - 1]!, inTurn[i]!, inTurn[i + 1]!];
+    if (it.display || sameLine(before, it) || sameLine(it, after) || !sameLine(before, after)) {
+      continue;
+    }
+    const home = inTurn.findIndex((p, j) => j > i + 1 && sameLine(p, it));
+    if (home < 0) continue;
+    inTurn.splice(i, 1);
+    inTurn.splice(home - 1, 0, it);
+  }
+
+  // Pieces keep the order settled here, not the order the PDF drew them.
+  const turns = new Map(inTurn.map((p, i) => [p.run, i]));
+  turn = (run) => turns.get(run) ?? 0;
+
+  for (const { run, from, to, display } of inTurn) {
     const last = lineGroup.at(-1);
     if (display || (last && !sameLine(last, { run, from, to }))) flushLine();
     if (display) {
@@ -362,7 +451,7 @@ export function planQuote(pieces: readonly QuotePiece[]): QuotePlan {
         number: display.number,
       };
       const [x, y, w, h] = display.box;
-      const stand: CopyRun = { text: key, start: run.start, x, y, w, h, page: run.page };
+      const stand: CopyRun = { text: key, start: turn(run), x, y, w, h, page: run.page };
       byDisplay.set(display, { part, run: stand });
       displays.push(part);
       keyFor.set(key, part);
@@ -398,6 +487,11 @@ export function planQuote(pieces: readonly QuotePiece[]): QuotePlan {
     ) {
       lastPart.text += run.x - (last.x + last.w) > 0.15 * medianH ? ` ${part.text}` : part.text;
       lastPart.rects.push(...part.rects);
+      const l = Math.min(lastPart.ink[0], part.ink[0]);
+      const bo = Math.min(lastPart.ink[1], part.ink[1]);
+      const r = Math.max(lastPart.ink[0] + lastPart.ink[2], part.ink[0] + part.ink[2]);
+      const t = Math.max(lastPart.ink[1] + lastPart.ink[3], part.ink[1] + part.ink[3]);
+      lastPart.ink = [l, bo, r - l, t - bo];
       inline.splice(inline.indexOf(part), 1);
       keyFor.delete(run.text);
       const right = Math.max(last.x + last.w, run.x + run.w);
@@ -408,9 +502,10 @@ export function planQuote(pieces: readonly QuotePiece[]): QuotePlan {
   }
   // `smartCopyText` orders by `start`; keep the order settled here.
   const template = smartCopyText(merged.map((run, i) => ({ ...run, start: i })));
+  for (const part of [...inline, ...displays]) part.text = withoutIgnorable(part.text);
   let plain = template;
   for (const [key, part] of keyFor) plain = plain.split(key).join(part.text);
-  return { plain, template, inline, displays };
+  return { plain: withoutIgnorable(plain), template: withoutIgnorable(template), inline, displays };
 }
 
 /** The formula a converter read a stretch as, when it read it as one: a
@@ -430,13 +525,32 @@ export function oneFormula(markdown: string | null | undefined): string | null {
       math = true;
       continue;
     }
-    const glue = segment.text.replace(/\\(.)/g, '$1');
-    if (!/^[\s0-9()[\]{}|.,;:'!/=<>+-]*$/.test(glue)) return null;
+    let glue = segment.text.replace(/\\(.)/g, '$1');
+    // an accent the reading left beside its letter: "$p$" then a bar
+    const accent = ACCENTS.get(glue.charAt(0));
+    if (accent && /[A-Za-z]$/.test(out)) {
+      out = `${out.slice(0, -1)}${accent}{${out.slice(-1)}}`;
+      glue = glue.slice(1);
+    }
+    // a function's or a constant's name ("+const") is the formula's
+    glue = glue.replace(/[A-Za-z]+/g, (w) => (FUNCTIONS.has(w) ? `\\mathrm{${w}}` : w));
+    if (!/^[\s0-9()[\]{}|.,;:'!/=<>+-]*$/.test(glue.replace(/\\mathrm\{[a-zA-Z]+\}/g, ''))) {
+      return null;
+    }
     out += glue;
   }
   const formula = out.replace(/\s+/g, ' ').trim();
   return math && formula ? formula : null;
 }
+
+/** Accents a reading can leave as a character beside their letter. */
+const ACCENTS = new Map([
+  [String.fromCharCode(0xaf), '\\bar'],
+  [String.fromCharCode(0x2c6), '\\hat'],
+  [String.fromCharCode(0x2dc), '\\tilde'],
+  [String.fromCharCode(0x2d9), '\\dot'],
+  [String.fromCharCode(0xa8), '\\ddot'],
+]);
 
 /** Whether a display's plain text reads as prose (a table, a caption the
  * equation finder took for a formula) rather than as a formula: not worth
@@ -450,6 +564,13 @@ export function prosy(text: string): boolean {
   );
 }
 
+/** Whether text ends in an operator or a relation, which a formula
+ * goes on past. */
+function endsWithOperator(text: string): boolean {
+  const last = [...text.trim()].at(-1);
+  return last !== undefined && isOperator(last.codePointAt(0)!);
+}
+
 /** Assemble the quote's Markdown: its prose escaped, each formula as
  * `$...$` and each display as `$$ ... $$` where it was read (`tex`), else
  * its plain text, set in italics when it is a formula. Formulas the page
@@ -459,17 +580,14 @@ export function fillQuote(plan: QuotePlan, tex: ReadonlyMap<string, string | nul
   let out = '';
   let math = '';
   let mathPart: InlinePart | null = null;
+  let joinNext = false;
   const flush = () => {
     if (math) out += `$${math}$`;
     math = '';
     mathPart = null;
   };
   /** Where a part sits: the middle of its box, and its height. */
-  const place = (part: InlinePart) => {
-    const bottom = Math.min(...part.rects.map((r) => r[1]));
-    const top = Math.max(...part.rects.map((r) => r[1] + r[3]));
-    return { centre: (bottom + top) / 2, h: top - bottom };
-  };
+  const place = (part: InlinePart) => ({ centre: part.ink[1] + part.ink[3] / 2, h: part.ink[3] });
   /** A display's number, printed after it, which its \\tag says already. */
   let printed: string | null = null;
   const template = [...plan.template];
@@ -490,6 +608,18 @@ export function fillQuote(plan: QuotePlan, tex: ReadonlyMap<string, string | nul
     const displayPart = plan.displays.find((p) => p.key === ch);
     const part = inlinePart ?? displayPart;
     if (!part) {
+      // A formula broken at a line end after an operator ("... =") goes on
+      // after the break: the space is the formula's if a formula follows.
+      if (/\s/.test(ch) && mathPart && endsWithOperator(mathPart.text)) {
+        const next = template.slice(i).join('').search(/\S/);
+        const after = next < 0 ? undefined : template[i + next];
+        const following = plan.inline.find((p) => p.key === after);
+        if (following && tex.get(following.key)?.trim()) {
+          i += next - 1;
+          joinNext = true;
+          continue;
+        }
+      }
       flush();
       out += escapeMarkdown(ch);
       continue;
@@ -497,7 +627,9 @@ export function fillQuote(plan: QuotePlan, tex: ReadonlyMap<string, string | nul
     const read = tex.get(part.key)?.trim();
     const plain = escapeMarkdown(part.text.replace(/\s+/g, ' ').trim());
     if (inlinePart && read) {
-      if (mathPart) {
+      if (mathPart && joinNext) {
+        math += ` ${read}`;
+      } else if (mathPart) {
         // set raised or lowered against the formula before it: its index
         const a = place(mathPart);
         const b = place(inlinePart);
@@ -508,6 +640,7 @@ export function fillQuote(plan: QuotePlan, tex: ReadonlyMap<string, string | nul
         math = read;
       }
       mathPart = inlinePart;
+      joinNext = false;
       continue;
     }
     flush();

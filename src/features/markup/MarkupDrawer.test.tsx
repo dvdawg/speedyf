@@ -169,7 +169,10 @@ describe('MarkupDrawer', () => {
     expect(quote.querySelector('.mk-math-plain')?.textContent).toBe('y');
     const second = screen.getByRole('article', { name: 'Comment 2' });
     expect(second.querySelector('.mk-card-quote')?.textContent).toBe('q b');
+    // words can be read again; a region has none
+    expect(first.querySelector('[aria-label="Re-read math"]')).not.toBeNull();
     const third = screen.getByRole('article', { name: 'Comment 3' });
+    expect(third.querySelector('[aria-label="Re-read math"]')).toBeNull();
     const img = third.querySelector('.mk-crop img') as HTMLImageElement;
     expect(img.alt).toBe('Region on the page');
     expect(img.src).toContain('kind=preview');

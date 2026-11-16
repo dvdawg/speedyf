@@ -137,3 +137,37 @@ export async function texParses(tex: string): Promise<boolean> {
     }
   });
 }
+
+/** A converter's formula tidied: no variation selectors (a font's hint
+ * that came through as text), no empty rows at the ends of a block, and a
+ * block of one row as that row. */
+export function tidyTex(tex: string): string {
+  let t = '';
+  for (const ch of tex) {
+    const cp = ch.codePointAt(0)!;
+    if (cp < 0xfe00 || cp > 0xfe0f) t += ch;
+  }
+  t = t.replace(/\s+/g, ' ').trim();
+  const block = /^\\begin\{(gathered|aligned)\}([\s\S]*)\\end\{\1\}$/.exec(t);
+  if (block) {
+    const rows = block[2]!.split('\\\\').map((r) => r.trim());
+    while (rows.length > 0 && rows[0] === '') rows.shift();
+    while (rows.length > 0 && rows.at(-1) === '') rows.pop();
+    t =
+      rows.length === 1 && block[1] === 'gathered'
+        ? rows[0]!
+        : `\\begin{${block[1]}} ${rows.join(' \\\\ ')} \\end{${block[1]}}`;
+  }
+  return t;
+}
+
+/** A formula as a converter read it, tidied, when it can be trusted; null
+ * otherwise. */
+export async function trustedFormula(
+  tex: string | null | undefined,
+  display: boolean
+): Promise<string | null> {
+  const t = tex ? tidyTex(tex) : '';
+  if (!t || !plausibleFormula(t)) return null;
+  return (await texParses(display ? `$$ ${t} $$` : `$${t}$`)) ? t : null;
+}

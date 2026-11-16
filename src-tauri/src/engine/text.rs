@@ -468,6 +468,10 @@ pub(crate) fn build_runs(glyphs: &[Glyph]) -> Vec<TextRun> {
             flush(&mut cur, &mut runs);
             continue;
         }
+        // part of the character before it, not one of its own
+        if crate::engine::glyphs::is_variation_selector(glyph.ch as u32) {
+            continue;
+        }
         let Some([x, y, w, h]) = glyph.bbox else {
             // Into a run already open only, so a run never begins with a
             // space, and never carries two in a row - a PDF often encodes one
@@ -730,6 +734,14 @@ mod tests {
         glyphs.push(i);
         let runs = build_runs(&glyphs);
         assert_eq!(runs[0].math, vec![[6, 9]]);
+    }
+
+    /// A variation selector after a sum sign is no character of the run.
+    #[test]
+    fn a_variation_selector_is_dropped() {
+        let runs = build_runs(&[glyph('\u{2211}', 0, 50.0), glyph('\u{FE01}', 1, 50.0)]);
+        assert_eq!(runs[0].text, "\u{2211}");
+        assert_eq!(runs[0].edges, vec![0.0, 9.0]);
     }
 
     /// A ligature PDFium split into two letters on one box: each letter

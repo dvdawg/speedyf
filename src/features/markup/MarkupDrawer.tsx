@@ -5,7 +5,7 @@
  *
  * It takes the place of an extension's drawer (one drawer at a time), at
  * the same width, resized the same way. */
-import { createMemo, createSignal, For, onMount, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, onMount, Show } from 'solid-js';
 import IconButton from '../../components/IconButton';
 import { IconChevronDown, IconChevronRight, IconClose, IconRegion } from '../../components/icons';
 import { formatShortcut } from '../../app/shortcutLabel';
@@ -32,6 +32,7 @@ import {
   kindFilter,
   labelContext,
   reviewFor,
+  rereadQuote,
   reviewing,
   revealComment,
   setKindFilter,
@@ -40,6 +41,7 @@ import {
   updateComment,
 } from './markupStore';
 import { loadSuggestions, referencesAnchor, type Suggestion } from './suggestions';
+import { backfillQuotes } from './quoteBackfill';
 import { COMMENT_KINDS, KIND_LABEL, type MarkupComment } from './types';
 
 export default function MarkupDrawer() {
@@ -52,6 +54,15 @@ export default function MarkupDrawer() {
 
 function Drawer(props: { path: string }) {
   void loadMath();
+  // Quotes kept before their math could be read are read now, quietly,
+  // one at a time.
+  createEffect(() => {
+    if (reviewFor(props.path)?.status !== 'ready') return;
+    void backfillQuotes(props.path, {
+      comments: (path) => reviewFor(path)?.doc.comments ?? null,
+      reread: rereadQuote,
+    });
+  });
   const review = () => reviewFor(props.path);
   const comments = () => review()?.doc.comments ?? [];
 
@@ -251,6 +262,7 @@ function Drawer(props: { path: string }) {
                                   }}
                                   onEdit={() => editComment(id)}
                                   onDelete={() => deleteComment(props.path, id)}
+                                  onReread={() => void rereadQuote(props.path, entry().comment)}
                                   onKind={(kind) => updateComment(props.path, id, { kind })}
                                   onSave={(r) => save(id, r)}
                                   onCancel={() =>
