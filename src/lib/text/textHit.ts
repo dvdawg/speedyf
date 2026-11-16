@@ -17,6 +17,7 @@
  */
 import type { TextRunDto } from '../../types/engine';
 import { linesOf, type Line } from './paragraph';
+import { marginNumbers } from './marginNumbers';
 
 export interface PagePoint {
   x: number;
@@ -68,6 +69,8 @@ export interface TextModel {
   displays: readonly Display[];
   /** the display holding each run, or -1 */
   displayOfRun: readonly number[];
+  /** runs that are margin line numbers (`marginNumbers`) */
+  margin: readonly boolean[];
   /** x of each character boundary of a run, `text.length + 1` of them */
   edges(run: number): readonly number[];
 }
@@ -168,7 +171,10 @@ export function buildTextModel(
   measure: MeasureText = (text) => text.length,
   displayBoxes: readonly DisplayBox[] = []
 ): TextModel {
-  const base = linesOf(runs);
+  // Margin line numbers are no part of the text: on no line, so a press or
+  // a drag never lands on one and a selection's band never covers one.
+  const margin = marginNumbers(runs);
+  const base = linesOf(runs, margin);
   const lines: HitLine[] = base.map((line, i) => {
     let reachLeft = line.minX;
     let reachRight = line.maxX;
@@ -229,7 +235,7 @@ export function buildTextModel(
     for (let r = d.first; r <= d.last; r += 1) displayOfRun[r] = i;
   });
 
-  return { runs, lines, lineOfRun, edges, displays, displayOfRun };
+  return { runs, lines, lineOfRun, edges, displays, displayOfRun, margin };
 }
 
 function isLowSurrogate(text: string, k: number): boolean {
