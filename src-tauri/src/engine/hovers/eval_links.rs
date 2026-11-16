@@ -118,6 +118,10 @@ fn classify_link(before: &str, inside: &str, rect: [f32; 4]) -> Option<Target> {
                 .iter()
                 .find(|w| word == **w || word == format!("{w}s"))
             {
+                // An algorithm is a float, judged by the float evaluation.
+                if *kind == "algorithm" {
+                    return Some(Target::Float("algorithm".into(), number));
+                }
                 return Some(Target::Theorem(kind.to_string(), number));
             }
             if matches!(word, "eq" | "eqs" | "equation" | "equations") {
@@ -207,15 +211,47 @@ fn starts_section(text: &str) -> bool {
     // A heading is short and ends without a full stop; an enumerated
     // sentence ("1. A is private.") is neither.
     let short = text.split_whitespace().count() <= 12 && !text.trim_end().ends_with('.');
+    // "3 A framework for ...": a one-letter first word, more words after.
+    let worded = word.chars().filter(|c| c.is_alphabetic()).count() >= 2
+        || text.split_whitespace().count() >= 4;
     is_number(number)
         && !number.starts_with('(')
         && word.starts_with(|c: char| c.is_uppercase())
-        && word.chars().filter(|c| c.is_alphabetic()).count() >= 2
+        && worded
         && short
 }
 
-/// The line `i` is followed by, in reading order, when it continues the
-/// same block: the same column and close, or the top of the next column.
+/// An enumerated or itemised line: "(i)", "(a)", "(3)", "1.", "b)", a
+/// bullet.
+fn starts_item(text: &str) -> bool {
+    let t = text.trim_start();
+    if t.starts_with(['\u{2022}', '\u{2013}', '\u{00b7}', '*']) {
+        return true;
+    }
+    let label: String = t.chars().take_while(|c| !c.is_whitespace()).collect();
+    let inner = match (label.strip_prefix('('), label.strip_suffix(')')) {
+        (Some(rest), _) => match rest.strip_suffix(')') {
+            Some(inner) => inner.to_string(),
+            None => return false,
+        },
+        (None, Some(inner)) => inner.to_string(),
+        (None, None) => match label.strip_suffix('.') {
+            Some(inner) => inner.to_string(),
+            None => return false,
+        },
+    };
+    let roman = !inner.is_empty() && inner.chars().all(|c| matches!(c, 'i' | 'v' | 'x'));
+    let letter = inner.len() == 1 && inner.chars().all(|c| c.is_ascii_lowercase());
+    let digits = !inner.is_empty() && inner.len() <= 2 && inner.chars().all(|c| c.is_ascii_digit());
+    roman || letter || digits
+}
+
+/// A page's foot: its number alone on a line.
+fn is_page_number(text: &str) -> bool {
+    !text.is_empty() && text.len() <= 4 && text.chars().all(|c| c.is_ascii_digit())
+}
+
+/// The line `i` is followed by, in reading order.
 fn next_line(page: &Page, i: usize) -> Option<usize> {
     let mut j = i + 1;
     while j < page.lines.len() && page.lines[j].flags.furniture {
@@ -224,12 +260,41 @@ fn next_line(page: &Page, i: usize) -> Option<usize> {
     (j < page.lines.len()).then_some(j)
 }
 
-/// Where the target is and how far it runs: its lines, and the lines that
-/// must stay out (the proof after it, the next entry, the line before a
-/// heading).
+/// The next line of body text after `i` in reading order: past running
+/// heads and feet, page numbers, and the smaller type of footnotes.
+fn next_body_line(page: &Page, i: usize) -> Option<usize> {
+    let mut j = i;
+    loop {
+        j = next_line(page, j)?;
+        let l = &page.lines[j];
+        let small = page.body_size > 0.0 && l.size > 0.0 && l.size < 0.92 * page.body_size;
+        if !small && !is_page_number(&text_of(page, j)) {
+            return Some(j);
+        }
+    }
+}
+
+/// The first line of body text on a page, in reading order.
+fn first_body_line(page: &Page) -> Option<usize> {
+    let first = (0..page.lines.len()).find(|&i| !page.lines[i].flags.furniture)?;
+    let l = &page.lines[first];
+    let small = page.body_size > 0.0 && l.size > 0.0 && l.size < 0.92 * page.body_size;
+    if small || is_page_number(&text_of(page, first)) {
+        next_body_line(page, first)
+    } else {
+        Some(first)
+    }
+}
+
+/// A line of the target: on the destination page (0) or the next (1).
+type At = (usize, usize);
+
+/// Where the target is and how far it runs: its lines - over a column or
+/// page break too - and the lines that must stay out (the proof after it,
+/// the next entry, the line before a heading).
 struct Truth {
-    lines: Vec<usize>,
-    outside: Vec<usize>,
+    lines: Vec<At>,
+    outside: Vec<At>,
 }
 
 fn head_near(page: &Page, heads: Vec<usize>, anchor: Option<f32>) -> Option<usize> {
@@ -243,7 +308,194 @@ fn head_near(page: &Page, heads: Vec<usize>, anchor: Option<f32>) -> Option<usiz
     }
 }
 
-fn truth(page: &Page, target: &Target, anchor: Option<(Option<f32>, f32)>) -> Option<Truth> {
+/// Where reading goes on after line `at`: the next body line, and whether
+/// it opens a new column or page.
+fn step(pages: &[&Page], at: At) -> Option<(At, bool)> {
+    let (p, i) = at;
+    let page = pages[p];
+    match next_body_line(page, i) {
+        // A new column starts above the line before it - wholly, not as an
+        // accent or a script over that line does.
+        Some(j) => Some((
+            (p, j),
+            page.lines[j].top > page.lines[i].top + 1.0
+                && page.lines[j].bottom > page.lines[i].top + 2.0,
+        )),
+        None => {
+            let next = pages.get(p + 1)?;
+            Some(((p + 1, first_body_line(next)?), true))
+        }
+    }
+}
+
+fn ends_sentence(text: &str) -> bool {
+    matches!(
+        text.trim_end().chars().last(),
+        Some('.' | '!' | '?' | ':' | ';')
+    )
+}
+
+fn prose(l: &Line) -> bool {
+    !l.is_display() && l.math_share < 0.2
+}
+
+/// A theorem-like statement: its label to the proof, the next statement or
+/// heading, or the paragraph after it - back in the body face after an
+/// italic statement, or set apart. Its lists ("(i)", "(a)", "1." - often
+/// upright, set apart by the list's own skip, their further lines hanging
+/// indented) and displays (with any lone script or symbol line of them)
+/// are its own, and so is what it runs on into at the top of the next
+/// column or page.
+fn statement_truth(pages: &[&Page], head: usize) -> Truth {
+    let page = pages[0];
+    let lines = &page.lines;
+    let left = |page: &Page, l: &Line| {
+        page.lines
+            .iter()
+            .filter(|m| {
+                !m.flags.furniture
+                    && super::page::same_column(m, l)
+                    && (m.top - l.top).abs() < 200.0
+                    && m.x1 - m.x0 > 0.5 * (l.x1 - l.x0).max(1.0)
+            })
+            .map(|m| m.x0)
+            .fold(l.x0, f32::min)
+    };
+    // The statement's face: that of the head line's own words - past its
+    // label, not mathematics, not a name in parentheses - when it has
+    // enough of them; else its first line of prose that is not an item.
+    let mut italic = {
+        let l = &lines[head];
+        let mut depth = 0i32;
+        let mut fonts = Vec::new();
+        let mut tokens = 0;
+        let mut previous = ' ';
+        for i in l.start..l.end {
+            let c = page.text[i];
+            if previous == ' ' && c != ' ' {
+                tokens += 1;
+            }
+            previous = c;
+            match c {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                c if c.is_alphabetic() && depth <= 0 && tokens > 2 => {
+                    if let Some(g) = page.glyph_at(i).filter(|g| !g.math) {
+                        fonts.push(g.font);
+                    }
+                }
+                _ => {}
+            }
+        }
+        (fonts.len() >= 12).then(|| {
+            let own = fonts.iter().filter(|&&f| f != page.body_font).count();
+            2 * own > fonts.len()
+        })
+    };
+    let mut k = head;
+    for _ in 0..4 {
+        if italic.is_some() {
+            break;
+        }
+        let Some(j) = next_body_line(page, k) else {
+            break;
+        };
+        let t = text_of(page, j);
+        if prose(&lines[j]) && !starts_item(&t) && lines[j].x1 - lines[j].x0 > 60.0 {
+            italic = Some(lines[j].font != page.body_font);
+            break;
+        }
+        k = j;
+    }
+    let mut out = vec![(0, head)];
+    let mut outside = Vec::new();
+    let mut in_list = false;
+    let mut at = (0, head);
+    let mut margin = left(page, &lines[head]);
+    while out.len() < 60 {
+        let Some((next, broke)) = step(pages, at) else {
+            break;
+        };
+        let (prev_page, prev_line) = (pages[at.0], &pages[at.0].lines[at.1]);
+        let here = pages[next.0];
+        let l = &here.lines[next.1];
+        let t = text_of(here, next.1);
+        let item = starts_item(&t);
+        // "1. Dense family ..." in a statement is an item of its list, not
+        // a heading: it follows a colon or other items, or runs long, in
+        // the body's size.
+        let listed = item
+            && (here.body_size <= 0.0 || l.size <= 1.05 * here.body_size)
+            && (in_list
+                || text_of(prev_page, at.1).ends_with(':')
+                || t.split_whitespace().count() > 6);
+        let head_like = t.starts_with("Proof")
+            || t.starts_with("PROOF")
+            || starts_statement(&t)
+            || (starts_section(&t) && !listed);
+        let display = !prose(l) || t.chars().count() < 3;
+        let own_face = l.font != here.body_font;
+        if broke {
+            // A new column or page: more of the statement only if it reads
+            // as such.
+            let goes_on = !head_like
+                && match italic {
+                    Some(true) => display || item || own_face,
+                    _ => !ends_sentence(&text_of(prev_page, at.1)),
+                };
+            if !goes_on {
+                break;
+            }
+            margin = left(here, l);
+            out.push(next);
+            at = next;
+            continue;
+        }
+        if head_like {
+            outside.push(next);
+            break;
+        }
+        let indented = l.x0 > margin + 3.0;
+        let gap = prev_line.bottom - l.top;
+        let apart = gap > leading_gap(here) + 3.5;
+        let prev_display = !prose(prev_line);
+        let take = if item {
+            in_list = true;
+            true
+        } else if prose(l) && italic == Some(true) && !own_face {
+            // The body face again: an item's further lines, or the
+            // paragraph after.
+            in_list && indented
+        } else if !apart || display || prev_display {
+            true
+        } else if in_list && indented {
+            true
+        } else if in_list {
+            in_list = false;
+            italic == Some(true) || !indented
+        } else {
+            false
+        };
+        if !take {
+            if t.chars().count() >= 3 {
+                outside.push(next);
+            }
+            break;
+        }
+        if !indented && prose(l) && !item {
+            in_list = false;
+        }
+        out.push(next);
+        at = next;
+    }
+    Truth {
+        lines: out,
+        outside,
+    }
+}
+
+fn truth(pages: &[&Page], target: &Target, anchor: Option<(Option<f32>, f32)>) -> Option<Truth> {
+    let page = pages[0];
     let lines = &page.lines;
     let anchor_y = anchor.map(|a| a.1);
     let gap0 = leading_gap(page);
@@ -259,33 +511,7 @@ fn truth(page: &Page, target: &Target, anchor: Option<(Option<f32>, f32)>) -> Op
                 })
                 .collect();
             let head = head_near(page, heads, anchor_y)?;
-            let mut out = vec![head];
-            let mut outside = Vec::new();
-            let italic = next_line(page, head).is_some_and(|j| lines[j].font != page.body_font);
-            let mut i = head;
-            while out.len() < 40 {
-                let Some(j) = next_line(page, i) else { break };
-                let t = text_of(page, j);
-                let new_column = lines[j].top > lines[i].top + 1.0;
-                let display = lines[j].is_display() || lines[i].is_display();
-                let page_number = !t.is_empty() && t.chars().all(|c| c.is_ascii_digit());
-                let ends = t.starts_with("Proof")
-                    || page_number
-                    || starts_statement(&t)
-                    || starts_section(&t)
-                    || (!new_column && !display && gap(i, j) > gap0 + 3.5)
-                    || (italic && !display && lines[j].font == page.body_font && !t.is_empty());
-                if ends {
-                    outside.push(j);
-                    break;
-                }
-                out.push(j);
-                i = j;
-            }
-            Some(Truth {
-                lines: out,
-                outside,
-            })
+            Some(statement_truth(pages, head))
         }
         Target::Section(number) => {
             let heads: Vec<usize> = (0..lines.len())
@@ -303,29 +529,32 @@ fn truth(page: &Page, target: &Target, anchor: Option<(Option<f32>, f32)>) -> Op
                 })
                 .collect();
             let head = head_near(page, heads, anchor_y)?;
-            let mut out = vec![head];
+            let mut out = vec![(0, head)];
             let mut i = head;
             for _ in 0..2 {
-                let Some(j) = next_line(page, i) else { break };
+                let Some(j) = next_body_line(page, i) else {
+                    break;
+                };
                 if lines[j].top > lines[i].top + 1.0 {
                     break;
                 }
-                out.push(j);
+                out.push((0, j));
                 i = j;
             }
             // The line just above the heading, in its column: the previous
-            // section's tail.
+            // section's tail. Never a page number or running head.
             let above = (0..lines.len())
                 .filter(|&k| {
                     k != head
                         && !lines[k].flags.furniture
+                        && !is_page_number(&text_of(page, k))
                         && lines[k].bottom >= lines[head].top
                         && super::page::same_column(&lines[k], &lines[head])
                 })
                 .min_by(|&a, &b| lines[a].bottom.total_cmp(&lines[b].bottom));
             Some(Truth {
                 lines: out,
-                outside: above.into_iter().collect(),
+                outside: above.into_iter().map(|k| (0, k)).collect(),
             })
         }
         Target::Equation(number) => {
@@ -337,7 +566,8 @@ fn truth(page: &Page, target: &Target, anchor: Option<(Option<f32>, f32)>) -> Op
                 })
                 .collect();
             let head = head_near(page, heads, anchor_y)?;
-            // The display: the math lines set close above and below.
+            // The display: the math lines set close above and below - the
+            // other rows of an align or gather too, numbered or not.
             let mut out = vec![head];
             let (mut x0, mut x1) = (lines[head].x0, lines[head].x1);
             loop {
@@ -355,11 +585,7 @@ fn truth(page: &Page, target: &Target, anchor: Option<(Option<f32>, f32)>) -> Op
                     let near = (l.bottom >= bottom - 0.1 && l.bottom - top <= 0.6 * l.em())
                         || (l.top <= top + 0.1 && bottom - l.top <= 0.6 * l.em())
                         || (l.top <= top + 0.5 && l.bottom >= bottom - 0.5);
-                    let tagged_other = {
-                        let t = text_of(page, k);
-                        t.ends_with(')') && t.contains(" (") && !t.ends_with(&tag)
-                    };
-                    if overlaps && near && l.is_display() && !tagged_other {
+                    if overlaps && near && l.is_display() {
                         out.push(k);
                         x0 = x0.min(l.x0);
                         x1 = x1.max(l.x1);
@@ -371,7 +597,7 @@ fn truth(page: &Page, target: &Target, anchor: Option<(Option<f32>, f32)>) -> Op
                 }
             }
             Some(Truth {
-                lines: out,
+                lines: out.into_iter().map(|i| (0, i)).collect(),
                 outside: Vec::new(),
             })
         }
@@ -403,7 +629,7 @@ fn truth(page: &Page, target: &Target, anchor: Option<(Option<f32>, f32)>) -> Op
                         .max_by(|&a, &b| lines[a].top.total_cmp(&lines[b].top))?
                 }
             };
-            let mut out = vec![head];
+            let mut out = vec![(0, head)];
             let mut outside = Vec::new();
             // Hanging: lines on the page that start at this entry's margin
             // go on indented.
@@ -419,25 +645,47 @@ fn truth(page: &Page, target: &Target, anchor: Option<(Option<f32>, f32)>) -> Op
                 })
                 .count()
                 >= 2;
-            let mut i = head;
-            while out.len() < 12 {
-                let Some(j) = next_line(page, i) else { break };
-                let t = text_of(page, j);
-                let new_column = lines[j].top > lines[i].top + 1.0;
+            let mut margin = lines[head].x0;
+            let mut at = (0, head);
+            while out.len() < 16 {
+                let Some((next, broke)) = step(pages, at) else {
+                    break;
+                };
+                let here = pages[next.0];
+                let (prev, l) = (&pages[at.0].lines[at.1], &here.lines[next.1]);
+                let t = text_of(here, next.1);
+                if broke {
+                    // Over a break: more of the entry unless a new one
+                    // starts there.
+                    let left = here
+                        .lines
+                        .iter()
+                        .filter(|m| !m.flags.furniture && super::page::same_column(m, l))
+                        .map(|m| m.x0)
+                        .fold(l.x0, f32::min);
+                    let new_entry = t.starts_with('[') || (hanging && l.x0 <= left + 1.5);
+                    if new_entry || !hanging && number.is_none() {
+                        break;
+                    }
+                    margin = left;
+                    out.push(next);
+                    at = next;
+                    continue;
+                }
+                let g = prev.bottom - l.top;
                 let starts = t.starts_with('[')
-                    || (hanging && lines[j].x0 <= lines[head].x0 + 1.5)
-                    || (!hanging && !new_column && gap(i, j) > gap0 + 1.5);
+                    || (hanging && l.x0 <= margin + 1.5)
+                    || (!hanging && g > leading_gap(here) + 1.5);
                 if starts {
-                    outside.push(j);
+                    outside.push(next);
                     break;
                 }
-                // An entry running on into the next column is judged on
-                // its first part; a line far below is the page's foot.
-                if new_column || gap(i, j) > gap0 + 6.0 {
+                // A line far below is the page's foot.
+                if g > leading_gap(here) + 6.0 {
                     break;
                 }
-                out.push(j);
-                i = j;
+                out.push(next);
+                at = next;
             }
             Some(Truth {
                 lines: out,
@@ -456,20 +704,50 @@ fn truth(page: &Page, target: &Target, anchor: Option<(Option<f32>, f32)>) -> Op
                 .collect();
             let head = head_near(page, heads, None)?;
             let size = lines[head].size;
-            let mut out = vec![head];
-            let mut i = head;
-            while out.len() < 12 {
-                let Some(j) = next_line(page, i) else { break };
-                let t = text_of(page, j);
-                // The next note: a line opening with a mark, set apart
-                // ("2 Concentrated") or run on ("2Concentrated").
-                let next_mark = t.starts_with(|c: char| c.is_ascii_digit())
-                    && t.chars().take_while(char::is_ascii_digit).count() <= 2;
-                if (lines[j].size - size).abs() > 0.5 || next_mark || gap(i, j) > 4.0 {
+            let next_mark = |t: &str| {
+                t.starts_with(|c: char| c.is_ascii_digit())
+                    && t.chars().take_while(char::is_ascii_digit).count() <= 2
+            };
+            let mut out = vec![(0, head)];
+            let mut at = (0, head);
+            while out.len() < 16 {
+                let (p, i) = at;
+                let here = pages[p];
+                let notes = |page: &Page, k: usize| {
+                    let l = &page.lines[k];
+                    !l.flags.furniture
+                        && (l.size - size).abs() <= 0.5
+                        && l.bottom < 0.35 * page.height
+                };
+                // The next line of a note: in its column, or - its column's
+                // foot reached - the next column's foot, or the next page's.
+                let following = next_line(here, i).filter(|&j| notes(here, j));
+                let (next, broke) = match following {
+                    Some(j) => ((p, j), here.lines[j].top > here.lines[i].top + 1.0),
+                    None => {
+                        let Some(next_page) = pages.get(p + 1) else {
+                            break;
+                        };
+                        if p > 0 {
+                            break;
+                        }
+                        let Some(j) = (0..next_page.lines.len()).find(|&k| notes(next_page, k))
+                        else {
+                            break;
+                        };
+                        ((p + 1, j), true)
+                    }
+                };
+                let page_here = pages[next.0];
+                let t = text_of(page_here, next.1);
+                if next_mark(&t) {
                     break;
                 }
-                out.push(j);
-                i = j;
+                if !broke && gap_in(page_here, at, next) > 4.0 {
+                    break;
+                }
+                out.push(next);
+                at = next;
             }
             Some(Truth {
                 lines: out,
@@ -480,6 +758,10 @@ fn truth(page: &Page, target: &Target, anchor: Option<(Option<f32>, f32)>) -> Op
     }
 }
 
+fn gap_in(page: &Page, a: At, b: At) -> f32 {
+    page.lines[a.1].bottom - page.lines[b.1].top
+}
+
 #[derive(Default)]
 struct Tally {
     checked: usize,
@@ -488,6 +770,8 @@ struct Tally {
     start_cut: usize,
     leaks: usize,
     cut: usize,
+    /// Targets over a column or page break.
+    split: usize,
 }
 
 impl Tally {
@@ -498,64 +782,126 @@ impl Tally {
         self.start_cut += t.start_cut;
         self.leaks += t.leaks;
         self.cut += t.cut;
+        self.split += t.split;
     }
 
     fn line(&self, name: &str) -> String {
         format!(
-            "{name:<22} checked {:>5}  target-cut {:>4}  head-missing {:>4}  leaks {:>4}  cut-line {:>4}  (no truth {})",
-            self.checked, self.missing, self.start_cut, self.leaks, self.cut, self.no_truth
+            "{name:<22} checked {:>5}  target-cut {:>4}  head-missing {:>4}  leaks {:>4}  cut-line {:>4}  (split {}, no truth {})",
+            self.checked, self.missing, self.start_cut, self.leaks, self.cut, self.split, self.no_truth
         )
     }
 }
 
-/// Judge a crop: all of the target inside, its head above all, nothing
-/// that must stay out, no line cut through.
-fn judge(page: &Page, crop: [f32; 4], truth: &Truth, tally: &mut Tally) -> Vec<String> {
+/// A preview: its pieces, each on the destination page (0) or the next.
+type Crops = Vec<(usize, [f32; 4])>;
+
+/// Judge a preview: all of the target inside one of its pieces, its head
+/// above all, nothing that must stay out, no line cut through.
+fn judge(pages: &[&Page], crops: &Crops, truth: &Truth, tally: &mut Tally) -> Vec<String> {
     tally.checked += 1;
+    if truth
+        .lines
+        .iter()
+        .any(|&(p, i)| p > 0 || pages[0].lines[i].top > pages[0].lines[truth.lines[0].1].top + 1.0)
+    {
+        tally.split += 1;
+    }
     let mut problems = Vec::new();
-    let (cx0, cy0, cx1, cy1) = (crop[0], crop[1], crop[0] + crop[2], crop[1] + crop[3]);
-    let inside = |l: &Line| {
-        l.x0 >= cx0 - 2.0 && l.x1 <= cx1 + 2.0 && l.bottom >= cy0 - 1.5 && l.top <= cy1 + 1.5
+    let inside = |(p, i): At| {
+        let l = &pages[p].lines[i];
+        crops.iter().filter(|(cp, _)| *cp == p).any(|(_, crop)| {
+            let (cx0, cy0, cx1, cy1) = (crop[0], crop[1], crop[0] + crop[2], crop[1] + crop[3]);
+            l.x0 >= cx0 - 2.0 && l.x1 <= cx1 + 2.0 && l.bottom >= cy0 - 1.5 && l.top <= cy1 + 1.5
+        })
     };
-    let share = |l: &Line| {
+    let share = |l: &Line, crop: &[f32; 4]| {
+        let (cx0, cy0, cx1, cy1) = (crop[0], crop[1], crop[0] + crop[2], crop[1] + crop[3]);
         if l.x1.min(cx1) - l.x0.max(cx0) <= 3.0 {
             return 0.0;
         }
         ((l.top.min(cy1) - l.bottom.max(cy0)) / l.height()).max(0.0)
     };
+    let text = |(p, i): At| text_of(pages[p], i);
+    // A lone script or symbol line is a display's fragment, not a line.
+    let real = |at: At| text(at).chars().count() >= 3;
     let head = truth.lines[0];
-    if !inside(&page.lines[head]) {
+    if !inside(head) {
         tally.start_cut += 1;
-        problems.push(format!("HEAD missing: {:?}", text_of(page, head)));
+        problems.push(format!("HEAD missing: {:?}", text(head)));
     }
-    if let Some(&i) = truth.lines.iter().find(|&&i| !inside(&page.lines[i])) {
+    if let Some(&at) = truth.lines.iter().find(|&&at| !inside(at) && real(at)) {
         tally.missing += 1;
         problems.push(format!(
-            "TARGET cut: {:?} ({} lines)",
-            text_of(page, i),
+            "TARGET cut: {:?}{} ({} lines)",
+            text(at),
+            if at.0 > 0 { " on the next page" } else { "" },
             truth.lines.len()
         ));
     }
-    // A lone script or symbol line is a display's fragment, not a line.
-    let real = |i: usize| text_of(page, i).chars().count() >= 3;
-    if let Some(&i) = truth
-        .outside
-        .iter()
-        .find(|&&i| share(&page.lines[i]) > 0.5 && real(i))
-    {
+    if let Some(&at) = truth.outside.iter().find(|&&(p, i)| {
+        real((p, i))
+            && crops
+                .iter()
+                .any(|(cp, crop)| *cp == p && share(&pages[p].lines[i], crop) > 0.5)
+    }) {
         tally.leaks += 1;
-        problems.push(format!("LEAKS: {:?}", text_of(page, i)));
+        problems.push(format!("LEAKS: {:?}", text(at)));
     }
-    let cut = (0..page.lines.len()).find(|&i| {
-        let l = &page.lines[i];
-        let s = share(l);
-        !l.flags.furniture && s > 0.15 && s < 0.85 && text_of(page, i).chars().count() >= 3
+    let cut = crops.iter().find_map(|(p, crop)| {
+        let page = pages[*p];
+        (0..page.lines.len())
+            .find(|&i| {
+                let l = &page.lines[i];
+                let s = share(l, crop);
+                !l.flags.furniture && s > 0.15 && s < 0.85 && text_of(page, i).chars().count() >= 3
+            })
+            .map(|i| text_of(page, i))
     });
-    if let Some(i) = cut {
+    if let Some(line) = cut {
         tally.cut += 1;
-        problems.push(format!("CUTS: {:?}", text_of(page, i)));
+        problems.push(format!("CUTS: {line:?}"));
     }
     problems
+}
+
+/// A link's preview as the engine shows it: its crop, and the pieces the
+/// target runs on into.
+#[allow(clippy::too_many_arguments)]
+fn link_pieces(
+    page: &Page,
+    next: Option<&Page>,
+    runs: &[TextRun],
+    w: f32,
+    h: f32,
+    x: Option<f32>,
+    y: Option<f32>,
+    words: &super::targets::LinkText,
+) -> Crops {
+    let target = super::targets::link_preview(Some(page), runs, w, h, x, y, Some(words));
+    let mut crops = vec![(0, target.rect)];
+    if let Some(flow) = target.flow {
+        for piece in super::continuation::continuation(flow, page, next, target.rect) {
+            crops.push((usize::from(piece.next_page), piece.rect));
+        }
+    }
+    crops
+}
+
+/// A hover span's preview: its region, and the pieces it runs on into.
+fn span_pieces(kind: &str, page: &Page, next: Option<&Page>, region: [f32; 4]) -> Crops {
+    let flow = match kind {
+        "theorem" => Some(super::targets::Flow::Statement),
+        "footnote" => Some(super::targets::Flow::Footnote),
+        _ => None,
+    };
+    let mut crops = vec![(0, region)];
+    if let Some(flow) = flow {
+        for piece in super::continuation::continuation(flow, page, next, region) {
+            crops.push((usize::from(piece.next_page), piece.rect));
+        }
+    }
+    crops
 }
 
 type Link = ([f32; 4], Option<f32>, Option<f32>, u32);
@@ -630,6 +976,23 @@ fn load(b: &dyn PdfiumLibraryBindings, path: &str) -> Option<Doc> {
     Some(doc)
 }
 
+fn show_crops(crops: &Crops) -> String {
+    crops
+        .iter()
+        .map(|(p, c)| {
+            format!(
+                "{}[{:.0},{:.0},{:.0},{:.0}]",
+                if *p > 0 { "next " } else { "" },
+                c[0],
+                c[1],
+                c[0] + c[2],
+                c[1] + c[3]
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" + ")
+}
+
 /// Where a run of the page's characters sits: the characters whose glyphs
 /// fall inside `rect`.
 fn locate(page: &Page, rect: [f32; 4]) -> Option<(usize, usize)> {
@@ -693,6 +1056,8 @@ fn evaluate_all_previews() {
                 let Some(Some(page)) = doc.pages.get(to as usize) else {
                     continue;
                 };
+                let next = doc.pages.get(to as usize + 1).and_then(Option::as_ref);
+                let pages: Vec<&Page> = std::iter::once(page).chain(next).collect();
                 // Destinations can be shared (a page-level one, the top of
                 // the reference list): the link's text tells them apart.
                 if !seen.insert((
@@ -706,7 +1071,7 @@ fn evaluate_all_previews() {
                 let key = format!("link {}", target.kind());
                 let tally = totals.entry(key.clone()).or_default();
                 let anchor = y.map(|y| (x, y));
-                let Some(truth) = truth(page, &target, anchor) else {
+                let Some(truth) = truth(&pages, &target, anchor) else {
                     tally.no_truth += 1;
                     let _ = writeln!(
                         detail,
@@ -718,40 +1083,30 @@ fn evaluate_all_previews() {
                     continue;
                 };
                 let [w, h] = doc.sizes[to as usize];
-                let crop = if std::env::var("SPEEDYF_OLD_CROP").is_ok() {
-                    crate::engine::preview::crop_rect(&crate::engine::preview::CropInput {
-                        page_w_pt: w,
-                        page_h_pt: h,
-                        dest_x: x,
-                        dest_y: y,
-                        runs: &doc.runs[to as usize],
-                    })
+                let crops: Crops = if std::env::var("SPEEDYF_OLD_CROP").is_ok() {
+                    vec![(
+                        0,
+                        crate::engine::preview::crop_rect(&crate::engine::preview::CropInput {
+                            page_w_pt: w,
+                            page_h_pt: h,
+                            dest_x: x,
+                            dest_y: y,
+                            runs: &doc.runs[to as usize],
+                        }),
+                    )]
                 } else {
-                    {
-                        let words = super::targets::LinkText::from_runs(&doc.runs[src], rect);
-                        super::targets::link_crop(
-                            Some(page),
-                            &doc.runs[to as usize],
-                            w,
-                            h,
-                            x,
-                            y,
-                            Some(&words),
-                        )
-                    }
+                    let words = super::targets::LinkText::from_runs(&doc.runs[src], rect);
+                    link_pieces(page, next, &doc.runs[to as usize], w, h, x, y, &words)
                 };
-                let problems = judge(page, crop, &truth, tally);
+                let problems = judge(&pages, &crops, &truth, tally);
                 if !problems.is_empty() {
                     let _ = writeln!(
                         detail,
-                        "{} {key} {target:?} p{}->p{} x={x:?} y={y:?} crop [{:.0},{:.0},{:.0},{:.0}]\n    {}",
+                        "{} {key} {target:?} p{}->p{} x={x:?} y={y:?} crop {}\n    {}",
                         doc.name,
                         src + 1,
                         to + 1,
-                        crop[0],
-                        crop[1],
-                        crop[0] + crop[2],
-                        crop[1] + crop[3],
+                        show_crops(&crops),
                         problems.join("\n    ")
                     );
                 }
@@ -777,24 +1132,24 @@ fn evaluate_all_previews() {
                 let Some(Some(page)) = doc.pages.get(to) else {
                     continue;
                 };
+                let next = doc.pages.get(to + 1).and_then(Option::as_ref);
+                let pages: Vec<&Page> = std::iter::once(page).chain(next).collect();
                 let key = format!("span {}", target.kind());
                 let tally = totals.entry(key.clone()).or_default();
                 let anchor = Some((span.target.x, span.target.y));
-                let Some(truth) = truth(page, &target, anchor) else {
+                let Some(truth) = truth(&pages, &target, anchor) else {
                     tally.no_truth += 1;
                     continue;
                 };
-                let problems = judge(page, region, &truth, tally);
+                let crops = span_pieces(span.kind, page, next, region);
+                let problems = judge(&pages, &crops, &truth, tally);
                 if !problems.is_empty() {
                     let _ = writeln!(
                         detail,
-                        "{} {key} {target:?} ->p{} region [{:.0},{:.0},{:.0},{:.0}]\n    {}",
+                        "{} {key} {target:?} ->p{} region {}\n    {}",
                         doc.name,
                         to + 1,
-                        region[0],
-                        region[1],
-                        region[0] + region[2],
-                        region[1] + region[3],
+                        show_crops(&crops),
                         problems.join("\n    ")
                     );
                 }
@@ -830,28 +1185,61 @@ fn dump_link_target() {
     let b = pdfium.bindings();
     let raw = render::open_document(b, path, None).expect("open");
     let [w, h] = render::page_display_size(b, raw, src).expect("size");
-    let handle = b.FPDF_LoadPage(raw, src);
-    let page = super::prepare_page(
-        Page::new(extract::extract(b, handle, w, h)),
-        Default::default(),
-    );
-    for (i, l) in page.lines.iter().enumerate() {
-        if (l.top - y).abs() < 60.0 {
+    let read = |src: i32| {
+        let [w, h] = render::page_display_size(b, raw, src)?;
+        let handle = b.FPDF_LoadPage(raw, src);
+        if handle.is_null() {
+            return None;
+        }
+        let page = super::prepare_page(
+            Page::new(extract::extract(b, handle, w, h)),
+            Default::default(),
+        );
+        b.FPDF_ClosePage(handle);
+        Some(page)
+    };
+    let page = read(src).expect("page");
+    let next = read(src + 1);
+    let all = std::env::var("SPEEDYF_ALL").is_ok();
+    let show = |page: &Page, near: Option<f32>| {
+        for (i, l) in page.lines.iter().enumerate() {
+            if near.is_none_or(|y| (l.top - y).abs() < 60.0) {
+                eprintln!(
+                    "line {i} x {:.1}..{:.1} y {:.1}..{:.1} size {:.1} font {} disp {} furn {} {:?}",
+                    l.x0,
+                    l.x1,
+                    l.bottom,
+                    l.top,
+                    l.size,
+                    l.font,
+                    l.is_display(),
+                    l.flags.furniture,
+                    text_of(page, i).chars().take(70).collect::<String>()
+                );
+            }
+        }
+    };
+    show(&page, (!all).then_some(y));
+    let target = super::targets::link_preview(Some(&page), &[], w, h, x, Some(y), None);
+    eprintln!("target {target:?}");
+    if let Some(flow) = target.flow {
+        let pieces = super::continuation::continuation(flow, &page, next.as_ref(), target.rect);
+        eprintln!("pieces {pieces:?}");
+    }
+    let mut classified = page.clone();
+    let regions = super::regions::classify(&mut classified, &mut Default::default());
+    for d in super::xref::find_definitions(&classified, &regions, 0) {
+        if (d.jump.1 - y).abs() < 60.0 {
             eprintln!(
-                "line {i} x {:.1}..{:.1} y {:.1}..{:.1} size {:.1} font {} disp {} {:?}",
-                l.x0,
-                l.x1,
-                l.bottom,
-                l.top,
-                l.size,
-                l.font,
-                l.is_display(),
-                text_of(&page, i).chars().take(70).collect::<String>()
+                "definition {:?} {} jump {:?} region {:?} row {:?}",
+                d.kind, d.label, d.jump, d.region, d.row
             );
         }
     }
-    eprintln!("target {:?}", super::targets::link_target(&page, x, y));
-    b.FPDF_ClosePage(handle);
+    if let (true, Some(next)) = (all, next.as_ref()) {
+        eprintln!("NEXT PAGE");
+        show(next, None);
+    }
     b.FPDF_CloseDocument(raw);
 }
 
