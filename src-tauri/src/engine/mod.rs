@@ -28,6 +28,9 @@ pub mod preview;
 pub mod queue;
 #[cfg(test)]
 mod quote_eval;
+pub mod reading_order;
+#[cfg(test)]
+mod reading_order_eval;
 pub mod render;
 pub mod save;
 pub mod tagged;
