@@ -409,8 +409,13 @@ fn info_update(bytes: &[u8], entries: &[(&'static str, String)]) -> Option<Vec<u
     }
     out.extend_from_slice(b" >>\nendobj\n");
     let xref_at = bytes.len() + out.len();
-    // Each cross-reference entry is exactly 20 bytes, newline included.
-    out.extend_from_slice(format!("xref\n{size} 1\n{object_at:010} 00000 n \n").as_bytes());
+    // Each cross-reference entry is exactly 20 bytes, newline included. The
+    // section opens with object 0, the head of the free list, as a full table
+    // does: strict readers (pypdf) otherwise take it for one numbered from
+    // the wrong place.
+    out.extend_from_slice(
+        format!("xref\n0 1\n0000000000 65535 f \n{size} 1\n{object_at:010} 00000 n \n").as_bytes(),
+    );
     out.extend_from_slice(
         format!(
             "trailer\n<< /Size {} /Root {root} /Info {size} 0 R /Prev {prev}",
