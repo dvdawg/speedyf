@@ -9,7 +9,10 @@
  * by its year's rank among the component's years (ranks, not years, so one
  * old outlier does not squash the rest), so the drawing reads roughly
  * oldest to newest left to right while links can still pull a paper out of
- * order. Undated nodes feel no time pull. Once
+ * order. Undated nodes feel no time pull. Given the canvas's aspect, a
+ * small component that comes out narrower than it (wide label boxes with
+ * one year between them stack up) is eased wider by leaning its gravity.
+ * Once
  * the drawing has mostly settled, a collision step pushes apart any two
  * boxes that overlap (plus padding), so at zoom 1 every label can be shown
  * without touching another or another's dot. Components are laid out one
@@ -74,6 +77,12 @@ export interface GraphLayout {
 export interface LayoutOptions {
   /** Rounds of the simulation for a component of up to BUDGET_NODES. */
   iterations?: number;
+  /** The width over height the drawing will be shown at, when known. A
+   * small component that comes out narrower than this (a few nodes with
+   * one year, whose wide label boxes stack) is eased wider: its gravity
+   * pulls less across and more down. Never narrower, and large
+   * components are left alone. */
+  aspect?: number;
 }
 
 /** The label font is 11px monospace; this is a little over its advance,
@@ -114,6 +123,12 @@ const SETTLE_SWEEPS = 200;
 const ASPECT = 1.6;
 /** Room over the ideal shelf width, so components of similar size pair up. */
 const SHELF_SLACK = 1.3;
+/** Components up to this size are eased toward the asked-for aspect. */
+const ASPECT_NODES = 40;
+/** How far the gravity may lean, each way, to widen a component. */
+const ASPECT_LEAN = 4;
+/** The lean joins in once the first share of the rounds has set the shape. */
+const LEAN_FROM = 0.3;
 
 /** Edges naming an id not in the list, and self-citations, are ignored;
  * a citation running both ways counts once. */
@@ -149,6 +164,10 @@ export function layoutGraph(
   const xs = new Float64Array(n);
   const ys = new Float64Array(n);
   const rounds = options.iterations ?? DEFAULT_ITERATIONS;
+  const aspect =
+    options.aspect !== undefined && Number.isFinite(options.aspect) && options.aspect > 0
+      ? clampAspect(options.aspect)
+      : null;
   const crossings = { before: 0, after: 0 };
   const parts = components(adjacent).map((members) => {
     const inside = new Set(members);
@@ -159,7 +178,8 @@ export function layoutGraph(
     const starts = members.length <= MULTI_START_NODES && local.length > 2 ? STARTS : 1;
     let best: { xs: Float64Array; ys: Float64Array; before: number; after: number } | null = null;
     for (let start = 0; start < starts; start++) {
-      simulate(members, links, boxes, years, xs, ys, rounds, start, pinned);
+      const lean = members.length <= ASPECT_NODES ? aspect : null;
+      simulate(members, links, boxes, years, xs, ys, rounds, start, pinned, lean);
       const result = untangleIn(members, local, boxes, xs, ys, slice, pinned);
       if (!best || result.after < best.after) {
         best = { xs: xs.slice(), ys: ys.slice(), ...result };
@@ -202,6 +222,8 @@ export function layoutGraph(
   const points: Point[] = nodes.map((_, i) => ({ x: xs[i]!, y: ys[i]! }));
   return { points, width, height: y + shelfHeight, crossings };
 }
+
+const clampAspect = (a: number) => Math.min(3, Math.max(0.5, a));
 
 /** Connected components, each in breadth-first order from its best-linked
  * node (lowest index on ties), components in order of their lowest index. */
@@ -260,7 +282,8 @@ function simulate(
   ys: Float64Array,
   budget: number,
   start = 0,
-  pinned: readonly boolean[] = []
+  pinned: readonly boolean[] = [],
+  aspect: number | null = null
 ): void {
   const m = members.length;
   // The ideal edge length: a typical box and its padding.
@@ -358,13 +381,32 @@ function simulate(
     }
     cx /= m;
     cy /= m;
+    // Narrower than asked: gravity eases across and firms up down, by the
+    // shortfall, so repulsion widens the component. Wide enough: even.
+    let leanX = 1;
+    let leanY = 1;
+    if (aspect !== null && m >= 3 && round >= rounds * LEAN_FROM) {
+      let sx = 0;
+      let sy = 0;
+      for (const i of members) {
+        sx += Math.abs(xs[i]! - cx);
+        sy += Math.abs(ys[i]! - cy);
+      }
+      const short = sx / Math.max(sy, 1e-9) / aspect;
+      if (short < 1) {
+        const lean = Math.sqrt(Math.max(short, 1 / ASPECT_LEAN));
+        leanX = lean;
+        leanY = 1 / lean;
+      }
+    }
     const temperature = hottest * (1 - round / rounds) + 0.5;
     for (const i of members) {
       if (pinned[i]) continue;
       const t = targets.get(i);
       const time = t === null || t === undefined ? 0 : (xs[i]! - cx - t) * TIME;
-      const fx = dx[i]! - (xs[i]! - cx) * GRAVITY * Math.sqrt(m) - time;
-      const fy = dy[i]! - (ys[i]! - cy) * GRAVITY * Math.sqrt(m);
+      // Times 1 when not leaning: exactly the plain gravity.
+      const fx = dx[i]! - (xs[i]! - cx) * GRAVITY * Math.sqrt(m) * leanX - time;
+      const fy = dy[i]! - (ys[i]! - cy) * GRAVITY * Math.sqrt(m) * leanY;
       const length = Math.hypot(fx, fy);
       if (length < 1e-9) continue;
       const step = Math.min(length, temperature);
