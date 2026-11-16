@@ -109,7 +109,7 @@ fn classify_link(before: &str, inside: &str, rect: [f32; 4]) -> Option<Target> {
             }
             if matches!(
                 word,
-                "section" | "sections" | "sec" | "secs" | "appendix" | "chapter"
+                "section" | "sections" | "sec" | "secs" | "appendix" | "appendices" | "chapter"
             ) || word == "\u{a7}"
             {
                 return Some(Target::Section(number));
@@ -932,6 +932,18 @@ fn link_pieces(
     crops
 }
 
+/// Where the engine sends a link whose destination does not carry the
+/// number its words name.
+fn corrected(
+    labels: &LabelMap,
+    page: &Page,
+    src: u32,
+    rect: [f32; 4],
+    words: &super::targets::LinkText,
+) -> Option<(u32, f32, f32)> {
+    super::targets::corrected_target(labels, page, src, rect, words)
+}
+
 /// A hover span's preview: its region, and the pieces it runs on into.
 fn span_pieces(kind: &str, page: &Page, next: Option<&Page>, region: [f32; 4]) -> Crops {
     let flow = match kind {
@@ -957,6 +969,40 @@ struct Doc {
     sizes: Vec<[f32; 2]>,
     links: Vec<Vec<Link>>,
     spans: std::collections::HashMap<u32, Vec<super::HoverSpanDto>>,
+    /// Every numbered definition, by kind and label: page and click point.
+    labels: LabelMap,
+}
+
+type LabelMap = std::collections::HashMap<(super::xref::Kind, String), Vec<(u32, f32, f32)>>;
+
+/// The number a target names, as printed: "A.2", "8", "(12)".
+fn target_number(target: &Target) -> Option<String> {
+    match target {
+        Target::Theorem(_, n) | Target::Section(n) => Some(n.clone()),
+        Target::Equation(n) => Some(format!("({n})")),
+        _ => None,
+    }
+}
+
+/// Whether a crop's lines carry `number`, as a word of their text.
+fn carries_number(page: &Page, crop: [f32; 4], number: &str) -> bool {
+    (0..page.lines.len())
+        .filter(|&i| {
+            let l = &page.lines[i];
+            let centre = (l.top + l.bottom) / 2.0;
+            centre >= crop[1]
+                && centre <= crop[1] + crop[3]
+                && l.x1 > crop[0]
+                && l.x0 < crop[0] + crop[2]
+        })
+        .any(|i| {
+            let text = text_of(page, i);
+            if number.starts_with('(') {
+                return text.contains(number);
+            }
+            text.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | ':' | '(' | ')'))
+                .any(|t| t.trim_end_matches('.') == number)
+        })
 }
 
 fn load(b: &dyn PdfiumLibraryBindings, path: &str) -> Option<Doc> {
@@ -973,6 +1019,7 @@ fn load(b: &dyn PdfiumLibraryBindings, path: &str) -> Option<Doc> {
         sizes: Vec::new(),
         links: Vec::new(),
         spans: Default::default(),
+        labels: Default::default(),
     };
     let mut builder = IndexBuilder::new(count);
     while let Some(src) = builder.next_page() {
@@ -1016,6 +1063,17 @@ fn load(b: &dyn PdfiumLibraryBindings, path: &str) -> Option<Doc> {
             .push(model.map(|p| super::prepare_page(p, Default::default())));
     }
     doc.spans = builder.finish().spans;
+    for (src, page) in doc.pages.iter().enumerate() {
+        let Some(page) = page else { continue };
+        let mut page = page.clone();
+        let regions = super::regions::classify(&mut page, &mut Default::default());
+        for d in super::xref::find_definitions(&page, &regions, src as u32) {
+            doc.labels
+                .entry((d.kind, d.label.clone()))
+                .or_default()
+                .push((d.page, d.jump.0, d.jump.1));
+        }
+    }
     b.FPDF_CloseDocument(raw);
     Some(doc)
 }
@@ -1097,11 +1155,9 @@ fn evaluate_all_previews() {
                 if matches!(target, Target::Float(..)) {
                     continue;
                 }
-                let Some(Some(page)) = doc.pages.get(to as usize) else {
+                let Some(Some(dest)) = doc.pages.get(to as usize) else {
                     continue;
                 };
-                let next = doc.pages.get(to as usize + 1).and_then(Option::as_ref);
-                let pages: Vec<&Page> = std::iter::once(page).chain(next).collect();
                 // Destinations can be shared (a page-level one, the top of
                 // the reference list): the link's text tells them apart.
                 if !seen.insert((
@@ -1111,6 +1167,69 @@ fn evaluate_all_previews() {
                     inside.trim().to_string(),
                 )) {
                     continue;
+                }
+                let words = super::targets::LinkText::from_runs(&doc.runs[src], rect);
+                let old = std::env::var("SPEEDYF_OLD_CROP").is_ok();
+                let [w, h] = doc.sizes[to as usize];
+                let dest_next = doc.pages.get(to as usize + 1).and_then(Option::as_ref);
+                let mut crops: Crops = if old {
+                    vec![(
+                        0,
+                        crate::engine::preview::crop_rect(&crate::engine::preview::CropInput {
+                            page_w_pt: w,
+                            page_h_pt: h,
+                            dest_x: x,
+                            dest_y: y,
+                            runs: &doc.runs[to as usize],
+                        }),
+                    )]
+                } else {
+                    link_pieces(dest, dest_next, &doc.runs[to as usize], w, h, x, y, &words)
+                };
+                // A destination that does not carry the number the words
+                // name gives way, in the engine, to the one that does.
+                let mut shown = (to, x, y);
+                if let Some((p, cx, cy)) = (!old)
+                    .then(|| corrected(&doc.labels, dest, to, crops[0].1, &words))
+                    .flatten()
+                    .filter(|c| doc.pages.get(c.0 as usize).is_some_and(Option::is_some))
+                {
+                    let [pw, ph] = doc.sizes[p as usize];
+                    let (page_p, next_p) = (
+                        doc.pages[p as usize].as_ref().expect("read"),
+                        doc.pages.get(p as usize + 1).and_then(Option::as_ref),
+                    );
+                    let none = super::targets::LinkText::default();
+                    crops = link_pieces(
+                        page_p,
+                        next_p,
+                        &doc.runs[p as usize],
+                        pw,
+                        ph,
+                        Some(cx),
+                        Some(cy),
+                        &none,
+                    );
+                    shown = (p, Some(cx), Some(cy));
+                }
+                let (to, x, y) = shown;
+                let page = doc.pages[to as usize].as_ref().expect("read");
+                let next = doc.pages.get(to as usize + 1).and_then(Option::as_ref);
+                let pages: Vec<&Page> = std::iter::once(page).chain(next).collect();
+                if let Some(number) = target_number(&target) {
+                    let numbered = totals.entry("numbered links".into()).or_default();
+                    numbered.checked += 1;
+                    if !carries_number(page, crops[0].1, &number) {
+                        numbered.missing += 1;
+                        let _ = writeln!(
+                            detail,
+                            "{} WRONG-NUMBER {target:?} {inside:?} p{}->p{} crop {}",
+                            doc.name,
+                            src + 1,
+                            to + 1,
+                            show_crops(&crops)
+                        );
+                    }
                 }
                 let key = format!("link {}", target.kind());
                 let tally = totals.entry(key.clone()).or_default();
@@ -1125,22 +1244,6 @@ fn evaluate_all_previews() {
                         to + 1
                     );
                     continue;
-                };
-                let [w, h] = doc.sizes[to as usize];
-                let crops: Crops = if std::env::var("SPEEDYF_OLD_CROP").is_ok() {
-                    vec![(
-                        0,
-                        crate::engine::preview::crop_rect(&crate::engine::preview::CropInput {
-                            page_w_pt: w,
-                            page_h_pt: h,
-                            dest_x: x,
-                            dest_y: y,
-                            runs: &doc.runs[to as usize],
-                        }),
-                    )]
-                } else {
-                    let words = super::targets::LinkText::from_runs(&doc.runs[src], rect);
-                    link_pieces(page, next, &doc.runs[to as usize], w, h, x, y, &words)
                 };
                 let problems = judge(&pages, &crops, &truth, tally);
                 if !problems.is_empty() {
