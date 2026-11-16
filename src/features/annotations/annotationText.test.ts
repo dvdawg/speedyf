@@ -27,11 +27,12 @@ describe('runsUnderQuads', () => {
     expect(runsUnderQuads([quad(0, 95, 200, 20)], runs).map((r) => r.text)).toEqual(['inside']);
   });
 
-  it('returns runs in reading order, not page order', () => {
+  it('returns runs in the layout order, not page order nor stream order', () => {
     // The two-column case. The right column sits at a larger x but earlier
     // text can appear below it, so sorting by position would interleave the
-    // columns. The character stream is the order the words were written in.
-    const runs = [run('second', 5, 320, 200), run('first', 1, 40, 100), run('third', 9, 320, 180)];
+    // columns; and a stream that interleaves them draws them out of turn.
+    // The layout's order is the reading order.
+    const runs = [run('first', 5, 40, 100), run('second', 1, 320, 200), run('third', 9, 320, 180)];
     const covering = [quad(0, 90, 600, 130)];
     expect(runsUnderQuads(covering, runs).map((r) => r.text)).toEqual(['first', 'second', 'third']);
   });

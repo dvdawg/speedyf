@@ -21,7 +21,7 @@ pub struct Interval {
 }
 
 impl Interval {
-    fn width(self) -> f32 {
+    pub(crate) fn width(self) -> f32 {
         self.end - self.start
     }
 
@@ -31,7 +31,7 @@ impl Interval {
     }
 }
 
-fn median_height(runs: &[&TextRun]) -> f32 {
+pub(crate) fn median_height(runs: &[&TextRun]) -> f32 {
     if runs.is_empty() {
         return 11.0;
     }
@@ -71,26 +71,40 @@ pub(crate) fn segments(runs: &[TextRun]) -> Vec<TextRun> {
 /// that happens to break between words right there - not a display's tall
 /// delimiter or a trailing full stop.
 fn rows_of(runs: &[TextRun], columns: &[Interval]) -> Vec<TextRun> {
+    rows_with_members(runs, columns, false).0
+}
+
+/// As `rows_of`, and the row each run went into (`None` for a run with no
+/// extent, which joins none). With `split_at_gutters`, a run starting flush
+/// at a column's edge never joins across the gutter, whatever its height:
+/// where the gutter is narrower than a word space, the lines of two
+/// columns would otherwise run together.
+pub(crate) fn rows_with_members(
+    runs: &[TextRun],
+    columns: &[Interval],
+    split_at_gutters: bool,
+) -> (Vec<TextRun>, Vec<Option<usize>>) {
     let flush_across = |last: &TextRun, run: &TextRun| {
         columns.windows(2).any(|pair| {
             let edge = pair[1].start;
             let flush = (edge - 1.0..=edge + 1.5).contains(&run.x);
             let same_type = (last.h - run.h).abs() <= 0.5 * run.h.max(last.h);
-            last.x + last.w < edge && flush && !same_type
+            last.x + last.w < edge && flush && (split_at_gutters || !same_type)
         })
     };
-    let mut sorted: Vec<&TextRun> = runs
-        .iter()
-        .filter(|run| run.w > 0.0 && run.h > 0.0)
+    let mut sorted: Vec<usize> = (0..runs.len())
+        .filter(|&i| runs[i].w > 0.0 && runs[i].h > 0.0)
         .collect();
-    sorted.sort_by(|left, right| left.x.total_cmp(&right.x));
+    sorted.sort_by(|&left, &right| runs[left].x.total_cmp(&runs[right].x));
+    let mut member: Vec<Option<usize>> = vec![None; runs.len()];
     let mut out: Vec<TextRun> = Vec::new();
     // The last run joined to each segment.
     let mut last: Vec<&TextRun> = Vec::new();
     // Segments still open to the right: a run joins the nearest one on its
     // row whose end it starts just after.
     let mut open: Vec<usize> = Vec::new();
-    for run in sorted {
+    for index in sorted {
+        let run = &runs[index];
         let joined = open.iter().copied().find(|&i| {
             let seg = &out[i];
             let gap = run.x - (seg.x + seg.w);
@@ -109,6 +123,7 @@ fn rows_of(runs: &[TextRun], columns: &[Interval]) -> Vec<TextRun> {
                 seg.y = y0;
                 seg.h = y1 - y0;
                 last[i] = run;
+                member[index] = Some(i);
             }
             None => {
                 out.push(TextRun {
@@ -123,12 +138,13 @@ fn rows_of(runs: &[TextRun], columns: &[Interval]) -> Vec<TextRun> {
                 });
                 last.push(run);
                 open.push(out.len() - 1);
+                member[index] = Some(out.len() - 1);
             }
         }
         // A segment that ends well left of this run can take no more.
         open.retain(|&i| out[i].x + out[i].w >= run.x - JOIN_GAP_PT);
     }
-    out
+    (out, member)
 }
 
 /// The page's text columns, left to right, read from the whole page.
@@ -352,7 +368,7 @@ fn find_gutter(runs: &[Interval], block: Interval) -> Option<Gutter> {
 }
 
 /// The column a run at `x` belongs to: the one holding it, or the nearest.
-fn nearest_column(columns: &[Interval], x: f32) -> usize {
+pub(crate) fn nearest_column(columns: &[Interval], x: f32) -> usize {
     (0..columns.len())
         .min_by(|&a, &b| columns[a].distance(x).total_cmp(&columns[b].distance(x)))
         .unwrap_or(0)
@@ -360,7 +376,7 @@ fn nearest_column(columns: &[Interval], x: f32) -> usize {
 
 /// Whether a stretch of text reaches across a gutter into a neighbouring
 /// column.
-fn spans_gutter(columns: &[Interval], index: usize, run: &TextRun) -> bool {
+pub(crate) fn spans_gutter(columns: &[Interval], index: usize, run: &TextRun) -> bool {
     let left = index
         .checked_sub(1)
         .and_then(|i| columns.get(i))

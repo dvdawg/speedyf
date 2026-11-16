@@ -13,6 +13,11 @@ import type { TextRunDto } from '../../types/engine';
  * within a page, since PDF coordinates restart on each one. */
 export interface CopyRun extends TextRunDto {
   page: number;
+  /** The run's place in its page's text layer, which the engine sends in
+   * reading order (`reading_order.rs`). Without it runs are taken in the
+   * order of their characters in the PDF, which in a page whose stream
+   * interleaves its columns is not the order they read in. */
+  order?: number;
   /** The box of the display equation the run is part of, if any: its runs
    * are read row by row rather than in the order the PDF drew them. */
   display?: readonly number[];
@@ -79,8 +84,8 @@ interface Line {
   text: string;
 }
 
-/** Group runs into visual lines, following the order the extractor produced
- * (its char-stream order is already reading order, including across columns). */
+/** Group runs into visual lines, following the order they come in: reading
+ * order, columns one after another. */
 function groupLines(runs: readonly CopyRun[], medianH: number): Line[] {
   const lines: Line[] = [];
   let current: Line | null = null;
@@ -178,6 +183,14 @@ function byRows(runs: readonly CopyRun[], medianH: number): CopyRun[] {
   return rows.flatMap((row) => row.sort((a, b) => a.x - b.x));
 }
 
+/** Pages in turn, and on a page the text layer's order where the runs
+ * know it, else their characters' order in the PDF. */
+function readingOrder(a: CopyRun, b: CopyRun): number {
+  if (a.page !== b.page) return a.page - b.page;
+  if (a.order !== undefined && b.order !== undefined) return a.order - b.order;
+  return a.start - b.start;
+}
+
 /** True when `previous` ends mid-word and `next` finishes that word. */
 function isWrappedWord(previous: string, next: string): boolean {
   const trimmed = previous.trimEnd();
@@ -208,10 +221,7 @@ function startsParagraph(previous: Line, next: Line, medianH: number): boolean {
 export function smartCopyText(runs: readonly CopyRun[]): string {
   if (runs.length === 0) return '';
   const medianH = medianHeight(runs);
-  const ordered = visualOrder(
-    [...runs].sort((a, b) => a.page - b.page || a.start - b.start),
-    medianH
-  );
+  const ordered = visualOrder([...runs].sort(readingOrder), medianH);
   const lines = groupLines(ordered, medianH);
   if (lines.length === 0) return '';
 

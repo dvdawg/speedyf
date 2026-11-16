@@ -4,12 +4,12 @@
  * it covers — and no text at all. To show what was highlighted, the rectangles
  * have to be matched back against the page's own text.
  *
- * The ordering is the part worth being careful about. Text runs are gathered by
- * `start`, their position in PDFium's character stream, **not** by where they
- * sit on the page. Sorting geometrically is what spliced two-column lines
- * together when the figures panel was built: a highlight crossing a column
- * break would come back interleaved, alternating between columns. The character
- * stream already follows reading order, so using it is both simpler and right.
+ * The ordering is the part worth being careful about. Runs are kept in the
+ * order the page's text layout gives them, which the engine has put in reading
+ * order (`reading_order.rs`), **not** sorted by where they sit on the page nor
+ * by `start`. Sorting geometrically is what spliced two-column lines together
+ * when the figures panel was built, and the PDF's character stream is no
+ * better on a page whose content interleaves its columns.
  */
 import type { PdfQuad } from '../../types/model';
 import type { TextRunDto } from '../../types/engine';
@@ -48,7 +48,7 @@ function overlapFraction(run: TextRunDto, box: Box): number {
   return area > 0 ? (width * height) / area : 0;
 }
 
-/** The runs a set of quads covers, in reading order.
+/** The runs a set of quads covers, in reading order: the order of `runs`.
  *
  * Returned as runs rather than a string so the caller can hand them to
  * `smartCopyText`, which is what already knows how to rejoin a word broken
@@ -59,8 +59,5 @@ export function runsUnderQuads(
 ): TextRunDto[] {
   if (quads.length === 0 || runs.length === 0) return [];
   const boxes = quads.map(boundsOf);
-  return runs
-    .filter((run) => boxes.some((box) => overlapFraction(run, box) >= MIN_OVERLAP))
-    .slice()
-    .sort((a, b) => a.start - b.start);
+  return runs.filter((run) => boxes.some((box) => overlapFraction(run, box) >= MIN_OVERLAP));
 }
