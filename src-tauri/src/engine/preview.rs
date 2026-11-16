@@ -119,6 +119,7 @@ fn rows_of(runs: &[TextRun], columns: &[Interval]) -> Vec<TextRun> {
                     w: run.w,
                     h: run.h,
                     edges: Vec::new(),
+                    math: Vec::new(),
                 });
                 last.push(run);
                 open.push(out.len() - 1);
