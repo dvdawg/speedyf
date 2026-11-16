@@ -346,6 +346,16 @@ body {
   filter: brightness(0.85) sepia(0.08);
 }
 
+/* The paper around a dimmed preview: the same filter worked out for white
+   (brightness 0.85, a touch of sepia), so the card and its picture match. */
+:root {
+  --preview-paper: var(--page-bg);
+}
+
+:root[data-theme='dark'][data-dim-pages='on'] {
+  --preview-paper: #d9d9d7;
+}
+
 :root[data-theme='dark'][data-dim-pages='on'] .page-loading .page-img {
   filter: none;
 }
@@ -1699,7 +1709,7 @@ html.is-dragging-tab * {
 .citation-preview-action.is-internal {
   position: relative;
   padding: 8px 8px 24px;
-  background: var(--page-bg);
+  background: var(--preview-paper);
 }
 
 .citation-preview-viewport {
@@ -1710,7 +1720,7 @@ html.is-dragging-tab * {
   max-height: min(342px, calc(100vh - 58px));
   overflow: auto;
   overscroll-behavior: contain;
-  background: var(--page-bg);
+  background: var(--preview-paper);
 }
 
 .citation-preview-skeleton {
@@ -1748,7 +1758,7 @@ html.is-dragging-tab * {
   width: 100%;
   max-height: 232px;
   object-fit: contain;
-  background: var(--page-bg);
+  background: var(--preview-paper);
   opacity: 0;
 }
 

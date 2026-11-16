@@ -142,7 +142,8 @@ export default function StatusBar() {
         </Show>
       </div>
       <div class="sb-right">
-        <Show when={doc()?.loaded && metrics()}>
+        {/* Engine diagnostics: for development builds only. */}
+        <Show when={import.meta.env.DEV && doc()?.loaded && metrics()}>
           {(value) => (
             <span
               class="sb-dim"
