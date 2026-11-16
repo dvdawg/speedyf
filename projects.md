@@ -805,6 +805,11 @@ project and for _All items_. The graph is the set's items as nodes and the
 citations between them as arrows, laid out by a small deterministic force
 simulation in plain SVG: click selects into the detail column, double-click
 opens, hover lights up a node's neighbours, nodes drag, the wheel zooms.
+Time is a soft bias of the layout, oldest roughly left, with no axis or
+hint drawn. A small graph is spread to fill the canvas: the distances
+between nodes stretch (at most 4 times, one axis at most 2.5 times the
+other) while dots and labels keep their size; dragged positions are kept
+unspread, so a resize only respreads.
 Citations that leave the set are counted, not drawn, and items whose text
 is not indexed yet are named, since their citations are not known rather
 than absent. One engine call returns nodes and edges, with the engine's one

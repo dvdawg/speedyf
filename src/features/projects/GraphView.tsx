@@ -25,6 +25,13 @@
  * motion is asked for. A dragged node stays where it was put, across
  * sessions (graphPositions.ts), until Reset layout.
  *
+ * A small graph fills its canvas the same way: its positions are spread,
+ * x and y each by a capped factor (graphFit.ts), before zoom and pan, and
+ * Fit frames the spread drawing. Positions are kept in layout units, so a
+ * resize respreads without rerunning the layout or touching a dragged
+ * node's stored place. Time order is only the layout's quiet bias; no
+ * axis or older / newer hint is drawn.
+ *
  * The data is read when the view mounts, when the scope changes, and on
  * every library:changed, sequenced like the store's reads so a slow earlier
  * answer never overwrites a later one.
@@ -108,11 +115,20 @@ import { DRAG_THRESHOLD } from './pointerDrag';
 import { projectsStore } from './projectsStore';
 import { citedWithLabel, citedWithText, withGhostId } from './CitedWith';
 import ViewMenu from './GraphViewMenu';
+import {
+  boundsOf,
+  fitTransform as frame,
+  NO_SPREAD,
+  spreadFor,
+  spreadPoint,
+  unspreadPoint,
+} from './graphFit';
+import type { Spread, Transform } from './graphFit';
 
-/** Room around the drawing when it is fitted, in pixels: the notes and the
- * controls sit along the top, the chip along the bottom.
- * Label widths are part of what is fitted, so this is clear space. */
-const PAD = { top: 44, right: 32, bottom: 36, left: 32 };
+/** Room around the drawing when it is fitted, in pixels: the controls and
+ * the chip sit along the top, the legend low on the right. Label widths
+ * are part of what is fitted, so this is clear space. */
+const PAD = { top: 44, right: 32, bottom: 28, left: 32 };
 /** What the canvas is taken to be before it has been measured, or where
  * nothing can measure it. */
 const FALLBACK = { width: 640, height: 480 };
@@ -164,12 +180,6 @@ const FIND_COLUMN = 24;
 /** Stepping to a match off the canvas zooms in to this, if further out:
  * below it a match is hard to pick out among its neighbours. */
 const READABLE_ZOOM = 0.6;
-
-interface Transform {
-  k: number;
-  x: number;
-  y: number;
-}
 
 const IDENTITY: Transform = { k: 1, x: 0, y: 0 };
 
@@ -550,6 +560,13 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
     right: radius(id) + (isGhost(id) ? 4 : LABEL_GAP + labelWidth(labelText().get(id) ?? '')),
     height: LABEL_HEIGHT,
   });
+  /** The canvas less the fit's padding: what the drawing may fill. */
+  const room = () => ({
+    width: Math.max(1, size().width - PAD.left - PAD.right),
+    height: Math.max(1, size().height - PAD.top - PAD.bottom),
+  });
+  /** Its shape, in tenths, so a few pixels do not count as a change. */
+  const roomAspect = () => Math.round((room().width / room().height) * 10) / 10;
   const layout = createMemo(() => {
     const centre = focus()?.paperId;
     return layoutGraph(
@@ -565,7 +582,10 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
         // No time pull without a year: where it sits is its citers' doing.
         ...ghosts().map((w) => ({ id: ghostId(w.key), year: w.year, box: boxOf(ghostId(w.key)) })),
       ],
-      allEdges()
+      allEdges(),
+      // The canvas's shape as the layout last saw it: a resize spreads the
+      // drawing (below) and never reruns this.
+      { aspect: untrack(roomAspect) }
     );
   });
   /** Every drawn id: the items, then the ghosts. */
@@ -575,15 +595,42 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
     ...loose().map((n) => n.id),
     ...withGhosts().map((w) => withGhostId(w.key)),
   ]);
-  /** The loose items' places: rows under the layout, in list order. */
+  /** The loose items per row under the layout, at its unspread width. */
+  const loosePerRow = () =>
+    Math.max(1, Math.floor(Math.max(layout().width, LOOSE_PITCH.x) / LOOSE_PITCH.x));
+  /** How far the drawing reaches past its outermost centres: the widest
+   * box each way, and the loose rows under it. */
+  const reach = () => {
+    let left = 0;
+    let right = 0;
+    for (const id of indexOf().keys()) {
+      const box = boxOf(id);
+      left = Math.max(left, box.left);
+      right = Math.max(right, box.right);
+    }
+    const rows = Math.ceil(loose().length / loosePerRow());
+    const below = rows === 0 ? 0 : LOOSE_PITCH.y * (0.5 + rows);
+    return { left, right, top: LABEL_HEIGHT / 2, bottom: LABEL_HEIGHT / 2 + below };
+  };
+  /** How far the layout's distances are stretched to fill the canvas: 1
+   * for a graph that fills it already (graphFit.ts). From the layout's own
+   * places, not the dragged ones, so a drag never rescales the rest. */
+  const spread = createMemo<Spread>(
+    () => spreadFor(boundsOf(layout().points), reach(), room()),
+    NO_SPREAD,
+    { equals: (a, b) => a.x === b.x && a.y === b.y }
+  );
+  /** The loose items' places, spread: rows of a fixed pitch under the
+   * spread layout, in list order. */
   const loosePlaces = createMemo(() => {
     const map = new Map<string, Point>();
     const items = loose();
     if (items.length === 0) return map;
-    const { points, width } = layout();
-    const left = points.length > 0 ? Math.min(...points.map((p) => p.x)) : 0;
-    const bottom = points.length > 0 ? Math.max(...points.map((p) => p.y)) : 0;
-    const perRow = Math.max(1, Math.floor(Math.max(width, LOOSE_PITCH.x) / LOOSE_PITCH.x));
+    const s = spread();
+    const { points } = layout();
+    const left = points.length > 0 ? Math.min(...points.map((p) => p.x)) * s.x : 0;
+    const bottom = points.length > 0 ? Math.max(...points.map((p) => p.y)) * s.y : 0;
+    const perRow = loosePerRow();
     items.forEach((n, i) => {
       map.set(n.id, {
         x: left + (i % perRow) * LOOSE_PITCH.x,
@@ -592,8 +639,15 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
     });
     return map;
   });
-  const basePosition = (id: string): Point =>
-    moved[id] ?? loosePlaces().get(id) ?? layout().points[indexOf().get(id) ?? 0] ?? { x: 0, y: 0 };
+  /** Where a node rests, spread. The layout and the dragged positions are
+   * in layout units; the spread is applied here and nowhere else. */
+  const basePosition = (id: string): Point => {
+    const placed = moved[id];
+    if (placed) return spreadPoint(placed, spread());
+    const loosePlace = loosePlaces().get(id);
+    if (loosePlace) return loosePlace;
+    return spreadPoint(layout().points[indexOf().get(id) ?? 0] ?? { x: 0, y: 0 }, spread());
+  };
   /** A cited-with ghost sits near the middle of its drawn members, turned
    * by its rank so two never land on one spot; it follows them when they
    * are dragged. */
@@ -616,15 +670,18 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
       y: y / members.length + Math.sin(angle) * WITH_REACH,
     };
   };
+  /** Where a node rests, spread, before zoom and pan. */
   const positionOf = (id: string): Point =>
-    withOf().has(id) ? (moved[id] ?? withPlace(id)) : basePosition(id);
-  /** Layout space before zoom and pan; `s` < 1 draws the arrival's
+    withOf().has(id) && !moved[id] ? withPlace(id) : basePosition(id);
+  /** A spread position before zoom and pan; `s` < 1 draws the arrival's
    * compact start, gathered toward the middle of the drawing. */
   const toPixels = (u: Point, s = 1): Point => {
     if (s >= 1) return u;
     const { width, height } = layout();
+    const cx = (width / 2) * spread().x;
+    const cy = (height / 2) * spread().y;
     const f = 0.3 + 0.7 * s;
-    return { x: width / 2 + (u.x - width / 2) * f, y: height / 2 + (u.y - height / 2) * f };
+    return { x: cx + (u.x - cx) * f, y: cy + (u.y - cy) * f };
   };
   /** Where each node rests, before zoom: what labels and Fit go by. */
   const rest = createMemo(() => {
@@ -985,21 +1042,19 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
       minY = centre.y - hy;
       maxY = centre.y + hy;
     }
-    const width = Math.max(1, maxX - minX);
-    const height = Math.max(1, maxY - minY);
-    const availX = Math.max(1, size().width - PAD.left - PAD.right);
-    const availY = Math.max(1, size().height - PAD.top - PAD.bottom);
-    // Never past 1: the layout is spaced for its labels at 1, and the
-    // label quota counts zoom from there.
-    const k = clamp(Math.min(availX / width, availY / height), MIN_ZOOM, 1);
-    return {
-      k,
-      x: PAD.left + (availX - width * k) / 2 - minX * k,
-      y: PAD.top + (availY - height * k) / 2 - minY * k,
-    };
+    // Never past zoom 1: the layout is spaced for its labels at 1, and the
+    // label quota counts zoom from there. The spread fills the rest.
+    return frame({ minX, minY, maxX, maxY }, size(), PAD, MIN_ZOOM);
   };
-  const fit = () => animateView(fitTransform());
+  /** Whether the view is as Fit left it: a resize then fits again. A
+   * pan, a zoom or a find step lets it go. */
+  let fitted = false;
+  const fit = () => {
+    fitted = true;
+    animateView(fitTransform());
+  };
   function arrive() {
+    fitted = true;
     setView(fitTransform());
     stopSettleAnimation?.();
     if (reducedMotion()) {
@@ -1011,7 +1066,31 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
       stopSettleAnimation = null;
     });
   }
+  // A resize changes the spread, never the layout. A view as Fit left it
+  // is fitted again; one the user moved keeps the point at the middle of
+  // the canvas there. At once: a resize is already continuous motion.
+  createEffect(
+    on(
+      spread,
+      (next, prev) => {
+        if (!prev || !untrack(graph)) return;
+        if (fitted) {
+          stopViewTween();
+          setView(untrack(fitTransform));
+          return;
+        }
+        const t = untrack(view);
+        const { width: W, height: H } = untrack(size);
+        const ux = (W / 2 - t.x) / t.k / prev.x;
+        const uy = (H / 2 - t.y) / t.k / prev.y;
+        stopViewTween();
+        setView({ k: t.k, x: W / 2 - ux * next.x * t.k, y: H / 2 - uy * next.y * t.k });
+      },
+      { defer: true }
+    )
+  );
   const zoomBy = (factor: number) => {
+    fitted = false;
     const t = viewTarget ?? view();
     const cx = size().width / 2;
     const cy = size().height / 2;
@@ -1107,9 +1186,14 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
           stopViewTween();
           stopSettle();
         }
+        // On screen the node is spread; it is kept in layout units, so
+        // it stays put under a later spread.
         const k = view().k;
         const u = positionOf(node.id);
-        setMoved(node.id, { x: u.x + (x - lastX) / k, y: u.y + (y - lastY) / k });
+        setMoved(
+          node.id,
+          unspreadPoint({ x: u.x + (x - lastX) / k, y: u.y + (y - lastY) / k }, spread())
+        );
         lastX = x;
         lastY = y;
       },
@@ -1135,6 +1219,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
     press(e, svg, {
       move: (x, y) => {
         if (!panning()) {
+          fitted = false;
           setPanning(true);
           setHover(null);
           dropCard();
@@ -1160,6 +1245,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
     const t = view();
     const k = clamp(t.k * Math.exp(-delta * 0.0015), MIN_ZOOM, MAX_ZOOM);
     if (k === t.k) return;
+    fitted = false;
     const ratio = k / t.k;
     setView({ k, x: mx - (mx - t.x) * ratio, y: my - (my - t.y) * ratio });
   };
@@ -1190,6 +1276,7 @@ export default function GraphView(props: { onMoveFocus?: (dir: -1 | 1) => void }
     const k = off && t.k < READABLE_ZOOM ? READABLE_ZOOM : t.k;
     const cx = PAD.left + (W - PAD.left - PAD.right) / 2;
     const cy = PAD.top + (H - PAD.top - PAD.bottom) / 2;
+    fitted = false;
     animateView({ k, x: cx - p.x * k, y: cy - p.y * k });
   };
   const stepFind = (dir: 1 | -1) => {

@@ -548,6 +548,117 @@ describe('GraphView zoom and positions', () => {
     expect(where(fourth.container, 'a')).toBe(rest);
   });
 
+  it('spreads a small graph over a large canvas, dots and labels their size', async () => {
+    // A canvas too small to spread into, then a large one.
+    const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(240);
+    const height = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(200);
+    const small = await drawn();
+    const gap = (root: HTMLElement) => {
+      const a = at(root, 'a');
+      const g = at(root, 'g');
+      return { x: Math.abs(a.x - g.x), y: Math.abs(a.y - g.y) };
+    };
+    const dot = (root: HTMLElement) => nodeFor(root, 'a').querySelector('.graph-node-dot')!;
+    const before = gap(small.container);
+    const radius = dot(small.container).getAttribute('r');
+    const labelX = nodeFor(small.container, 'a').querySelector('text')!.getAttribute('x');
+    small.unmount();
+
+    width.mockReturnValue(1700);
+    height.mockReturnValue(1300);
+    const big = await drawn();
+    const after = gap(big.container);
+    expect(Math.hypot(after.x, after.y)).toBeGreaterThan(2 * Math.hypot(before.x, before.y));
+    expect(dot(big.container).getAttribute('r')).toBe(radius);
+    expect(nodeFor(big.container, 'a').querySelector('text')!.getAttribute('x')).toBe(labelX);
+    // Still framed: every node inside the canvas less its padding.
+    const view = /translate\(([-\d.e]+) ([-\d.e]+)\)/.exec(
+      big.container.querySelector('.graph-svg > g')!.getAttribute('transform')!
+    )!;
+    for (const id of ['a', 'b', 'g']) {
+      const p = at(big.container, id);
+      const x = p.x + Number(view[1]);
+      const y = p.y + Number(view[2]);
+      expect(x).toBeGreaterThan(0);
+      expect(x).toBeLessThan(1700);
+      expect(y).toBeGreaterThan(0);
+      expect(y).toBeLessThan(1300);
+    }
+
+    // A drag moves the node as far as the pointer on screen, and is kept
+    // in layout units: less than that, by the spread.
+    const kept = () =>
+      (
+        JSON.parse(storage.getItem(STORAGE_KEY)!) as Record<
+          string,
+          { positions: Record<string, [number, number]> }
+        >
+      ).p1!.positions.a!;
+    drag(nodeFor(big.container, 'a'), 60, 40);
+    const first = kept();
+    const screenFirst = at(big.container, 'a');
+    drag(nodeFor(big.container, 'a'), 60, 40);
+    const second = kept();
+    const screenSecond = at(big.container, 'a');
+    expect(screenSecond.x - screenFirst.x).toBeCloseTo(60, 6);
+    expect(screenSecond.y - screenFirst.y).toBeCloseTo(40, 6);
+    expect(second[0] - first[0]).toBeLessThan(60 / 1.5);
+    expect(second[1] - first[1]).toBeLessThan(40);
+    expect(second[1] - first[1]).toBeGreaterThan(0);
+  });
+
+  it('respreads on a resize and fits again, the layout untouched', async () => {
+    const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(240);
+    const height = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(200);
+    const observers: (() => void)[] = [];
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: () => void) {
+          observers.push(callback);
+        }
+        observe() {}
+        disconnect() {}
+      }
+    );
+    const { container } = await drawn();
+    const calls = libraryGraph.mock.calls.length;
+    const span = () =>
+      Math.hypot(
+        at(container, 'a').x - at(container, 'g').x,
+        at(container, 'a').y - at(container, 'g').y
+      );
+    const before = span();
+    const offset = () =>
+      /translate\(([-\d.e]+) ([-\d.e]+)\)/
+        .exec(container.querySelector('.graph-svg > g')!.getAttribute('transform')!)!
+        .slice(1)
+        .map(Number);
+
+    width.mockReturnValue(1700);
+    height.mockReturnValue(1300);
+    for (const observe of observers) observe();
+    expect(span()).toBeGreaterThan(2 * before);
+    expect(libraryGraph.mock.calls.length).toBe(calls);
+    // Fitted again: the drawing's middle near the middle of the canvas.
+    const [x, y] = offset();
+    const xs = ['a', 'b', 'g'].map((id) => at(container, id).x + x!);
+    const ys = ['a', 'b', 'g'].map((id) => at(container, id).y + y!);
+    expect(Math.min(...xs)).toBeGreaterThan(0);
+    expect(Math.max(...xs)).toBeLessThan(1700);
+    expect(Math.min(...ys)).toBeGreaterThan(0);
+    expect(Math.max(...ys)).toBeLessThan(1300);
+
+    // Once zoomed by hand, a resize keeps the zoom.
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }));
+    const zoomed = span();
+    width.mockReturnValue(400);
+    height.mockReturnValue(320);
+    for (const observe of observers) observe();
+    expect(span()).toBeLessThan(zoomed);
+    expect(span()).toBeGreaterThan(before);
+  });
+
   it('works without storage', async () => {
     vi.spyOn(storage, 'getItem').mockImplementation(() => {
       throw new Error('denied');
