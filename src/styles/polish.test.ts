@@ -147,21 +147,34 @@ describe('polish: rows', () => {
   });
 });
 
-describe('polish: dim pages', () => {
-  it('filters the rasters only under the dark theme, never by an overlay', () => {
-    const dimRules = [...css.matchAll(/([^{}]*data-dim-pages[^{}]*)\{([^}]*)\}/g)];
-    expect(dimRules.length).toBeGreaterThan(0);
-    for (const [, selector] of dimRules) {
+describe('polish: SleepyF', () => {
+  it('filters the rasters only under SleepyF, never by an overlay, by the warmth', () => {
+    const rules = [...css.matchAll(/([^{}]*data-sleepy='on'[^{}]*)\{([^}]*)\}/g)];
+    const filters = rules.filter(([, , body]) => body!.includes('brightness('));
+    expect(filters.length).toBeGreaterThan(0);
+    for (const [, selector] of filters) {
       for (const part of selector!.split(/,(?![^(]*\))/)) {
-        expect(part).toContain(":root[data-theme='dark'][data-dim-pages='on']");
+        expect(part).toContain(":root[data-sleepy='on']");
       }
     }
-    const filters = dimRules.map(([, , body]) => body!).join('\n');
-    const brightness = Number(/brightness\(([\d.]+)\)/.exec(filters)![1]);
-    const sepia = Number(/sepia\(([\d.]+)\)/.exec(filters)![1]);
-    expect(brightness).toBeGreaterThanOrEqual(0.8);
-    expect(brightness).toBeLessThan(1);
-    expect(sepia).toBeLessThan(0.1);
+    const body = filters.map(([, , b]) => b!).join('\n');
+    expect(body).toContain('var(--sleepy-warmth)');
+    // the dimmest the slider goes still leaves a readable page
+    const at = (w: number) => {
+      const [, base, step] = /brightness\(calc\(([\d.]+) - ([\d.]+) \* var/.exec(body)!;
+      return Number(base) - Number(step) * w;
+    };
+    expect(at(0)).toBeLessThan(1);
+    expect(at(1)).toBeGreaterThanOrEqual(0.7);
+  });
+
+  it('is a dark theme of its own: every shell token the dark theme sets', () => {
+    const dark = /:root\[data-theme='dark'\]\s*\{([^}]*)\}/.exec(css)![1]!;
+    const sleepy = /:root\[data-sleepy='on'\]\s*\{([^}]*)\}/.exec(css)![1]!;
+    for (const token of ['--bg', '--bg-elev', '--viewer-bg', '--text', '--text-dim', '--accent']) {
+      expect(dark).toContain(`${token}:`);
+      expect(sleepy).toContain(`${token}:`);
+    }
   });
 });
 

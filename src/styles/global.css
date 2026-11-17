@@ -322,21 +322,25 @@ body {
   box-shadow: var(--focus-ring);
 }
 
-/* ---------- polish: dim pages ----------
-   Night reading: the rasters a little darker and warmer, under the dark
-   theme only (App sets the flag only then, and inversion clears it). A
+/* ---------- SleepyF ----------
+   Night reading: the rasters darker and warmer, by --sleepy-warmth (0 to 1,
+   the Settings slider; App sets it with the flag). SleepyF is always the
+   dark theme, inverted pages included: there it warms the light ink. A
    per-pixel filter on the images, not an overlay: text stays as crisp as
-   the raster, figures keep their hues, and the text, search and annotation
-   layers above keep their own colours. Blank and loading sheets dim with
-   them; the preview inside a loading sheet is dimmed once, by its sheet.
-   Every other picture of a page dims too: figure and tab thumbnails, first
-   pages in the library, page crops in notes and reviews. A hover preview
-   dims as a whole sheet - the picture, its stitched pieces and the paper
-   around them under one filter - so the paper always matches the picture. */
-:root[data-theme='dark'][data-dim-pages='on']
-  :is(.page-img, .page-tile, .page-blank, .page-loading),
-:root[data-theme='dark'][data-dim-pages='on'] :is(.thumb-btn img, .thumb-blank),
-:root[data-theme='dark'][data-dim-pages='on']
+   the raster, and the text, search and annotation layers above keep their
+   own colours. Blank and loading sheets dim with them; the preview inside a
+   loading sheet is dimmed once, by its sheet. Every other picture of a page
+   dims too: figure and tab thumbnails, first pages in the library, page
+   crops in notes and reviews. A hover preview dims as a whole sheet - the
+   picture, its stitched pieces and the paper around them under one filter -
+   so the paper always matches the picture. */
+:root {
+  --sleepy-warmth: 0.5;
+}
+
+:root[data-sleepy='on'] :is(.page-img, .page-tile, .page-blank, .page-loading),
+:root[data-sleepy='on'] :is(.thumb-btn img, .thumb-blank),
+:root[data-sleepy='on']
   :is(
     .citation-preview-action.is-internal,
     .note-preview-image,
@@ -346,11 +350,46 @@ body {
     .np-image,
     .mk-crop img
   ) {
-  filter: brightness(0.85) sepia(0.08);
+  filter: brightness(calc(0.92 - 0.2 * var(--sleepy-warmth)))
+    sepia(calc(0.05 + 0.35 * var(--sleepy-warmth)));
 }
 
-:root[data-theme='dark'][data-dim-pages='on'] .page-loading .page-img {
+:root[data-sleepy='on'] .page-loading .page-img {
   filter: none;
+}
+
+/* Pens drawn on the page, a little less vivid against a dimmed sheet. */
+:root[data-sleepy='on'] :is(.annot-highlight, .annot-shape) {
+  filter: saturate(0.7);
+}
+
+/* The shell: the dark theme, warmer, its text and accent quieter. */
+:root[data-sleepy='on'] {
+  --bg: #1a1816;
+  --bg-elev: #23201d;
+  --bg-inset: #1d1b19;
+  --viewer-bg: #0e0d0c;
+  --border: #38332e;
+  --text: #d8d1c6;
+  --text-dim: #958c81;
+  --accent: #a093d4;
+  --accent-soft: rgba(160, 147, 212, 0.16);
+  --accent-text: #15131a;
+  --warn: #cf9a55;
+  --danger: #d97770;
+}
+
+/* Into and out of SleepyF in a short fade rather than a flash. */
+@media (prefers-reduced-motion: no-preference) {
+  :is(.page-img, .page-tile, .page-blank, .thumb-btn img, .figure-thumb, .tab-preview-page) {
+    transition: filter 300ms ease-out;
+  }
+
+  body {
+    transition:
+      background-color 300ms ease-out,
+      color 300ms ease-out;
+  }
 }
 
 /* ---------- shell ---------- */
@@ -630,6 +669,24 @@ body {
   max-width: 620px;
   padding-bottom: 16px;
   border-bottom: 1px solid var(--border);
+}
+
+/* A setting that belongs to the one above it: SleepyF's schedule and
+ * warmth, indented under it. */
+.home-setting.home-setting-sub {
+  padding-left: 16px;
+}
+
+.home-setting input[type='range'] {
+  width: 140px;
+  accent-color: var(--accent);
+}
+
+.home-setting-times {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .home-setting-text {
@@ -3185,6 +3242,21 @@ html.is-dragging-tab * {
 .sb-clear {
   width: 16px;
   font-size: 14px;
+}
+
+/* SleepyF's reminder that it is on, and its off switch. */
+.sb-sleepy {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  cursor: pointer;
+}
+
+.sb-sleepy:hover {
+  color: var(--text);
 }
 
 /* ---------- empty state / drop ---------- */
