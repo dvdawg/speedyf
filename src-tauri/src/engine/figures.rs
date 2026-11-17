@@ -224,6 +224,11 @@ pub fn parse_caption(line: &str) -> Option<(String, String)> {
     {
         return None;
     }
+    // A bracket closing after the number ends a note that names it - an
+    // annotated bibliography's "... see Algorithm 1.]" - not a caption.
+    if after.trim_start_matches(['.', ':', ')']).starts_with(']') {
+        return None;
+    }
 
     let printed = &trimmed[..word.len()];
     let title = after
@@ -466,6 +471,9 @@ mod tests {
         // naming a figure would otherwise fill the panel with duplicates.
         assert_eq!(parse_caption("Figure 2 computes r(z) numerically"), None);
         assert_eq!(parse_caption("Figures 2 and 3 show the same"), None);
+        // The end of a bibliography entry's note, broken before its last
+        // words: "[... which forces the / Algorithm 1.]".
+        assert_eq!(parse_caption("Algorithm 1.]"), None);
     }
 
     #[test]
