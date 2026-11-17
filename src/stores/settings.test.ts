@@ -2,13 +2,24 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   applyPageAppearance,
   effectiveTheme,
-  pagesDimmed,
+  inSleepyWindow,
   pagesInverted,
   settings,
+  sleepyActive,
+  toggleSleepy,
   updateSettings,
 } from './settings';
 
-afterEach(() => updateSettings({ theme: 'system', invertPages: false, dimPages: false }));
+afterEach(() =>
+  updateSettings({
+    theme: 'system',
+    invertPages: false,
+    sleepyf: 'off',
+    sleepyWarmth: 50,
+    sleepyFrom: '22:00',
+    sleepyTo: '07:00',
+  })
+);
 
 describe('invertPages', () => {
   it('is off until it is asked for', () => {
@@ -44,35 +55,57 @@ describe('invertPages', () => {
   });
 });
 
-describe('dimPages', () => {
-  const appearance = () => {
-    const root = { dataset: {} as DOMStringMap } as HTMLElement;
+describe('SleepyF', () => {
+  const appearance = (): Record<string, string | undefined> => {
+    const props: Record<string, string> = {};
+    const root = {
+      dataset: {} as DOMStringMap,
+      style: { setProperty: (k: string, v: string) => (props[k] = v) },
+    } as unknown as HTMLElement;
     applyPageAppearance(root);
-    return root.dataset;
+    return { ...root.dataset, warmth: props['--sleepy-warmth'] };
   };
 
   it('is off until it is asked for', () => {
-    expect(settings.dimPages).toBe(false);
-    expect(pagesDimmed()).toBe(false);
+    expect(settings.sleepyf).toBe('off');
+    expect(sleepyActive()).toBe(false);
+    expect(appearance().sleepy).toBe('off');
   });
 
-  it('dims only under the dark theme', () => {
-    updateSettings({ dimPages: true, theme: 'light' });
-    expect(pagesDimmed()).toBe(false);
-    expect(appearance().dimPages).toBe('off');
-
-    updateSettings({ theme: 'dark' });
-    expect(pagesDimmed()).toBe(true);
-    expect(appearance()).toMatchObject({ theme: 'dark', dimPages: 'on', invertPages: 'off' });
+  it('is always dark, whatever the theme', () => {
+    updateSettings({ theme: 'light', sleepyf: 'on' });
+    expect(effectiveTheme()).toBe('dark');
+    expect(appearance()).toMatchObject({ theme: 'dark', sleepy: 'on', warmth: '0.5' });
+    updateSettings({ sleepyf: 'off' });
+    expect(effectiveTheme()).toBe('light');
   });
 
-  it('gives way to inversion', () => {
-    updateSettings({ dimPages: true, invertPages: true, theme: 'dark' });
-    expect(pagesDimmed()).toBe(false);
-    expect(appearance()).toMatchObject({ invertPages: 'on', dimPages: 'off' });
-    // Still standing: turning inversion off brings the dimming back.
-    updateSettings({ invertPages: false });
-    expect(appearance().dimPages).toBe('on');
+  it('dims inverted pages too', () => {
+    updateSettings({ sleepyf: 'on', invertPages: true, theme: 'light' });
+    expect(appearance()).toMatchObject({ invertPages: 'on', sleepy: 'on' });
+  });
+
+  it('passes its warmth to the stylesheet', () => {
+    updateSettings({ sleepyf: 'on', sleepyWarmth: 80 });
+    expect(appearance().warmth).toBe('0.8');
+  });
+
+  it('toggles outright when not scheduled', () => {
+    toggleSleepy();
+    expect(settings.sleepyf).toBe('on');
+    toggleSleepy();
+    expect(settings.sleepyf).toBe('off');
+  });
+
+  it('holds a hand toggle while scheduled, without changing the mode', () => {
+    // a window that is never in: the schedule says off
+    updateSettings({ sleepyf: 'scheduled', sleepyFrom: '03:00', sleepyTo: '03:00' });
+    expect(sleepyActive()).toBe(false);
+    toggleSleepy();
+    expect(sleepyActive()).toBe(true);
+    expect(settings.sleepyf).toBe('scheduled');
+    toggleSleepy();
+    expect(sleepyActive()).toBe(false);
   });
 
   it('is saved with the other settings', () => {
@@ -83,10 +116,31 @@ describe('dimPages', () => {
       value: { setItem: (k: string, v: string) => (saved[k] = v), getItem: () => null },
     });
     try {
-      updateSettings({ dimPages: true });
-      expect(JSON.parse(saved['speedyf-settings']!).dimPages).toBe(true);
+      updateSettings({ sleepyf: 'scheduled', sleepyWarmth: 70 });
+      const stored = JSON.parse(saved['speedyf-settings']!);
+      expect(stored).toMatchObject({ sleepyf: 'scheduled', sleepyWarmth: 70 });
+      expect(stored.sleepyFrom).toBe('22:00');
+      expect(stored.sleepyTo).toBe('07:00');
     } finally {
       Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: real });
     }
+  });
+});
+
+describe('inSleepyWindow', () => {
+  const at = (h: number, m = 0) => h * 60 + m;
+
+  it('runs past midnight when it ends earlier than it starts', () => {
+    expect(inSleepyWindow('22:00', '07:00', at(23))).toBe(true);
+    expect(inSleepyWindow('22:00', '07:00', at(3))).toBe(true);
+    expect(inSleepyWindow('22:00', '07:00', at(7))).toBe(false);
+    expect(inSleepyWindow('22:00', '07:00', at(12))).toBe(false);
+    expect(inSleepyWindow('22:00', '07:00', at(22))).toBe(true);
+  });
+
+  it('runs within a day otherwise, and is never in when empty', () => {
+    expect(inSleepyWindow('13:00', '15:30', at(14))).toBe(true);
+    expect(inSleepyWindow('13:00', '15:30', at(15, 30))).toBe(false);
+    expect(inSleepyWindow('13:00', '13:00', at(13))).toBe(false);
   });
 });
