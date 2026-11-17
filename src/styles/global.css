@@ -121,6 +121,17 @@ body {
   user-select: none;
 }
 
+/* Whatever takes typing is selectable, whatever its container says. WebKit
+   reads only the prefixed form, and under body's -webkit-user-select: none
+   a field focused from script - the note's line taken up on a click - can
+   hold the focus without ever drawing its caret. */
+input,
+textarea,
+[contenteditable='true'] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -7442,6 +7453,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   outline: none;
   background: transparent;
   color: var(--text);
+  caret-color: var(--text);
   font: inherit;
   line-height: inherit;
   resize: none;
@@ -7462,6 +7474,12 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   background: transparent;
   -webkit-appearance: none;
   appearance: none;
+}
+
+/* At least a line, so a height measured before the line was laid out
+   cannot leave it, and its caret, zero tall. */
+.note-field {
+  min-height: 1.55em;
 }
 
 .note-field::placeholder {
