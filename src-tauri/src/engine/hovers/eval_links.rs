@@ -221,7 +221,7 @@ fn starts_statement(text: &str) -> bool {
     let original = text.split_whitespace().nth(2).unwrap_or("");
     THEOREM_WORDS.contains(&word.trim_end_matches('.'))
         && is_number(number)
-        && !number.ends_with([',', ')', ';'])
+        && !number.trim_end_matches('.').ends_with([',', ')', ';'])
         && !original.starts_with(char::is_lowercase)
 }
 
@@ -518,11 +518,12 @@ fn statement_truth(pages: &[&Page], head: usize) -> Truth {
         let l = &here.lines[next.1];
         let t = text_of(here, next.1);
         // An item of a list in prose, not a piece of a display ("h) <= L").
-        let item = starts_item(&t) && !l.is_display() && !in_display(here, next.1);
+        let labelled_item = starts_item(&t);
+        let item = labelled_item && !l.is_display() && !in_display(here, next.1);
         // "1. Dense family ..." in a statement is an item of its list, not
         // a heading: it follows a colon or other items, or runs long, in
         // the body's size.
-        let listed = item
+        let listed = labelled_item
             && (here.body_size <= 0.0 || l.size <= 1.05 * here.body_size)
             && (in_list
                 || text_of(prev_page, at.1).ends_with(':')
