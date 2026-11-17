@@ -1277,7 +1277,11 @@ function EditorBody(props: BodyProps) {
                         </Show>
                       }
                     >
-                      <div class="note-block is-active" data-block={block.id}>
+                      <div
+                        class="note-block is-active"
+                        classList={{ 'is-empty': liveRaw() === '' }}
+                        data-block={block.id}
+                      >
                         <textarea
                           ref={(el) => {
                             field = el;

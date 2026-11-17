@@ -7489,6 +7489,39 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   padding: 0 3px;
 }
 
+/* An empty line's caret, drawn here. WKWebView on recent macOS draws the
+   caret itself from the caret's rectangle, and WebKit gives an empty
+   rectangle for a caret in an empty field, so an empty line showed none
+   until a character was typed. Where the native caret would be: the
+   field's text starts at the block's edge. Once the line has text the
+   native caret is back and this goes. */
+.note-block.is-active.is-empty:has(> .note-field:focus)::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.18em;
+  width: 1.5px;
+  height: 1.2em;
+  background: var(--text);
+  pointer-events: none;
+}
+
+.note-block.is-active.is-empty:has(> .note-field.is-mono:focus)::before {
+  height: 1.1em;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .note-block.is-active.is-empty:has(> .note-field:focus)::before {
+    animation: note-caret-blink 1.05s step-end infinite;
+  }
+}
+
+@keyframes note-caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
 .note-field::placeholder {
   color: var(--text-dim);
   opacity: 1;

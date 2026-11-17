@@ -134,6 +134,8 @@ describe('the note editor', () => {
     expect(state.text).toBe('first line\nsecond line\n');
     const next = view.container.querySelector<HTMLTextAreaElement>('.note-field')!;
     expect(next.value).toBe('');
+    // An empty line draws its own caret (WebKit draws none there).
+    expect(next.closest('.note-block')!.classList.contains('is-empty')).toBe(true);
     // Undo takes the split back, then the typing.
     fireEvent.keyDown(next, { key: 'z', metaKey: true, ctrlKey: true });
     await settle();
