@@ -757,8 +757,32 @@ fn answers_to(page: &Page, rect: Rect, named: &Named) -> bool {
                     || text.trim_start().starts_with(surname.as_str()))
         }
         Named::NumberedCitation(key) => text.contains(&format!("[{key}]")),
+        // A heading or statement: its first line carries the number - not
+        // a subsection's heading under a section's ("B", then "B.1").
+        Named::Statement(kind, number) if *kind != Kind::Equation => {
+            let first = (0..page.lines.len())
+                .filter(|&i| {
+                    let l = &page.lines[i];
+                    let centre = (l.top + l.bottom) / 2.0;
+                    !l.flags.furniture
+                        && centre >= rect[1]
+                        && centre <= rect[1] + rect[3]
+                        && l.x1.min(rect[0] + rect[2]) - l.x0.max(rect[0]) > 0.0
+                })
+                .max_by(|&a, &b| page.lines[a].top.total_cmp(&page.lines[b].top));
+            first.is_some_and(|i| {
+                let rect = line_rect(&page.lines[i]);
+                carries(page, rect, *kind, number)
+            })
+        }
         _ => false,
     }
+}
+
+/// Whether what the words name can lie inside another target: a numbered
+/// heading or statement, not a display row or a reference.
+fn nested(named: Option<&Named>) -> bool {
+    matches!(named, Some(Named::Statement(kind, _)) if *kind != Kind::Equation)
 }
 
 fn overlaps(a: Rect, b: Rect) -> bool {
@@ -818,9 +842,12 @@ pub fn link_preview(
             .is_some_and(|(page, named)| answers_to(page, rect, named))
     };
     let target = match (by_anchor, by_words) {
-        // They disagree: the destination is coarse, the words are not.
+        // They disagree: the destination is coarse, the words are not. A
+        // heading's anchor is raised into the heading above it: the words
+        // name a statement or heading the anchor's does not open with.
         (Some(anchor), Some(words))
-            if !overlaps(anchor.rect, words.rect) && !answers(anchor.rect) =>
+            if !answers(anchor.rect)
+                && (!overlaps(anchor.rect, words.rect) || nested(named.as_ref())) =>
         {
             words
         }
@@ -1537,6 +1564,50 @@ mod tests {
         );
         assert!(
             !lines.iter().any(|l| l.starts_with("The proof")),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn a_subsections_anchor_raised_into_its_sections_heading() {
+        // "B" opens straight onto "B.1"; hyperref raised B.1's anchor
+        // into B's heading. The words name B.1: the preview opens there.
+        let mut b = Builder::new();
+        for y in [700.0, 688.0, 676.0] {
+            b.line(
+                y,
+                BODY,
+                "Running text of the body before the appendix, set across.",
+            );
+        }
+        b.line(650.0, BOLD, "B Proofs for Section 2");
+        b.line(630.0, BOLD, "B.1 Proof of the first lemma");
+        for k in 0..6 {
+            let y = 612.0 - 12.0 * k as f32;
+            b.line(
+                y,
+                BODY,
+                "Running text of the proof itself goes on here, set across.",
+            );
+        }
+        let page = b.page();
+        let words = words("deferred to Appendix ", "B.1");
+        let target = link_preview(
+            Some(&page),
+            &[],
+            612.0,
+            792.0,
+            Some(72.0),
+            Some(652.0),
+            Some(&words),
+        );
+        let lines = lines_in(&page, target.rect);
+        assert!(
+            lines.iter().any(|l| l.starts_with("B.1 Proof")),
+            "{lines:?}"
+        );
+        assert!(
+            !lines.iter().any(|l| l.starts_with("B Proofs")),
             "{lines:?}"
         );
     }
