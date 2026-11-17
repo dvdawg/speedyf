@@ -1126,13 +1126,36 @@ fn caption_head(page: &Page, line: usize) -> Option<Head> {
     })
 }
 
+/// Where a line's own text starts past a review copy's line number set in
+/// the margin before it ("224 Corollary 7 ..."): digits alone, a space,
+/// then more. None when the line opens with no such number.
+fn past_line_number(page: &Page, line: usize) -> Option<usize> {
+    let l = &page.lines[line];
+    let text = &page.text;
+    let digits = (l.start..l.end)
+        .take_while(|&i| text[i].is_ascii_digit())
+        .count();
+    if !(1..=4).contains(&digits) || at(text, l.start + digits) != Some(' ') {
+        return None;
+    }
+    let start = skip_spaces(text, l.start + digits);
+    (start < l.end).then_some(start)
+}
+
 fn theorem_head(page: &Page, line: usize) -> Option<Head> {
+    let start = page.lines[line].start;
+    theorem_head_at(page, line, start).or_else(|| {
+        past_line_number(page, line).and_then(|start| theorem_head_at(page, line, start))
+    })
+}
+
+fn theorem_head_at(page: &Page, line: usize, start: usize) -> Option<Head> {
     let l = &page.lines[line];
     let text = &page.text;
     let (word, kind) = THEOREM_WORDS
         .iter()
-        .find(|(w, _)| starts_with(text, l.start, w))?;
-    let after = l.start + word.chars().count();
+        .find(|(w, _)| starts_with(text, start, w))?;
+    let after = start + word.chars().count();
     if is_word(at(text, after)) || at(text, after) != Some(' ') {
         return None;
     }
@@ -1142,29 +1165,49 @@ fn theorem_head(page: &Page, line: usize) -> Option<Head> {
         return None;
     }
     let (term, after_term) = terminator(text, parsed.end, l.end);
-    if matches!(term, Terminator::None) || page.continues_previous(line) {
+    if page.continues_previous(line) {
         return None;
     }
     // The label is set in a face of its own - bold, small capitals, italic
     // against an upright statement. Without that it is a sentence that
     // happens to open a line.
-    let label_font = page.font_of(l.start, parsed.end)?;
-    let following = font_after(page, line, after_term)?;
+    let label_font = page.font_of(start, parsed.end)?;
+    let mut following = font_after(page, line, after_term)?;
+    // A name in parentheses set in the label's own face (JMLR: "Theorem 19
+    // (Regression)", all bold): the statement's face comes after it.
+    if following == label_font && at(text, after_term) == Some('(') {
+        if let Some(close) = (after_term..l.end).find(|&i| text[i] == ')') {
+            following = font_after(page, line, close + 1)?;
+        }
+    }
     if label_font == following {
+        return None;
+    }
+    // Words straight after the number ("Lemma 10 Fix ...", JMLR's style)
+    // make a head only under a bold label: a sentence opening a line in
+    // another face ("Theorem 3 shows") is not one.
+    if matches!(term, Terminator::None) && !page.all_bold(start, parsed.end) {
         return None;
     }
     Some(Head {
         kind: *kind,
         label: parsed.label,
         line,
-        label_range: (l.start, parsed.end),
+        label_range: (start, parsed.end),
     })
 }
 
 fn section_head(page: &Page, line: usize) -> Option<Head> {
+    let start = page.lines[line].start;
+    section_head_at(page, line, start).or_else(|| {
+        past_line_number(page, line).and_then(|start| section_head_at(page, line, start))
+    })
+}
+
+fn section_head_at(page: &Page, line: usize, from: usize) -> Option<Head> {
     let l = &page.lines[line];
     let text = &page.text;
-    let mut start = l.start;
+    let mut start = from;
     let mut appendix = false;
     for prefix in ["Appendix ", "APPENDIX "] {
         if starts_with(text, start, prefix) {
@@ -1257,7 +1300,7 @@ fn section_head(page: &Page, line: usize) -> Option<Head> {
         kind: Kind::Section,
         label,
         line,
-        label_range: (l.start, end),
+        label_range: (from, end),
     })
 }
 
@@ -2287,6 +2330,42 @@ mod tests {
         });
         let found: Vec<(Kind, &str)> = defs.iter().map(|d| (d.kind, d.label.as_str())).collect();
         assert_eq!(found, vec![(Kind::Theorem, "2.1"), (Kind::Lemma, "4")]);
+    }
+
+    #[test]
+    fn jmlr_heads_without_a_full_stop_and_with_a_bold_name() {
+        let (_, defs) = definitions(|b| {
+            b.line(700.0, BODY, "Some text before it.");
+            let x = b.text(72.0, 680.0, BOLD, "Lemma 10");
+            b.text(x, 680.0, ITALIC, " Fix T and run the algorithm.");
+            b.newline();
+            let x = b.text(72.0, 660.0, BOLD, "Theorem 19 (Regression)");
+            b.text(x, 660.0, ITALIC, " Suppose every class is learnable.");
+            b.newline();
+            // A sentence opening a line in another face is no head.
+            let x = b.text(72.0, 640.0, ITALIC, "Theorem 3");
+            b.text(x, 640.0, BODY, " shows that the bound is tight.");
+            b.newline();
+        });
+        let found: Vec<(Kind, &str)> = defs.iter().map(|d| (d.kind, d.label.as_str())).collect();
+        assert_eq!(found, vec![(Kind::Lemma, "10"), (Kind::Theorem, "19")]);
+    }
+
+    #[test]
+    fn heads_after_a_review_copys_line_numbers() {
+        let (_, defs) = definitions(|b| {
+            b.line(700.0, BODY, "223 Some text before it.");
+            b.text(50.0, 680.0, BODY, "224");
+            let x = b.text(72.0, 680.0, BOLD, "Corollary 7.");
+            b.text(x, 680.0, ITALIC, " Every bounded sequence converges.");
+            b.newline();
+            b.text(50.0, 660.0, BODY, "225");
+            b.text(72.0, 660.0, BOLD, "5 Discussion");
+            b.newline();
+            b.line(640.0, BODY, "226 The body goes on from here.");
+        });
+        let found: Vec<(Kind, &str)> = defs.iter().map(|d| (d.kind, d.label.as_str())).collect();
+        assert_eq!(found, vec![(Kind::Corollary, "7"), (Kind::Section, "5")]);
     }
 
     #[test]

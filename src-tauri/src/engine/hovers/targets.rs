@@ -449,13 +449,51 @@ fn kind_of(word: &str) -> Option<Kind> {
         "remark" => Kind::Remark,
         "example" => Kind::Example,
         "conjecture" => Kind::Conjecture,
+        "claim" => Kind::Claim,
+        "assumption" => Kind::Assumption,
         _ => return None,
     })
 }
 
+/// A link's words with its number as printed, whatever the text layer
+/// made of the spacing: a number split at its dot ("4 .5" is "4.5"), a
+/// kind word run into its number (a tie that left no space: "Lemma17").
+pub(crate) fn joined_number(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len() + 1);
+    for (i, &c) in chars.iter().enumerate() {
+        let split = c == ' '
+            && i > 0
+            && chars[i - 1].is_ascii_digit()
+            && chars.get(i + 1) == Some(&'.')
+            && chars.get(i + 2).is_some_and(char::is_ascii_digit);
+        if split {
+            continue;
+        }
+        if c.is_ascii_digit() && i > 0 && chars[i - 1].is_alphabetic() {
+            let word: String = out
+                .chars()
+                .rev()
+                .take_while(|c| c.is_alphabetic())
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            let lower = word.to_lowercase();
+            let float = matches!(lower.as_str(), "fig" | "figure" | "table" | "tab");
+            if word.chars().count() > 2 && (kind_of(&word).is_some() || float) {
+                out.push(' ');
+            }
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// Read what a link names.
 fn named(text: &LinkText) -> Option<Named> {
-    let inside = text.inside.trim();
+    let inside = joined_number(text.inside.trim());
+    let inside = inside.as_str();
     let before = text.before.trim_end();
     let words: Vec<&str> = before
         .split_whitespace()
@@ -463,9 +501,15 @@ fn named(text: &LinkText) -> Option<Named> {
         .collect();
     let number = inside.split_whitespace().rev().find_map(number_token);
     if let Some(number) = &number {
-        // The kind word: in the link or just before it.
+        // The kind word: in the link or just before it ("appendices A.1,
+        // A.2"). A bracket between opens a citation ("for example [8]"), a
+        // number ending a sentence is what a footnote mark follows
+        // ("Section 3.^8"): the word names something else.
         for word in words.iter().rev().skip(1).take(2) {
             let word = word.trim_end_matches(['(', '~']);
+            if word.is_empty() {
+                continue;
+            }
             let lower = word.to_lowercase();
             let lower = lower.trim_end_matches(['.', '~']);
             if matches!(lower, "fig" | "figs" | "figure" | "figures") {
@@ -476,6 +520,10 @@ fn named(text: &LinkText) -> Option<Named> {
             }
             if let Some(kind) = kind_of(word) {
                 return Some(Named::Statement(kind, number.clone()));
+            }
+            let sentence_end = word.ends_with('.') && number_token(word).is_some();
+            if word.contains(['[', ']']) || sentence_end {
+                break;
             }
         }
         // "(29)", or "29" linked inside the parentheses of "(29)".
@@ -668,10 +716,19 @@ pub fn corrected_target(
             .collect(),
         None => Vec::new(),
     };
-    match found.as_slice() {
-        [one] if !(one.0 == src && rect_holds(rect, one.2)) => Some(*one),
-        _ => None,
-    }
+    // Several - a statement restated where it is proved, an anchor left at
+    // the foot of the page before its statement: the one on the
+    // destination's page or the next, if only one is.
+    let near: Vec<(u32, f32, f32)> = found
+        .iter()
+        .copied()
+        .filter(|f| f.0 == src || f.0 == src + 1)
+        .collect();
+    let chosen = match (found.as_slice(), near.as_slice()) {
+        ([one], _) | (_, [one]) => *one,
+        _ => return None,
+    };
+    (!(chosen.0 == src && rect_holds(rect, chosen.2))).then_some(chosen)
 }
 
 fn rect_holds(rect: Rect, y: f32) -> bool {
@@ -827,6 +884,20 @@ fn bibliography_entry(page: &Page, x: Option<f32>, y: f32) -> Option<Rect> {
                 && x.is_none_or(|x| l.x0 <= x + 30.0 && l.x1 >= x)
         })
         .collect();
+    // The anchor sits at or before an entry's first letter (natbib's sits
+    // in the hanging indent, left of a second column), never inside a
+    // line: a line starting there wins over the other column's lines it
+    // falls in the middle of.
+    let starting: Vec<usize> = candidates
+        .iter()
+        .copied()
+        .filter(|&i| x.is_none_or(|x| lines[i].x0 >= x - 5.0))
+        .collect();
+    let candidates = if starting.is_empty() {
+        candidates
+    } else {
+        starting
+    };
     // A labelled line near the anchor is the entry; else the first line
     // whose top the anchor is on or over - not the previous entry's last
     // line, whose top can be just above it.
@@ -1123,9 +1194,12 @@ mod tests {
 
     #[test]
     fn lemma_17_takes_its_whole_display_and_the_line_after() {
-        // With the detector's display and without it: the reader takes the
-        // display's pieces beside the short first line either way.
-        for displays in [true, false] {
+        // With the detector's display (the index reads the head, bold with
+        // no full stop): the display's pieces beside the short first line
+        // are the statement's. Without it the fallback reader takes them
+        // too (below).
+        {
+            let displays = true;
             let page = lemma_17(displays);
             let rect = link_target(&page, Some(72.0), 500.0).expect("a statement");
             // Every piece: the lower limit, the rest of the expression.
@@ -1148,19 +1222,22 @@ mod tests {
 
     #[test]
     fn a_statement_read_by_its_head_takes_its_display_whole() {
-        // The fallback reader, from the head line on, reads the same.
-        let page = lemma_17(true);
-        let head = (0..page.lines.len())
-            .find(|&i| page.line_text(i).starts_with("Lemma 17"))
-            .expect("head");
-        let region = statement_lines(&page, head, None, &mut None);
-        assert!(holds(region, [237.0, 439.0, 357.0, 474.0]), "{region:?}");
-        assert!(
-            lines_in(&page, region)
-                .iter()
-                .any(|l| l.starts_with("where Si denotes")),
-            "{region:?}"
-        );
+        // The fallback reader, from the head line on, reads the same, with
+        // the detector's display or without it.
+        for displays in [true, false] {
+            let page = lemma_17(displays);
+            let head = (0..page.lines.len())
+                .find(|&i| page.line_text(i).starts_with("Lemma 17"))
+                .expect("head");
+            let region = pad(statement_lines(&page, head, None, &mut None), 3.0, &page);
+            assert!(holds(region, [237.0, 439.0, 357.0, 474.0]), "{region:?}");
+            assert!(
+                lines_in(&page, region)
+                    .iter()
+                    .any(|l| l.starts_with("where Si denotes")),
+                "{region:?}"
+            );
+        }
     }
 
     #[test]
@@ -1386,6 +1463,138 @@ mod tests {
         // Words that name no number: nothing to check.
         let bare = words("as discussed ", "above");
         assert_eq!(corrected_target(&labels, &page, 2, rect, &bare), None);
+    }
+
+    #[test]
+    fn a_restated_or_foot_anchored_statement_is_the_one_by_the_destination() {
+        let page = related_work_page();
+        let rect = link_target(&page, Some(72.0), 690.0).expect("the heading");
+        let mut labels = Labels::new();
+        // Stated on page 5, restated with its proof on page 13; the anchor
+        // sits at the foot of page 12.
+        labels.insert(
+            (Kind::Theorem, "19".into()),
+            vec![(5, 72.0, 400.0), (13, 72.0, 700.0)],
+        );
+        labels.insert((Kind::Claim, "6.56".into()), vec![(13, 72.0, 716.0)]);
+        let text = words("and Theorem ", "19");
+        assert_eq!(
+            corrected_target(&labels, &page, 12, rect, &text),
+            Some((13, 72.0, 700.0))
+        );
+        let claim = words("First, by Claim ", "6.56");
+        assert_eq!(
+            corrected_target(&labels, &page, 12, rect, &claim),
+            Some((13, 72.0, 716.0))
+        );
+    }
+
+    #[test]
+    fn an_italic_statement_goes_on_past_a_paragraph_break_in_its_face() {
+        let mut b = Builder::new();
+        for y in [700.0, 688.0, 676.0, 664.0] {
+            b.line(
+                y,
+                BODY,
+                "Running text of the body before the lemma, set across.",
+            );
+        }
+        let x = b.text(72.0, 640.0, BOLD, "Lemma 5.1.");
+        b.text(
+            x + 4.0,
+            640.0,
+            ITALIC,
+            "For a matrix S, define the map B where G is",
+        );
+        b.newline();
+        b.line(628.0, ITALIC, "a matrix with independent normal entries.");
+        b.line(
+            608.0,
+            ITALIC,
+            "Then for every e > 0 the map B is a masking mechanism.",
+        );
+        b.line(
+            584.0,
+            BODY,
+            "The proof of Lemma 5.1 can be found in the appendix.",
+        );
+        b.line(
+            572.0,
+            BODY,
+            "Running text of the body after the lemma, set across.",
+        );
+        let page = b.page();
+        let rect = link_target(&page, Some(72.0), 650.0).expect("a statement");
+        let lines = lines_in(&page, rect);
+        assert!(
+            lines.iter().any(|l| l.starts_with("Then for every")),
+            "{lines:?}"
+        );
+        assert!(
+            !lines.iter().any(|l| l.starts_with("The proof")),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn an_anchor_in_the_hanging_indent_is_the_right_columns_entry() {
+        // natbib puts a second column's anchor in its hanging indent, left
+        // of the column: inside the first column's lines at that height.
+        let mut b = Builder::new();
+        let mut y = 700.0;
+        let mut k = 0;
+        while y > 200.0 {
+            let first = format!("Author{k}, A. Paper title set out in the left column");
+            b.line_at(54.0, y, BODY, &first);
+            b.line_at(64.0, y - 11.0, BODY, "Journal of Things, pages 1-10, 2001.");
+            b.line_at(
+                305.0,
+                y - 1.0,
+                BODY,
+                &format!("Writer{k}, B. Another paper on it"),
+            );
+            b.line_at(315.0, y - 12.0, BODY, "Annals of Stuff, pages 9-19, 2002.");
+            y -= 26.0;
+            k += 1;
+        }
+        let page = b.page();
+        // Writer4's first line: its top at 602.5, Author4's at 603.5.
+        let rect = link_target(&page, Some(287.5), 603.5).expect("an entry");
+        assert!(rect[0] > 300.0, "{rect:?}");
+        let lines = lines_in(&page, rect);
+        assert!(lines.iter().any(|l| l.starts_with("Writer4")), "{lines:?}");
+        assert!(!lines.iter().any(|l| l.starts_with("Writer5")), "{lines:?}");
+    }
+
+    #[test]
+    fn a_kind_word_names_only_the_number_right_after_it() {
+        // A citation after "for example", a footnote mark after a section
+        // number: neither names a statement or a section.
+        assert_eq!(named_number(&words("see for example [", "8")), None);
+        assert_eq!(named_number(&words("Monotone's theorem [", "1")), None);
+        assert_eq!(named_number(&words("as in Section 3.", "8")), None);
+        assert_eq!(
+            named_number(&words("by Lemma ", "12")),
+            Some((Kind::Lemma, "12".into()))
+        );
+        assert_eq!(
+            named_number(&words("from Eq. (", "4")),
+            Some((Kind::Equation, "4".into()))
+        );
+        // A number the text split at its dot.
+        assert_eq!(
+            named_number(&words("in ", "Definition 4 .5")),
+            Some((Kind::Definition, "4.5".into()))
+        );
+        // A kind word run into its number: a tie with no space in the text.
+        assert_eq!(
+            named_number(&words("By ", "Lemma17")),
+            Some((Kind::Lemma, "17".into()))
+        );
+        assert_eq!(
+            named_number(&words("in ", "Definition5.7")),
+            Some((Kind::Definition, "5.7".into()))
+        );
     }
 
     #[test]
