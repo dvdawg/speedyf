@@ -246,6 +246,10 @@ fn group_lines(glyphs: &[Glyph]) -> Vec<Vec<usize>> {
     // centre and height of the line's largest glyph, and its right edge
     let mut core: Option<(f32, f32)> = None;
     let mut last_right = f32::MIN;
+    // The previous glyph's box: a ligature's characters ("ff", "ffi") all
+    // come with the ligature's one box, the later ones a jump back to its
+    // start that is no new line.
+    let mut last_box: Option<[f32; 4]> = None;
     for (index, glyph) in glyphs.iter().enumerate() {
         if !glyph.has_box() {
             if core.is_some() {
@@ -255,10 +259,14 @@ fn group_lines(glyphs: &[Glyph]) -> Vec<Vec<usize>> {
         }
         let [x, y, w, h] = glyph.rect;
         let centre = y + h / 2.0;
+        let ligature = last_box.is_some_and(|b| {
+            (b[0] - x).abs() < 0.5 && (b[1] - y).abs() < 0.5 && (b[3] - h).abs() < 0.5
+        });
         let joins = core.is_some_and(|(core_centre, core_h)| {
             let span = core_h.max(h);
-            (centre - core_centre).abs() <= 0.6 * span && x >= last_right - span
+            (centre - core_centre).abs() <= 0.6 * span && (x >= last_right - span || ligature)
         });
+        last_box = Some(glyph.rect);
         if !joins && core.is_some() {
             out.push(std::mem::take(&mut current));
             core = None;
@@ -890,6 +898,33 @@ mod tests {
         let at = page.text.iter().position(|c| *c == '1').unwrap();
         assert_eq!(page.script[at], Script::Super);
         assert_eq!(page.script[0], Script::Normal);
+    }
+
+    #[test]
+    fn a_ligatures_characters_sharing_its_box_stay_on_their_line() {
+        // "efficiency": PDFium gives each character of the "ffi" ligature
+        // the ligature's one box, a jump back to its start.
+        let mut b = Builder::new();
+        let x = b.text(72.0, 700.0, BODY, "e");
+        for ch in ['f', 'f', 'i'] {
+            b.glyphs.push(Glyph {
+                ch,
+                rect: [x, 700.0, 12.0, 7.5],
+                size: 10.0,
+                font: 1,
+                ..Glyph::default()
+            });
+        }
+        b.text(x + 12.5, 700.0, BODY, "ciency of it");
+        b.newline();
+        b.line(688.0, BODY, "next line");
+        let page = b.page();
+        assert_eq!(page.lines.len(), 2, "{:?}", text_of(&page));
+        assert!(
+            page.line_text(0).starts_with("efficiency"),
+            "{:?}",
+            page.line_text(0)
+        );
     }
 
     #[test]
