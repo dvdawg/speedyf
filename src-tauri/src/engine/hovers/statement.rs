@@ -118,6 +118,10 @@ pub fn text_column(page: &Page, line: &Line) -> (f32, f32) {
     (left.min(line.x0), right.max(line.x1))
 }
 
+fn opens_proof(text: &str) -> bool {
+    text.starts_with("Proof") || text.starts_with("PROOF")
+}
+
 fn prose(l: &Line) -> bool {
     !l.is_display() && l.math_share < 0.2
 }
@@ -175,7 +179,19 @@ impl Reader {
     ) -> bool {
         let text = page.line_text(j);
         let text = text.trim_start();
-        if text.starts_with("Proof") || text.starts_with("PROOF") {
+        if opens_proof(text) {
+            return false;
+        }
+        // The rest of a row the proof opens, read before its start (a hat
+        // over a letter splits the row): the proof's too.
+        let proof_row = page.lines.iter().enumerate().any(|(k, m)| {
+            k != j
+                && l.x0 - m.x1 < 2.0 * l.em()
+                && (m.baseline - l.baseline).abs() < 0.3 * l.em()
+                && m.x0 < l.x0
+                && opens_proof(page.line_text(k).trim_start())
+        });
+        if proof_row {
             return false;
         }
         let item = opens_item(text) && l.x0 <= self.left + 40.0;

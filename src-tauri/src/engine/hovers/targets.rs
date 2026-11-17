@@ -1542,6 +1542,40 @@ mod tests {
     }
 
     #[test]
+    fn the_rest_of_the_proofs_first_row_is_the_proofs() {
+        // "Proof. Let H^t attain ...": the hat splits the row, and the rest
+        // of it, a little taller, is read before the row's start.
+        let mut b = Builder::new();
+        for y in [700.0, 688.0, 676.0] {
+            b.line(
+                y,
+                BODY,
+                "Running text of the body before the lemma, set across.",
+            );
+        }
+        let x = b.text(72.0, 652.0, BOLD, "Lemma 4.3 (Contraction).");
+        b.text(x + 4.0, 652.0, ITALIC, "The drift contracts by half.");
+        b.newline();
+        b.line_at(
+            140.0,
+            628.5,
+            BODY,
+            "t attain the drift; it is measurable here.",
+        );
+        b.line_at(72.0, 628.0, BOLD, "Proof. Let H");
+        b.line(
+            616.0,
+            BODY,
+            "Running text of the proof goes on here, set across.",
+        );
+        let page = b.page();
+        let rect = link_target(&page, Some(72.0), 662.0).expect("a statement");
+        let lines = lines_in(&page, rect);
+        assert!(!lines.iter().any(|l| l.contains("attain")), "{lines:?}");
+        assert!(!lines.iter().any(|l| l.starts_with("Proof")), "{lines:?}");
+    }
+
+    #[test]
     fn a_numbered_entry_behind_a_review_copys_line_number_is_found() {
         let mut b = Builder::new();
         let mut y = 700.0;
