@@ -7477,9 +7477,16 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 }
 
 /* At least a line, so a height measured before the line was laid out
-   cannot leave it, and its caret, zero tall. */
+   cannot leave it, and its caret, zero tall. A little room on each side,
+   given back by the margin so the text stays where the drawn lines are:
+   at the field's very edge, as on an empty line or at a line's start,
+   WebKit draws the caret across the edge, and overflow: hidden cuts it
+   away. */
 .note-field {
   min-height: 1.55em;
+  width: calc(100% + 6px);
+  margin: 0 -3px;
+  padding: 0 3px;
 }
 
 .note-field::placeholder {
