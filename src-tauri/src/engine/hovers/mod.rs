@@ -787,4 +787,6 @@ mod eval;
 #[cfg(test)]
 mod eval_links;
 #[cfg(test)]
+mod eval_symbols;
+#[cfg(test)]
 mod geometry_tests;
