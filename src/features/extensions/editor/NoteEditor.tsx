@@ -808,11 +808,9 @@ function EditorBody(props: BodyProps) {
     });
   };
 
-  /** The note offset a point in a rendered block stands for: the drawn
-   * character under it, mapped back to the block's source. */
-  const offsetInBlock = (element: HTMLElement, block: Block, x: number, y: number) => {
-    const list = blocks();
-    const start = startsOf(list)[list.indexOf(block)] ?? 0;
+  /** The drawn character under a point in a rendered block. Measured
+   * before anything else changes, while the block is where it was clicked. */
+  const drawnOffsetAt = (element: HTMLElement, x: number, y: number) => {
     let drawnOffset = element.textContent?.length ?? 0;
     const doc = document as Document & {
       caretRangeFromPoint?: (x: number, y: number) => Range | null;
@@ -824,7 +822,26 @@ function EditorBody(props: BodyProps) {
       pre.setEnd(range.startContainer, range.startOffset);
       drawnOffset = pre.toString().length;
     }
-    return start + sourceOffset(block.raw, element.textContent ?? '', drawnOffset);
+    return drawnOffset;
+  };
+
+  /** The note offset a point in a rendered block stands for: the drawn
+   * character under it, mapped back to the block's source. */
+  const offsetInBlock = (element: HTMLElement, block: Block, x: number, y: number) => {
+    const list = blocks();
+    const start = startsOf(list)[list.indexOf(block)] ?? 0;
+    const drawn = drawnOffsetAt(element, x, y);
+    return start + sourceOffset(block.raw, element.textContent ?? '', drawn);
+  };
+
+  /** Leave the line being edited for a click elsewhere, re-cutting the note
+   * with its edits so offsets are measured against the note as it is. */
+  const leaveForClick = () => {
+    pendingLeave = false;
+    if (!active()) return;
+    setActive(null);
+    setPicker(null);
+    rebuild();
   };
 
   const onBlockClick = (e: MouseEvent, block: Block) => {
@@ -832,7 +849,15 @@ function EditorBody(props: BodyProps) {
     if (target.closest('a, .np-cite, button')) return;
     const selection = window.getSelection();
     if (selection && !selection.isCollapsed) return;
-    activateAt(offsetInBlock(e.currentTarget as HTMLElement, block, e.clientX, e.clientY));
+    const element = e.currentTarget as HTMLElement;
+    const drawn = drawnOffsetAt(element, e.clientX, e.clientY);
+    leaveForClick();
+    // a block the edit re-cut is gone: put the caret at the edited line's end
+    const list = blocks();
+    const index = list.indexOf(block);
+    if (index < 0) return activateAt(caret);
+    const start = startsOf(list)[index] ?? 0;
+    activateAt(start + sourceOffset(block.raw, element.textContent ?? '', drawn));
   };
 
   /** A click on the page below or beside the lines writes at the end, the
@@ -842,8 +867,42 @@ function EditorBody(props: BodyProps) {
     if (target.closest('[data-block], a, button, textarea')) return;
     const selection = window.getSelection();
     if (selection && !selection.isCollapsed) return;
+    leaveForClick();
     activateAt(bodyEnd(s.text()));
   };
+
+  /* ---- leaving a line ----
+     A press elsewhere in the note does not leave the line being edited
+     until the press is over. Leaving it at once redraws it - typeset, with
+     its live math preview gone - which moves every line under it, so the
+     release lands on another line than the press and the click goes
+     astray: to the wrong line, or to the note's end, out of view. The click
+     itself moves the caret (leaveForClick); a press that was not a click,
+     such as a drag selecting rendered text, leaves the line when it ends. */
+  let pressing = false;
+  let pendingLeave = false;
+  const onEditorPointerDown = (e: PointerEvent) => {
+    if (e.button !== 0) return;
+    pressing = true;
+  };
+  const onPressEnd = () => {
+    if (!pressing) return;
+    pressing = false;
+    // after the click, which comes right after the release
+    setTimeout(() => {
+      if (!pendingLeave) return;
+      pendingLeave = false;
+      if (document.activeElement !== field) deactivate();
+    }, 0);
+  };
+  onMount(() => {
+    window.addEventListener('pointerup', onPressEnd, true);
+    window.addEventListener('pointercancel', onPressEnd, true);
+    onCleanup(() => {
+      window.removeEventListener('pointerup', onPressEnd, true);
+      window.removeEventListener('pointercancel', onPressEnd, true);
+    });
+  });
 
   /* ---- items dropped from the Projects list ---- */
 
@@ -1084,7 +1143,13 @@ function EditorBody(props: BodyProps) {
         {props.end}
       </div>
       <NotePreview />
-      <div class="note-editor-scroll" ref={scroller} onCopy={onCopy} onClick={onPageClick}>
+      <div
+        class="note-editor-scroll"
+        ref={scroller}
+        onCopy={onCopy}
+        onClick={onPageClick}
+        onPointerDown={onEditorPointerDown}
+      >
         <Show
           when={!source()}
           fallback={
@@ -1242,6 +1307,13 @@ function EditorBody(props: BodyProps) {
                             // Focus moving to the picker or the head is not leaving.
                             const next = e.relatedTarget as HTMLElement | null;
                             if (next?.closest('.note-picker')) return;
+                            // The window going to the back is not leaving
+                            // either: the line keeps its caret for the return.
+                            if (!document.hasFocus()) return;
+                            if (pressing) {
+                              pendingLeave = true;
+                              return;
+                            }
                             if (!composing) deactivate();
                           }}
                         />

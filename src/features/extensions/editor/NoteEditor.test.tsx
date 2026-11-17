@@ -140,6 +140,33 @@ describe('the note editor', () => {
     expect(host.noteSessions().get(KEY)!.text()).toBe('first line\nsecond line');
   });
 
+  it('keeps the edited line until a press elsewhere is over, then moves to the clicked line', async () => {
+    const { view, state } = mount('first\nsecond\nthird');
+    await settle();
+    fireEvent.click(view.container.querySelectorAll<HTMLElement>('.note-block')[0]!);
+    await settle();
+    const field = view.container.querySelector<HTMLTextAreaElement>('.note-field')!;
+    field.value = 'first, edited';
+    field.setSelectionRange(13, 13);
+    fireEvent.input(field);
+    await settle();
+    const scroll = view.container.querySelector<HTMLElement>('.note-editor-scroll')!;
+    const third = view.container.querySelectorAll<HTMLElement>('.note-block')[2]!;
+    // The press takes focus off the line, but the line stays as it is, so
+    // nothing moves under the pointer.
+    fireEvent.pointerDown(third, { button: 0 });
+    fireEvent.blur(field);
+    expect(view.container.querySelector('.note-field')).toBe(field);
+    fireEvent.pointerUp(window);
+    fireEvent.click(third);
+    await settle();
+    const next = view.container.querySelector<HTMLTextAreaElement>('.note-field')!;
+    expect(next.value).toBe('third');
+    expect(document.activeElement).toBe(next);
+    expect(state.text).toBe('first, edited\nsecond\nthird');
+    expect(scroll.contains(next)).toBe(true);
+  });
+
   it('renders consecutive quote lines as one quote, and continues it on Enter', async () => {
     const { view, state } = mount(
       'Before.\n\n> First paragraph.\n>\n> Second [@attias2022quantum, p. 12]{box=1,2,3,4}\n\nAfter.'
