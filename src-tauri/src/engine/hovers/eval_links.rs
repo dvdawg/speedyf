@@ -268,6 +268,36 @@ fn starts_item(text: &str) -> bool {
     roman || letter || digits
 }
 
+/// A paragraph opening with a run-in head in bold ("Analysis of the
+/// strategy. Before ..."): its first words bold, up to a full stop, the
+/// rest not.
+fn run_in_head(page: &Page, i: usize) -> bool {
+    let l = &page.lines[i];
+    let bold = |k: usize| page.glyph_at(k).is_some_and(|g| g.bold);
+    let Some(stop) = (l.start..l.end).find(|&k| page.text[k] == '.') else {
+        return false;
+    };
+    let letters: Vec<usize> = (l.start..stop)
+        .filter(|&k| page.text[k].is_alphabetic())
+        .collect();
+    let after = (stop..l.end).find(|&k| page.text[k].is_alphabetic());
+    letters.len() >= 4
+        && letters.iter().all(|&k| bold(k))
+        && after.is_some_and(|k| !bold(k))
+        && prose(l)
+}
+
+/// A line's text past a review copy's line number: "531 [7] A. Name"
+/// reads "[7] A. Name".
+fn past_line_number(text: &str) -> &str {
+    match text.split_once(' ') {
+        Some((n, rest)) if (1..=4).contains(&n.len()) && n.chars().all(|c| c.is_ascii_digit()) => {
+            rest.trim_start()
+        }
+        _ => text,
+    }
+}
+
 /// A page's foot: its number alone on a line.
 fn is_page_number(text: &str) -> bool {
     !text.is_empty() && text.len() <= 4 && text.chars().all(|c| c.is_ascii_digit())
@@ -487,7 +517,8 @@ fn statement_truth(pages: &[&Page], head: usize) -> Truth {
         let here = pages[next.0];
         let l = &here.lines[next.1];
         let t = text_of(here, next.1);
-        let item = starts_item(&t);
+        // An item of a list in prose, not a piece of a display ("h) <= L").
+        let item = starts_item(&t) && !l.is_display() && !in_display(here, next.1);
         // "1. Dense family ..." in a statement is an item of its list, not
         // a heading: it follows a colon or other items, or runs long, in
         // the body's size.
@@ -499,7 +530,8 @@ fn statement_truth(pages: &[&Page], head: usize) -> Truth {
         let head_like = t.starts_with("Proof")
             || t.starts_with("PROOF")
             || starts_statement(&t)
-            || (starts_section(&t) && !listed);
+            || (starts_section(&t) && !listed)
+            || run_in_head(here, next.1);
         let display = !prose(l) || t.chars().count() < 3 || in_display(here, next.1);
         let own_face = l.font != here.body_font;
         if broke {
@@ -706,7 +738,7 @@ fn truth(pages: &[&Page], target: &Target, anchor: Option<(Option<f32>, f32)>) -
                 Some(n) => {
                     let label = format!("[{n}]");
                     let heads: Vec<usize> = (0..lines.len())
-                        .filter(|&i| text_of(page, i).starts_with(&label))
+                        .filter(|&i| past_line_number(&text_of(page, i)).starts_with(&label))
                         .collect();
                     head_near(page, heads, anchor_y)
                 }
@@ -739,7 +771,7 @@ fn truth(pages: &[&Page], target: &Target, anchor: Option<(Option<f32>, f32)>) -
                     let labelled: Vec<usize> = near
                         .iter()
                         .copied()
-                        .filter(|&i| text_of(page, i).starts_with('['))
+                        .filter(|&i| past_line_number(&text_of(page, i)).starts_with('['))
                         .collect();
                     let near = if labelled.is_empty() { near } else { labelled };
                     near.into_iter()
@@ -775,7 +807,8 @@ fn truth(pages: &[&Page], target: &Target, anchor: Option<(Option<f32>, f32)>) -
                 };
                 let here = pages[next.0];
                 let (prev, l) = (&pages[whole.0].lines[whole.1], &here.lines[next.1]);
-                let t = text_of(here, next.1);
+                // A review copy's line number does not hide a label.
+                let t = past_line_number(&text_of(here, next.1)).to_string();
                 let centre = (l.top + l.bottom) / 2.0;
                 if !broke
                     && next.0 == whole.0
@@ -796,7 +829,9 @@ fn truth(pages: &[&Page], target: &Target, anchor: Option<(Option<f32>, f32)>) -
                         .map(|m| m.x0)
                         .fold(l.x0, f32::min);
                     let new_entry = t.starts_with('[') || (hanging && l.x0 <= left + 1.5);
-                    if new_entry || !hanging && number.is_none() {
+                    // An entry goes on in words, not a table's figures.
+                    let words = t.chars().filter(|c| c.is_alphabetic()).count() >= 3;
+                    if new_entry || !words || !hanging && number.is_none() {
                         break;
                     }
                     margin = left;
