@@ -118,6 +118,10 @@ pub fn text_column(page: &Page, line: &Line) -> (f32, f32) {
     (left.min(line.x0), right.max(line.x1))
 }
 
+fn opens_proof(text: &str) -> bool {
+    text.starts_with("Proof") || text.starts_with("PROOF")
+}
+
 fn prose(l: &Line) -> bool {
     !l.is_display() && l.math_share < 0.2
 }
@@ -127,6 +131,9 @@ pub struct Reader {
     /// Whether the statement is set in a face of its own (amsthm's italic
     /// `plain` style); None until its first line of prose says.
     pub italic: Option<bool>,
+    /// The font the statement's own text is set in, once a line of it
+    /// in a face of its own is read.
+    face: Option<u16>,
     in_list: bool,
     left: f32,
     gap0: f32,
@@ -139,6 +146,7 @@ impl Reader {
     pub fn new(page: &Page, left: f32, italic: Option<bool>) -> Reader {
         Reader {
             italic,
+            face: None,
             in_list: false,
             left,
             gap0: leading_gap(page),
@@ -171,7 +179,19 @@ impl Reader {
     ) -> bool {
         let text = page.line_text(j);
         let text = text.trim_start();
-        if text.starts_with("Proof") || text.starts_with("PROOF") {
+        if opens_proof(text) {
+            return false;
+        }
+        // The rest of a row the proof opens, read before its start (a hat
+        // over a letter splits the row): the proof's too.
+        let proof_row = page.lines.iter().enumerate().any(|(k, m)| {
+            k != j
+                && l.x0 - m.x1 < 2.0 * l.em()
+                && (m.baseline - l.baseline).abs() < 0.3 * l.em()
+                && m.x0 < l.x0
+                && opens_proof(page.line_text(k).trim_start())
+        });
+        if proof_row {
             return false;
         }
         let item = opens_item(text) && l.x0 <= self.left + 40.0;
@@ -217,10 +237,19 @@ impl Reader {
             }
         }
         let apart = gap > self.gap0 + 3.5;
+        // Its own face, read on a line of its text: a statement in that
+        // face goes on in it, a paragraph break within it too.
+        let in_face = text_line && self.italic == Some(true) && own_face;
+        if in_face && self.face.is_none() && !apart {
+            self.face = Some(l.font);
+        }
         if !apart || !text_line {
             if !indented && text_line {
                 self.in_list = false;
             }
+            return true;
+        }
+        if in_face && self.face == Some(l.font) {
             return true;
         }
         if !prose(previous) || fragment(previous) {
