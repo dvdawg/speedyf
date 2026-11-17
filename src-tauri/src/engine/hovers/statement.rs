@@ -127,6 +127,9 @@ pub struct Reader {
     /// Whether the statement is set in a face of its own (amsthm's italic
     /// `plain` style); None until its first line of prose says.
     pub italic: Option<bool>,
+    /// The font the statement's own text is set in, once a line of it
+    /// in a face of its own is read.
+    face: Option<u16>,
     in_list: bool,
     left: f32,
     gap0: f32,
@@ -139,6 +142,7 @@ impl Reader {
     pub fn new(page: &Page, left: f32, italic: Option<bool>) -> Reader {
         Reader {
             italic,
+            face: None,
             in_list: false,
             left,
             gap0: leading_gap(page),
@@ -217,10 +221,19 @@ impl Reader {
             }
         }
         let apart = gap > self.gap0 + 3.5;
+        // Its own face, read on a line of its text: a statement in that
+        // face goes on in it, a paragraph break within it too.
+        let in_face = text_line && self.italic == Some(true) && own_face;
+        if in_face && self.face.is_none() && !apart {
+            self.face = Some(l.font);
+        }
         if !apart || !text_line {
             if !indented && text_line {
                 self.in_list = false;
             }
+            return true;
+        }
+        if in_face && self.face == Some(l.font) {
             return true;
         }
         if !prose(previous) || fragment(previous) {
