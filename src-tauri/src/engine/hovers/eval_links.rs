@@ -48,6 +48,7 @@ const THEOREM_WORDS: &[&str] = &[
     "condition",
     "property",
     "problem",
+    "question",
 ];
 
 /// What a link or span points at.
@@ -93,7 +94,8 @@ fn clean_number(token: &str) -> String {
 
 /// Read a link: its own text and the words before it.
 fn classify_link(before: &str, inside: &str, rect: [f32; 4]) -> Option<Target> {
-    let inside = inside.trim();
+    let inside = super::targets::joined_number(inside.trim());
+    let inside = inside.as_str();
     let words = format!("{} {}", before.trim_end(), inside);
     let lower = words.to_lowercase();
     let tokens: Vec<&str> = lower.split_whitespace().collect();
@@ -107,6 +109,13 @@ fn classify_link(before: &str, inside: &str, rect: [f32; 4]) -> Option<Target> {
         let n = tokens.len();
         let prior = |k: usize| tokens.get(n.wrapping_sub(k)).copied().unwrap_or("");
         for k in 2..=3 {
+            // No bracket or sentence's end between the kind word and the
+            // number: "for example [8]" is a citation, the mark after
+            // "Section 3." a footnote.
+            let sentence_end = prior(2).ends_with('.') && is_number(prior(2));
+            if k == 3 && (prior(2).contains(['[', ']']) || sentence_end) {
+                break;
+            }
             let word = prior(k).trim_end_matches(['.', '~']);
             if matches!(word, "fig" | "figure" | "figs" | "figures") {
                 return Some(Target::Float("figure".into(), number));
@@ -207,7 +216,13 @@ fn starts_statement(text: &str) -> bool {
     let (Some(word), Some(number)) = (tokens.next(), tokens.next()) else {
         return false;
     };
-    THEOREM_WORDS.contains(&word.trim_end_matches('.')) && is_number(number)
+    // A head, not a mention running on at a line's start ("Theorem 16,
+    // and let", "Definition 6). Then", "Lemma 15 gives").
+    let original = text.split_whitespace().nth(2).unwrap_or("");
+    THEOREM_WORDS.contains(&word.trim_end_matches('.'))
+        && is_number(number)
+        && !number.ends_with([',', ')', ';'])
+        && !original.starts_with(char::is_lowercase)
 }
 
 fn starts_section(text: &str) -> bool {
@@ -270,24 +285,30 @@ fn next_line(page: &Page, i: usize) -> Option<usize> {
 /// The next line of body text after `i` in reading order: past running
 /// heads and feet, page numbers, and the smaller type of footnotes.
 fn next_body_line(page: &Page, i: usize) -> Option<usize> {
+    next_line_of_size(page, i, page.body_size)
+}
+
+/// The next line after `i` in reading order set at least about `size`:
+/// past running heads and feet, page numbers and smaller type.
+fn next_line_of_size(page: &Page, i: usize, size: f32) -> Option<usize> {
     let mut j = i;
     loop {
         j = next_line(page, j)?;
         let l = &page.lines[j];
-        let small = page.body_size > 0.0 && l.size > 0.0 && l.size < 0.92 * page.body_size;
+        let small = size > 0.0 && l.size > 0.0 && l.size < 0.92 * size;
         if !small && !is_page_number(&text_of(page, j)) {
             return Some(j);
         }
     }
 }
 
-/// The first line of body text on a page, in reading order.
-fn first_body_line(page: &Page) -> Option<usize> {
+/// The first line of a page set at least about `size`, in reading order.
+fn first_line_of_size(page: &Page, size: f32) -> Option<usize> {
     let first = (0..page.lines.len()).find(|&i| !page.lines[i].flags.furniture)?;
     let l = &page.lines[first];
-    let small = page.body_size > 0.0 && l.size > 0.0 && l.size < 0.92 * page.body_size;
+    let small = size > 0.0 && l.size > 0.0 && l.size < 0.92 * size;
     if small || is_page_number(&text_of(page, first)) {
-        next_body_line(page, first)
+        next_line_of_size(page, first, size)
     } else {
         Some(first)
     }
@@ -318,9 +339,15 @@ fn head_near(page: &Page, heads: Vec<usize>, anchor: Option<f32>) -> Option<usiz
 /// Where reading goes on after line `at`: the next body line, and whether
 /// it opens a new column or page.
 fn step(pages: &[&Page], at: At) -> Option<(At, bool)> {
+    step_in(pages, at, None)
+}
+
+/// `step` through lines set at least about `size` (each page's body size
+/// when None): a bibliography may be set smaller than the body.
+fn step_in(pages: &[&Page], at: At, size: Option<f32>) -> Option<(At, bool)> {
     let (p, i) = at;
     let page = pages[p];
-    match next_body_line(page, i) {
+    match next_line_of_size(page, i, size.unwrap_or(page.body_size)) {
         // A new column starts above the line before it - wholly, not as an
         // accent or a script over that line does.
         Some(j) => Some((
@@ -330,9 +357,34 @@ fn step(pages: &[&Page], at: At) -> Option<(At, bool)> {
         )),
         None => {
             let next = pages.get(p + 1)?;
-            Some(((p + 1, first_body_line(next)?), true))
+            let size = size.unwrap_or(next.body_size);
+            Some(((p + 1, first_line_of_size(next, size)?), true))
         }
     }
+}
+
+/// Whether line `i` is a piece of a display: inside one of the page's
+/// display boxes, or a lone operator or equation number set as a line of
+/// its own ("sup", "max", ". (8.13)").
+fn in_display(page: &Page, i: usize) -> bool {
+    let l = &page.lines[i];
+    let (cx, cy) = ((l.x0 + l.x1) / 2.0, (l.top + l.bottom) / 2.0);
+    let boxed = page.displays.iter().any(|d| {
+        cx >= d[0] - 1.0 && cx <= d[0] + d[2] + 1.0 && cy >= d[1] - 1.0 && cy <= d[1] + d[3] + 1.0
+    });
+    let text = text_of(page, i);
+    let bare = text.trim_matches(|c: char| c.is_whitespace() || matches!(c, '.' | ','));
+    let operator = matches!(
+        bare,
+        "sup" | "inf" | "max" | "min" | "lim" | "limsup" | "liminf" | "argmax" | "argmin" | "log"
+    );
+    let tag = bare.starts_with('(')
+        && bare.ends_with(')')
+        && bare.len() <= 8
+        && bare[1..bare.len() - 1]
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.');
+    boxed || operator || tag
 }
 
 fn ends_sentence(text: &str) -> bool {
@@ -371,6 +423,7 @@ fn statement_truth(pages: &[&Page], head: usize) -> Truth {
     // The statement's face: that of the head line's own words - past its
     // label, not mathematics, not a name in parentheses - when it has
     // enough of them; else its first line of prose that is not an item.
+    let mut face: Option<u16> = None;
     let mut italic = {
         let l = &lines[head];
         let mut depth = 0i32;
@@ -394,6 +447,12 @@ fn statement_truth(pages: &[&Page], head: usize) -> Truth {
                 _ => {}
             }
         }
+        // The face itself: the commonest of the head's words not the body's.
+        let mut count: BTreeMap<u16, usize> = BTreeMap::new();
+        for &f in fonts.iter().filter(|&&f| f != page.body_font) {
+            *count.entry(f).or_default() += 1;
+        }
+        face = count.into_iter().max_by_key(|&(_, n)| n).map(|(f, _)| f);
         (fonts.len() >= 12).then(|| {
             let own = fonts.iter().filter(|&&f| f != page.body_font).count();
             2 * own > fonts.len()
@@ -410,6 +469,7 @@ fn statement_truth(pages: &[&Page], head: usize) -> Truth {
         let t = text_of(page, j);
         if prose(&lines[j]) && !starts_item(&t) && lines[j].x1 - lines[j].x0 > 60.0 {
             italic = Some(lines[j].font != page.body_font);
+            face = Some(lines[j].font);
             break;
         }
         k = j;
@@ -440,15 +500,19 @@ fn statement_truth(pages: &[&Page], head: usize) -> Truth {
             || t.starts_with("PROOF")
             || starts_statement(&t)
             || (starts_section(&t) && !listed);
-        let display = !prose(l) || t.chars().count() < 3;
+        let display = !prose(l) || t.chars().count() < 3 || in_display(here, next.1);
         let own_face = l.font != here.body_font;
         if broke {
             // A new column or page: more of the statement only if it reads
             // as such.
+            // In a face of its own: that face again, a list's item, or a
+            // display mid-sentence - not a figure's labels in some other
+            // face at the top of the page.
+            let open = !ends_sentence(&text_of(prev_page, at.1));
             let goes_on = !head_like
                 && match italic {
-                    Some(true) => display || item || own_face,
-                    _ => !ends_sentence(&text_of(prev_page, at.1)),
+                    Some(true) => item || face.is_some_and(|f| l.font == f) || (display && open),
+                    _ => open,
                 };
             if !goes_on {
                 break;
@@ -465,9 +529,20 @@ fn statement_truth(pages: &[&Page], head: usize) -> Truth {
         let indented = l.x0 > margin + 3.0;
         let gap = prev_line.bottom - l.top;
         let apart = gap > leading_gap(here) + 3.5;
-        let prev_display = !prose(prev_line) || text_of(prev_page, at.1).chars().count() < 4;
+        let prev_display = !prose(prev_line)
+            || text_of(prev_page, at.1).chars().count() < 4
+            || in_display(prev_page, at.1);
         let take = if item {
             in_list = true;
+            true
+        } else if prose(l)
+            && !display
+            && italic == Some(true)
+            && face.is_some_and(|f| l.font == f)
+            && t.chars().count() >= 4
+        {
+            // The statement's own face goes on: it is the statement's
+            // text, however far it is set from the line before.
             true
         } else if prose(l)
             && italic == Some(true)
@@ -491,6 +566,11 @@ fn statement_truth(pages: &[&Page], head: usize) -> Truth {
         } else {
             false
         };
+        if std::env::var("SPEEDYF_TRUTH_DEBUG").is_ok() {
+            eprintln!(
+                "truth italic {italic:?} take {take} apart {apart} prev_display {prev_display} display {display} indented {indented} own {own_face} list {in_list} {t:?}"
+            );
+        }
         if !take {
             if t.chars().count() >= 3 {
                 outside.push(next);
@@ -521,8 +601,13 @@ fn truth(pages: &[&Page], target: &Target, anchor: Option<(Option<f32>, f32)>) -
                 .filter(|&i| {
                     let lower = text_of(page, i).to_lowercase();
                     let mut t = lower.split_whitespace();
+                    // A head, not a sentence opening a line ("Lemma 10
+                    // below shows"): no lowercase word after the number.
+                    let original = text_of(page, i);
+                    let after = original.split_whitespace().nth(2).unwrap_or("");
                     t.next().map(|w| w.trim_end_matches('.')) == Some(word.as_str())
                         && t.next().map(clean_number).as_deref() == Some(number.as_str())
+                        && !after.starts_with(char::is_lowercase)
                 })
                 .collect();
             let head = head_near(page, heads, anchor_y)?;
@@ -633,7 +718,7 @@ fn truth(pages: &[&Page], target: &Target, anchor: Option<(Option<f32>, f32)>) -
                     // The entry's first line: the first line at or below the
                     // anchor, by its x when the destination names one.
                     let (x, y) = anchor?;
-                    (0..lines.len())
+                    let near: Vec<usize> = (0..lines.len())
                         .filter(|&i| {
                             let l = &lines[i];
                             !l.flags.furniture
@@ -641,6 +726,23 @@ fn truth(pages: &[&Page], target: &Target, anchor: Option<(Option<f32>, f32)>) -
                                 && l.top >= y - 30.0
                                 && x.is_none_or(|x| l.x0 <= x + 30.0 && l.x1 >= x)
                         })
+                        .collect();
+                    // An anchor sits at or before an entry's first letter,
+                    // never inside a line of another column; a line opening
+                    // with a label starts an entry, a run-on line does not.
+                    let starting: Vec<usize> = near
+                        .iter()
+                        .copied()
+                        .filter(|&i| x.is_none_or(|x| lines[i].x0 >= x - 5.0))
+                        .collect();
+                    let near = if starting.is_empty() { near } else { starting };
+                    let labelled: Vec<usize> = near
+                        .iter()
+                        .copied()
+                        .filter(|&i| text_of(page, i).starts_with('['))
+                        .collect();
+                    let near = if labelled.is_empty() { near } else { labelled };
+                    near.into_iter()
                         .max_by(|&a, &b| lines[a].top.total_cmp(&lines[b].top))?
                 }
             };
@@ -665,8 +767,10 @@ fn truth(pages: &[&Page], target: &Target, anchor: Option<(Option<f32>, f32)>) -
             // The last whole line: a piece of its row (a ligature splits
             // lines; an accent sits above) is read with it.
             let mut whole = (0, head);
+            // The entries' own type, which may be smaller than the body's.
+            let size = Some(lines[head].size.min(page.body_size));
             while out.len() < 24 {
-                let Some((next, broke)) = step(pages, at) else {
+                let Some((next, broke)) = step_in(pages, at, size) else {
                     break;
                 };
                 let here = pages[next.0];
@@ -726,8 +830,11 @@ fn truth(pages: &[&Page], target: &Target, anchor: Option<(Option<f32>, f32)>) -
             let heads: Vec<usize> = (0..lines.len())
                 .filter(|&i| {
                     let t = text_of(page, i);
+                    // A note's words after its mark: not a lone script.
                     t.starts_with(mark.as_str())
                         && !t[mark.len()..].starts_with(|c: char| c.is_ascii_digit())
+                        && t[mark.len()..].trim().chars().count() >= 3
+                        && prose(&lines[i])
                         && lines[i].bottom < 0.35 * page.height
                         && (page.body_size <= 0.0 || lines[i].size < page.body_size - 0.3)
                 })
@@ -758,10 +865,14 @@ fn truth(pages: &[&Page], target: &Target, anchor: Option<(Option<f32>, f32)>) -
                         let Some(next_page) = pages.get(p + 1) else {
                             break;
                         };
-                        if p > 0 {
+                        // Over the page only mid-sentence, into the next
+                        // page's notes: lines of prose under all its body
+                        // and displays, not a display's small scripts.
+                        if p > 0 || ends_sentence(&text_of(here, i)) {
                             break;
                         }
-                        let Some(j) = (0..next_page.lines.len()).find(|&k| notes(next_page, k))
+                        let Some(j) = (0..next_page.lines.len())
+                            .find(|&k| notes(next_page, k) && under_the_body(next_page, k))
                         else {
                             break;
                         };
@@ -786,6 +897,26 @@ fn truth(pages: &[&Page], target: &Target, anchor: Option<(Option<f32>, f32)>) -
         }
         Target::Float(..) => None,
     }
+}
+
+/// Whether line `k` is prose set under every line of the body and every
+/// display it shares an x with: a page's foot.
+fn under_the_body(page: &Page, k: usize) -> bool {
+    let l = &page.lines[k];
+    let overlaps = |x0: f32, x1: f32| x1.min(l.x1) - x0.max(l.x0) > 0.0;
+    prose(l)
+        && text_of(page, k).chars().count() >= 3
+        && page.lines.iter().all(|m| {
+            let body = page.body_size > 0.0 && m.size >= 0.92 * page.body_size;
+            m.flags.furniture
+                || !(body || m.is_display())
+                || !overlaps(m.x0, m.x1)
+                || m.bottom > l.top
+        })
+        && page
+            .displays
+            .iter()
+            .all(|d| !overlaps(d[0], d[0] + d[2]) || d[1] > l.top)
 }
 
 fn gap_in(page: &Page, a: At, b: At) -> f32 {
@@ -1438,11 +1569,13 @@ fn evaluate_all_previews() {
                         numbered.missing += 1;
                         let _ = writeln!(
                             detail,
-                            "{} WRONG-NUMBER {target:?} {inside:?} p{}->p{} crop {}",
+                            "{} WRONG-NUMBER {target:?} {inside:?} p{}->p{} crop {} words {:?} names {:?}",
                             doc.name,
                             src + 1,
                             to + 1,
-                            show_crops(&crops)
+                            show_crops(&crops),
+                            (&words.before, &words.inside),
+                            super::targets::named_number(&words)
                         );
                     }
                 }
@@ -1644,6 +1777,26 @@ fn dump_link_target() {
         let pieces = super::continuation::continuation(flow, &page, next.as_ref(), target.rect);
         eprintln!("pieces {pieces:?}");
     }
+    // The eval's truth for a target: `SPEEDYF_TRUTH=theorem:1`.
+    if let Ok(spec) = std::env::var("SPEEDYF_TRUTH") {
+        let (word, number) = spec.split_once(':').unwrap_or(("", ""));
+        let target = match word {
+            "equation" => Target::Equation(number.into()),
+            "section" => Target::Section(number.into()),
+            "footnote" => Target::Footnote(number.into()),
+            "citation" => Target::Citation((!number.is_empty()).then(|| number.into())),
+            _ => Target::Theorem(word.into(), number.into()),
+        };
+        let pages: Vec<&Page> = std::iter::once(&page).chain(next.as_ref()).collect();
+        if let Some(t) = truth(&pages, &target, Some((x, y))) {
+            for (p, i) in t.lines {
+                eprintln!("truth line p+{p} {:?}", text_of(pages[p], i));
+            }
+            for (p, i) in t.outside {
+                eprintln!("truth outside p+{p} {:?}", text_of(pages[p], i));
+            }
+        }
+    }
     let mut classified = page.clone();
     let regions = super::regions::classify(&mut classified, &mut Default::default());
     for d in super::xref::find_definitions(&classified, &regions, 0) {
@@ -1672,6 +1825,11 @@ fn dump_links() {
     let pdfium = Pdfium::new(pdfium_init::init_bindings(&[]).expect("pdfium"));
     let b = pdfium.bindings();
     let doc = load(b, &path).expect("load");
+    let mut labels: Vec<_> = doc.labels.iter().collect();
+    labels.sort_by(|a, b| a.0 .1.cmp(&b.0 .1));
+    for ((kind, label), at) in labels {
+        eprintln!("label {kind:?} {label} at {at:?}");
+    }
     for (src, links_here) in doc.links.iter().enumerate() {
         let Some(source) = doc.pages[src].as_ref() else {
             continue;
