@@ -230,8 +230,8 @@ export default function SettingsPanel() {
           <label class="home-setting-text" for="setting-sleepyf">
             <span class="home-setting-title">SleepyF</span>
             <span class="home-setting-desc">
-              Night reading: the dark theme, warmer and quieter, with pages dimmed and warmed.
-              Scheduled turns it on between two times each day. Printing and export are unaffected.
+              Night reading: the dark theme, warmer and quieter, with pages dimmed and warmed. With
+              system follows this computer's dark mode. Printing and export are unaffected.
             </span>
           </label>
           <select
@@ -242,39 +242,9 @@ export default function SettingsPanel() {
           >
             <option value="off">Off</option>
             <option value="on">On</option>
-            <option value="scheduled">Scheduled</option>
+            <option value="system">With system</option>
           </select>
         </div>
-
-        <Show when={settings.sleepyf === 'scheduled'}>
-          <div class="home-setting home-setting-sub">
-            <span class="home-setting-text">
-              <span class="home-setting-title">Schedule</span>
-              <span class="home-setting-desc">
-                From the first time until the second, by this computer's clock.
-              </span>
-            </span>
-            <span class="home-setting-times">
-              <input
-                type="time"
-                aria-label="SleepyF starts"
-                value={settings.sleepyFrom}
-                onChange={(e) => {
-                  if (e.currentTarget.value) updateSettings({ sleepyFrom: e.currentTarget.value });
-                }}
-              />
-              <span class="home-setting-desc">to</span>
-              <input
-                type="time"
-                aria-label="SleepyF ends"
-                value={settings.sleepyTo}
-                onChange={(e) => {
-                  if (e.currentTarget.value) updateSettings({ sleepyTo: e.currentTarget.value });
-                }}
-              />
-            </span>
-          </div>
-        </Show>
 
         <Show when={settings.sleepyf !== 'off'}>
           <div class="home-setting home-setting-sub">

@@ -5,8 +5,8 @@ import { engine } from '../lib/transport/engine';
 
 export type ThemePref = 'system' | 'light' | 'dark';
 export type LaunchScreen = 'home' | 'projects';
-/** SleepyF, the night mode: off, on, or on between two times of day. */
-export type SleepyMode = 'off' | 'on' | 'scheduled';
+/** SleepyF, the night mode: off, on, or on while the system is dark. */
+export type SleepyMode = 'off' | 'on' | 'system';
 
 interface Settings {
   theme: ThemePref;
@@ -19,9 +19,6 @@ interface Settings {
   sleepyf: SleepyMode;
   /** How far SleepyF dims and warms the pages, 0 to 100. */
   sleepyWarmth: number;
-  /** When a scheduled SleepyF starts and ends, as local "HH:MM". */
-  sleepyFrom: string;
-  sleepyTo: string;
   lowMemory: boolean;
   /** folders in the library; was a single optional root */
   libraryRoots: string[];
@@ -46,18 +43,13 @@ interface Settings {
 
 const KEY = 'speedyf-settings';
 const DEFAULT_WARMTH = 50;
-const DEFAULT_FROM = '22:00';
-const DEFAULT_TO = '07:00';
-
-/** A stored "HH:MM", or null when it is not one. */
-function clockTime(value: unknown): string | null {
-  return typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value) ? value : null;
-}
 
 function sleepyMode(parsed: Partial<Settings> & { dimPages?: unknown }): SleepyMode {
-  if (parsed.sleepyf === 'on' || parsed.sleepyf === 'scheduled' || parsed.sleepyf === 'off') {
+  if (parsed.sleepyf === 'on' || parsed.sleepyf === 'system' || parsed.sleepyf === 'off') {
     return parsed.sleepyf;
   }
+  // a schedule by the clock, which following the system replaced
+  if ((parsed.sleepyf as unknown) === 'scheduled') return 'system';
   // the dim pages switch SleepyF grew out of
   return parsed.dimPages === true ? 'on' : 'off';
 }
@@ -75,8 +67,6 @@ function load(): Settings {
           typeof parsed.sleepyWarmth === 'number' && Number.isFinite(parsed.sleepyWarmth)
             ? Math.min(100, Math.max(0, Math.round(parsed.sleepyWarmth)))
             : DEFAULT_WARMTH,
-        sleepyFrom: clockTime(parsed.sleepyFrom) ?? DEFAULT_FROM,
-        sleepyTo: clockTime(parsed.sleepyTo) ?? DEFAULT_TO,
         lowMemory: parsed.lowMemory === true,
         libraryRoots: Array.isArray(parsed.libraryRoots)
           ? parsed.libraryRoots.filter((root): root is string => typeof root === 'string')
@@ -103,8 +93,6 @@ function load(): Settings {
     invertPages: false,
     sleepyf: 'off',
     sleepyWarmth: DEFAULT_WARMTH,
-    sleepyFrom: DEFAULT_FROM,
-    sleepyTo: DEFAULT_TO,
     lowMemory: false,
     libraryRoots: [],
     trustedLinkHosts: [],
@@ -122,7 +110,7 @@ export { settings };
 
 export function updateSettings(patch: Partial<Settings>) {
   setSettingsStore(patch);
-  // a new mode drops a hand toggle made under the old schedule
+  // a new mode drops a hand toggle made under the old one
   if (patch.sleepyf !== undefined) setOverride(null);
   try {
     localStorage.setItem(
@@ -132,8 +120,6 @@ export function updateSettings(patch: Partial<Settings>) {
         invertPages: settings.invertPages,
         sleepyf: settings.sleepyf,
         sleepyWarmth: settings.sleepyWarmth,
-        sleepyFrom: settings.sleepyFrom,
-        sleepyTo: settings.sleepyTo,
         lowMemory: settings.lowMemory,
         libraryRoots: settings.libraryRoots,
         trustedLinkHosts: settings.trustedLinkHosts,
@@ -176,61 +162,27 @@ if (typeof window !== 'undefined' && window.matchMedia) {
   mq.addEventListener('change', (e) => setSystemDark(e.matches));
 }
 
-/** Minutes since local midnight, as a signal a scheduled SleepyF follows.
- * Checked every half minute: a schedule is set to the minute, so it starts
- * and ends within half a minute of its time. */
-function minutesNow(): number {
-  const now = new Date();
-  return now.getHours() * 60 + now.getMinutes();
-}
-
-const [clock, setClock] = createSignal(minutesNow());
-
-if (typeof window !== 'undefined') {
-  // No teardown on purpose, like the appearance listener above.
-  window.setInterval(() => setClock(minutesNow()), 30_000);
-}
-
-function minutesOf(time: string): number {
-  const [h, m] = time.split(':').map(Number);
-  return (h ?? 0) * 60 + (m ?? 0);
-}
-
-/** Whether `minutes` past midnight falls in the window from `from` to `to`,
- * which runs past midnight when it ends earlier than it starts. An empty
- * window (the same time twice) is never in. */
-export function inSleepyWindow(from: string, to: string, minutes: number): boolean {
-  const start = minutesOf(from);
-  const end = minutesOf(to);
-  if (start === end) return false;
-  return start < end ? minutes >= start && minutes < end : minutes >= start || minutes < end;
-}
-
-/** A switch made by hand while SleepyF is scheduled: it holds until the
- * schedule itself next turns, then the schedule takes over again. */
-const [override, setOverride] = createSignal<{ active: boolean; scheduled: boolean } | null>(null);
-
-function scheduledNow(): boolean {
-  return inSleepyWindow(settings.sleepyFrom, settings.sleepyTo, clock());
-}
+/** A switch made by hand while SleepyF follows the system: it holds until
+ * the system appearance next changes, then the system takes over again. */
+const [override, setOverride] = createSignal<{ active: boolean; systemDark: boolean } | null>(null);
 
 /** Whether SleepyF is in effect right now. */
 export function sleepyActive(): boolean {
   if (settings.sleepyf === 'on') return true;
   if (settings.sleepyf === 'off') return false;
-  const scheduled = scheduledNow();
+  const dark = systemDark();
   const held = override();
-  return held && held.scheduled === scheduled ? held.active : scheduled;
+  return held && held.systemDark === dark ? held.active : dark;
 }
 
-/** Turns SleepyF over: on and off outright, or, while it is scheduled, the
- * other way until the schedule next turns. */
+/** Turns SleepyF over: on and off outright, or, while it follows the
+ * system, the other way until the system appearance next changes. */
 export function toggleSleepy(): void {
-  if (settings.sleepyf !== 'scheduled') {
+  if (settings.sleepyf !== 'system') {
     updateSettings({ sleepyf: settings.sleepyf === 'on' ? 'off' : 'on' });
     return;
   }
-  setOverride({ active: !sleepyActive(), scheduled: scheduledNow() });
+  setOverride({ active: !sleepyActive(), systemDark: systemDark() });
 }
 
 /** Resolve the effective theme, honoring the OS preference in system mode.

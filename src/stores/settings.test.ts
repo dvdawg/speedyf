@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   applyPageAppearance,
   effectiveTheme,
-  inSleepyWindow,
   pagesInverted,
   settings,
   sleepyActive,
@@ -16,8 +15,6 @@ afterEach(() =>
     invertPages: false,
     sleepyf: 'off',
     sleepyWarmth: 50,
-    sleepyFrom: '22:00',
-    sleepyTo: '07:00',
   })
 );
 
@@ -97,13 +94,13 @@ describe('SleepyF', () => {
     expect(settings.sleepyf).toBe('off');
   });
 
-  it('holds a hand toggle while scheduled, without changing the mode', () => {
-    // a window that is never in: the schedule says off
-    updateSettings({ sleepyf: 'scheduled', sleepyFrom: '03:00', sleepyTo: '03:00' });
+  it('follows the system, and holds a hand toggle without changing the mode', () => {
+    // the test environment's system appearance is light
+    updateSettings({ sleepyf: 'system' });
     expect(sleepyActive()).toBe(false);
     toggleSleepy();
     expect(sleepyActive()).toBe(true);
-    expect(settings.sleepyf).toBe('scheduled');
+    expect(settings.sleepyf).toBe('system');
     toggleSleepy();
     expect(sleepyActive()).toBe(false);
   });
@@ -116,31 +113,11 @@ describe('SleepyF', () => {
       value: { setItem: (k: string, v: string) => (saved[k] = v), getItem: () => null },
     });
     try {
-      updateSettings({ sleepyf: 'scheduled', sleepyWarmth: 70 });
+      updateSettings({ sleepyf: 'system', sleepyWarmth: 70 });
       const stored = JSON.parse(saved['speedyf-settings']!);
-      expect(stored).toMatchObject({ sleepyf: 'scheduled', sleepyWarmth: 70 });
-      expect(stored.sleepyFrom).toBe('22:00');
-      expect(stored.sleepyTo).toBe('07:00');
+      expect(stored).toMatchObject({ sleepyf: 'system', sleepyWarmth: 70 });
     } finally {
       Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: real });
     }
-  });
-});
-
-describe('inSleepyWindow', () => {
-  const at = (h: number, m = 0) => h * 60 + m;
-
-  it('runs past midnight when it ends earlier than it starts', () => {
-    expect(inSleepyWindow('22:00', '07:00', at(23))).toBe(true);
-    expect(inSleepyWindow('22:00', '07:00', at(3))).toBe(true);
-    expect(inSleepyWindow('22:00', '07:00', at(7))).toBe(false);
-    expect(inSleepyWindow('22:00', '07:00', at(12))).toBe(false);
-    expect(inSleepyWindow('22:00', '07:00', at(22))).toBe(true);
-  });
-
-  it('runs within a day otherwise, and is never in when empty', () => {
-    expect(inSleepyWindow('13:00', '15:30', at(14))).toBe(true);
-    expect(inSleepyWindow('13:00', '15:30', at(15, 30))).toBe(false);
-    expect(inSleepyWindow('13:00', '13:00', at(13))).toBe(false);
   });
 });

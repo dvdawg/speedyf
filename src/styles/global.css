@@ -671,8 +671,8 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
-/* A setting that belongs to the one above it: SleepyF's schedule and
- * warmth, indented under it. */
+/* A setting that belongs to the one above it, such as SleepyF's warmth,
+ * indented under it. */
 .home-setting.home-setting-sub {
   padding-left: 16px;
 }
@@ -680,13 +680,6 @@ body {
 .home-setting input[type='range'] {
   width: 140px;
   accent-color: var(--accent);
-}
-
-.home-setting-times {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
 }
 
 .home-setting-text {

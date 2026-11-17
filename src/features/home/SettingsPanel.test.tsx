@@ -181,10 +181,8 @@ describe('SettingsPanel display settings', () => {
     fireEvent.input(screen.getByLabelText(/Invert page colors/), { target: { checked: true } });
     expect(settings.invertPages).toBe(true);
 
-    fireEvent.input(screen.getByLabelText(/^SleepyF/), { target: { value: 'scheduled' } });
-    expect(settings.sleepyf).toBe('scheduled');
-    fireEvent.change(screen.getByLabelText('SleepyF starts'), { target: { value: '21:30' } });
-    expect(settings.sleepyFrom).toBe('21:30');
+    fireEvent.input(screen.getByLabelText(/^SleepyF/), { target: { value: 'system' } });
+    expect(settings.sleepyf).toBe('system');
     fireEvent.input(screen.getByLabelText(/Warmth/), { target: { value: '75' } });
     expect(settings.sleepyWarmth).toBe(75);
 
@@ -197,7 +195,6 @@ describe('SettingsPanel display settings', () => {
       invertPages: false,
       sleepyf: 'off',
       sleepyWarmth: 50,
-      sleepyFrom: '22:00',
       lowMemory: false,
     });
   });
