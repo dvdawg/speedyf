@@ -616,7 +616,7 @@ fn locate_named(
         Named::NumberedCitation(number) => {
             let label = format!("[{number}]");
             let line = (0..page.lines.len())
-                .find(|&i| page.line_text(i).trim_start().starts_with(&label))?;
+                .find(|&i| past_line_number(&page.line_text(i)).starts_with(&label))?;
             let l = &page.lines[line];
             bibliography_entry(page, Some(l.x0), l.top).map(reference)
         }
@@ -838,14 +838,19 @@ pub fn link_preview(
     }
 }
 
-/// The text after the first line's label: "[12] Author" -> "Author".
-pub(crate) fn labelled(text: &str) -> bool {
+/// A line's text past a review copy's line number before it: "351 [12]
+/// A. Name" reads "[12] A. Name".
+fn past_line_number(text: &str) -> &str {
     let t = text.trim_start();
-    // A review copy's line number before it: "351 [12] ...".
-    let t = match t.split_once(' ') {
+    match t.split_once(' ') {
         Some((number, rest)) if number.chars().all(|c| c.is_ascii_digit()) => rest.trim_start(),
         _ => t,
-    };
+    }
+}
+
+/// The text after the first line's label: "[12] Author" -> "Author".
+pub(crate) fn labelled(text: &str) -> bool {
+    let t = past_line_number(text);
     let Some(rest) = t.strip_prefix('[') else {
         return false;
     };
@@ -1534,6 +1539,33 @@ mod tests {
             !lines.iter().any(|l| l.starts_with("The proof")),
             "{lines:?}"
         );
+    }
+
+    #[test]
+    fn a_numbered_entry_behind_a_review_copys_line_number_is_found() {
+        let mut b = Builder::new();
+        let mut y = 700.0;
+        for k in 1..12 {
+            b.text(40.0, y, BODY, &format!("{}", 340 + 2 * k));
+            b.line_at(
+                60.0,
+                y,
+                BODY,
+                &format!("[{k}] A. Author. A paper title, 2001."),
+            );
+            b.text(40.0, y - 11.0, BODY, &format!("{}", 341 + 2 * k));
+            b.line_at(72.0, y - 11.0, BODY, "Journal of Things, pages 1-10.");
+            y -= 24.0;
+        }
+        let page = b.page();
+        let words = words("as in [", "9]");
+        let target = link_preview(Some(&page), &[], 612.0, 792.0, None, None, Some(&words));
+        let lines = lines_in(&page, target.rect);
+        assert!(
+            lines.iter().any(|l| l.contains("[9] A. Author")),
+            "{lines:?}"
+        );
+        assert!(!lines.iter().any(|l| l.contains("[10]")), "{lines:?}");
     }
 
     #[test]
