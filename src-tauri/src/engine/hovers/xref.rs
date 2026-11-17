@@ -1286,14 +1286,33 @@ fn section_head_at(page: &Page, line: usize, from: usize) -> Option<Head> {
         && label_font != page.body_font
         && page.all_bold(start, word_end);
     let short = l.end - l.start <= 90;
-    let set_apart = heading_face || larger;
+    // Or centred on its column in a face of its own, the body's size: the
+    // AMS article's small-capital "3. Proof outline".
+    // IEEE's "I. INTRODUCTION" is in capitals, smaller ones in the body's
+    // own font.
+    let (left, right) = super::statement::column_extent(page, l);
+    let (gap_left, gap_right) = (l.x0 - left, right - l.x1);
+    let letters: Vec<char> = text[title.min(l.end)..l.end]
+        .iter()
+        .copied()
+        .filter(|c| c.is_alphabetic())
+        .collect();
+    let capitals = letters.len() >= 4 && letters.iter().all(|c| c.is_uppercase());
+    let own_face = title_font == Some(label_font) && label_font != page.body_font;
+    let centred = (own_face || capitals)
+        && short
+        && gap_left > 3.0 * l.em()
+        && (gap_left - gap_right).abs() < 1.5 * l.em();
+    let set_apart = heading_face || larger || centred;
     // A long line in a merely larger size is a run of display text, not a
     // heading; a run-in heading keeps its heading face.
     if !set_apart || (!short && !heading_face) {
         return None;
     }
-    // A heading is a run of lines of its own: never smaller than the body.
-    if page.body_size > 0.0 && l.size > 0.0 && l.size < 0.95 * page.body_size {
+    // A heading is a run of lines of its own: never smaller than the body
+    // (but for small capitals centred over the column).
+    let small_caps = centred && capitals && l.size >= 0.75 * page.body_size;
+    if page.body_size > 0.0 && l.size > 0.0 && l.size < 0.95 * page.body_size && !small_caps {
         return None;
     }
     Some(Head {
@@ -2349,6 +2368,43 @@ mod tests {
         });
         let found: Vec<(Kind, &str)> = defs.iter().map(|d| (d.kind, d.label.as_str())).collect();
         assert_eq!(found, vec![(Kind::Lemma, "10"), (Kind::Theorem, "19")]);
+    }
+
+    #[test]
+    fn a_centred_heading_in_small_capitals_is_a_section() {
+        const CAPS: Style = Style {
+            size: 10.0,
+            font: 7,
+            bold: false,
+            math: false,
+        };
+        let (_, defs) = definitions(|b| {
+            for i in 0..4 {
+                b.line(
+                    700.0 - 12.0 * i as f32,
+                    BODY,
+                    "Body text of the paper continues across the whole column here.",
+                );
+            }
+            b.line_at(187.0, 640.0, CAPS, "3. Proof outline");
+            b.line(
+                620.0,
+                BODY,
+                "The physical description leads to a cancellation here.",
+            );
+            // Not centred: a line in another face at the margin.
+            b.line(600.0, CAPS, "4. Not a heading at all");
+            // IEEE's small capitals, in the body's font but smaller.
+            let small = Style { size: 8.0, ..BODY };
+            b.line_at(195.0, 560.0, small, "II. RELATED WORK");
+            b.line(
+                540.0,
+                BODY,
+                "The physical description leads to a cancellation here.",
+            );
+        });
+        let found: Vec<(Kind, &str)> = defs.iter().map(|d| (d.kind, d.label.as_str())).collect();
+        assert_eq!(found, vec![(Kind::Section, "3"), (Kind::Section, "II")]);
     }
 
     #[test]
