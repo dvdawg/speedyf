@@ -26,6 +26,7 @@ pub mod page;
 pub mod regions;
 pub mod settle;
 pub mod statement;
+pub mod symbols;
 pub mod targets;
 pub mod terms;
 pub mod xref;
@@ -158,6 +159,8 @@ pub struct IndexBuilder {
     /// The page before, kept until the next one says whether its last
     /// footnote runs on.
     previous: Option<(u32, Page)>,
+    /// Math symbols and where they are defined.
+    symbols: symbols::Collector,
 }
 
 impl IndexBuilder {
@@ -173,6 +176,7 @@ impl IndexBuilder {
             statements: Vec::new(),
             listed: std::collections::HashSet::new(),
             previous: None,
+            symbols: symbols::Collector::new(),
         }
     }
 
@@ -192,6 +196,7 @@ impl IndexBuilder {
             return;
         };
         let regions = classify(&mut page, &mut self.state);
+        self.symbols.add_page(&page, src);
         let definitions = xref::find_definitions(&page, &regions, src);
         for d in &definitions {
             if !(d.kind.is_statement() || d.kind == Kind::Equation) {
@@ -278,6 +283,20 @@ impl IndexBuilder {
                     .any(|s| any_overlap(&s.rects, &note.rects))
                 {
                     page_spans.push(note);
+                }
+            }
+        }
+        // Symbols last: a reference, footnote mark or term over the same
+        // characters keeps them.
+        for (src, found) in self.symbols.spans() {
+            let page_spans = spans.entry(src).or_default();
+            let others = page_spans.len();
+            for span in found {
+                if !page_spans[..others]
+                    .iter()
+                    .any(|s| any_overlap(&s.rects, &span.rects))
+                {
+                    page_spans.push(span);
                 }
             }
         }
