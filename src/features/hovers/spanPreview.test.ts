@@ -68,6 +68,45 @@ describe('span previews in the citation popover', () => {
     expect(store.state.hover.result?.kind).toBe('span');
   });
 
+  it('previews a symbol from its definition, marking the defining occurrence', async () => {
+    vi.useFakeTimers();
+    const store = createCitationStore(createDocumentStore(), {} as ViewportStore);
+    const element = {
+      getBoundingClientRect: () => ({
+        left: 0,
+        top: 0,
+        right: 10,
+        bottom: 10,
+        width: 10,
+        height: 10,
+      }),
+    } as HTMLElement;
+    const symbol = span({
+      kind: 'symbol',
+      label: 'theta_t',
+      target: {
+        page: 1,
+        x: 72,
+        y: 520,
+        region: [72, 496, 400, 24],
+        continues: false,
+        mark: [140, 508, 12, 10],
+        terms: [],
+      },
+    });
+    store.enter(1, 4, { kind: 'span', span: symbol }, element, true);
+    vi.advanceTimersByTime(0);
+    await settle();
+    expect(invoke).toHaveBeenCalledWith('get_hover_preview', {
+      docId: 1,
+      src: 1,
+      kind: 'symbol',
+      region: [72, 496, 400, 24],
+      mark: [140, 508, 12, 10],
+    });
+    expect(store.state.hover.result?.kind).toBe('span');
+  });
+
   it('shows a term as text, without the engine', async () => {
     vi.useFakeTimers();
     const store = createCitationStore(createDocumentStore(), {} as ViewportStore);

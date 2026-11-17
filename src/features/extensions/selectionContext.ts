@@ -184,7 +184,7 @@ export function xrefsIn(
 ): SelectionXref[] {
   const out: SelectionXref[] = [];
   for (const span of spans) {
-    if (span.kind === 'footnote' || span.kind === 'term') continue;
+    if (span.kind === 'footnote' || span.kind === 'term' || span.kind === 'symbol') continue;
     const inside = span.rects.some((r) =>
       selection.rects.some((s) => overlaps(topLeft(r as Rect, height), s))
     );

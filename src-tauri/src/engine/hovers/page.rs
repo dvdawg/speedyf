@@ -47,6 +47,9 @@ pub struct PageInput {
     pub width: f32,
     pub height: f32,
     pub glyphs: Vec<Glyph>,
+    /// Font names by id: `fonts[id - 1]` is the name of `Glyph::font ==
+    /// id`. May be empty (synthetic pages); ids then stand for themselves.
+    pub fonts: Vec<String>,
 }
 
 /// Line-level facts the detectors share.
@@ -140,6 +143,8 @@ pub struct Page {
     /// when one is set level with it: a unit no preview cuts through and a
     /// reader takes whole. Empty until `set_displays`.
     pub displays: Vec<[f32; 4]>,
+    /// Font names by id, as `PageInput::fonts`.
+    pub font_names: Vec<String>,
 }
 
 /// What one PDFium character becomes in the normalised text.
@@ -282,6 +287,7 @@ impl Page {
             width,
             height,
             glyphs,
+            fonts,
         } = input;
         let groups = group_lines(&glyphs);
 
@@ -308,6 +314,7 @@ impl Page {
             height,
             body_size,
             body_font,
+            font_names: fonts,
             ..Page::default()
         };
         for group in groups {
@@ -570,6 +577,14 @@ impl Page {
         [b[0], bottom, b[2], top - bottom]
     }
 
+    /// The name of font `id`, or None when the page carries no names.
+    pub fn font_name(&self, id: u16) -> Option<&str> {
+        (id as usize)
+            .checked_sub(1)
+            .and_then(|i| self.font_names.get(i))
+            .map(String::as_str)
+    }
+
     /// The text of one line.
     pub fn line_text(&self, line: usize) -> String {
         let l = &self.lines[line];
@@ -825,6 +840,7 @@ pub mod build {
                 width: self.width,
                 height: self.height,
                 glyphs: self.glyphs,
+                fonts: Vec::new(),
             })
         }
     }

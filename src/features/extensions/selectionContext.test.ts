@@ -82,6 +82,7 @@ describe('cross-references in a selection', () => {
     const spans = [
       span('Theorem 2.1', 'theorem', 580),
       span('Footnote 3', 'footnote', 580),
+      span('theta_t', 'symbol', 580),
       span('Equation 12', 'equation', 100),
     ];
     expect(xrefsIn({ rects: [line(210)] }, spans, H, () => 800)).toEqual([
