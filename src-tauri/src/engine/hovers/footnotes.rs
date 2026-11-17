@@ -432,6 +432,7 @@ pub fn find_footnotes(page: &Page, next: Option<&Page>) -> Vec<Footnote> {
             let first = &page.lines[lines[0]];
             let continues = last_zone_line.is_some_and(|last| lines.contains(&last))
                 && notes.last().is_some_and(|n| n.lines == lines)
+                && last_zone_line.is_some_and(|last| !ends_sentence(&page.line_text(last)))
                 && next.is_some_and(continues_on);
             out.push(Footnote {
                 mark: mark.clone(),
@@ -490,6 +491,11 @@ pub fn note_continuation(page: &Page, next: Option<&Page>, region: Rect) -> Opti
             page,
         ))
     };
+    // A note that ends its sentence is done: what opens the next foot
+    // without a mark is something else.
+    if ends_sentence(&page.line_text(lines[at])) {
+        return None;
+    }
     match lines.get(at + 1) {
         // The next column's foot.
         Some(&following) => {
@@ -502,15 +508,54 @@ pub fn note_continuation(page: &Page, next: Option<&Page>, region: Rect) -> Opti
         }
         None => {
             let next = next?;
-            let lines = zone(next);
+            let lines = note_area(next);
             run_on(next, &lines, 0).map(|rect| (true, rect))
         }
     }
 }
 
-/// Whether the next page's footnote zone opens mid-note.
+fn ends_sentence(text: &str) -> bool {
+    matches!(
+        text.trim_end().chars().last(),
+        Some('.' | '!' | '?' | ';' | ':')
+    )
+}
+
+/// A page's note area, the lines a note run on from the page before can
+/// open with: its footnote zone's lines of prose (not the small type of a
+/// display's scripts) set under every line of the body and every display
+/// beside them.
+fn note_area(page: &Page) -> Vec<usize> {
+    let body = |l: &Line| {
+        !l.flags.furniture
+            && l.end > l.start
+            && page.body_size > 0.0
+            && l.size >= 0.92 * page.body_size
+    };
+    zone(page)
+        .into_iter()
+        .filter(|&i| {
+            let l = &page.lines[i];
+            let prose = !l.is_display()
+                && l.math_share < 0.2
+                && page.line_text(i).trim().chars().count() >= 3;
+            let under_body = page
+                .lines
+                .iter()
+                .filter(|b| (body(b) || b.is_display()) && x_overlap(b, l.x0, l.x1))
+                .all(|b| b.bottom > l.top);
+            let under_displays = page
+                .displays
+                .iter()
+                .all(|d| d[0] + d[2] <= l.x0 || d[0] >= l.x1 || d[1] > l.top);
+            prose && under_body && under_displays
+        })
+        .collect()
+}
+
+/// Whether the next page's note area opens mid-note.
 fn continues_on(next: &Page) -> bool {
-    let lines = zone(next);
+    let lines = note_area(next);
     let Some(&first) = lines.first() else {
         return false;
     };
@@ -759,6 +804,56 @@ mod tests {
         let found = find_footnotes(&b.page(), None);
         assert_eq!(found.len(), 2);
         assert!(found.iter().all(|f| (f.jump.1 - 578.0).abs() < 10.0));
+    }
+
+    /// A page of body text whose foot holds, first in the text's order, a
+    /// display's small mathematical scripts, and then `note` in the note
+    /// area.
+    fn next_page_with(note: &str) -> Page {
+        const SMALL_MATH: Style = Style {
+            size: 8.0,
+            font: 4,
+            bold: false,
+            math: true,
+        };
+        let mut b = Builder::new();
+        let mut y = 700.0;
+        while y > 170.0 {
+            b.line(y, BODY, "Next page body text runs here now.");
+            y -= 12.0;
+        }
+        b.line_at(120.0, 158.0, SMALL_MATH, "Mgs f=E");
+        b.line(90.0, SMALL, note);
+        b.page()
+    }
+
+    #[test]
+    fn a_note_that_ends_its_sentence_does_not_run_on() {
+        let page = page_with(
+            &[("A sentence with a short footnote", Some("2"))],
+            &["2|See footnote 1."],
+        );
+        let next = next_page_with("text in small type with no mark");
+        let found = find_footnotes(&page, Some(&next));
+        assert_eq!(found.len(), 1);
+        assert!(!found[0].continues);
+        assert_eq!(note_continuation(&page, Some(&next), found[0].region), None);
+    }
+
+    #[test]
+    fn a_note_runs_on_into_the_note_area_not_a_displays_scripts() {
+        let page = page_with(
+            &[("A sentence with a long footnote", Some("3"))],
+            &["3|The note starts here and runs on to the"],
+        );
+        let next = next_page_with("next page, where it ends.");
+        let found = find_footnotes(&page, Some(&next));
+        assert_eq!(found.len(), 1);
+        assert!(found[0].continues);
+        let (next_page, rect) =
+            note_continuation(&page, Some(&next), found[0].region).expect("runs on");
+        assert!(next_page);
+        assert!(rect[1] + rect[3] < 100.0, "the scripts stay out: {rect:?}");
     }
 
     #[test]
