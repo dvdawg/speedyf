@@ -1,10 +1,19 @@
 /** Hover spans the engine finds in page text (`engine::hovers`): cross-
- * references ("Eq. (12)", "Fig. 3", "Theorem 2.1"), footnote marks, and
- * terms an extension contributed. Rectangles are `[x, y, w, h]` in y-up
+ * references ("Eq. (12)", "Fig. 3", "Theorem 2.1"), footnote marks, math
+ * symbols (previewing where the paper defines them), and terms an
+ * extension contributed. Rectangles are `[x, y, w, h]` in y-up
  * page points, the space every page overlay draws in. */
 
 export type HoverSpanKind =
-  'equation' | 'figure' | 'table' | 'algorithm' | 'section' | 'theorem' | 'footnote' | 'term';
+  | 'equation'
+  | 'figure'
+  | 'table'
+  | 'algorithm'
+  | 'section'
+  | 'theorem'
+  | 'footnote'
+  | 'symbol'
+  | 'term';
 
 export type HoverRect = [number, number, number, number];
 
@@ -29,7 +38,7 @@ export interface HoverTarget {
   /** A footnote that runs on onto the next page. */
   continues: boolean;
   /** The linked row of a multi-line display whose region is the whole
-   * display; absent otherwise. */
+   * display, or a symbol's defining occurrence; absent otherwise. */
   mark?: HoverRect | null;
   terms: HoverTermEntry[];
 }
@@ -37,7 +46,8 @@ export interface HoverTarget {
 export interface HoverSpan {
   kind: HoverSpanKind;
   rects: HoverRect[];
-  /** For screen readers: "Equation 12", "Footnote 3", "FDT". */
+  /** For screen readers: "Equation 12", "Footnote 3", "FDT", or a
+   * symbol's ASCII name ("theta_t", "cal L"). */
   label: string;
   target: HoverTarget;
 }

@@ -38,7 +38,7 @@ const OWNED =
 const CLICK_SLOP_PX = 4;
 
 function ariaLabel(span: HoverSpan): string {
-  if (span.kind === 'term') return `Definition of ${span.label}`;
+  if (span.kind === 'term' || span.kind === 'symbol') return `Definition of ${span.label}`;
   return `Preview ${span.label}`;
 }
 
