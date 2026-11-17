@@ -27,7 +27,7 @@ import { closedTabCount } from '../features/document/closedTabs';
 import { addBlankPageAfter } from '../features/editor/editorActions';
 import { setActiveTool, type Tool } from '../features/annotations/toolStore';
 import { beginPrint } from '../features/print/printStore';
-import { settings, updateSettings } from '../stores/settings';
+import { settings, toggleSleepy, updateSettings } from '../stores/settings';
 import { forgetContributedText } from '../features/extensions/extensionStore';
 import {
   activePaper,
@@ -649,12 +649,12 @@ export const COMMANDS: readonly Command[] = [
     run: () => updateSettings({ invertPages: !settings.invertPages }),
   },
   {
-    id: 'settings.toggleDimPages',
-    title: 'Toggle Dim Pages',
+    id: 'settings.toggleSleepyf',
+    title: 'Toggle SleepyF',
     group: 'Settings',
-    keywords: ['dark', 'night', 'dim', 'brightness', 'warm', 'appearance'],
+    keywords: ['dark', 'night', 'sleep', 'dim', 'brightness', 'warm', 'appearance'],
     enabled: () => true,
-    run: () => updateSettings({ dimPages: !settings.dimPages }),
+    run: toggleSleepy,
   },
   {
     id: 'settings.toggleLowMemory',

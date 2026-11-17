@@ -1,5 +1,6 @@
 import { createSignal, onCleanup, onMount, Show } from 'solid-js';
 import { activeTab } from '../stores/tabsStore';
+import { sleepyActive, toggleSleepy } from '../stores/settings';
 import { engine } from '../lib/transport/engine';
 import type { EngineMetrics, LookupActivity } from '../lib/transport/engine';
 import { libraryStore } from '../features/citations/libraryStore';
@@ -142,6 +143,16 @@ export default function StatusBar() {
         </Show>
       </div>
       <div class="sb-right">
+        <Show when={sleepyActive()}>
+          <button
+            type="button"
+            class="sb-sleepy"
+            title="SleepyF is on. Click to turn it off."
+            onClick={toggleSleepy}
+          >
+            SleepyF
+          </button>
+        </Show>
         {/* Engine diagnostics: for development builds only. */}
         <Show when={import.meta.env.DEV && doc()?.loaded && metrics()}>
           {(value) => (

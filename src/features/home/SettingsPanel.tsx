@@ -15,8 +15,14 @@
 import { createSignal, For, onMount, Show } from 'solid-js';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { engine, isEngineError } from '../../lib/transport/engine';
-import { applyLowMemory, effectiveTheme, settings, updateSettings } from '../../stores/settings';
-import type { LaunchScreen, ThemePref } from '../../stores/settings';
+import {
+  applyLowMemory,
+  effectiveTheme,
+  settings,
+  sleepyActive,
+  updateSettings,
+} from '../../stores/settings';
+import type { LaunchScreen, SleepyMode, ThemePref } from '../../stores/settings';
 import type { BibtexOptions, LibraryBackup, LibraryDataInfo } from '../../types/engine';
 import { formatDate } from './format';
 
@@ -189,7 +195,7 @@ export default function SettingsPanel() {
           <label class="home-setting-text" for="setting-theme">
             <span class="home-setting-title">Theme</span>
             <span class="home-setting-desc">
-              Follow the system appearance, or pin SpeedyF to light or dark.
+              Follow the system appearance, or pin SpeedyF to light or dark. SleepyF is always dark.
             </span>
           </label>
           <select
@@ -221,20 +227,72 @@ export default function SettingsPanel() {
         </div>
 
         <div class="home-setting">
-          <label class="home-setting-text" for="setting-dim-pages">
-            <span class="home-setting-title">Dim pages in dark theme</span>
+          <label class="home-setting-text" for="setting-sleepyf">
+            <span class="home-setting-title">SleepyF</span>
             <span class="home-setting-desc">
-              Lower page brightness a little, with a touch of warmth, for reading at night. Figures
-              keep their colors. Ignored while pages are inverted.
+              Night reading: the dark theme, warmer and quieter, with pages dimmed and warmed.
+              Scheduled turns it on between two times each day. Printing and export are unaffected.
             </span>
           </label>
-          <input
-            id="setting-dim-pages"
-            type="checkbox"
-            checked={settings.dimPages}
-            onInput={(e) => updateSettings({ dimPages: e.currentTarget.checked })}
-          />
+          <select
+            id="setting-sleepyf"
+            value={settings.sleepyf}
+            onInput={(e) => updateSettings({ sleepyf: e.currentTarget.value as SleepyMode })}
+            aria-label={`SleepyF (currently ${sleepyActive() ? 'on' : 'off'})`}
+          >
+            <option value="off">Off</option>
+            <option value="on">On</option>
+            <option value="scheduled">Scheduled</option>
+          </select>
         </div>
+
+        <Show when={settings.sleepyf === 'scheduled'}>
+          <div class="home-setting home-setting-sub">
+            <span class="home-setting-text">
+              <span class="home-setting-title">Schedule</span>
+              <span class="home-setting-desc">
+                From the first time until the second, by this computer's clock.
+              </span>
+            </span>
+            <span class="home-setting-times">
+              <input
+                type="time"
+                aria-label="SleepyF starts"
+                value={settings.sleepyFrom}
+                onChange={(e) => {
+                  if (e.currentTarget.value) updateSettings({ sleepyFrom: e.currentTarget.value });
+                }}
+              />
+              <span class="home-setting-desc">to</span>
+              <input
+                type="time"
+                aria-label="SleepyF ends"
+                value={settings.sleepyTo}
+                onChange={(e) => {
+                  if (e.currentTarget.value) updateSettings({ sleepyTo: e.currentTarget.value });
+                }}
+              />
+            </span>
+          </div>
+        </Show>
+
+        <Show when={settings.sleepyf !== 'off'}>
+          <div class="home-setting home-setting-sub">
+            <label class="home-setting-text" for="setting-sleepy-warmth">
+              <span class="home-setting-title">Warmth</span>
+              <span class="home-setting-desc">How far SleepyF dims and warms the pages.</span>
+            </label>
+            <input
+              id="setting-sleepy-warmth"
+              type="range"
+              min="0"
+              max="100"
+              step="5"
+              value={settings.sleepyWarmth}
+              onInput={(e) => updateSettings({ sleepyWarmth: Number(e.currentTarget.value) })}
+            />
+          </div>
+        </Show>
 
         <div class="home-setting">
           <label class="home-setting-text" for="setting-low-memory">
