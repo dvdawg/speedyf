@@ -53,6 +53,7 @@ pub fn extract(
             width: disp_w,
             height: disp_h,
             glyphs: Vec::new(),
+            fonts: Vec::new(),
         };
     }
     let count = b.FPDFText_CountChars(tp).max(0);
@@ -90,10 +91,17 @@ pub fn extract(
         });
     }
     b.FPDFText_ClosePage(tp);
+    let mut names = vec![String::new(); fonts.len()];
+    for ((name, _), (id, _)) in fonts {
+        if let Some(slot) = names.get_mut(usize::from(id).wrapping_sub(1)) {
+            *slot = name;
+        }
+    }
     PageInput {
         width: disp_w,
         height: disp_h,
         glyphs,
+        fonts: names,
     }
 }
 
