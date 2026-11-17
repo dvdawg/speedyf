@@ -453,7 +453,7 @@ fn statement_truth(pages: &[&Page], head: usize) -> Truth {
     // The statement's face: that of the head line's own words - past its
     // label, not mathematics, not a name in parentheses - when it has
     // enough of them; else its first line of prose that is not an item.
-    let mut face: Option<u16> = None;
+    let mut face: Option<u16>;
     let mut italic = {
         let l = &lines[head];
         let mut depth = 0i32;
