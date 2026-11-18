@@ -163,6 +163,85 @@ fn fill_samples(family: &str, n: usize, bpc: u32, fill: [f32; 3]) -> Vec<u32> {
     }
 }
 
+/// A fallback image decoder: samples as 8-bit gray (1) or RGB (3).
+pub type Decoder<'a> = &'a dyn Fn(&Document, &Stream) -> Option<(Vec<u8>, usize)>;
+
+type Decoded = (Vec<u8>, usize, u32, &'static str);
+
+/// Decode with what lopdf and the image crate handle: the standard filters,
+/// and plain JPEGs.
+fn decode_native(
+    doc: &Document,
+    stream: &Stream,
+    filters: &[Vec<u8>],
+    image_mask: bool,
+    w: u32,
+    h: u32,
+    out_dict: &mut lopdf::Dictionary,
+) -> Option<Decoded> {
+    let dict = &stream.dict;
+    if filters.last().map(Vec::as_slice) == Some(b"DCTDecode") {
+        // CMYK JPEGs (often Adobe-inverted) and remapped samples would not
+        // survive a decode to RGB with their colours intact.
+        let cmyk = dict
+            .get(b"ColorSpace")
+            .ok()
+            .and_then(|cs| components(doc, cs))
+            == Some(4);
+        if filters.len() != 1 || cmyk || dict.has(b"Decode") || image_mask {
+            return None;
+        }
+        let decoded =
+            image::load_from_memory_with_format(&stream.content, image::ImageFormat::Jpeg).ok()?;
+        let (bytes, n, cs) = match decoded.color().channel_count() {
+            1 => (decoded.into_luma8().into_raw(), 1, "DeviceGray"),
+            _ => (decoded.into_rgb8().into_raw(), 3, "DeviceRGB"),
+        };
+        out_dict.set("ColorSpace", Object::Name(cs.as_bytes().to_vec()));
+        out_dict.set("BitsPerComponent", 8);
+        out_dict.remove(b"Decode");
+        return Some((bytes, n, 8, if n == 1 { "gray" } else { "rgb" }));
+    }
+    let decodable = filters.iter().all(|f| {
+        matches!(
+            f.as_slice(),
+            b"FlateDecode"
+                | b"Fl"
+                | b"LZWDecode"
+                | b"LZW"
+                | b"ASCII85Decode"
+                | b"A85"
+                | b"ASCIIHexDecode"
+                | b"AHx"
+                | b"RunLengthDecode"
+                | b"RL"
+        )
+    });
+    if !decodable {
+        return None;
+    }
+    let (n, bpc, family) = if image_mask {
+        (1, 1, "mask")
+    } else {
+        let cs = dict.get(b"ColorSpace").ok()?;
+        let n = components(doc, cs)?;
+        let bpc = dict
+            .get(b"BitsPerComponent")
+            .ok()
+            .map(|o| deref(doc, o))
+            .and_then(|o| o.as_i64().ok())
+            .unwrap_or(8) as u32;
+        (n, bpc, family(doc, cs))
+    };
+    if ![1, 2, 4, 8, 16].contains(&bpc) || u64::from(w) * u64::from(h) * n as u64 > MAX_SAMPLES {
+        return None;
+    }
+    let bytes = stream
+        .decompressed_content_with_limit(MAX_SAMPLES as usize * 2 + 4096)
+        .ok()?;
+    Some((bytes, n, bpc, family))
+}
+
 /// Blank what `marks` cover of the image `stream` placed by `ctm`.
 pub fn redact_image(
     doc: &Document,
@@ -170,6 +249,7 @@ pub fn redact_image(
     ctm: &Matrix,
     marks: &[Rect],
     fill: [f32; 3],
+    decoder: Option<Decoder<'_>>,
 ) -> ImageOutcome {
     let dict = &stream.dict;
     let int = |k: &[u8]| {
@@ -201,72 +281,46 @@ pub fn redact_image(
         .unwrap_or_default();
     let mut out_dict = dict.clone();
 
-    let (mut data, n, bpc, family) = if filters.last().map(Vec::as_slice) == Some(b"DCTDecode") {
-        // CMYK JPEGs (often Adobe-inverted) and remapped samples would not
-        // survive a decode to RGB with their colours intact.
-        let cmyk = dict
-            .get(b"ColorSpace")
-            .ok()
-            .and_then(|cs| components(doc, cs))
-            == Some(4);
-        if filters.len() != 1 || cmyk || dict.has(b"Decode") {
-            return ImageOutcome::Remove;
+    let native = decode_native(doc, stream, &filters, image_mask, w, h, &mut out_dict);
+    let decoded = native.or_else(|| {
+        // Anything else - CCITT, JBIG2, JPEG 2000, CMYK JPEG - through PDFium,
+        // as 8-bit gray or RGB. A stencil mask comes back as gray, dark
+        // where it paints, and is packed again as a 1-bit mask.
+        let (bytes, n) = decoder?(doc, stream)?;
+        let mut d = dict.clone();
+        if image_mask {
+            if n != 1 {
+                return None;
+            }
+            let stride = (w as usize).div_ceil(8);
+            let mut packed = vec![0u8; stride * h as usize];
+            for (i, v) in bytes.iter().enumerate().take(w as usize * h as usize) {
+                if *v >= 128 {
+                    let (row, col) = (i / w as usize, i % w as usize);
+                    packed[row * stride + col / 8] |= 0x80 >> (col % 8);
+                }
+            }
+            d.remove(b"Decode");
+            d.remove(b"ColorSpace");
+            d.set("BitsPerComponent", 1);
+            out_dict = d;
+            return Some((packed, 1, 1u32, "mask"));
         }
-        let Ok(decoded) =
-            image::load_from_memory_with_format(&stream.content, image::ImageFormat::Jpeg)
-        else {
-            return ImageOutcome::Remove;
-        };
-        let (bytes, n, cs) = match decoded.color().channel_count() {
-            1 => (decoded.into_luma8().into_raw(), 1, "DeviceGray"),
-            _ => (decoded.into_rgb8().into_raw(), 3, "DeviceRGB"),
-        };
-        out_dict.set("ColorSpace", Object::Name(cs.as_bytes().to_vec()));
-        out_dict.set("BitsPerComponent", 8);
-        out_dict.remove(b"Decode");
-        (bytes, n, 8u32, if n == 1 { "gray" } else { "rgb" })
-    } else {
-        let decodable = filters.iter().all(|f| {
-            matches!(
-                f.as_slice(),
-                b"FlateDecode"
-                    | b"Fl"
-                    | b"LZWDecode"
-                    | b"LZW"
-                    | b"ASCII85Decode"
-                    | b"A85"
-                    | b"ASCIIHexDecode"
-                    | b"AHx"
-                    | b"RunLengthDecode"
-                    | b"RL"
-            )
-        });
-        if !decodable {
-            return ImageOutcome::Remove;
-        }
-        let (n, bpc, family) = if image_mask {
-            (1, 1, "mask")
-        } else {
-            let Some(cs) = dict.get(b"ColorSpace").ok() else {
-                return ImageOutcome::Remove;
-            };
-            let Some(n) = components(doc, cs) else {
-                return ImageOutcome::Remove;
-            };
-            let bpc = int(b"BitsPerComponent").unwrap_or(8) as u32;
-            (n, bpc, family(doc, cs))
-        };
-        if ![1, 2, 4, 8, 16].contains(&bpc) {
-            return ImageOutcome::Remove;
-        }
-        if u64::from(w) * u64::from(h) * n as u64 > MAX_SAMPLES {
-            return ImageOutcome::Remove;
-        }
-        let Ok(bytes) = stream.decompressed_content_with_limit(MAX_SAMPLES as usize * 2 + 4096)
-        else {
-            return ImageOutcome::Remove;
-        };
-        (bytes, n, bpc, family)
+        d.set(
+            "ColorSpace",
+            Object::Name(if n == 1 {
+                b"DeviceGray".to_vec()
+            } else {
+                b"DeviceRGB".to_vec()
+            }),
+        );
+        d.set("BitsPerComponent", 8);
+        d.remove(b"Decode");
+        out_dict = d;
+        Some((bytes, n, 8u32, if n == 1 { "gray" } else { "rgb" }))
+    });
+    let Some((mut data, n, bpc, family)) = decoded else {
+        return ImageOutcome::Remove;
     };
 
     let stride = (w as usize * n * bpc as usize).div_ceil(8);

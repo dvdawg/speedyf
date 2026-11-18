@@ -610,3 +610,35 @@ fn save_path_keeps_or_applies_marks() {
     assert!(!contains(&all_bytes(&bytes), "JOHNSMITH"));
     assert_eq!(crate::engine::sanitize::revision_count(&bytes), 0);
 }
+
+/// The PDFium fallback decoder: a stencil mask comes back dark exactly where
+/// it paints, and a colour image with its own pixels.
+#[test]
+fn pdfium_decoder_reads_masks_and_colour() {
+    let pdfium = pdfium();
+    let doc = Document::with_version("1.7");
+    // 8x2 stencil: row 0 bits 0b00001111 (left half paints), row 1 all ones.
+    let mut mask = Stream::new(
+        dictionary! {
+            "Type" => "XObject", "Subtype" => "Image", "Width" => 8, "Height" => 2,
+            "ImageMask" => true, "BitsPerComponent" => 1,
+        },
+        vec![0b0000_1111, 0xff],
+    );
+    mask.compress().unwrap();
+    let (luma, n) = decode::decode_with_pdfium(&pdfium, &doc, &mask).expect("decodes");
+    assert_eq!(n, 1);
+    assert!(luma[0] < 128 && luma[3] < 128, "{luma:?}");
+    assert!(luma[4] >= 128 && luma[8] >= 128, "{luma:?}");
+
+    let rgb = Stream::new(
+        dictionary! {
+            "Type" => "XObject", "Subtype" => "Image", "Width" => 2, "Height" => 1,
+            "ColorSpace" => "DeviceRGB", "BitsPerComponent" => 8,
+        },
+        vec![255, 0, 0, 0, 0, 255],
+    );
+    let (px, n) = decode::decode_with_pdfium(&pdfium, &doc, &rgb).expect("decodes");
+    assert_eq!(n, 3);
+    assert_eq!(px, vec![255, 0, 0, 0, 0, 255]);
+}

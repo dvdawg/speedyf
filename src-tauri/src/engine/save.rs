@@ -1100,7 +1100,7 @@ pub fn build_output(
 
     // 5) Redaction marks, applying them, removing hidden information: see
     //    `engine::redact`. A full clean rewrite whenever anything is removed.
-    crate::engine::redact::finish_output(plan, out_path)?;
+    crate::engine::redact::finish_output(pdfium, plan, out_path)?;
     Ok(())
 }
 

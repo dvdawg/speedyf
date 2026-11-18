@@ -21,6 +21,9 @@
 //! survives in an earlier revision.
 
 pub mod content;
+pub mod decode;
+#[cfg(test)]
+mod eval;
 pub mod find;
 pub mod fonts;
 pub mod geom;
@@ -303,6 +306,14 @@ fn fill_ops(doc: &mut Document, marks: &[Mark], resources: &mut Dictionary) -> S
 
 /// Apply every /Redact annotation in `doc`.
 pub fn apply_document(doc: &mut Document) -> Result<Report, String> {
+    apply_document_with(doc, None)
+}
+
+/// `apply_document`, with a fallback decoder for images lopdf cannot read.
+pub fn apply_document_with(
+    doc: &mut Document,
+    decoder: Option<image::Decoder<'_>>,
+) -> Result<Report, String> {
     let mut report = Report::default();
     let pages = doc.get_pages();
     for (number, page) in pages {
@@ -314,7 +325,8 @@ pub fn apply_document(doc: &mut Document) -> Result<Report, String> {
         }
         report.pages += 1;
         report.marks += marks.len() as u32;
-        redact_page(doc, page, &marks, &mut report).map_err(|e| format!("page {number}: {e}"))?;
+        redact_page(doc, page, &marks, &mut report, decoder)
+            .map_err(|e| format!("page {number}: {e}"))?;
     }
     if report.pages > 0 {
         report.signatures_removed = remove_signatures(doc);
@@ -342,6 +354,7 @@ fn redact_page(
     page: ObjectId,
     marks: &[Mark],
     report: &mut Report,
+    decoder: Option<image::Decoder<'_>>,
 ) -> Result<(), String> {
     let areas: Vec<MarkArea> = marks
         .iter()
@@ -355,8 +368,9 @@ fn redact_page(
     let mut resources = page_resources(doc, page);
     let bytes = page_content(doc, page)?;
     let ops = decode_ops(&bytes, report)?;
-    let (ops, _) =
-        Filter::new(doc, &areas, report).filter(ops, &mut resources, Matrix::IDENTITY, 0)?;
+    let mut filter = Filter::new(doc, &areas, report);
+    filter.decoder = decoder;
+    let (ops, _) = filter.filter(ops, &mut resources, Matrix::IDENTITY, 0)?;
     let mut content = b"q\n".to_vec();
     content.extend(
         Content { operations: ops }
@@ -678,6 +692,7 @@ pub fn clean_rewrite(doc: &mut Document) -> Result<Vec<u8>, String> {
 /// hidden information as the plan asks. Called by `save::build_output` on
 /// its finished output.
 pub fn finish_output(
+    pdfium: &pdfium_render::prelude::Pdfium,
     plan: &crate::engine::types::EditPlan,
     out: &std::path::Path,
 ) -> crate::errors::AppResult<()> {
@@ -704,7 +719,8 @@ pub fn finish_output(
     }
     marks::add_marks(&mut doc, &pending).map_err(AppError::Internal)?;
     if scrub.apply_redactions {
-        let report = apply_document(&mut doc).map_err(AppError::Internal)?;
+        let decode = |d: &Document, s: &Stream| decode::decode_with_pdfium(pdfium, d, s);
+        let report = apply_document_with(&mut doc, Some(&decode)).map_err(AppError::Internal)?;
         log::info!("redactions applied: {report:?}");
     }
     if let Some(options) = &scrub.remove_hidden {

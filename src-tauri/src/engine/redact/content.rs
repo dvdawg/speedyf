@@ -25,7 +25,7 @@
 
 use super::fonts::{read_font, FontInfo};
 use super::geom::{number, Matrix, Rect};
-use super::image::{redact_image, ImageOutcome};
+use super::image::{redact_image, Decoder, ImageOutcome};
 use super::Report;
 use lopdf::content::{Content, Operation};
 use lopdf::{Dictionary, Document, Object, ObjectId, Stream, StringFormat};
@@ -68,6 +68,8 @@ pub struct Filter<'a> {
     pub doc: &'a mut Document,
     pub marks: &'a [MarkArea],
     pub report: &'a mut Report,
+    /// Decodes images lopdf cannot (PDFium, in the app).
+    pub decoder: Option<Decoder<'a>>,
     fonts: HashMap<ObjectId, Rc<FontInfo>>,
     seq: u32,
 }
@@ -102,6 +104,7 @@ impl<'a> Filter<'a> {
             doc,
             marks,
             report,
+            decoder: None,
             fonts: HashMap::new(),
             seq: 0,
         }
@@ -747,7 +750,7 @@ impl<'a> Filter<'a> {
                 }
                 let rects: Vec<Rect> = hits.iter().map(|m| m.rect).collect();
                 let fill = hits[0].fill;
-                match redact_image(doc, stream, ctm, &rects, fill) {
+                match redact_image(doc, stream, ctm, &rects, fill, self.decoder) {
                     ImageOutcome::Unchanged => Ok(XResult::Keep),
                     ImageOutcome::Remove => {
                         self.report.images_removed += 1;
@@ -757,7 +760,14 @@ impl<'a> Filter<'a> {
                         // The soft mask carries the same shapes; blank it too.
                         if let Ok(Object::Reference(smask_id)) = image.dict.get(b"SMask").cloned() {
                             if let Ok(Object::Stream(smask)) = doc.get_object(smask_id) {
-                                match redact_image(doc, smask, ctm, &rects, [1.0, 1.0, 1.0]) {
+                                match redact_image(
+                                    doc,
+                                    smask,
+                                    ctm,
+                                    &rects,
+                                    [1.0, 1.0, 1.0],
+                                    self.decoder,
+                                ) {
                                     ImageOutcome::Replaced(s) => {
                                         let id = self.doc.add_object(s);
                                         image.dict.set("SMask", Object::Reference(id));
