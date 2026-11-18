@@ -4,6 +4,8 @@ import PrintDialog from '../features/print/PrintDialog';
 import { closePrint, printState } from '../features/print/printStore';
 import SignDialog from '../features/sign/SignDialog';
 import { signState } from '../features/sign/signStore';
+import CertSignDialog from '../features/sign/certificate/CertSignDialog';
+import { certState } from '../features/sign/certificate/certStore';
 import {
   dismissError,
   modal,
@@ -106,6 +108,10 @@ export default function Modals() {
       {/* Visual signatures: their own store, like print. */}
       <Show when={signState.dialog}>
         <SignDialog />
+      </Show>
+      {/* Certificate signing: its own store too. */}
+      <Show when={certState.open}>
+        <CertSignDialog />
       </Show>
       <Show when={modal.kind !== null}>
         <div

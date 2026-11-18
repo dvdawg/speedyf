@@ -10,6 +10,7 @@ import {
   toggleFlattenSignatures,
 } from './signStore';
 import type { SignatureRole } from './art';
+import { openCertDialog } from './certificate/certStore';
 
 const docOpen = (ctx: CommandCtx) => ctx.tab?.documentStore.state.loaded === true;
 
@@ -63,6 +64,22 @@ export const SIGN_COMMANDS: Command[] = [
     keywords: KEYWORDS,
     enabled: docOpen,
     run: () => setSignMenuOpen(true),
+  },
+  {
+    id: 'sign.certificate',
+    title: 'Sign: Sign with Certificate...',
+    group: 'Tools',
+    keywords: [
+      'certificate',
+      'digital signature',
+      'pades',
+      'certify',
+      'p12',
+      'keychain',
+      ...KEYWORDS,
+    ],
+    enabled: docOpen,
+    run: () => openCertDialog(),
   },
   {
     id: 'sign.flatten',
