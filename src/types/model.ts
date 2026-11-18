@@ -45,7 +45,41 @@ export interface PageEntry {
   sizeKnown: boolean;
 }
 
-export type AnnotationKind = 'highlight' | 'ink' | 'rect' | 'textbox' | 'note' | 'image' | 'bubble';
+export type AnnotationKind =
+  'highlight' | 'ink' | 'rect' | 'textbox' | 'note' | 'image' | 'bubble' | 'signature';
+
+/** The typed signature styles, one bundled handwriting font each. */
+export type SignatureStyle = 'flowing' | 'script' | 'hand';
+
+/** A visual signature's artwork in its own box of `w` x `h` units, y down.
+ * The engine writes it as a Stamp and keeps this same JSON inside it, so a
+ * saved signature reopens as itself (src-tauri/src/engine/signature.rs). */
+export type SignatureArt =
+  | {
+      type: 'drawn';
+      w: number;
+      h: number;
+      /** smoothed polylines, box units */
+      strokes: PdfPoint[][];
+      /** pen width, box units */
+      width: number;
+    }
+  | {
+      type: 'typed';
+      w: number;
+      h: number;
+      text: string;
+      style: SignatureStyle;
+      /** the name's glyph outlines as SVG path data, box units */
+      d: string;
+    }
+  | {
+      type: 'image';
+      w: number;
+      h: number;
+      /** base64 PNG with a transparent background */
+      png: string;
+    };
 
 export type TextFontFamily = 'Helvetica' | 'Times-Roman' | 'Courier';
 
@@ -86,6 +120,8 @@ export interface Annotation extends Partial<TextFormat> {
   /** For a shaded bubble: the character index of the glyph it fills, so the
    * same bubble can be recognised again and un-shaded. */
   bubbleCharIndex?: number;
+  /** A visual signature's artwork (`kind: 'signature'`). */
+  signature?: SignatureArt;
   /** Set only on annotations read out of the file: this annotation's position
    * in PDFium's enumeration of its source page.
    *

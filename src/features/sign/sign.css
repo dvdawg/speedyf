@@ -1,0 +1,368 @@
+/* Visual signatures: the Sign menu, the create dialog, placed signatures and
+ * empty signature fields. Tokens only, from styles/global.css. */
+
+/* The typed styles, previewed with the same files the engine outlines. No
+ * kerning, ligatures or contextual alternates: the engine sets glyphs one
+ * after another, and the preview must show exactly that. */
+@font-face {
+  font-family: 'SpeedyF Sign Flowing';
+  src: url('../../assets/signature-fonts/GreatVibes-Regular.ttf') format('truetype');
+  font-display: block;
+}
+
+@font-face {
+  font-family: 'SpeedyF Sign Script';
+  src: url('../../assets/signature-fonts/DancingScript.ttf') format('truetype');
+  font-display: block;
+}
+
+@font-face {
+  font-family: 'SpeedyF Sign Hand';
+  src: url('../../assets/signature-fonts/Cedarville-Cursive.ttf') format('truetype');
+  font-display: block;
+}
+
+.signature-art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+/* ---------- toolbar menu ---------- */
+
+.sign-menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.sign-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 40;
+  width: 232px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  box-shadow: var(--shadow);
+}
+
+.sign-menu-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.sign-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.sign-menu-item {
+  height: 28px;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sign-menu-item:hover,
+.sign-menu-item:focus-visible {
+  background: var(--accent-soft);
+  outline: none;
+}
+
+/* A saved signature shows as itself, on the page colour it will sit on. */
+.sign-menu-saved {
+  height: 40px;
+  padding: 4px 8px;
+}
+
+.sign-menu-saved .signature-art {
+  width: auto;
+  max-width: 100%;
+  height: 100%;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--page-bg);
+}
+
+.sign-menu-remove {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.sign-menu-remove:hover,
+.sign-menu-remove:focus-visible {
+  background: var(--row-hover);
+  color: var(--danger);
+  outline: none;
+}
+
+.sign-menu-separator {
+  height: 1px;
+  flex: none;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
+.sign-menu-box {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--accent);
+}
+
+.sign-menu-note {
+  margin: 4px 8px 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+/* ---------- create dialog ---------- */
+
+.modal.sign-dialog {
+  width: min(540px, calc(100vw - 40px));
+}
+
+.sign-modes {
+  display: inline-flex;
+  margin-bottom: 12px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-inset);
+}
+
+.sign-modes button {
+  height: 24px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sign-modes button.is-active {
+  background: var(--bg-elev);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(15, 20, 26, 0.12);
+}
+
+.sign-modes button:focus-visible,
+.sign-style:focus-visible,
+.sign-ink:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.sign-name {
+  width: 100%;
+  height: var(--control-h);
+  margin-bottom: 10px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-inset);
+  color: var(--text);
+  font: inherit;
+}
+
+.sign-styles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+/* Samples sit on white whatever the theme: they are previews of ink on a
+ * page, and the page is paper. */
+.sign-style {
+  height: 64px;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--page-bg);
+  cursor: pointer;
+}
+
+.sign-style.is-active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.sign-style-sample {
+  font-size: 26px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-kerning: none;
+  font-feature-settings:
+    'kern' 0,
+    'liga' 0,
+    'clig' 0,
+    'calt' 0;
+  font-variant-ligatures: none;
+}
+
+.sign-pad {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 3 / 1;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--page-bg);
+  cursor: crosshair;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.sign-pad-line {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.sign-pad-actions {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+
+.sign-image {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.sign-image-preview {
+  width: 100%;
+  height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--page-bg);
+}
+
+.sign-image-preview .signature-art {
+  width: auto;
+  max-width: 100%;
+  height: 100%;
+}
+
+.sign-inks {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.sign-ink {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 2px solid var(--bg-elev);
+  border-radius: 50%;
+  background: var(--ink);
+  box-shadow: 0 0 0 1px var(--border);
+  cursor: pointer;
+}
+
+.sign-ink.is-active {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.modal .sign-hint {
+  margin: 0 0 12px;
+  font-size: 12px;
+}
+
+.modal .sign-error {
+  margin: 0 0 10px;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+/* ---------- on the page ---------- */
+
+.annot-signature {
+  position: absolute;
+  cursor: move;
+}
+
+.annot-signature.is-selected {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Armed with a signature to place: every page takes the click. */
+.annot-layer.is-placing-signature {
+  cursor: copy;
+}
+
+.sign-field-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* Invisible until pointed at, like the other form widgets: the field draws
+ * its own box. */
+.sign-field {
+  position: absolute;
+  padding: 0;
+  margin: 0;
+  border: 1px dashed transparent;
+  border-radius: 2px;
+  background: transparent;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.sign-field:hover,
+.sign-field:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  outline: none;
+}

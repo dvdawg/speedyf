@@ -61,6 +61,7 @@ export async function hydrateAnnotations(tab: TabRecord, docId: number) {
         ...(a.strokes !== null ? { strokes: a.strokes } : {}),
         ...(a.text !== null ? { text: a.text } : {}),
         ...(a.fontSizePt !== null ? { fontSizePt: a.fontSizePt } : {}),
+        ...(a.signature ? { signature: a.signature } : {}),
         fontFamily: a.fontFamily,
         bold: a.bold,
         italic: a.italic,

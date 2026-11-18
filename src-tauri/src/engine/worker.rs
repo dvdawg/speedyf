@@ -3248,6 +3248,8 @@ fn do_form_fields(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<FormFiel
                 rect,
                 export_value,
                 checked: bindings.FPDFAnnot_IsChecked(form, annotation) != 0,
+                signed: field_type == 7
+                    && crate::engine::signature::field_is_signed(bindings, annotation),
             });
             bindings.FPDFPage_CloseAnnot(annotation);
         }

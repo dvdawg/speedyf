@@ -430,7 +430,7 @@ fn info_update(bytes: &[u8], entries: &[(&'static str, String)]) -> Option<Vec<u
     Some(out)
 }
 
-fn parse_color(hex: &str, opacity: f32) -> PdfColor {
+pub(crate) fn parse_color(hex: &str, opacity: f32) -> PdfColor {
     let h = hex.trim_start_matches('#');
     let v = u32::from_str_radix(h, 16).unwrap_or(0);
     let (r, g, b) = if h.len() >= 6 {
@@ -703,6 +703,9 @@ fn add_annotations<'a>(
                 // right up until someone looks at the page.
                 a.set_bounds(user_rect)?;
                 a.objects_mut().add_path_object(path)?;
+            }
+            "signature" => {
+                crate::engine::signature::write(doc, page, &space, annot)?;
             }
             other => {
                 log::warn!("unknown annotation kind ignored at save: {other}");
@@ -1251,6 +1254,8 @@ mod tests {
                 }]),
                 strokes: None,
                 text: None,
+                signature: None,
+                flatten: false,
             },
             PlanAnnot {
                 kind: "rect".into(),
@@ -1266,6 +1271,8 @@ mod tests {
                 quads: None,
                 strokes: None,
                 text: None,
+                signature: None,
+                flatten: false,
             },
             PlanAnnot {
                 kind: "note".into(),
@@ -1281,6 +1288,8 @@ mod tests {
                 quads: None,
                 strokes: None,
                 text: Some("fixture note".into()),
+                signature: None,
+                flatten: false,
             },
             PlanAnnot {
                 kind: "ink".into(),
@@ -1300,6 +1309,8 @@ mod tests {
                     point(125.0, 200.0),
                 ]]),
                 text: None,
+                signature: None,
+                flatten: false,
             },
         ];
         page.texts.push(PlanText {
@@ -1693,6 +1704,8 @@ mod tests {
             quads: None,
             strokes: None,
             text: None,
+            signature: None,
+            flatten: false,
         });
         build_output(
             &pdfium,
@@ -1765,6 +1778,8 @@ mod tests {
             quads: None,
             strokes: None,
             text: None,
+            signature: None,
+            flatten: false,
         });
         build_output(
             &pdfium,
@@ -1911,6 +1926,8 @@ mod tests {
             quads: None,
             strokes: None,
             text: None,
+            signature: None,
+            flatten: false,
         });
         let plan = EditPlan {
             pages: vec![page],
@@ -2186,6 +2203,8 @@ mod tests {
             quads: None,
             strokes: None,
             text: None,
+            signature: None,
+            flatten: false,
         }
     }
 
