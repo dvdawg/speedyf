@@ -1069,8 +1069,12 @@ pub fn build_output_with(
     out_path: &Path,
     options: SaveOptions,
 ) -> AppResult<()> {
-    let keep_signatures = !options.allow_signed_rewrite
-        && crate::engine::signing::file_has_signatures(Path::new(src_path));
+    // A signed source is read once more here, to trim what PDFium appends
+    // to it down to what actually changed (see `minimal_update`).
+    let signed_source = std::fs::read(src_path)
+        .ok()
+        .filter(|bytes| crate::engine::signing::has_signatures(bytes));
+    let keep_signatures = !options.allow_signed_rewrite && signed_source.is_some();
     let src = pdfium
         .load_pdf_from_file(src_path, password)
         .map_err(|e| AppError::Malformed(format!("cannot reopen source: {e:?}")))?;
@@ -1198,6 +1202,14 @@ pub fn build_output_with(
     // 5) Redaction marks, applying them, removing hidden information: see
     //    `engine::redact`. A full clean rewrite whenever anything is removed.
     crate::engine::redact::finish_output(pdfium, plan, out_path)?;
+
+    // 6) On a signed source, every pass above appended to the signed bytes,
+    //    each writing back far more than it changed. Collapse them into one
+    //    update holding only the changed objects, so a checker sees a form
+    //    fill or a comment, not a rewritten page and signature appearance.
+    if let Some(source) = signed_source.filter(|_| edit_in_place) {
+        crate::engine::minimal_update::minimize_file(&source, out_path)?;
+    }
     Ok(())
 }
 

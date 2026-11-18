@@ -113,7 +113,11 @@ pub fn apply_edits(
                     "form edit pass: the appended update has an unexpected tail".into(),
                 ));
             }
-            if has_xfa {
+            // Not on a signed file: removing /XFA changes the form's
+            // definition, which a signature checker (pyHanko; very likely
+            // Acrobat) reports as a modification beyond form filling, and
+            // on a certified document as breaking the certification.
+            if has_xfa && !crate::engine::signing::file_has_signatures(path) {
                 drop_xfa(path).map_err(|e| AppError::Internal(format!("form edit pass: {e}")))?;
             }
             restore(&raw_values)

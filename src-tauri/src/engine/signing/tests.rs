@@ -516,6 +516,80 @@ fn changing_page_content_after_signing_is_flagged() {
     assert_eq!(kinds(&report), vec![("pageContent", false)]);
 }
 
+/// What PDFium's incremental save used to append to a signed file: the page
+/// content written back re-compressed. It decodes to the same text, but
+/// pyHanko (and Acrobat) judge the encoded bytes, so this is a change.
+#[test]
+fn a_recompressed_page_content_stream_is_flagged() {
+    use std::io::Write;
+    let text = b"BT /F1 24 Tf 72 700 Td (Signed paper) Tj ET\n";
+    let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    z.write_all(text).unwrap();
+    let packed = z.finish().unwrap();
+    let mut body = format!(
+        "<< /Length {} /Filter /FlateDecode >>\nstream\n",
+        packed.len()
+    )
+    .into_bytes();
+    body.extend_from_slice(&packed);
+    body.extend_from_slice(b"\nendstream");
+    let report = only(&update(&fill_name(&signed_form("", "")), &[(4, body)]));
+    assert_eq!(report.status, "modified", "{report:#?}");
+    assert!(kinds(&report).contains(&("pageContent", false)));
+}
+
+/// A comment written inline in /Annots (as PDFium adds them) is still seen,
+/// and under a form-fill-only certification it is not allowed.
+#[test]
+fn an_inline_comment_is_seen() {
+    let inline = "[6 0 R 7 0 R 10 0 R << /Type /Annot /Subtype /Text /Rect [400 700 420 720] >>]";
+    let report = only(&update(&signed_form("", ""), &[(3, page_dict(inline))]));
+    assert_eq!(kinds(&report), vec![("comment", true)]);
+    let report = only(&update(&certified(2), &[(3, page_dict(inline))]));
+    assert_eq!(report.status, "modified", "{report:#?}");
+}
+
+/// Objects written back with only their spelling changed (spacing, key
+/// order, a hex string for a literal one) are the same objects.
+#[test]
+fn objects_written_back_unchanged_are_not_changes() {
+    let pdf = update(
+        &fill_name(&signed_form("", "")),
+        &[
+            (2, b"<</Kids[ 3 0 R ]/Type/Pages/Count 1>>".to_vec()),
+            (
+                7,
+                b"<</V 9 0 R/F 4/P 3 0 R/Rect[72 500 300 550]/T<5369676e617475726531>/FT/Sig/Subtype/Widget/Type/Annot>>"
+                    .to_vec(),
+            ),
+        ],
+    );
+    let report = only(&pdf);
+    assert_eq!(report.status, INTACT, "{report:#?}");
+    assert_eq!(kinds(&report), vec![("formFill", true)]);
+}
+
+/// Dropping the XFA copy of a signed form is not form filling.
+#[test]
+fn removing_the_xfa_after_signing_is_flagged() {
+    let signer = Signer::ec();
+    let mut objects = form_objects(sig_dict("adbe.pkcs7.detached", ""), "");
+    objects[4].1 =
+        b"<< /Fields [6 0 R 7 0 R 10 0 R] /SigFlags 3 /XFA 11 0 R /DA (/Helv 0 Tf 0 g) >>".to_vec();
+    objects.push((11, stream("<xdp:xdp/>")));
+    let signed = sign_last(base(&objects), detached(&signer));
+    let pdf = update(
+        &signed,
+        &[(
+            5,
+            b"<< /Fields [6 0 R 7 0 R 10 0 R] /SigFlags 3 /DA (/Helv 0 Tf 0 g) >>".to_vec(),
+        )],
+    );
+    let report = only(&pdf);
+    assert_eq!(report.status, "modified", "{report:#?}");
+    assert_eq!(kinds(&report), vec![("other", false)]);
+}
+
 #[test]
 fn adding_a_page_after_signing_is_flagged() {
     let pdf = update(
