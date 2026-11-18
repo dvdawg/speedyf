@@ -1014,7 +1014,7 @@ fn eval_signing_samples() {
                 })
                 .collect();
             println!(
-                "  {} | {} | {} | {} | intact={} trust={} | {} | {} | ts={:?} | rev {}/{} | {}",
+                "  {} | {} | {} | {} | intact={} trust={} | {} | {} | ts={:?} | rev {}/{} | {} {}",
                 r.field_name.as_deref().unwrap_or("-"),
                 r.sub_filter.as_deref().unwrap_or("-"),
                 r.kind,
@@ -1026,11 +1026,8 @@ fn eval_signing_samples() {
                 r.timestamp.as_ref().map(|t| t.valid),
                 r.revision,
                 r.revisions,
-                format!(
-                    "{} {}",
-                    r.problem.clone().unwrap_or_default(),
-                    changes.join("; ")
-                )
+                r.problem.clone().unwrap_or_default(),
+                changes.join("; ")
             );
         }
     }
