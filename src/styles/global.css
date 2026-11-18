@@ -359,7 +359,8 @@ textarea,
     .tab-preview-page,
     .paper-preview-image,
     .np-image,
-    .mk-crop img
+    .mk-crop img,
+    .form-cover
   ) {
   filter: brightness(calc(0.92 - 0.2 * var(--sleepy-warmth)))
     sepia(calc(0.05 + 0.35 * var(--sleepy-warmth)));
@@ -3131,40 +3132,116 @@ html.is-dragging-tab * {
 .form-list {
   flex: 1;
   overflow-y: auto;
+  padding: 4px 0 8px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Required-left count and the tint switch, above the list. */
+.form-nav-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 8px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.form-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.form-name {
+  border-bottom: 1px solid var(--border);
   color: var(--text-dim);
   font-size: 12px;
 }
 
-.form-name em {
-  font-style: normal;
-  opacity: 0.7;
+.form-nav-count.is-owed {
+  color: var(--text);
 }
 
-.form-field input {
-  height: 28px;
+.form-nav-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+
+.form-nav-toggle input {
+  margin: 0;
+}
+
+.form-page-head {
+  margin: 8px 10px 2px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.form-nav-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: calc(100% - 10px);
+  margin: 0 5px;
+  padding: 4px 5px;
+  border: 0;
+  border-radius: var(--row-radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.form-nav-row:hover {
+  background: var(--row-hover);
+}
+
+.form-nav-row:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.form-nav-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.form-nav-value {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.form-nav-row.is-owed .form-nav-value {
+  color: var(--danger);
+}
+
+.form-nav-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.form-nav-reset {
+  flex: none;
+  padding: 3px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--bg-inset);
+  background: var(--bg-elev);
   color: var(--text);
-  padding: 0 8px;
   font: inherit;
+  cursor: pointer;
 }
 
-.form-ro {
-  color: var(--text-dim);
+.form-nav-reset:hover {
+  background: var(--row-hover);
 }
 
 /* ---------- status bar ---------- */
@@ -4240,73 +4317,265 @@ body.is-resizing-sidebar * {
 
 /* ---------- interactive form widgets ---------- */
 
-/* Widgets sit above the page raster but below annotations: a checkbox is part
- * of the document, and anything the reader draws goes on top of it. */
+/* Widgets sit above the page raster but below annotations: a form field is
+ * part of the document, and anything the reader draws goes on top of it.
+ * Each widget is an overlay over its own box. Untouched, it is transparent
+ * and the raster shows the file's value; edited or focused, it is a piece of
+ * paper (.form-cover) over the raster's now-stale appearance, drawing the
+ * value itself in the field's own ink (--form-ink, set inline). */
 .form-layer {
   position: absolute;
   inset: 0;
   pointer-events: none;
+  --form-tint: transparent;
 }
 
-/* Unchecked, a widget is invisible until pointed at — the PDF already draws
- * its own box, and painting a second one over it would only make the page
- * look wrong. Checked, it draws the mark itself, because the appearance
- * stream in the file still says "off" until the document is saved. */
-.form-widget {
+/* "Highlight fields": a faint wash of the accent over every fillable box,
+ * and a hairline round the required ones. */
+.form-layer.is-tinted {
+  --form-tint: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+:root[data-invert-pages='on'] .form-layer.is-tinted {
+  --form-tint: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.form-field {
   position: absolute;
-  padding: 0;
+  box-sizing: border-box;
   margin: 0;
-  border: 1px solid transparent;
-  border-radius: 2px;
-  background: transparent;
+  padding: 0;
+  border: 0;
+  border-radius: 1px;
+  background: var(--form-tint);
   pointer-events: auto;
-  cursor: pointer;
-  color: var(--accent);
+  color: var(--form-ink);
 }
 
-.form-widget.is-radio {
+.form-layer.is-tinted .form-field.is-required {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 60%, transparent);
+}
+
+.form-field.is-covered:not(.form-widget) {
+  background: linear-gradient(var(--form-tint), var(--form-tint)), var(--page-bg);
+}
+
+.form-field:focus-within,
+.form-widget:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 0;
+}
+
+.form-field:hover:not(:focus-within) {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.form-field.is-covered:hover:not(:focus-within, .form-widget) {
+  background:
+    linear-gradient(
+      color-mix(in srgb, var(--accent) 14%, transparent),
+      color-mix(in srgb, var(--accent) 14%, transparent)
+    ),
+    var(--page-bg);
+}
+
+/* The text controls themselves: no chrome of their own, the field's font
+ * and alignment, and invisible ink until the field is covered. */
+.form-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0 var(--form-pad, 2px);
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--form-ink);
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: inherit;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+textarea.form-input {
+  padding-top: var(--form-pad, 2px);
+  resize: none;
+  overflow: hidden;
+  white-space: pre-wrap;
+}
+
+.form-field.is-covered .form-input {
+  color: var(--form-ink);
+}
+
+.form-input::selection {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* WebKit draws no caret in an empty focused field (see the notepad's
+ * .note-block caret): the field draws one where typing will start. */
+.form-text.is-empty:has(> .form-input:focus)::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: var(--form-pad, 2px);
+  width: 1px;
+  height: 1.1em;
+  transform: translateY(-50%);
+  background: var(--form-ink);
+  pointer-events: none;
+}
+
+.form-text.is-multiline.is-empty:has(> .form-input:focus)::before {
+  top: var(--form-pad, 2px);
+  transform: none;
+}
+
+.form-text.is-empty[data-align='center']:has(> .form-input:focus)::before {
+  left: 50%;
+}
+
+.form-text.is-empty[data-align='right']:has(> .form-input:focus)::before {
+  left: auto;
+  right: var(--form-pad, 2px);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .form-text.is-empty:has(> .form-input:focus)::before {
+    animation: note-caret-blink 1.05s step-end infinite;
+  }
+}
+
+/* Combo boxes: the native menu, and a small arrow once the raster's own is
+ * covered. */
+.form-select {
+  cursor: pointer;
+}
+
+.form-select option,
+.form-combo-picker option {
+  background: var(--bg-elev);
+  color: var(--text);
+}
+
+.form-combo-picker {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  margin: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.form-combo.is-covered::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 0.4em;
+  border-top: 0.3em solid var(--form-ink);
+  border-right: 0.25em solid transparent;
+  border-left: 0.25em solid transparent;
+  transform: translateY(-30%);
+  pointer-events: none;
+}
+
+.form-combo.is-editable .form-input {
+  padding-right: 1.2em;
+}
+
+/* List boxes: one row per option, the selection marked in the accent. */
+.form-listbox {
+  overflow-y: auto;
+  scrollbar-width: none;
+  outline: none;
+  cursor: default;
+}
+
+.form-listbox::-webkit-scrollbar {
+  display: none;
+}
+
+.form-option {
+  padding: 0 var(--form-pad, 2px);
+  overflow: hidden;
+  color: transparent;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.form-listbox.is-covered .form-option {
+  color: var(--form-ink);
+}
+
+.form-listbox.is-covered .form-option.is-selected {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.form-listbox:focus .form-option.is-active {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+/* Checkboxes and radio buttons. */
+.form-widget {
+  cursor: pointer;
+}
+
+.form-widget.is-radio,
+.form-widget.is-radio .form-check-face {
   border-radius: 50%;
 }
 
-.form-widget:hover,
-.form-widget:focus-visible {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  outline: none;
+/* The face: inset from the widget's edge so covering a stale check mark
+ * leaves the box the form drew around it. */
+.form-check-face {
+  position: absolute;
+  inset: 14%;
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+.form-check-face.is-covered {
+  background: var(--page-bg);
 }
 
 /* The mark: a cross for a checkbox, a filled disc for a radio, both drawn
- * from the element's own box so they track zoom without extra arithmetic. */
-.form-widget.is-checked::before,
-.form-widget.is-checked::after {
+ * from the face's own box so they track zoom without extra arithmetic. */
+.form-check-face.is-on::before,
+.form-check-face.is-on::after {
   content: '';
   position: absolute;
-  background: currentColor;
+  background: var(--form-ink);
 }
 
-.form-widget.is-checked:not(.is-radio)::before,
-.form-widget.is-checked:not(.is-radio)::after {
-  left: 12%;
-  right: 12%;
+.form-widget:not(.is-radio) .form-check-face.is-on::before,
+.form-widget:not(.is-radio) .form-check-face.is-on::after {
+  left: 4%;
+  right: 4%;
   top: 50%;
-  height: 12%;
+  height: 13%;
   border-radius: 1px;
 }
 
-.form-widget.is-checked:not(.is-radio)::before {
+.form-widget:not(.is-radio) .form-check-face.is-on::before {
   transform: translateY(-50%) rotate(45deg);
 }
 
-.form-widget.is-checked:not(.is-radio)::after {
+.form-widget:not(.is-radio) .form-check-face.is-on::after {
   transform: translateY(-50%) rotate(-45deg);
 }
 
-.form-widget.is-checked.is-radio::before {
-  inset: 25%;
+.form-widget.is-radio .form-check-face.is-on::before {
+  inset: 16%;
   border-radius: 50%;
 }
 
-.form-widget.is-checked.is-radio::after {
+.form-widget.is-radio .form-check-face.is-on::after {
   content: none;
 }
 
