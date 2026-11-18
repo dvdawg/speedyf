@@ -58,6 +58,10 @@ notify = { version = "=8.2.0", default-features = false, features = ["macos_fsev
 lopdf = { version = "=0.47.0", default-features = false }
 # Markup storage key fallback (commands/markup.rs). Already in the tree.
 sha2 = "0.10"
+# Typed visual signatures (engine/signature.rs): glyph outlines of the bundled
+# handwriting fonts, written into the PDF as plain paths. Parsing only, no
+# shaping; `std` alone, without the layout and variation tables.
+ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
 
 # Native OCR for scanned pages (engine/ocr.rs): Apple's Vision framework.
 # Only the features the module uses — the crate's defaults pull in CoreML,

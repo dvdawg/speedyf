@@ -13,6 +13,7 @@ pub mod hovers;
 pub mod library;
 pub mod markup;
 pub mod projectfiles;
+pub mod signatures;
 
 pub struct EngineState(pub EngineHandle);
 

@@ -371,6 +371,8 @@ pub struct FormFieldDto {
     pub export_value: String,
     /// Whether this particular widget is currently on.
     pub checked: bool,
+    /// For a signature field: whether it already holds a signature.
+    pub signed: bool,
 }
 
 /// One checkbox or radio button the user toggled, identified by the widget
@@ -463,6 +465,41 @@ pub struct PlanAnnot {
     pub strokes: Option<Vec<Vec<PointDto>>>,
     #[serde(default)]
     pub text: Option<String>,
+    /// The artwork of a visual signature (`kind: "signature"`).
+    #[serde(default)]
+    pub signature: Option<SignatureArt>,
+    /// Write a signature into the page content instead of as an annotation.
+    #[serde(default)]
+    pub flatten: bool,
+}
+
+/// A visual signature's artwork, in its own box of `w` x `h` units, y down.
+///
+/// The same shape the frontend stores and draws, and the same JSON SpeedyF
+/// keeps inside the Stamp it writes, so a saved signature reopens as the
+/// signature it was rather than as a picture of one. See `engine/signature.rs`.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum SignatureArt {
+    /// Strokes drawn with a pointer, as smoothed polylines.
+    Drawn {
+        w: f32,
+        h: f32,
+        strokes: Vec<Vec<PointDto>>,
+        /// Pen width, in the same units as the box.
+        width: f32,
+    },
+    /// A name set in one of the bundled handwriting fonts. `d` is the outline
+    /// as SVG path data, for display; saving regenerates it from the font.
+    Typed {
+        w: f32,
+        h: f32,
+        text: String,
+        style: String,
+        d: String,
+    },
+    /// An imported picture: base64 PNG with a transparent background.
+    Image { w: f32, h: f32, png: String },
 }
 
 /// One annotation read back out of a PDF.
@@ -486,6 +523,8 @@ pub struct AnnotationDto {
     pub font_size_pt: Option<f32>,
     #[serde(flatten)]
     pub text_style: TextStyle,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<SignatureArt>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]

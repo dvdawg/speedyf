@@ -15,8 +15,10 @@
 //! what writing applies. Both directions live in `save.rs` so they cannot drift.
 
 use super::save::PageSpace;
+use super::signature;
 use super::types::{
-    AnnotationDto, PageAnnotationsDto, PointDto, QuadDto, RectDto, TextFontFamily, TextStyle,
+    AnnotationDto, PageAnnotationsDto, PointDto, QuadDto, RectDto, SignatureArt, TextFontFamily,
+    TextStyle,
 };
 use crate::errors::{AppError, AppResult};
 use pdfium_render::prelude::*;
@@ -211,6 +213,7 @@ fn read_annotation(
     annot: &PdfPageAnnotation<'_>,
     index: u32,
     space: &PageSpace,
+    signature: impl FnOnce() -> Option<(SignatureArt, String)>,
 ) -> Option<AnnotationDto> {
     let rect = space.rect_from_user(&annot.bounds().ok()?);
     let mut dto = AnnotationDto {
@@ -225,6 +228,7 @@ fn read_annotation(
         text: None,
         font_size_pt: None,
         text_style: TextStyle::default(),
+        signature: None,
     };
 
     let style = style_of(annot.objects());
@@ -279,6 +283,18 @@ fn read_annotation(
             dto.text = Some(annot.contents().unwrap_or_default());
             dto.font_size_pt = Some(style.font_size.unwrap_or(DEFAULT_FONT_PT));
             dto.text_style = style.text_style;
+        }
+        PdfPageAnnotationType::Stamp
+            if annot.creator().as_deref() == Some(signature::SIGNATURE_CREATOR) =>
+        {
+            // One of SpeedyF's visual signatures. Its artwork rides along in
+            // the stamp, so it comes back as the signature it was. Without
+            // that data it is left alone: read as a bubble or an image, a
+            // later save would rewrite it as one.
+            let (art, color) = signature()?;
+            dto.kind = "signature".into();
+            dto.color = color;
+            dto.signature = Some(art);
         }
         PdfPageAnnotationType::Stamp if annot.creator().as_deref() == Some(TEXT_STAMP_CREATOR) => {
             let (color, opacity) = color_or(style.fill, "#d81b60");
@@ -355,11 +371,17 @@ pub fn read_annotations(
     let mut pages = Vec::new();
     for (src, page) in document.pages().iter().enumerate() {
         let space = PageSpace::of(&page);
+        let bindings = document.bindings();
+        let handle = bindings.get_handle_from_page(&page);
         let annots: Vec<AnnotationDto> = page
             .annotations()
             .iter()
             .enumerate()
-            .filter_map(|(index, annot)| read_annotation(&annot, index as u32, &space))
+            .filter_map(|(index, annot)| {
+                read_annotation(&annot, index as u32, &space, || {
+                    signature::read_stored(bindings, handle, index as u32)
+                })
+            })
             .collect();
         if annots.is_empty() {
             continue;
