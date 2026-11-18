@@ -4,6 +4,10 @@ import PrintDialog from '../features/print/PrintDialog';
 import { closePrint, printState } from '../features/print/printStore';
 import SignDialog from '../features/sign/SignDialog';
 import { signState } from '../features/sign/signStore';
+import RedactDialog from '../features/protect/redact/RedactDialog';
+import { redactState } from '../features/protect/redact/redactStore';
+import SanitizeDialog from '../features/protect/sanitize/SanitizeDialog';
+import { sanitizeState } from '../features/protect/sanitize/sanitizeStore';
 import {
   dismissError,
   modal,
@@ -106,6 +110,13 @@ export default function Modals() {
       {/* Visual signatures: their own store, like print. */}
       <Show when={signState.dialog}>
         <SignDialog />
+      </Show>
+      {/* Redaction and hidden information: their own stores, like print. */}
+      <Show when={redactState.panelOpen}>
+        <RedactDialog />
+      </Show>
+      <Show when={sanitizeState.open}>
+        <SanitizeDialog />
       </Show>
       <Show when={modal.kind !== null}>
         <div

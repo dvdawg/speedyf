@@ -57,6 +57,7 @@ import type {
   RelatedItem,
 } from '../../types/engine';
 import type { EditPlan } from '../../features/document/documentStore';
+import type { FindQuery, HiddenInfo, RedactMatch } from '../../features/protect/types';
 
 /** What the status bar shows while lookups run: whether any is in flight,
  * and for a batch, how far along it is (both 0 for a single lookup). */
@@ -148,6 +149,10 @@ export interface EngineApi {
   ): Promise<[number, number, number, number][]>;
   saveDocument(docId: number, plan: EditPlan, destPath: string): Promise<SaveResult>;
   getFormFields(docId: number): Promise<FormInfo>;
+  /** Search-and-redact: every match of a phrase or pattern. */
+  findRedactions(docId: number, query: FindQuery): Promise<RedactMatch[]>;
+  /** What hidden information the document carries. */
+  scanHiddenInfo(docId: number): Promise<HiddenInfo>;
   getOutline(docId: number): Promise<OutlineNode[]>;
   /** One idle slice of generating an outline from the page headings; call
    * again until `done`. */
@@ -335,6 +340,8 @@ export const engine: EngineApi = {
   getMatchRects: (docId, src, start, len) => invoke('get_match_rects', { docId, src, start, len }),
   saveDocument: (docId, plan, destPath) => invoke('save_document', { docId, plan, destPath }),
   getFormFields: (docId) => invoke('get_form_fields', { docId }),
+  findRedactions: (docId, query) => invoke('find_redactions', { docId, query }),
+  scanHiddenInfo: (docId) => invoke('scan_hidden_info', { docId }),
   getOutline: (docId) => invoke('get_outline', { docId }),
   getGeneratedOutline: (docId) => invoke('get_generated_outline', { docId }),
   getAnnotations: (docId) => invoke('get_annotations', { docId }),

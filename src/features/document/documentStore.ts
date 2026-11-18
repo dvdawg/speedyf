@@ -23,6 +23,8 @@ export type EditOp =
   | { type: 'setFormButton'; page: number; index: number; checked: boolean }
   /** Write this document's visual signatures into the page content at save. */
   | { type: 'setFlattenSignatures'; value: boolean }
+  /** Apply redactions / remove hidden information at save (protect/). */
+  | { type: 'setScrub'; scrub: ScrubPlan }
   | { type: 'setFormChoice'; field: string; choice: FormChoice }
   /** Several form values at once, as one undo step: Reset Form. */
   | { type: 'setFormValues'; values: FormValues }
@@ -55,8 +57,33 @@ interface PriorFormValues {
   choices: Record<string, FormChoice | null>;
 }
 
+/** Which kinds of hidden information a save removes (engine/sanitize.rs). */
+export interface SanitizeOptions {
+  metadata: boolean;
+  attachments: boolean;
+  javascript: boolean;
+  hiddenLayers: boolean;
+  hiddenText: boolean;
+  comments: boolean;
+  forms: boolean;
+  links: boolean;
+  bookmarks: boolean;
+  thumbnails: boolean;
+  privateData: boolean;
+}
+
+/** Protection work a save finishes with; any of it is a full clean
+ * rewrite of the file (engine/redact/mod.rs `ScrubPlan`). */
+export interface ScrubPlan {
+  /** Remove what lies under every redaction mark. */
+  applyRedactions: boolean;
+  removeHidden: SanitizeOptions | null;
+}
+
+export const NO_SCRUB: ScrubPlan = { applyRedactions: false, removeHidden: null };
+
 export interface PlanAnnot {
-  kind: 'highlight' | 'ink' | 'rect' | 'note' | 'signature';
+  kind: 'highlight' | 'ink' | 'rect' | 'note' | 'signature' | 'redact';
   rect: PdfRect;
   color: string;
   opacity: number;
@@ -135,6 +162,7 @@ export interface EditPlan {
   form: [string, string][];
   formButtons: PlanFormButton[];
   formChoices: PlanFormChoice[];
+  scrub?: ScrubPlan;
 }
 
 export interface DocState {
@@ -151,6 +179,8 @@ export interface DocState {
   flattenSignatures: boolean;
   /** Combo and list box values the user changed, by field name. */
   formChoiceEdits: Record<string, FormChoice>;
+  /** Redactions to apply and hidden information to remove at save. */
+  scrub: ScrubPlan;
   dirty: boolean;
   saving: boolean;
   /** bumped whenever engine-derived visuals must be re-fetched (reload) */
@@ -172,6 +202,7 @@ const emptyState = (): DocState => ({
   formButtonEdits: {},
   flattenSignatures: false,
   formChoiceEdits: {},
+  scrub: NO_SCRUB,
   dirty: false,
   saving: false,
   generation: 0,
@@ -330,6 +361,8 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
         };
       case 'setFlattenSignatures':
         return { type: 'setFlattenSignatures', value: state.flattenSignatures };
+      case 'setScrub':
+        return { type: 'setScrub', scrub: JSON.parse(JSON.stringify(state.scrub)) as ScrubPlan };
       case 'setFormChoice': {
         const prev = state.formChoiceEdits[op.field];
         return {
@@ -452,6 +485,10 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
           }
           case 'setFlattenSignatures': {
             s.flattenSignatures = op.value;
+            break;
+          }
+          case 'setScrub': {
+            s.scrub = JSON.parse(JSON.stringify(op.scrub)) as ScrubPlan;
             break;
           }
           case 'restorePage': {
@@ -746,7 +783,7 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
         dropSrcAnnots,
         annots: anns
           .filter((a): a is Annotation & { kind: PlanAnnot['kind'] } =>
-            ['highlight', 'ink', 'rect', 'note', 'bubble', 'signature'].includes(a.kind)
+            ['highlight', 'ink', 'rect', 'note', 'bubble', 'signature', 'redact'].includes(a.kind)
           )
           .map((a) => ({
             kind: a.kind,
@@ -791,6 +828,9 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
         selected: [...choice.selected],
         ...(choice.text !== undefined ? { text: choice.text } : {}),
       })),
+      ...(state.scrub.applyRedactions || state.scrub.removeHidden
+        ? { scrub: JSON.parse(JSON.stringify(state.scrub)) as ScrubPlan }
+        : {}),
     };
   };
 
@@ -822,7 +862,11 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
         snapshot.hydratedByPage.map(([id, indices]) => [id, new Set(indices)])
       );
       // Snapshots written before choice edits existed carry no record.
-      setState({ ...snapshot.state, formChoiceEdits: snapshot.state.formChoiceEdits ?? {} });
+      setState({
+        ...snapshot.state,
+        formChoiceEdits: snapshot.state.formChoiceEdits ?? {},
+        scrub: snapshot.state.scrub ?? NO_SCRUB,
+      });
       rebuildPageLookups();
       syncHistoryMeta();
     },

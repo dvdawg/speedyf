@@ -46,7 +46,17 @@ export interface PageEntry {
 }
 
 export type AnnotationKind =
-  'highlight' | 'ink' | 'rect' | 'textbox' | 'note' | 'image' | 'bubble' | 'signature';
+  | 'highlight'
+  | 'ink'
+  | 'rect'
+  | 'textbox'
+  | 'note'
+  | 'image'
+  | 'bubble'
+  | 'signature'
+  /** A redaction mark: `color` is its fill, `text` its overlay text, `quads`
+   * the text lines it covers (absent for an area mark). */
+  | 'redact';
 
 /** The typed signature styles, one bundled handwriting font each. */
 export type SignatureStyle = 'flowing' | 'script' | 'hand';

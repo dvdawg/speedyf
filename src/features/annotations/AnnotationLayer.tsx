@@ -35,6 +35,9 @@ import type { EquationBlock } from '../extensions/EquationLayer';
 import { placePendingSignature, signState } from '../sign/signStore';
 import { resizeKeepingAspect } from '../sign/art';
 import SignatureArtView from '../sign/SignatureArtView';
+import RedactMarkView from '../protect/redact/RedactMarkView';
+import { markFromDrag, redactAnnotation } from '../protect/redact/redactMarks';
+import { markStyle } from '../protect/redact/redactStore';
 
 interface Props {
   page: PageEntry;
@@ -193,9 +196,17 @@ export default function AnnotationLayer(props: Props) {
 
   // ---------- creation ----------
 
-  const finishRectDraw = (rect: PdfRect) => {
+  const finishRectDraw = (rect: PdfRect, areaOnly = false) => {
     const style = activeStyle();
-    if (toolState.active === 'rect') {
+    if (toolState.active === 'redact') {
+      // Over text: whole glyphs. Elsewhere, or with Alt: the dragged area.
+      const shape = markFromDrag(props.runs, rect, areaOnly);
+      if (!shape) return;
+      documentStore.apply({
+        type: 'addAnnot',
+        annot: redactAnnotation(props.page.id, shape, markStyle()),
+      });
+    } else if (toolState.active === 'rect') {
       if (rect.w < 3 || rect.h < 3) return;
       documentStore.apply({
         type: 'addAnnot',
@@ -375,7 +386,7 @@ export default function AnnotationLayer(props: Props) {
           },
         });
       } else {
-        finishRectDraw(rectFrom(d.startPdf, p));
+        finishRectDraw(rectFrom(d.startPdf, p), e.altKey);
       }
     } else if (d.kind === 'move' && d.annotId) {
       const dx = p.x - d.startPdf.x;
@@ -539,7 +550,14 @@ export default function AnnotationLayer(props: Props) {
             stroke-linecap="round"
           />
         </Show>
-        <Show when={draft() && (toolState.active === 'rect' || toolState.active === 'highlight')}>
+        <Show
+          when={
+            draft() &&
+            (toolState.active === 'rect' ||
+              toolState.active === 'highlight' ||
+              toolState.active === 'redact')
+          }
+        >
           <rect
             x={draft()!.rect.x}
             y={H() - draft()!.rect.y - draft()!.rect.h}
@@ -584,6 +602,17 @@ export default function AnnotationLayer(props: Props) {
           const isSel = () => selectedId() === a().id;
           return (
             <>
+              <Show when={a().kind === 'redact'}>
+                <RedactMarkView
+                  annot={a()}
+                  zoom={props.zoom}
+                  pageHeight={H()}
+                  selected={isSel()}
+                  armed={documentStore.state.scrub.applyRedactions}
+                  interactive={toolState.active === 'select'}
+                  onPointerDown={(e) => startMove(e, raw)}
+                />
+              </Show>
               <Show when={a().kind === 'highlight'}>
                 <For each={a().quads ?? []}>
                   {(q) => (
@@ -785,7 +814,13 @@ export default function AnnotationLayer(props: Props) {
               </Show>
 
               {/* selection chrome: resize handles + delete */}
-              <Show when={isSel() && ['rect', 'textbox', 'image', 'signature'].includes(a().kind)}>
+              <Show
+                when={
+                  isSel() &&
+                  (['rect', 'textbox', 'image', 'signature'].includes(a().kind) ||
+                    (a().kind === 'redact' && !a().quads))
+                }
+              >
                 <For each={['nw', 'ne', 'sw', 'se'] as const}>
                   {(h) => (
                     <div
