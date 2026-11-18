@@ -9,7 +9,7 @@
 
 .modal .cert-intro {
   margin-bottom: 12px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .cert-section {
@@ -19,7 +19,7 @@
 .cert-section h3 {
   margin: 0 0 6px;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
@@ -40,7 +40,7 @@
   gap: 8px;
   padding: 6px 8px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   cursor: pointer;
 }
 
@@ -65,20 +65,20 @@
 
 .cert-identity-name {
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 
 .cert-identity-meta {
   overflow: hidden;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .modal .cert-empty {
   margin-bottom: 8px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .cert-row {
@@ -92,7 +92,7 @@
   margin-top: 8px;
   padding: 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-inset);
 }
 
@@ -102,11 +102,11 @@
   margin: 0 0 8px;
   padding: 0 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-inset);
   color: var(--text);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 
 .cert-panel .cert-input {
@@ -129,13 +129,13 @@
   flex: 1 1 auto;
   min-width: 0;
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 
 .cert-file {
   overflow: hidden;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -146,7 +146,7 @@
   gap: 6px;
   margin-bottom: 6px;
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-md);
   cursor: pointer;
 }
 
@@ -161,7 +161,7 @@
 .cert-options summary {
   margin-bottom: 8px;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   cursor: pointer;
 }
 
@@ -176,7 +176,7 @@
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 
 .cert-field span {
@@ -187,11 +187,11 @@
   height: var(--control-h);
   padding: 0 6px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-inset);
   color: var(--text);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 
 .cert-field select option {
@@ -207,14 +207,14 @@
 
 .modal .cert-note {
   margin: 0 0 8px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 1.4;
 }
 
 .modal .cert-error {
   margin: 0 0 10px;
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .cert-dialog .cert-check input:focus-visible,
