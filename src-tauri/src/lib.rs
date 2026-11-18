@@ -438,6 +438,8 @@ pub fn run() {
             markup_capture::markup_print_capture,
             markup_capture::markup_print_finish,
             commands::get_form_fields,
+            commands::find_redactions,
+            commands::scan_hidden_info,
             commands::get_outline,
             commands::get_generated_outline,
             commands::get_annotations,
