@@ -290,6 +290,26 @@ fn keeping_an_aes256_source_reuses_its_handler() {
 }
 
 #[test]
+fn keeping_a_permissions_only_file_needs_no_password() {
+    let _guard = pdfium_init::test_guard();
+    let pdfium = test_pdfium();
+    let dir = tempfile::tempdir().unwrap();
+    let plain = dir.path().join("plain.pdf");
+    let (src, out) = (dir.path().join("src.pdf"), dir.path().join("out.pdf"));
+    fixture(&pdfium, &plain);
+    save_protected(&pdfium, &plain, None, &set("", "owner", restricted()), &src);
+    save_protected(&pdfium, &src, None, &ProtectRequest::Keep, &out);
+    let anyone = protection_of(&pdfium, &out, None).unwrap();
+    assert!(anyone.encrypted && !anyone.open_password);
+    assert_eq!(anyone.permissions, restricted());
+    assert!(
+        protection_of(&pdfium, &out, Some("owner"))
+            .unwrap()
+            .owner_unlocked
+    );
+}
+
+#[test]
 fn removing_protection_opens_without_a_password() {
     let _guard = pdfium_init::test_guard();
     let pdfium = test_pdfium();

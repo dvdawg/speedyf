@@ -367,8 +367,13 @@ fn aes256(user: &str, owner: &str, permissions: Permissions) -> AppResult<Encryp
 }
 
 fn keep(src_path: &Path, password: &str) -> AppResult<Target> {
-    let src = Document::load_with_options(src_path, LoadOptions::with_password(password))
-        .map_err(|e| AppError::Malformed(format!("cannot read the source's protection: {e}")))?;
+    let src = Document::load_with_options(src_path, LoadOptions::with_password(password)).map_err(
+        |e| {
+            AppError::Malformed(format!(
+                "cannot read the source's protection ({e}); Protect... can remove or replace it"
+            ))
+        },
+    )?;
     let Some(state) = src.encryption_state.clone() else {
         return Err(AppError::Unsupported(
             "the source's protection could not be read".into(),
