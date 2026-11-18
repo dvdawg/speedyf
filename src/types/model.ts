@@ -46,7 +46,11 @@ export interface PageEntry {
 }
 
 export type AnnotationKind =
-  'highlight' | 'ink' | 'rect' | 'textbox' | 'note' | 'image' | 'bubble' | 'signature';
+  'highlight' | 'ink' | 'rect' | 'textbox' | 'note' | 'image' | 'bubble' | 'signature' | 'mark';
+
+/** The Fill & Sign marks: a tick, a cross, a filled dot, a strike line and an
+ * outline circle. Written as vector stamps (src-tauri/src/engine/marks.rs). */
+export type MarkKind = 'check' | 'cross' | 'dot' | 'line' | 'circle';
 
 /** The typed signature styles, one bundled handwriting font each. */
 export type SignatureStyle = 'flowing' | 'script' | 'hand';
@@ -122,6 +126,11 @@ export interface Annotation extends Partial<TextFormat> {
   bubbleCharIndex?: number;
   /** A visual signature's artwork (`kind: 'signature'`). */
   signature?: SignatureArt;
+  /** Which Fill & Sign mark (`kind: 'mark'`). */
+  mark?: MarkKind;
+  /** A text box spread one character a cell across this many cells: text
+   * filled into a comb row of a printed form. */
+  combCells?: number;
   /** Set only on annotations read out of the file: this annotation's position
    * in PDFium's enumeration of its source page.
    *

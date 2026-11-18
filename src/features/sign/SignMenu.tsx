@@ -18,6 +18,7 @@ import {
 } from './signStore';
 import type { SignatureRole } from './art';
 import SignatureArtView from './SignatureArtView';
+import { fillActive, toggleFill } from './fillStore';
 import './sign.css';
 
 /** A pen nib over a signature line. */
@@ -111,15 +112,43 @@ export function SignMenu() {
   return (
     <div class="sign-menu-wrap" ref={wrap}>
       <IconButton
-        label="Sign: place a visual signature"
+        label="Sign: signatures and filling printed forms"
         disabled={!loaded()}
-        active={signState.menuOpen || signState.pending !== null}
+        active={signState.menuOpen || signState.pending !== null || fillActive()}
         onClick={() => setSignMenuOpen(!signState.menuOpen)}
       >
         <IconSign />
       </IconButton>
       <Show when={signState.menuOpen && loaded()}>
         <div class="sign-menu" role="menu" aria-label="Sign">
+          <button
+            type="button"
+            role="menuitemcheckbox"
+            class="sign-menu-item sign-menu-check"
+            aria-checked={fillActive()}
+            title="Type, tick and date a printed form that has no fields"
+            onClick={() => {
+              toggleFill();
+              setSignMenuOpen(false);
+            }}
+          >
+            <span class="sign-menu-box" aria-hidden="true">
+              <Show when={fillActive()}>
+                <svg viewBox="0 0 12 12" width="12" height="12">
+                  <path
+                    d="M2.5 6.2l2.3 2.3 4.7-5"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </Show>
+            </span>
+            Fill printed form
+          </button>
+          <div class="sign-menu-separator" role="separator" />
           <Group role="signature" />
           <div class="sign-menu-separator" role="separator" />
           <Group role="initials" />

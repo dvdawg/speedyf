@@ -118,6 +118,26 @@ export interface PageBubbles {
   bubbles: Bubble[];
 }
 
+/** What a printed form leaves to write in (see src-tauri/src/engine/blanks.rs). */
+export type BlankKind = 'line' | 'box' | 'cell' | 'comb' | 'check';
+
+/** One blank a printed form draws, for the Fill tool. */
+export interface Blank {
+  /** Normalized PDF page space, y-up. For a `line`, the bottom edge is the
+   * rule the writing stands on. */
+  rect: { x: number; y: number; w: number; h: number };
+  kind: BlankKind;
+  /** The size to write at: the label beside it, clamped to fit. */
+  fontSizePt: number;
+  /** For a comb: how many character cells. */
+  cells: number;
+}
+
+export interface PageBlanks {
+  src: number;
+  blanks: Blank[];
+}
+
 /** A further piece of a preview that runs on: the rest of a statement,
  * footnote or reference at the top of the next column or page. */
 export interface PreviewPart {
@@ -267,6 +287,10 @@ export interface StoredAnnotation extends TextFormat {
   fontSizePt: number | null;
   /** Present on SpeedyF's own visual signatures. */
   signature?: SignatureArt;
+  /** Present on Fill & Sign marks. */
+  mark?: string;
+  /** Present on text written into a comb row. */
+  combCells?: number;
 }
 
 export interface PageAnnotations {

@@ -3,7 +3,7 @@ import { createStore, produce } from 'solid-js/store';
 import type { TextFormat } from '../../types/model';
 import { DEFAULT_TEXT_STYLE } from './textStyle';
 
-export type Tool = 'select' | 'highlight' | 'ink' | 'rect' | 'textbox' | 'note' | 'bubble';
+export type Tool = 'select' | 'highlight' | 'ink' | 'rect' | 'textbox' | 'note' | 'bubble' | 'fill';
 
 export interface ToolStyle extends TextFormat {
   color: string;
@@ -28,6 +28,8 @@ const defaults: Record<Tool, ToolStyle> = {
   // marking up a page: it has to read as filled-in ink on a printout and
   // survive whatever a grader scans it through.
   bubble: { ...DEFAULT_TEXT_STYLE, color: '#1a1a1a', opacity: 1, strokeWidth: 0 },
+  // Fill & Sign: answers and marks on a printed form, in ink-coloured type.
+  fill: { ...DEFAULT_TEXT_STYLE, fontSizePt: 10, color: '#1a1a1a', opacity: 1, strokeWidth: 0 },
 };
 
 const [toolState, setToolState] = createStore<ToolState>({

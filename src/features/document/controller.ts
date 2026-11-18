@@ -8,7 +8,7 @@ import { engine, isEngineError } from '../../lib/transport/engine';
 import type { TabRecord } from '../../stores/tabsStore';
 import { askUnsaved, showError } from '../../stores/modalStore';
 import { recentStore } from '../../stores/recentStore';
-import type { Annotation } from '../../types/model';
+import type { Annotation, MarkKind } from '../../types/model';
 
 const SIZE_BATCH = 128;
 
@@ -62,6 +62,8 @@ export async function hydrateAnnotations(tab: TabRecord, docId: number) {
         ...(a.text !== null ? { text: a.text } : {}),
         ...(a.fontSizePt !== null ? { fontSizePt: a.fontSizePt } : {}),
         ...(a.signature ? { signature: a.signature } : {}),
+        ...(a.mark ? { mark: a.mark as MarkKind } : {}),
+        ...(a.combCells ? { combCells: a.combCells } : {}),
         fontFamily: a.fontFamily,
         bold: a.bold,
         italic: a.italic,
