@@ -48,7 +48,18 @@ export interface PageEntry {
 }
 
 export type AnnotationKind =
-  'highlight' | 'ink' | 'rect' | 'textbox' | 'note' | 'image' | 'bubble' | 'signature' | 'mark';
+  | 'highlight'
+  | 'ink'
+  | 'rect'
+  | 'textbox'
+  | 'note'
+  | 'image'
+  | 'bubble'
+  | 'signature'
+  /** A redaction mark: `color` is its fill, `text` its overlay text, `quads`
+   * the text lines it covers (absent for an area mark). */
+  | 'redact'
+  | 'mark';
 
 /** The Fill & Sign marks: a tick, a cross, a filled dot, a strike line and an
  * outline circle. Written as vector stamps (src-tauri/src/engine/marks.rs). */

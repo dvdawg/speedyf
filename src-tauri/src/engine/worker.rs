@@ -375,6 +375,8 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         Work::MarkupExport { respond, .. } => respond(Err(err())),
         Work::MarkupKey { respond, .. } => respond(Err(err())),
         Work::FormFields { respond, .. } => respond(Err(err())),
+        Work::FindRedactions { respond, .. } => respond(Err(err())),
+        Work::ScanHiddenInfo { respond, .. } => respond(Err(err())),
         Work::Outline { respond, .. } => respond(Err(err())),
         Work::GeneratedOutline { respond, .. } => respond(Err(err())),
         Work::FormalEnvs { respond, .. } => respond(Err(err())),
@@ -548,6 +550,12 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
             &path,
         ))),
         Work::FormFields { doc, respond } => respond(do_form_fields(state, doc)),
+        Work::FindRedactions {
+            doc,
+            query,
+            respond,
+        } => respond(do_find_redactions(state, doc, &query)),
+        Work::ScanHiddenInfo { doc, respond } => respond(do_scan_hidden_info(state, doc)),
         Work::Outline { doc, respond } => respond(do_outline(state, doc)),
         Work::GeneratedOutline { doc, respond } => {
             respond(do_generated_outline(state, shared, doc))
@@ -3362,6 +3370,60 @@ fn do_figures(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<FigureDto>> 
         }
     }
     Ok(out)
+}
+
+/// Most matches search-and-redact lists; past it the list says it stopped.
+const MAX_REDACT_MATCHES: usize = 5000;
+
+fn do_find_redactions(
+    state: &mut WorkerState,
+    doc: DocId,
+    query: &super::redact::find::FindQuery,
+) -> AppResult<Vec<super::redact::find::RedactMatchDto>> {
+    let page_count = state.doc(doc)?.page_count;
+    let mut out = Vec::new();
+    for src in 0..page_count {
+        let [w, h] = state.display_size(doc, src)?;
+        let page = state.page_handle(doc, src)?;
+        let extracted = text::extract_page(state.bindings, page, w, h);
+        for hit in super::redact::find::find_in_text(&extracted.raw, query) {
+            let rects = text::merge_match_rects(&extracted.boxes, hit.start as u32, hit.len as u32);
+            if rects.is_empty() {
+                continue;
+            }
+            out.push(super::redact::find::RedactMatchDto {
+                page: src,
+                start: hit.start as u32,
+                len: hit.len as u32,
+                text: hit.text.split_whitespace().collect::<Vec<_>>().join(" "),
+                kind: hit.kind.to_string(),
+                rects,
+            });
+            if out.len() >= MAX_REDACT_MATCHES {
+                return Ok(out);
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn do_scan_hidden_info(
+    state: &mut WorkerState,
+    doc: DocId,
+) -> AppResult<super::sanitize::HiddenInfoDto> {
+    let (path, password) = {
+        let d = state.doc(doc)?;
+        (d.path.clone(), d.password.clone())
+    };
+    let bytes = std::fs::read(&path)?;
+    let options = match password.as_deref() {
+        Some(pw) => lopdf::LoadOptions::with_password(pw),
+        None => lopdf::LoadOptions::default(),
+    };
+    let loaded = lopdf::Document::load_mem_with_options(&bytes, options);
+    let document =
+        loaded.map_err(|e| AppError::Malformed(format!("cannot read the document: {e}")))?;
+    Ok(super::sanitize::scan(&document, &bytes))
 }
 
 fn do_form_fields(state: &mut WorkerState, doc: DocId) -> AppResult<FormDto> {

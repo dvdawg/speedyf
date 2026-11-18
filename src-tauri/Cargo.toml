@@ -56,6 +56,8 @@ notify = { version = "=8.2.0", default-features = false, features = ["macos_fsev
 # annotation a /Dest, so the internal links are added in a second incremental
 # update written by lopdf. No rayon, no chrono.
 lopdf = { version = "=0.47.0", default-features = false }
+# Search-and-redact patterns (engine/redact/find.rs). Already in the tree.
+regex = { version = "1", default-features = false, features = ["std", "perf", "unicode-case", "unicode-perl"] }
 # Password protection (engine/protect.rs): the random AES-256 file key. The
 # version lopdf itself already pulls in.
 getrandom = { version = "0.4", features = ["sys_rng"] }

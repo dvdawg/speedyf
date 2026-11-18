@@ -39,7 +39,9 @@ mod quote_eval;
 pub mod reading_order;
 #[cfg(test)]
 mod reading_order_eval;
+pub mod redact;
 pub mod render;
+pub mod sanitize;
 pub mod save;
 pub mod signature;
 pub mod signing;
@@ -285,6 +287,18 @@ pub enum Work {
     FormFields {
         doc: DocId,
         respond: Respond<FormDto>,
+    },
+    /// Search-and-redact: every match of a phrase or pattern
+    /// (`redact::find`).
+    FindRedactions {
+        doc: DocId,
+        query: redact::find::FindQuery,
+        respond: Respond<Vec<redact::find::RedactMatchDto>>,
+    },
+    /// What hidden information the document carries (`sanitize::scan`).
+    ScanHiddenInfo {
+        doc: DocId,
+        respond: Respond<sanitize::HiddenInfoDto>,
     },
     Outline {
         doc: DocId,

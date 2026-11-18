@@ -1317,6 +1317,7 @@ mod tests {
             form: Vec::new(),
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
+            scrub: Default::default(),
             form_display: Vec::new(),
         };
         build_output(pdfium, src.to_str().unwrap(), None, &plan, &out).expect("save");
@@ -1531,6 +1532,7 @@ mod tests {
             form: vec![("name".into(), "Grace".into())],
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
+            scrub: Default::default(),
             form_display: Vec::new(),
         };
         build_output(&pdfium, src.to_str().unwrap(), None, &plan, &out).expect("save");
@@ -1716,6 +1718,7 @@ mod eval {
             form: Vec::new(),
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
+            scrub: Default::default(),
             form_display: Vec::new(),
         };
         SKIP_CARRY.with(|skip| skip.set(!carry));

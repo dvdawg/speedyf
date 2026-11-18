@@ -653,6 +653,7 @@ fn benchmark_valid(
                 form: Vec::new(),
                 form_buttons: Vec::new(),
                 form_choices: Vec::new(),
+                scrub: Default::default(),
                 form_display: Vec::new(),
             };
             let save_dir = tempfile::Builder::new()

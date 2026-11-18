@@ -56,6 +56,7 @@ import TextTools from '../features/annotations/TextTools';
 import { ReaderPaneToggles } from '../features/extensions/ReaderPane';
 import { MarkupToggle } from '../features/markup/MarkupToggle';
 import { SignMenu } from '../features/sign/SignMenu';
+import { RedactMenu } from '../features/protect/redact/RedactMenu';
 import FillTools from '../features/sign/FillTools';
 
 export default function Toolbar() {
@@ -362,6 +363,7 @@ export default function Toolbar() {
             <IconBubble />
           </IconButton>
           <SignMenu />
+          <RedactMenu />
           <Show when={showStyle()}>
             <div class="tool-options" role="group" aria-label="Tool style">
               <input
@@ -372,7 +374,7 @@ export default function Toolbar() {
                 title="Color"
                 aria-label="Annotation color"
               />
-              <label class="tb-slider" title="Opacity">
+              <label class="tb-slider" title="Opacity" hidden={toolState.active === 'redact'}>
                 <span class="sr-only">Opacity</span>
                 <input
                   type="range"

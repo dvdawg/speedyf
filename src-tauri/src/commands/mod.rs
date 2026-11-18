@@ -457,6 +457,42 @@ pub async fn save_document(
         .await
 }
 
+/// Search-and-redact: matches of a phrase or pattern on every page.
+#[tauri::command]
+pub async fn find_redactions(
+    state: tauri::State<'_, EngineState>,
+    doc_id: DocId,
+    query: crate::engine::redact::find::FindQuery,
+) -> AppResult<Vec<crate::engine::redact::find::RedactMatchDto>> {
+    state
+        .0
+        .call_async(Priority::VisiblePage, doc_id, move |respond| {
+            Work::FindRedactions {
+                doc: doc_id,
+                query,
+                respond,
+            }
+        })
+        .await
+}
+
+/// What hidden information the document carries, for the removal dialog.
+#[tauri::command]
+pub async fn scan_hidden_info(
+    state: tauri::State<'_, EngineState>,
+    doc_id: DocId,
+) -> AppResult<crate::engine::sanitize::HiddenInfoDto> {
+    state
+        .0
+        .call_async(Priority::VisiblePage, doc_id, move |respond| {
+            Work::ScanHiddenInfo {
+                doc: doc_id,
+                respond,
+            }
+        })
+        .await
+}
+
 #[tauri::command]
 pub async fn unlock_permissions(
     state: tauri::State<'_, EngineState>,

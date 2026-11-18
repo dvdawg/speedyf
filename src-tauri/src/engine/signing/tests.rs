@@ -904,6 +904,7 @@ mod saving {
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
             form_display: Vec::new(),
+            scrub: Default::default(),
         }
     }
 
