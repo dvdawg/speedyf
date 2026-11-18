@@ -56,15 +56,50 @@ notify = { version = "=8.2.0", default-features = false, features = ["macos_fsev
 # annotation a /Dest, so the internal links are added in a second incremental
 # update written by lopdf. No rayon, no chrono.
 lopdf = { version = "=0.47.0", default-features = false }
+# Search-and-redact patterns (engine/redact/find.rs). Already in the tree.
+regex = { version = "1", default-features = false, features = ["std", "perf", "unicode-case", "unicode-perl"] }
 # Password protection (engine/protect.rs): the random AES-256 file key. The
 # version lopdf itself already pulls in.
-getrandom = "0.4"
+getrandom = { version = "0.4", features = ["sys_rng"] }
 # Markup storage key fallback (commands/markup.rs). Already in the tree.
 sha2 = "0.10"
 # Typed visual signatures (engine/signature.rs): glyph outlines of the bundled
 # handwriting fonts, written into the PDF as plain paths. Parsing only, no
 # shaping; `std` alone, without the layout and variation tables.
 ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
+# Digital signatures (engine/signing): CMS, X.509 and the signature
+# algorithms PDF signers use, all pure Rust so nothing links OpenSSL. Offline:
+# no OCSP or CRL fetching. These are the older releases the checker was
+# written against, renamed so they sit beside the newer ones below.
+cms_02 = { package = "cms", version = "0.2" }
+x509_cert_02 = { package = "x509-cert", version = "0.2", default-features = false, features = ["std"] }
+der_07 = { package = "der", version = "0.7", features = ["std", "oid", "alloc", "derive"] }
+spki_07 = { package = "spki", version = "0.7", features = ["std"] }
+rsa_09 = { package = "rsa", version = "0.9", default-features = false, features = ["std", "sha2"] }
+p256_013 = { package = "p256", version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+p384 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+ecdsa = { version = "0.16", default-features = false, features = ["verifying", "der", "std"] }
+sha1 = { version = "0.10", features = ["oid"] }
+# Finding signature dictionaries in a file's bytes. Already in the tree.
+memchr = "2"
+# Certificate signing (engine/signing/sign.rs, keys.rs): PAdES signatures
+# built with the pure-Rust RustCrypto stack, offline. These are the newer
+# releases p12-keystore needs. rcgen makes the self-signed identity (its
+# `ring` backend is already in the tree through rustls); p12-keystore reads
+# and writes .p12 files; argon2 and chacha20poly1305 encrypt a key kept in
+# the app data directory.
+cms = { version = "=0.3.0-rc.2", default-features = false, features = ["std"] }
+x509-cert = { version = "0.3", default-features = false, features = ["std"] }
+der = { version = "0.8", features = ["std", "derive", "oid"] }
+spki = { version = "0.8", features = ["std"] }
+rsa = { version = "0.10", features = ["pkcs1v15"] }
+p256 = { version = "0.14", features = ["ecdsa", "pkcs8"] }
+sha2_11 = { package = "sha2", version = "0.11", features = ["oid"] }
+pkcs8 = { version = "0.11", features = ["std"] }
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
+p12-keystore = "0.4"
+argon2 = { version = "0.6", default-features = false, features = ["alloc"] }
+chacha20poly1305 = { version = "0.11", default-features = false, features = ["alloc"] }
 
 # Native OCR for scanned pages (engine/ocr.rs): Apple's Vision framework.
 # Only the features the module uses — the crate's defaults pull in CoreML,
@@ -78,6 +113,12 @@ objc2-vision = { version = "0.3", default-features = false, features = ["std", "
 objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-core-foundation", "WKPDFConfiguration"] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std"] }
 block2 = "0.6"
+# Digital signatures: whether a signer's certificate chains to a root the
+# system trusts (engine/signing/verify.rs), and certificate identities in the
+# Keychain (engine/signing/keys.rs): the key never leaves it; signing goes
+# through SecKeyCreateSignature.
+security-framework = { version = "3", features = ["macos-12"] }
+core-foundation = "0.10"
 
 # Windows and Linux start a fresh process for every "open with"; without this
 # a second PDF opens a second copy of the app instead of reaching the one

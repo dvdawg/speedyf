@@ -30,6 +30,8 @@ import EquationLayer from '../extensions/EquationLayer';
 import StatementLayer from '../extensions/StatementLayer';
 import FormLayer from '../forms/FormLayer';
 import SignatureFieldLayer from '../sign/SignatureFieldLayer';
+import CertPlaceLayer from '../sign/certificate/CertPlaceLayer';
+import { certState } from '../sign/certificate/certStore';
 import MarkupLayer from '../markup/MarkupLayer';
 import PrepareLayer from '../prepare/PrepareLayer';
 import { preparing } from '../prepare/prepareStore';
@@ -455,6 +457,16 @@ export default function PageView(props: Props) {
             pageId={page()!.id}
             src={srcIndex()!}
             geom={props.geom}
+            zoom={vp.state.zoom}
+          />
+        </Show>
+        <Show when={certState.placing && page()}>
+          <CertPlaceLayer
+            docId={doc.docId}
+            page={page()!}
+            pageIndex={props.index}
+            widthPt={props.geom.widthPt}
+            heightPt={props.geom.heightPt}
             zoom={vp.state.zoom}
           />
         </Show>

@@ -653,6 +653,7 @@ fn benchmark_valid(
                 form: Vec::new(),
                 form_buttons: Vec::new(),
                 form_choices: Vec::new(),
+                scrub: Default::default(),
                 form_display: Vec::new(),
                 form_design: None,
             };
@@ -669,6 +670,7 @@ fn benchmark_valid(
                     plan,
                     dest,
                     protect: Default::default(),
+                    allow_signed_rewrite: false,
                     respond,
                 })
                 .map_err(|error| StageError::new("save", error))?;

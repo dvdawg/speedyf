@@ -722,6 +722,9 @@ pub struct EditPlan {
     /// Combo and list box selections, keyed by field name.
     #[serde(default)]
     pub form_choices: Vec<PlanFormChoice>,
+    /// Apply redactions / remove hidden information (`engine::redact`).
+    #[serde(default)]
+    pub scrub: crate::engine::redact::ScrubPlan,
     /// Formatted page text for text fields whose /V stays raw: name, text,
     /// and the colour a red negative style asks for. See `forms::appearance`.
     #[serde(default)]

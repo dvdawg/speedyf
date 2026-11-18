@@ -370,11 +370,14 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         Work::MatchRects { respond, .. } => respond(Err(err())),
         Work::Save { respond, .. } => respond(Err(err())),
         Work::UnlockPermissions { respond, .. } => respond(Err(err())),
+        Work::WriteSigned { respond, .. } => respond(Err(err())),
         Work::BuildPrintPdf { respond, .. } => respond(Err(err())),
         Work::MarkupExport { respond, .. } => respond(Err(err())),
         Work::MarkupKey { respond, .. } => respond(Err(err())),
         Work::FormFields { respond, .. } => respond(Err(err())),
         Work::FormProposals { respond, .. } => respond(Err(err())),
+        Work::FindRedactions { respond, .. } => respond(Err(err())),
+        Work::ScanHiddenInfo { respond, .. } => respond(Err(err())),
         Work::Outline { respond, .. } => respond(Err(err())),
         Work::GeneratedOutline { respond, .. } => respond(Err(err())),
         Work::FormalEnvs { respond, .. } => respond(Err(err())),
@@ -507,13 +510,27 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
             plan,
             dest,
             protect,
+            allow_signed_rewrite,
             respond,
-        } => respond(do_save(state, doc, plan, dest, protect)),
+        } => respond(do_save(
+            state,
+            doc,
+            plan,
+            dest,
+            protect,
+            allow_signed_rewrite,
+        )),
         Work::UnlockPermissions {
             doc,
             password,
             respond,
         } => respond(do_unlock_permissions(state, doc, password)),
+        Work::WriteSigned {
+            doc,
+            bytes,
+            dest,
+            respond,
+        } => respond(do_write_signed(state, doc, bytes, dest)),
         Work::BuildPrintPdf {
             doc,
             plan,
@@ -535,6 +552,12 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
         ))),
         Work::FormFields { doc, respond } => respond(do_form_fields(state, doc)),
         Work::FormProposals { doc, respond } => respond(do_form_proposals(state, doc)),
+        Work::FindRedactions {
+            doc,
+            query,
+            respond,
+        } => respond(do_find_redactions(state, doc, &query)),
+        Work::ScanHiddenInfo { doc, respond } => respond(do_scan_hidden_info(state, doc)),
         Work::Outline { doc, respond } => respond(do_outline(state, doc)),
         Work::GeneratedOutline { doc, respond } => {
             respond(do_generated_outline(state, shared, doc))
@@ -2576,7 +2599,75 @@ fn do_build_print_pdf(
         let d = state.doc(doc)?;
         (d.path.clone(), d.password.clone())
     };
-    save::build_output(state.pdfium, &src_path, password.as_deref(), &plan, dest)
+    // A printout is a throwaway file: rewriting a signed source for it
+    // breaks nothing.
+    let options = save::SaveOptions {
+        allow_signed_rewrite: true,
+    };
+    save::build_output_with(
+        state.pdfium,
+        &src_path,
+        password.as_deref(),
+        &plan,
+        dest,
+        options,
+    )
+}
+
+/// Put a signed file in place: written to a sibling, opened once to check
+/// it, then renamed over `dest`. A signature is appended to the file the
+/// document was opened from, so when `dest` is that file the document is
+/// closed before the rename (Windows cannot replace an open file); the
+/// frontend reopens the result either way.
+fn do_write_signed(
+    state: &mut WorkerState,
+    doc: DocId,
+    bytes: Vec<u8>,
+    dest: PathBuf,
+) -> AppResult<u64> {
+    let (same_file, page_count) = {
+        let d = state.doc(doc)?;
+        (
+            std::path::Path::new(&d.path) == dest.as_path(),
+            d.page_count as usize,
+        )
+    };
+    let bindings = state.bindings;
+    let docs = &mut state.docs;
+    save::verified_atomic_replace(
+        &dest,
+        |temp| {
+            let mut file = std::fs::File::create(temp)?;
+            std::io::Write::write_all(&mut file, &bytes)?;
+            file.sync_all()?;
+            Ok(())
+        },
+        |temp| {
+            let path = temp
+                .to_str()
+                .ok_or_else(|| AppError::Io("bad temp path".into()))?;
+            let verify = render::open_document(bindings, path, None)?;
+            let count = bindings.FPDF_GetPageCount(verify).max(0) as usize;
+            bindings.FPDF_CloseDocument(verify);
+            if count != page_count {
+                return Err(AppError::Internal(format!(
+                    "verification failed: the signed file has {count} pages, expected {page_count}"
+                )));
+            }
+            Ok(())
+        },
+        || {
+            if same_file {
+                if let Some(mut d) = docs.remove(&doc) {
+                    for (_, p) in d.pages.drain(..) {
+                        bindings.FPDF_ClosePage(p);
+                    }
+                    bindings.FPDF_CloseDocument(d.raw);
+                }
+            }
+            Ok(())
+        },
+    )
 }
 
 fn do_save(
@@ -2585,6 +2676,7 @@ fn do_save(
     plan: EditPlan,
     dest: PathBuf,
     protect_request: protect::ProtectRequest,
+    allow_signed_rewrite: bool,
 ) -> AppResult<SaveResultDto> {
     if plan.pages.len() > u16::MAX as usize {
         return Err(AppError::Unsupported(
@@ -2606,6 +2698,12 @@ fn do_save(
             protect::read(b, d.raw, false),
         )
     };
+    if allow_signed_rewrite && same_file {
+        // Breaking the signatures is only ever done to a separate copy.
+        return Err(AppError::Signed(
+            "choose a new name for the copy: the signed original is kept as it is".into(),
+        ));
+    }
     // Lifting or replacing a file's restrictions takes its permissions
     // password; the reader enforces the same, this is the backstop.
     // `UnlockPermissions` may have swapped in the permissions password since
@@ -2631,6 +2729,16 @@ fn do_save(
     } else {
         None
     };
+    // Encrypting is a full rewrite done after the save proper, so it would
+    // break any signature the incremental save just preserved.
+    if target.encrypts()
+        && !allow_signed_rewrite
+        && crate::engine::signing::file_has_signatures(Path::new(&src_path))
+    {
+        return Err(AppError::Signed(
+            "password protection rewrites the file, which would break its signatures".into(),
+        ));
+    }
     let pdfium = state.pdfium;
     let bindings = state.bindings;
     let expected_pages = plan.pages.len();
@@ -2639,7 +2747,17 @@ fn do_save(
     let save_result = save::verified_atomic_replace(
         &dest,
         |temp_path| {
-            save::build_output(pdfium, &src_path, password.as_deref(), &plan, temp_path)?;
+            let options = save::SaveOptions {
+                allow_signed_rewrite,
+            };
+            save::build_output_with(
+                pdfium,
+                &src_path,
+                password.as_deref(),
+                &plan,
+                temp_path,
+                options,
+            )?;
             protect::encrypt_file(temp_path, &target)
         },
         |temp_path| {
@@ -3254,6 +3372,60 @@ fn do_figures(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<FigureDto>> 
         }
     }
     Ok(out)
+}
+
+/// Most matches search-and-redact lists; past it the list says it stopped.
+const MAX_REDACT_MATCHES: usize = 5000;
+
+fn do_find_redactions(
+    state: &mut WorkerState,
+    doc: DocId,
+    query: &super::redact::find::FindQuery,
+) -> AppResult<Vec<super::redact::find::RedactMatchDto>> {
+    let page_count = state.doc(doc)?.page_count;
+    let mut out = Vec::new();
+    for src in 0..page_count {
+        let [w, h] = state.display_size(doc, src)?;
+        let page = state.page_handle(doc, src)?;
+        let extracted = text::extract_page(state.bindings, page, w, h);
+        for hit in super::redact::find::find_in_text(&extracted.raw, query) {
+            let rects = text::merge_match_rects(&extracted.boxes, hit.start as u32, hit.len as u32);
+            if rects.is_empty() {
+                continue;
+            }
+            out.push(super::redact::find::RedactMatchDto {
+                page: src,
+                start: hit.start as u32,
+                len: hit.len as u32,
+                text: hit.text.split_whitespace().collect::<Vec<_>>().join(" "),
+                kind: hit.kind.to_string(),
+                rects,
+            });
+            if out.len() >= MAX_REDACT_MATCHES {
+                return Ok(out);
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn do_scan_hidden_info(
+    state: &mut WorkerState,
+    doc: DocId,
+) -> AppResult<super::sanitize::HiddenInfoDto> {
+    let (path, password) = {
+        let d = state.doc(doc)?;
+        (d.path.clone(), d.password.clone())
+    };
+    let bytes = std::fs::read(&path)?;
+    let options = match password.as_deref() {
+        Some(pw) => lopdf::LoadOptions::with_password(pw),
+        None => lopdf::LoadOptions::default(),
+    };
+    let loaded = lopdf::Document::load_mem_with_options(&bytes, options);
+    let document =
+        loaded.map_err(|e| AppError::Malformed(format!("cannot read the document: {e}")))?;
+    Ok(super::sanitize::scan(&document, &bytes))
 }
 
 fn do_form_fields(state: &mut WorkerState, doc: DocId) -> AppResult<FormDto> {

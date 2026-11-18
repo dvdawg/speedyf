@@ -159,6 +159,7 @@ fn a_form_survives_a_save_with_its_values() {
             },
         ],
         form_choices: Vec::new(),
+        scrub: Default::default(),
         form_display: Vec::new(),
         form_design: None,
     };
@@ -217,6 +218,7 @@ fn text_field_updates_its_saved_appearance_without_button_edits() {
         form: vec![("name".into(), "Ada".into())],
         form_buttons: Vec::new(),
         form_choices: Vec::new(),
+        scrub: Default::default(),
         form_display: Vec::new(),
         form_design: None,
     };
@@ -283,6 +285,7 @@ fn shared_text_fields_save_multiline_values_and_can_be_cleared() {
             form: vec![("shared".into(), value.into())],
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
+            scrub: Default::default(),
             form_display: Vec::new(),
             form_design: None,
         };
@@ -470,6 +473,7 @@ pub(super) fn one_page_plan() -> EditPlan {
         form: Vec::new(),
         form_buttons: Vec::new(),
         form_choices: Vec::new(),
+        scrub: Default::default(),
         form_display: Vec::new(),
         form_design: None,
     }

@@ -17,6 +17,7 @@ import {
   toggleFlattenSignatures,
   type SavedSignature,
 } from './signStore';
+import { openCertDialog } from './certificate/certStore';
 import type { SignatureRole } from './art';
 import SignatureArtView from './SignatureArtView';
 import { fillActive, toggleFill } from './fillStore';
@@ -165,6 +166,19 @@ export function SignMenu() {
           <Group role="signature" />
           <div class="sign-menu-separator" role="separator" />
           <Group role="initials" />
+          <div class="sign-menu-separator" role="separator" />
+          <button
+            type="button"
+            role="menuitem"
+            class="sign-menu-item"
+            title="Sign the file with a digital certificate, so readers can check who signed it and whether it changed"
+            onClick={() => {
+              setSignMenuOpen(false);
+              openCertDialog();
+            }}
+          >
+            Sign with certificate...
+          </button>
           <div class="sign-menu-separator" role="separator" />
           <button
             type="button"

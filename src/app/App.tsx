@@ -17,6 +17,7 @@ import SearchPanel from '../features/search/SearchPanel';
 import FormPanel from '../features/editor/FormPanel';
 import PreparePanel from '../features/prepare/PreparePanel';
 import { preparing } from '../features/prepare/prepareStore';
+import SignaturesPanel from '../features/signatures/SignaturesPanel';
 import { engine } from '../lib/transport/engine';
 import { ui } from '../stores/uiStore';
 import { applyPageAppearance, settings } from '../stores/settings';
@@ -246,6 +247,9 @@ export default function App() {
                             <Show when={preparing(tab)} fallback={<FormPanel />}>
                               <PreparePanel />
                             </Show>
+                          </Show>
+                          <Show when={tab.viewport.state.signaturesPanelOpen && visible()}>
+                            <SignaturesPanel />
                           </Show>
                           <Show when={visible()}>
                             <ReaderPaneDrawer />

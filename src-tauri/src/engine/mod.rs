@@ -39,9 +39,12 @@ mod quote_eval;
 pub mod reading_order;
 #[cfg(test)]
 mod reading_order_eval;
+pub mod redact;
 pub mod render;
+pub mod sanitize;
 pub mod save;
 pub mod signature;
+pub mod signing;
 pub mod tagged;
 pub mod text;
 pub mod types;
@@ -260,6 +263,9 @@ pub enum Work {
         /// Whether the output keeps, drops or replaces the source's
         /// password protection (`protect`).
         protect: protect::ProtectRequest,
+        /// Rewrite a signed document if the plan needs to (a confirmed
+        /// "Save a copy"); otherwise such a save fails with `AppError::Signed`.
+        allow_signed_rewrite: bool,
         respond: Respond<SaveResultDto>,
     },
     /// Check a permissions password against an open document; on success
@@ -269,6 +275,15 @@ pub enum Work {
         password: String,
         respond: Respond<protect::ProtectionDto>,
     },
+    /// Write a certificate-signed copy of `doc` (signing/sign.rs) to `dest`,
+    /// verified and atomically, closing the document first when `dest` is
+    /// its own file. Answers the bytes written.
+    WriteSigned {
+        doc: DocId,
+        bytes: Vec<u8>,
+        dest: PathBuf,
+        respond: Respond<u64>,
+    },
     FormFields {
         doc: DocId,
         respond: Respond<FormDto>,
@@ -277,6 +292,18 @@ pub enum Work {
     FormProposals {
         doc: DocId,
         respond: Respond<Vec<ProposedFieldDto>>,
+    },
+    /// Search-and-redact: every match of a phrase or pattern
+    /// (`redact::find`).
+    FindRedactions {
+        doc: DocId,
+        query: redact::find::FindQuery,
+        respond: Respond<Vec<redact::find::RedactMatchDto>>,
+    },
+    /// What hidden information the document carries (`sanitize::scan`).
+    ScanHiddenInfo {
+        doc: DocId,
+        respond: Respond<sanitize::HiddenInfoDto>,
     },
     Outline {
         doc: DocId,

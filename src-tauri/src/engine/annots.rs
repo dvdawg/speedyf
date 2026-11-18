@@ -7,7 +7,7 @@
 //! select, move or delete.
 //!
 //! Only the subtypes `save.rs` knows how to write are read. Everything else -
-//! links, form widgets, popups, XFA, redactions - is skipped here and left
+//! links, form widgets, popups, XFA - is skipped here and left
 //! untouched by the save path too. Adopting an annotation this model cannot
 //! represent would mean silently degrading it the next time the file was saved.
 //!
@@ -243,6 +243,7 @@ fn read_annotation(
     index: u32,
     space: &PageSpace,
     signature: impl FnOnce() -> Option<(SignatureArt, String)>,
+    redaction: impl FnOnce() -> (String, Option<String>),
     comb: impl FnOnce() -> Option<u32>,
 ) -> Option<AnnotationDto> {
     let rect = space.rect_from_user(&annot.bounds().ok()?);
@@ -379,7 +380,19 @@ fn read_annotation(
             // when the user moves it.
             dto.kind = "image".into();
         }
-        // Links, widgets, popups, XFA, redactions, anything unrecognized:
+        PdfPageAnnotationType::Redacted => {
+            // A redaction mark not yet applied (`engine::redact`). Text marks
+            // carry one quad per line; area marks only their rectangle.
+            let (color, overlay) = redaction();
+            dto.kind = "redact".into();
+            dto.color = color;
+            dto.text = overlay;
+            let quads = quads_of(annot.attachment_points(), space);
+            if !quads.is_empty() {
+                dto.quads = Some(quads);
+            }
+        }
+        // Links, widgets, popups, XFA, anything unrecognized:
         // still rendered by PDFium, and strictly left alone.
         _ => return None,
     }
@@ -402,6 +415,7 @@ pub fn is_owned(annot: &PdfPageAnnotation<'_>) -> bool {
             | PdfPageAnnotationType::Ink
             | PdfPageAnnotationType::FreeText
             | PdfPageAnnotationType::Stamp
+            | PdfPageAnnotationType::Redacted
     )
 }
 
@@ -434,6 +448,7 @@ pub fn read_annotations(
                     index as u32,
                     &space,
                     || signature::read_stored(bindings, handle, index as u32),
+                    || super::redact::marks::read_stored(bindings, handle, index as u32),
                     || read_comb(bindings, handle, index as u32),
                 )
             })

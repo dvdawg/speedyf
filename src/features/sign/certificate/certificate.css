@@ -1,0 +1,245 @@
+/* Certificate signing: the dialog and the box drawn on a page. Tokens only,
+ * from styles/global.css. */
+
+.modal.cert-dialog {
+  width: min(560px, calc(100vw - 40px));
+  max-height: calc(100vh - 60px);
+  overflow-y: auto;
+}
+
+.modal .cert-intro {
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+
+.cert-section {
+  margin-bottom: 14px;
+}
+
+.cert-section h3 {
+  margin: 0 0 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.cert-identities {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+  max-height: 168px;
+  overflow-y: auto;
+}
+
+.cert-identity {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.cert-identity:hover {
+  background: var(--row-hover);
+}
+
+.cert-identity.is-selected {
+  border-color: var(--border);
+  background: var(--bg-inset);
+}
+
+.cert-identity input {
+  margin: 2px 0 0;
+}
+
+.cert-identity-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.cert-identity-name {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.cert-identity-meta {
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modal .cert-empty {
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.cert-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.cert-panel {
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-inset);
+}
+
+.modal .cert-input {
+  width: 100%;
+  height: var(--control-h);
+  margin: 0 0 8px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-inset);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.cert-panel .cert-input {
+  background: var(--bg-elev);
+}
+
+.cert-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.cert-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cert-target {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.cert-file {
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cert-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cert-check input {
+  margin: 0;
+}
+
+.cert-options {
+  margin-bottom: 14px;
+}
+
+.cert-options summary {
+  margin-bottom: 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.cert-options summary:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.cert-field {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.cert-field span {
+  color: var(--text-dim);
+}
+
+.cert-field select {
+  height: var(--control-h);
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-inset);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.cert-field select option {
+  background: var(--bg-elev);
+  color: var(--text);
+}
+
+.cert-locks {
+  max-height: 120px;
+  margin: 0 0 8px 104px;
+  overflow-y: auto;
+}
+
+.modal .cert-note {
+  margin: 0 0 8px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.modal .cert-error {
+  margin: 0 0 10px;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.cert-dialog .cert-check input:focus-visible,
+.cert-dialog .cert-identity input:focus-visible,
+.cert-field select:focus-visible,
+.modal .cert-input:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* ---------- on the page ---------- */
+
+.cert-place-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  cursor: crosshair;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.cert-place-draft {
+  position: absolute;
+  border: 1px dashed var(--accent);
+  background: var(--accent-soft);
+  pointer-events: none;
+}

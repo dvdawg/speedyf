@@ -1317,6 +1317,7 @@ mod tests {
             form: Vec::new(),
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
+            scrub: Default::default(),
             form_display: Vec::new(),
             form_design: None,
         };
@@ -1532,6 +1533,7 @@ mod tests {
             form: vec![("name".into(), "Grace".into())],
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
+            scrub: Default::default(),
             form_display: Vec::new(),
             form_design: None,
         };
@@ -1718,6 +1720,7 @@ mod eval {
             form: Vec::new(),
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
+            scrub: Default::default(),
             form_display: Vec::new(),
             form_design: None,
         };

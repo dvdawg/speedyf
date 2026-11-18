@@ -390,6 +390,7 @@ fn one_page_plan() -> EditPlan {
         form_choices: Vec::new(),
         form_display: Vec::new(),
         form_design: None,
+        scrub: Default::default(),
     }
 }
 

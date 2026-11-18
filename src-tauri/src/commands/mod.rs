@@ -7,6 +7,7 @@ use crate::engine::{EngineHandle, Work};
 use crate::errors::{AppError, AppResult};
 use std::path::PathBuf;
 
+pub mod certsign;
 pub mod citations;
 pub mod health;
 pub mod hovers;
@@ -14,6 +15,7 @@ pub mod library;
 pub mod markup;
 pub mod projectfiles;
 pub mod signatures;
+pub mod signing;
 
 pub struct EngineState(pub EngineHandle);
 
@@ -435,6 +437,7 @@ pub async fn save_document(
     plan: EditPlan,
     dest_path: String,
     protect: Option<crate::engine::protect::ProtectRequest>,
+    allow_signed_rewrite: Option<bool>,
 ) -> AppResult<SaveResultDto> {
     if plan.pages.is_empty() {
         return Err(AppError::Unsupported(
@@ -448,7 +451,44 @@ pub async fn save_document(
             plan,
             dest: PathBuf::from(dest_path),
             protect: protect.unwrap_or_default(),
+            allow_signed_rewrite: allow_signed_rewrite.unwrap_or(false),
             respond,
+        })
+        .await
+}
+
+/// Search-and-redact: matches of a phrase or pattern on every page.
+#[tauri::command]
+pub async fn find_redactions(
+    state: tauri::State<'_, EngineState>,
+    doc_id: DocId,
+    query: crate::engine::redact::find::FindQuery,
+) -> AppResult<Vec<crate::engine::redact::find::RedactMatchDto>> {
+    state
+        .0
+        .call_async(Priority::VisiblePage, doc_id, move |respond| {
+            Work::FindRedactions {
+                doc: doc_id,
+                query,
+                respond,
+            }
+        })
+        .await
+}
+
+/// What hidden information the document carries, for the removal dialog.
+#[tauri::command]
+pub async fn scan_hidden_info(
+    state: tauri::State<'_, EngineState>,
+    doc_id: DocId,
+) -> AppResult<crate::engine::sanitize::HiddenInfoDto> {
+    state
+        .0
+        .call_async(Priority::VisiblePage, doc_id, move |respond| {
+            Work::ScanHiddenInfo {
+                doc: doc_id,
+                respond,
+            }
         })
         .await
 }

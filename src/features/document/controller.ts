@@ -6,9 +6,10 @@
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { engine, isEngineError } from '../../lib/transport/engine';
 import type { TabRecord } from '../../stores/tabsStore';
-import { askUnsaved, showError } from '../../stores/modalStore';
+import { askConfirm, askUnsaved, showError } from '../../stores/modalStore';
 import { recentStore } from '../../stores/recentStore';
 import type { Annotation, MarkKind } from '../../types/model';
+import { clearSignatures } from '../signatures/signatureStore';
 import { withFormDisplay } from '../forms/formBehaviour';
 
 const SIZE_BATCH = 128;
@@ -92,8 +93,17 @@ export async function guardUnsaved(tab: TabRecord): Promise<boolean> {
   return true; // discard
 }
 
-/** Save (or Save As). Returns true on success. */
-export async function saveDocument(tab: TabRecord, saveAs: boolean): Promise<boolean> {
+/** Save (or Save As). Returns true on success.
+ *
+ * `breakSignatures` is the confirmed "Save a copy" of a signed document whose
+ * edits cannot be appended to it: always to a new file, never over the signed
+ * original. */
+export async function saveDocument(
+  tab: TabRecord,
+  saveAs: boolean,
+  opts: { breakSignatures?: boolean } = {}
+): Promise<boolean> {
+  const breakSignatures = opts.breakSignatures ?? false;
   const state = tab.documentStore.state;
   if (!state.loaded || state.saving) return false;
   if (!saveAs && !state.dirty) return true;
@@ -107,7 +117,7 @@ export async function saveDocument(tab: TabRecord, saveAs: boolean): Promise<boo
   const docId = state.docId;
 
   let dest = state.path;
-  if (saveAs || !dest) {
+  if (saveAs || !dest || breakSignatures) {
     const picked = await saveDialog({
       defaultPath: state.path ?? state.name ?? 'document.pdf',
       filters: [{ name: 'PDF documents', extensions: ['pdf'] }],
@@ -115,14 +125,27 @@ export async function saveDocument(tab: TabRecord, saveAs: boolean): Promise<boo
     if (!picked) return false;
     if (!state.loaded || state.docId !== docId) return false;
     dest = picked.toLowerCase().endsWith('.pdf') ? picked : `${picked}.pdf`;
+    if (breakSignatures && dest === state.path) {
+      showError(
+        'Choose a new name for the copy. The signed original stays as it is, so its signatures remain valid.'
+      );
+      return false;
+    }
   }
 
   if (!state.loaded || state.docId !== docId) return false;
   tab.documentStore.setSaving(true);
   const rememberPage = tab.viewport.state.currentPage;
+  let refusedSigned = false;
   try {
     const plan = await withFormDisplay(docId, tab.documentStore.buildEditPlan());
-    const saved = await engine.saveDocument(docId, plan, dest, state.protectChange ?? undefined);
+    const saved = await engine.saveDocument(
+      docId,
+      plan,
+      dest,
+      state.protectChange ?? undefined,
+      breakSignatures
+    );
     // A discard/open can replace the active document while the native save
     // is running. The file was saved, but its completion must not overwrite
     // the newer session's model or navigation.
@@ -136,15 +159,34 @@ export async function saveDocument(tab: TabRecord, saveAs: boolean): Promise<boo
     );
     return true;
   } catch (e) {
-    showError(
-      isEngineError(e)
-        ? `Save failed: ${e.message}. The original file was not modified.`
-        : `Save failed: ${String(e)}`
-    );
-    return false;
+    if (isEngineError(e) && e.code === 'signed' && !breakSignatures) {
+      refusedSigned = true;
+    } else {
+      showError(
+        isEngineError(e)
+          ? `Save failed: ${e.message}. The original file was not modified.`
+          : `Save failed: ${String(e)}`
+      );
+      return false;
+    }
   } finally {
     if (tab.documentStore.state.docId === docId) tab.documentStore.setSaving(false);
   }
+  return refusedSigned ? offerSignedCopy(tab) : false;
+}
+
+/** A signed document is only ever appended to. When the edits cannot be
+ * (pages deleted, reordered or inserted, or a file that has to be rewritten),
+ * the signed original is left alone and the edits can go to a copy instead. */
+async function offerSignedCopy(tab: TabRecord): Promise<boolean> {
+  const copy = await askConfirm(
+    'This document is digitally signed. Saving these changes would rewrite the file and ' +
+      'break its signatures, so the signed original was left as it is. Save the changes as a ' +
+      'copy instead? The signatures in the copy will show as broken.',
+    'Save a Copy...'
+  );
+  if (!copy) return false;
+  return saveDocument(tab, true, { breakSignatures: true });
 }
 
 /** Reopens `dest` from disk into `tab`'s own stores in place, without
@@ -161,6 +203,7 @@ export async function reloadTabFromDisk(
 ): Promise<void> {
   const previousDocId = tab.documentStore.state.docId;
   const meta = await engine.open(dest, password);
+  clearSignatures(meta.docId);
   tab.documentStore.initFromMeta(meta);
   if (previousDocId >= 0) void engine.close(previousDocId);
   tab.searchStore.resetForDocument(meta.docId, meta.pageCount);

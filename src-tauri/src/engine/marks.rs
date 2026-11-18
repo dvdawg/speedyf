@@ -234,6 +234,7 @@ mod tests {
             form_choices: Vec::new(),
             form_display: Vec::new(),
             form_design: None,
+            scrub: Default::default(),
         };
         build_output(&pdfium, source.to_str().unwrap(), None, &plan, &output).expect("save");
 

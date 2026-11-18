@@ -18,6 +18,9 @@ pub enum AppError {
     Stale,
     #[error("unsupported: {0}")]
     Unsupported(String),
+    /// Saving would rewrite a signed document and break its signatures.
+    #[error("{0}")]
+    Signed(String),
     #[error("{0}")]
     Internal(String),
 }
@@ -32,6 +35,7 @@ impl AppError {
             AppError::Io(_) => "io",
             AppError::Stale => "stale",
             AppError::Unsupported(_) => "unsupported",
+            AppError::Signed(_) => "signed",
             AppError::Internal(_) => "internal",
         }
     }

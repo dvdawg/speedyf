@@ -1,0 +1,256 @@
+/* Redaction marks, the Redact menu and the protect dialogs. Tokens only,
+ * from styles/global.css. */
+
+/* ---------- marks on the page ---------- */
+
+/* An unapplied mark: an outline in the danger colour over a faint hatch, so
+ * it reads as "to be removed" without hiding what it covers. */
+.redact-mark {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid var(--danger);
+  background: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--danger) 22%, transparent) 0 1px,
+    transparent 1px 5px
+  );
+  cursor: move;
+}
+
+.redact-mark.is-selected {
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* Armed to apply at save: shown as it will print. */
+.redact-mark.is-armed {
+  border-color: transparent;
+  background: var(--redact-fill);
+}
+
+.redact-mark-text {
+  display: block;
+  overflow: hidden;
+  padding: 0 2px;
+  color: var(--redact-ink);
+  font:
+    10px/1.2 Helvetica,
+    Arial,
+    sans-serif;
+  white-space: nowrap;
+}
+
+/* ---------- toolbar menu ---------- */
+
+.redact-menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.redact-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 40;
+  width: 236px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  box-shadow: var(--shadow);
+}
+
+.redact-menu-item {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.redact-menu-item:hover:not(:disabled),
+.redact-menu-item:focus-visible {
+  outline: none;
+  background: var(--row-hover);
+}
+
+.redact-menu-item:disabled {
+  color: var(--text-dim);
+}
+
+.redact-menu-item[aria-checked='true'] {
+  color: var(--accent);
+}
+
+.redact-menu-separator {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border);
+}
+
+/* ---------- dialogs ---------- */
+
+.modal.protect-dialog {
+  width: min(520px, calc(100vw - 40px));
+}
+
+.protect-hint {
+  margin: 8px 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.protect-warn {
+  margin: 8px 0;
+  color: var(--warn);
+  font-size: 12px;
+}
+
+.protect-input {
+  width: 100%;
+  height: var(--control-h);
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-inset);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.protect-input:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.protect-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.protect-list {
+  max-height: 280px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.protect-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 4px;
+  border-radius: var(--row-radius);
+  font-size: 13px;
+}
+
+.protect-row:hover {
+  background: var(--row-hover);
+}
+
+.protect-row input {
+  margin-top: 2px;
+}
+
+.protect-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.protect-count,
+.protect-detail {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.protect-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.protect-spacer {
+  flex: 1 1 auto;
+}
+
+.redact-find {
+  display: flex;
+  gap: 8px;
+}
+
+.redact-options,
+.redact-patterns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 10px 0 0;
+}
+
+.redact-patterns {
+  padding: 0;
+  border: none;
+}
+
+.redact-patterns legend {
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.redact-results {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.redact-results-head {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.redact-results-actions {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.redact-results-actions button {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.redact-match-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.redact-overlay {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 12px;
+  color: var(--text-dim);
+  font-size: 12px;
+}

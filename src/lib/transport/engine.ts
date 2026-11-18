@@ -34,6 +34,7 @@ import type {
   SaveResult,
   SearchQueryResult,
 } from '../../types/engine';
+import type { SignatureReport } from '../../features/signatures/types';
 import type {
   BundleReport,
   CitationLinks,
@@ -63,6 +64,7 @@ import type {
   RelatedItem,
 } from '../../types/engine';
 import type { EditPlan } from '../../features/document/documentStore';
+import type { FindQuery, HiddenInfo, RedactMatch } from '../../features/protect/types';
 
 /** What the status bar shows while lookups run: whether any is in flight,
  * and for a batch, how far along it is (both 0 for a single lookup). */
@@ -156,20 +158,30 @@ export interface EngineApi {
     len: number
   ): Promise<[number, number, number, number][]>;
   /** `protect` defaults to keeping whatever protection the source has. */
+  /** `allowSignedRewrite`: a "Save a copy" the user confirmed, which may
+   * rewrite a signed document and break its signatures. Without it such a
+   * save fails with the `signed` error code. */
   saveDocument(
     docId: number,
     plan: EditPlan,
     destPath: string,
-    protect?: ProtectRequest
+    protect?: ProtectRequest,
+    allowSignedRewrite?: boolean
   ): Promise<SaveResult>;
   /** Check a permissions password; rejects with code `password` when wrong. */
   unlockPermissions(docId: number, password: string): Promise<ProtectionInfo>;
+  /** Every digital signature in the PDF at `path`, checked offline. */
+  checkSignatures(path: string): Promise<SignatureReport[]>;
   getFormFields(docId: number): Promise<FormInfo>;
   /** Fields proposed from every page's printed blanks (Prepare form). */
   getFormProposals(docId: number): Promise<ProposedField[]>;
   /** Write form values as FDF, XFDF, JSON or CSV, by the path's extension. */
   exportFormData(path: string, pdfName: string, fields: FormDataField[]): Promise<void>;
   importFormData(path: string): Promise<FormDataField[]>;
+  /** Search-and-redact: every match of a phrase or pattern. */
+  findRedactions(docId: number, query: FindQuery): Promise<RedactMatch[]>;
+  /** What hidden information the document carries. */
+  scanHiddenInfo(docId: number): Promise<HiddenInfo>;
   getOutline(docId: number): Promise<OutlineNode[]>;
   /** One idle slice of generating an outline from the page headings; call
    * again until `done`. */
@@ -357,13 +369,22 @@ export const engine: EngineApi = {
   searchQuery: (docId, query, caseSensitive) =>
     invoke('search_query', { docId, query, caseSensitive }),
   getMatchRects: (docId, src, start, len) => invoke('get_match_rects', { docId, src, start, len }),
-  saveDocument: (docId, plan, destPath, protect) =>
-    invoke('save_document', { docId, plan, destPath, protect: protect ?? null }),
+  saveDocument: (docId, plan, destPath, protect, allowSignedRewrite) =>
+    invoke('save_document', {
+      docId,
+      plan,
+      destPath,
+      protect: protect ?? null,
+      allowSignedRewrite: allowSignedRewrite ?? false,
+    }),
   unlockPermissions: (docId, password) => invoke('unlock_permissions', { docId, password }),
+  checkSignatures: (path) => invoke('check_signatures', { path }),
   getFormFields: (docId) => invoke('get_form_fields', { docId }),
   getFormProposals: (docId) => invoke('get_form_proposals', { docId }),
   exportFormData: (path, pdfName, fields) => invoke('export_form_data', { path, pdfName, fields }),
   importFormData: (path) => invoke('import_form_data', { path }),
+  findRedactions: (docId, query) => invoke('find_redactions', { docId, query }),
+  scanHiddenInfo: (docId) => invoke('scan_hidden_info', { docId }),
   getOutline: (docId) => invoke('get_outline', { docId }),
   getGeneratedOutline: (docId) => invoke('get_generated_outline', { docId }),
   getAnnotations: (docId) => invoke('get_annotations', { docId }),
@@ -461,7 +482,15 @@ export const engine: EngineApi = {
 /** Error shape produced by the Rust AppError serializer. */
 export interface EngineError {
   code:
-    'not_found' | 'engine' | 'password' | 'malformed' | 'io' | 'stale' | 'unsupported' | 'internal';
+    | 'not_found'
+    | 'engine'
+    | 'password'
+    | 'malformed'
+    | 'io'
+    | 'stale'
+    | 'unsupported'
+    | 'signed'
+    | 'internal';
   message: string;
 }
 
