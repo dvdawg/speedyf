@@ -135,6 +135,9 @@ export interface EditPlan {
   form: [string, string][];
   formButtons: PlanFormButton[];
   formChoices: PlanFormChoice[];
+  /** Formatted page text for text fields whose /V stays raw: name, text,
+   * whether it is drawn red. See forms/formBehaviour.ts. */
+  formDisplay?: [string, string, boolean | null][];
 }
 
 export interface DocState {
@@ -546,6 +549,33 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
       previous.op.field === mat.field
     ) {
       previous.op = mat;
+    } else if (
+      coalesce &&
+      previous.op.type === 'setFormValues' &&
+      previous.inverse.type === 'restoreFormValues' &&
+      mat.type === 'setFormValues' &&
+      inverse.type === 'restoreFormValues'
+    ) {
+      // Typing in a field that feeds a calculation: the newest values win,
+      // and the inverse keeps what each key held before the first of them.
+      const values = previous.op.values;
+      previous.op = {
+        type: 'setFormValues',
+        values: {
+          texts: { ...values.texts, ...mat.values.texts },
+          buttons: { ...values.buttons, ...mat.values.buttons },
+          choices: { ...values.choices, ...mat.values.choices },
+        },
+      };
+      const prev = previous.inverse.prev;
+      previous.inverse = {
+        type: 'restoreFormValues',
+        prev: {
+          texts: { ...inverse.prev.texts, ...prev.texts },
+          buttons: { ...inverse.prev.buttons, ...prev.buttons },
+          choices: { ...inverse.prev.choices, ...prev.choices },
+        },
+      };
     } else if (
       coalesce &&
       previous.op.type === 'setFormChoice' &&
