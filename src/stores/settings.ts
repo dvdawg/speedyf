@@ -7,6 +7,9 @@ export type ThemePref = 'system' | 'light' | 'dark';
 export type LaunchScreen = 'home' | 'projects';
 /** SleepyF, the night mode: off, on, or on while the system is dark. */
 export type SleepyMode = 'off' | 'on' | 'system';
+/** How the Fill tool writes today's date: US MM/DD/YYYY, ISO YYYY-MM-DD, or
+ * DD/MM/YYYY. A form's own date format, where it has one, always wins. */
+export type DateFormat = 'us' | 'iso' | 'dmy';
 
 interface Settings {
   theme: ThemePref;
@@ -22,6 +25,8 @@ interface Settings {
   /** A faint tint over fillable form fields, and an outline on required
    * ones. On by default: an unmarked form hides which boxes take typing. */
   highlightFields: boolean;
+  /** The date the Fill tool's date stamp writes. US by default. */
+  dateFormat: DateFormat;
   lowMemory: boolean;
   /** folders in the library; was a single optional root */
   libraryRoots: string[];
@@ -71,6 +76,8 @@ function load(): Settings {
             ? Math.min(100, Math.max(0, Math.round(parsed.sleepyWarmth)))
             : DEFAULT_WARMTH,
         highlightFields: parsed.highlightFields !== false,
+        dateFormat:
+          parsed.dateFormat === 'iso' || parsed.dateFormat === 'dmy' ? parsed.dateFormat : 'us',
         lowMemory: parsed.lowMemory === true,
         libraryRoots: Array.isArray(parsed.libraryRoots)
           ? parsed.libraryRoots.filter((root): root is string => typeof root === 'string')
@@ -98,6 +105,7 @@ function load(): Settings {
     sleepyf: 'off',
     sleepyWarmth: DEFAULT_WARMTH,
     highlightFields: true,
+    dateFormat: 'us',
     lowMemory: false,
     libraryRoots: [],
     trustedLinkHosts: [],
@@ -126,6 +134,7 @@ export function updateSettings(patch: Partial<Settings>) {
         sleepyf: settings.sleepyf,
         sleepyWarmth: settings.sleepyWarmth,
         highlightFields: settings.highlightFields,
+        dateFormat: settings.dateFormat,
         lowMemory: settings.lowMemory,
         libraryRoots: settings.libraryRoots,
         trustedLinkHosts: settings.trustedLinkHosts,
