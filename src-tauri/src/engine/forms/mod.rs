@@ -20,9 +20,15 @@
 //! `read` enumerates fields for the page overlay, `write` commits the user's
 //! edits at save time.
 
+mod appearance;
 mod read;
+pub mod scripts;
 mod write;
 
+#[cfg(test)]
+mod behaviour_eval;
+#[cfg(test)]
+mod behaviour_tests;
 #[cfg(test)]
 mod eval;
 #[cfg(test)]
