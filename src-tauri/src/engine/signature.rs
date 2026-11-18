@@ -829,6 +829,7 @@ mod tests {
             }],
             form: Vec::new(),
             form_buttons: Vec::new(),
+            form_choices: Vec::new(),
         }
     }
 

@@ -227,6 +227,21 @@ export default function SettingsPanel() {
         </div>
 
         <div class="home-setting">
+          <label class="home-setting-text" for="setting-highlight-fields">
+            <span class="home-setting-title">Highlight form fields</span>
+            <span class="home-setting-desc">
+              A faint tint over the boxes a form lets you fill, and an outline on the required ones.
+            </span>
+          </label>
+          <input
+            id="setting-highlight-fields"
+            type="checkbox"
+            checked={settings.highlightFields}
+            onInput={(e) => updateSettings({ highlightFields: e.currentTarget.checked })}
+          />
+        </div>
+
+        <div class="home-setting">
           <label class="home-setting-text" for="setting-sleepyf">
             <span class="home-setting-title">SleepyF</span>
             <span class="home-setting-desc">

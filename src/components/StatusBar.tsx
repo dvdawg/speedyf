@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, onMount, Show } from 'solid-js';
+import { createResource, createSignal, onCleanup, onMount, Show } from 'solid-js';
 import { activeTab } from '../stores/tabsStore';
 import { sleepyActive, toggleSleepy } from '../stores/settings';
 import { engine } from '../lib/transport/engine';
@@ -7,6 +7,7 @@ import { libraryStore } from '../features/citations/libraryStore';
 import { extensionsOnline } from '../features/extensions/extensionStore';
 import { installLibraryUndo } from '../features/projects/libraryUndo';
 import StatusMessage from './StatusMessage';
+import { formFields, isFillable, requiredCount, requiredLeft } from '../features/forms/formStore';
 
 export default function StatusBar() {
   const doc = () => activeTab()?.documentStore.state;
@@ -15,6 +16,17 @@ export default function StatusBar() {
   // The one moment SpeedyF talks to a server. Shown for as long as any
   // lookup is in flight, never hidden behind a setting.
   const [lookingUp, setLookingUp] = createSignal<LookupActivity | null>(null);
+  // Only documents with fields say anything about forms.
+  const [fields] = createResource(
+    () => (doc()?.loaded ? doc()!.docId : null),
+    (docId) => formFields(docId)
+  );
+  const formStatus = () => {
+    const state = doc();
+    const all = fields() ?? [];
+    if (!state?.loaded || !all.some(isFillable)) return null;
+    return requiredCount(all) > 0 ? `Form - ${requiredLeft(state, all)} required left` : 'Form';
+  };
 
   onMount(() => {
     // Says each library action with its Undo (libraryUndo.ts).
@@ -143,6 +155,21 @@ export default function StatusBar() {
         </Show>
       </div>
       <div class="sb-right">
+        <Show when={formStatus()}>
+          {(label) => (
+            <button
+              type="button"
+              class="sb-sleepy sb-form"
+              title="Show the form's fields"
+              onClick={() => {
+                const tab = activeTab();
+                if (tab) tab.viewport.setState('formPanelOpen', !tab.viewport.state.formPanelOpen);
+              }}
+            >
+              {label()}
+            </button>
+          )}
+        </Show>
         <Show when={sleepyActive()}>
           <button
             type="button"

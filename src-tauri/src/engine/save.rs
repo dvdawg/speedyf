@@ -79,7 +79,7 @@ pub(crate) enum SaveMode {
 }
 
 impl SaveMode {
-    fn flags(self) -> c_ulong {
+    pub(crate) fn flags(self) -> c_ulong {
         match self {
             SaveMode::Incremental => FPDF_INCREMENTAL,
             SaveMode::Rewrite => 0,
@@ -213,7 +213,7 @@ pub fn save_incremental(document: &PdfDocument<'_>, path: &Path) -> AppResult<()
 /// refuse the whole file. That stream is the last object written and
 /// `startxref` points at its first byte, so inserting the missing key inside
 /// its dictionary moves nothing any offset in the file refers to.
-fn mend_xref_stream_type(path: &Path) -> AppResult<bool> {
+pub(crate) fn mend_xref_stream_type(path: &Path) -> AppResult<bool> {
     use std::io::{Read, Seek, SeekFrom};
     // A cross-reference stream for an incremental update lists only the
     // objects it rewrote; anything larger than this is not what PDFium writes.
@@ -1085,7 +1085,15 @@ pub fn build_output(
 
     // 4) Commit form values AND their appearances through PDFium's form-fill
     //    environment; setting /V alone leaves stale or missing text on disk.
-    forms::apply_edits(pdfium.bindings(), out_path, &plan.form, &plan.form_buttons)?;
+    forms::apply_edits(
+        pdfium.bindings(),
+        out_path,
+        forms::FormEdits {
+            texts: &plan.form,
+            buttons: &plan.form_buttons,
+            choices: &plan.form_choices,
+        },
+    )?;
     Ok(())
 }
 
@@ -1192,6 +1200,7 @@ mod tests {
             ],
             form: Vec::new(),
             form_buttons: Vec::new(),
+            form_choices: Vec::new(),
         };
         build_output(
             &pdfium,
@@ -1330,6 +1339,7 @@ mod tests {
             pages: vec![page],
             form: Vec::new(),
             form_buttons: Vec::new(),
+            form_choices: Vec::new(),
         };
         build_output(
             &pdfium,
@@ -1493,6 +1503,7 @@ mod tests {
             pages,
             form: vec![],
             form_buttons: vec![],
+            form_choices: Vec::new(),
         };
         build_output(&pdfium, source.to_str().unwrap(), None, &plan, &output).unwrap();
         let doc = pdfium.load_pdf_from_file(&output, None).unwrap();
@@ -1549,6 +1560,7 @@ mod tests {
                 pages: vec![page],
                 form: Vec::new(),
                 form_buttons: Vec::new(),
+                form_choices: Vec::new(),
             },
             &output,
         )
@@ -1632,6 +1644,7 @@ mod tests {
                 .collect(),
             form: Vec::new(),
             form_buttons: Vec::new(),
+            form_choices: Vec::new(),
         };
         build_output(&pdfium, source.to_str().unwrap(), None, &plan, &output).unwrap();
         let doc = pdfium.load_pdf_from_file(&output, None).unwrap();
@@ -1715,6 +1728,7 @@ mod tests {
                 pages: vec![page],
                 form: Vec::new(),
                 form_buttons: Vec::new(),
+                form_choices: Vec::new(),
             },
             &output,
         )
@@ -1789,6 +1803,7 @@ mod tests {
                 pages: vec![page],
                 form: Vec::new(),
                 form_buttons: Vec::new(),
+                form_choices: Vec::new(),
             },
             &output,
         )
@@ -1867,6 +1882,7 @@ mod tests {
             pages: vec![plan_page(Some(0), 90)],
             form: Vec::new(),
             form_buttons: Vec::new(),
+            form_choices: Vec::new(),
         };
         build_output(
             &pdfium,
@@ -1933,6 +1949,7 @@ mod tests {
             pages: vec![page],
             form: Vec::new(),
             form_buttons: Vec::new(),
+            form_choices: Vec::new(),
         };
         build_output(
             &pdfium,
@@ -2213,6 +2230,7 @@ mod tests {
             pages,
             form: Vec::new(),
             form_buttons: Vec::new(),
+            form_choices: Vec::new(),
         };
         build_output(
             pdfium,

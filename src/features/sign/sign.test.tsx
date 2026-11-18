@@ -8,6 +8,7 @@
  */
 import { cleanup, fireEvent, render } from '@solidjs/testing-library';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { testField } from '../forms/testField';
 import type { FormFieldInfo } from '../../types/engine';
 import type { Annotation, PageEntry } from '../../types/model';
 import type * as formStoreModule from '../forms/formStore';
@@ -186,18 +187,14 @@ describe('placing a signature on a page', () => {
 
   it('fits an armed signature into the empty field it is clicked in', async () => {
     fields = [
-      {
+      testField({
         name: 'Signature1',
         kind: 'signature',
-        value: '',
         page: 0,
-        readOnly: false,
         index: 0,
         rect: { x: 300, y: 92, w: 200, h: 40 },
-        exportValue: '',
-        checked: false,
         signed: false,
-      },
+      }),
     ];
     const layer = mountLayer();
     armPlacement(await addSignature({ role: 'signature', art: typedArt, color: '#1a1a1a' }));
@@ -345,19 +342,16 @@ describe('the create dialog', () => {
 });
 
 describe('empty signature fields', () => {
-  const field = (over: Partial<FormFieldInfo>): FormFieldInfo => ({
-    name: 'Signature1',
-    kind: 'signature',
-    value: '',
-    page: 0,
-    readOnly: false,
-    index: 3,
-    rect: { x: 100, y: 100, w: 200, h: 40 },
-    exportValue: '',
-    checked: false,
-    signed: false,
-    ...over,
-  });
+  const field = (over: Partial<FormFieldInfo>): FormFieldInfo =>
+    testField({
+      name: 'Signature1',
+      kind: 'signature',
+      index: 3,
+      rect: { x: 100, y: 100, w: 200, h: 40 },
+      exportValue: '',
+      signed: false,
+      ...over,
+    });
 
   const mountFields = async () => {
     const tab = newDocument();

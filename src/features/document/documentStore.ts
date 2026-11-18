@@ -23,11 +23,37 @@ export type EditOp =
   | { type: 'setFormButton'; page: number; index: number; checked: boolean }
   /** Write this document's visual signatures into the page content at save. */
   | { type: 'setFlattenSignatures'; value: boolean }
+  | { type: 'setFormChoice'; field: string; choice: FormChoice }
+  /** Several form values at once, as one undo step: Reset Form. */
+  | { type: 'setFormValues'; values: FormValues }
   // internal inverse-only ops:
   | { type: 'restorePage'; entry: PageEntry; index: number; annots: Annotation[] }
   | { type: 'restoreAnnot'; pageId: PageId; annot: Annotation; index: number }
   | { type: 'restoreForm'; field: string; prev: string | undefined }
-  | { type: 'restoreFormButton'; page: number; index: number; prev: boolean | undefined };
+  | { type: 'restoreFormButton'; page: number; index: number; prev: boolean | undefined }
+  | { type: 'restoreFormChoice'; field: string; prev: FormChoice | undefined }
+  | { type: 'restoreFormValues'; prev: PriorFormValues };
+
+/** A combo or list box value: option indices, or text typed into an editable
+ * combo, which wins over them. */
+export interface FormChoice {
+  selected: number[];
+  text?: string;
+}
+
+/** Form values keyed the way `DocState` keys them. */
+export interface FormValues {
+  texts: Record<string, string>;
+  buttons: Record<string, boolean>;
+  choices: Record<string, FormChoice>;
+}
+
+/** What `setFormValues` replaced: `null` where there was no edit. */
+interface PriorFormValues {
+  texts: Record<string, string | null>;
+  buttons: Record<string, boolean | null>;
+  choices: Record<string, FormChoice | null>;
+}
 
 export interface PlanAnnot {
   kind: 'highlight' | 'ink' | 'rect' | 'note' | 'signature';
@@ -81,6 +107,13 @@ export function formButtonKey(page: number, index: number): string {
   return `${page}:${index}`;
 }
 
+function copyChoice(choice: FormChoice): FormChoice {
+  return {
+    selected: [...choice.selected],
+    ...(choice.text !== undefined ? { text: choice.text } : {}),
+  };
+}
+
 /** One checkbox or radio the user toggled, identified by its widget rather
  * than by its field name — see `PlanFormButton` in the engine. */
 export interface PlanFormButton {
@@ -89,10 +122,19 @@ export interface PlanFormButton {
   checked: boolean;
 }
 
+/** One combo or list box value, by field name — see `PlanFormChoice` in the
+ * engine. */
+export interface PlanFormChoice {
+  field: string;
+  selected: number[];
+  text?: string;
+}
+
 export interface EditPlan {
   pages: PlanPage[];
   form: [string, string][];
   formButtons: PlanFormButton[];
+  formChoices: PlanFormChoice[];
 }
 
 export interface DocState {
@@ -107,6 +149,8 @@ export interface DocState {
   formButtonEdits: Record<string, boolean>;
   /** Visual signatures are written into the page content at save. */
   flattenSignatures: boolean;
+  /** Combo and list box values the user changed, by field name. */
+  formChoiceEdits: Record<string, FormChoice>;
   dirty: boolean;
   saving: boolean;
   /** bumped whenever engine-derived visuals must be re-fetched (reload) */
@@ -127,6 +171,7 @@ const emptyState = (): DocState => ({
   formEdits: {},
   formButtonEdits: {},
   flattenSignatures: false,
+  formChoiceEdits: {},
   dirty: false,
   saving: false,
   generation: 0,
@@ -285,10 +330,34 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
         };
       case 'setFlattenSignatures':
         return { type: 'setFlattenSignatures', value: state.flattenSignatures };
+      case 'setFormChoice': {
+        const prev = state.formChoiceEdits[op.field];
+        return {
+          type: 'restoreFormChoice',
+          field: op.field,
+          prev: prev ? copyChoice(prev) : undefined,
+        };
+      }
+      case 'setFormValues': {
+        const prev: PriorFormValues = { texts: {}, buttons: {}, choices: {} };
+        for (const key of Object.keys(op.values.texts)) {
+          prev.texts[key] = state.formEdits[key] ?? null;
+        }
+        for (const key of Object.keys(op.values.buttons)) {
+          prev.buttons[key] = state.formButtonEdits[key] ?? null;
+        }
+        for (const key of Object.keys(op.values.choices)) {
+          const choice = state.formChoiceEdits[key];
+          prev.choices[key] = choice ? copyChoice(choice) : null;
+        }
+        return { type: 'restoreFormValues', prev };
+      }
       case 'restorePage':
       case 'restoreAnnot':
       case 'restoreForm':
       case 'restoreFormButton':
+      case 'restoreFormChoice':
+      case 'restoreFormValues':
         throw new Error(`inverse-only op cannot be applied directly: ${op.type}`);
     }
   };
@@ -400,6 +469,38 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
             else s.formEdits[op.field] = op.prev;
             break;
           }
+          case 'setFormChoice': {
+            s.formChoiceEdits[op.field] = copyChoice(op.choice);
+            break;
+          }
+          case 'restoreFormChoice': {
+            if (op.prev === undefined) delete s.formChoiceEdits[op.field];
+            else s.formChoiceEdits[op.field] = copyChoice(op.prev);
+            break;
+          }
+          case 'setFormValues': {
+            Object.assign(s.formEdits, op.values.texts);
+            Object.assign(s.formButtonEdits, op.values.buttons);
+            for (const [key, choice] of Object.entries(op.values.choices)) {
+              s.formChoiceEdits[key] = copyChoice(choice);
+            }
+            break;
+          }
+          case 'restoreFormValues': {
+            for (const [key, value] of Object.entries(op.prev.texts)) {
+              if (value === null) delete s.formEdits[key];
+              else s.formEdits[key] = value;
+            }
+            for (const [key, value] of Object.entries(op.prev.buttons)) {
+              if (value === null) delete s.formButtonEdits[key];
+              else s.formButtonEdits[key] = value;
+            }
+            for (const [key, value] of Object.entries(op.prev.choices)) {
+              if (value === null) delete s.formChoiceEdits[key];
+              else s.formChoiceEdits[key] = copyChoice(value);
+            }
+            break;
+          }
         }
       })
     );
@@ -442,6 +543,13 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
       coalesce &&
       previous.op.type === 'setForm' &&
       mat.type === 'setForm' &&
+      previous.op.field === mat.field
+    ) {
+      previous.op = mat;
+    } else if (
+      coalesce &&
+      previous.op.type === 'setFormChoice' &&
+      mat.type === 'setFormChoice' &&
       previous.op.field === mat.field
     ) {
       previous.op = mat;
@@ -678,6 +786,11 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
         const [page, index] = key.split(':');
         return { page: Number(page), index: Number(index), checked };
       }),
+      formChoices: Object.entries(state.formChoiceEdits).map(([field, choice]) => ({
+        field,
+        selected: [...choice.selected],
+        ...(choice.text !== undefined ? { text: choice.text } : {}),
+      })),
     };
   };
 
@@ -708,7 +821,8 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
       hydratedByPage = new Map(
         snapshot.hydratedByPage.map(([id, indices]) => [id, new Set(indices)])
       );
-      setState(snapshot.state);
+      // Snapshots written before choice edits existed carry no record.
+      setState({ ...snapshot.state, formChoiceEdits: snapshot.state.formChoiceEdits ?? {} });
       rebuildPageLookups();
       syncHistoryMeta();
     },

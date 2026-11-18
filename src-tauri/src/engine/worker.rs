@@ -49,7 +49,7 @@ struct DocState {
     /// tiny MRU of open page handles: (src_index, handle)
     pages: Vec<(u32, FPDF_PAGE)>,
     index_cursor: u32,
-    form_fields: Option<Vec<FormFieldDto>>,
+    form_fields: Option<FormDto>,
     /// Computed lazily; invalidated (left None) whenever the page set changes,
     /// since every entry carries a page index.
     formal_envs: Option<Vec<FormalEntryDto>>,
@@ -3136,169 +3136,23 @@ fn do_figures(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<FigureDto>> 
     Ok(out)
 }
 
-fn do_form_fields(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<FormFieldDto>> {
-    let (raw, page_count, cached) = {
+fn do_form_fields(state: &mut WorkerState, doc: DocId) -> AppResult<FormDto> {
+    let (raw, page_count, path, password, cached) = {
         let d = state.doc(doc)?;
-        (d.raw, d.page_count, d.form_fields.clone())
+        (
+            d.raw,
+            d.page_count,
+            d.path.clone(),
+            d.password.clone(),
+            d.form_fields.clone(),
+        )
     };
-    if let Some(fields) = cached {
-        return Ok(fields);
+    if let Some(form) = cached {
+        return Ok(form);
     }
-
-    let bindings = state.bindings;
-    if bindings.FPDF_GetFormType(raw) == 0 {
-        state.doc(doc)?.form_fields = Some(Vec::new());
-        return Ok(Vec::new());
-    }
-
-    // PDFium retains this pointer until ExitFormFillEnvironment(), so the
-    // callback table must stay pinned for the complete scan.
-    let mut form_fill_info = Box::pin(FPDF_FORMFILLINFO {
-        version: 2,
-        Release: None,
-        FFI_Invalidate: None,
-        FFI_OutputSelectedRect: None,
-        FFI_SetCursor: None,
-        FFI_SetTimer: None,
-        FFI_KillTimer: None,
-        FFI_GetLocalTime: None,
-        FFI_OnChange: None,
-        FFI_GetPage: None,
-        FFI_GetCurrentPage: None,
-        FFI_GetRotation: None,
-        FFI_ExecuteNamedAction: None,
-        FFI_SetTextFieldFocus: None,
-        FFI_DoURIAction: None,
-        FFI_DoGoToAction: None,
-        m_pJsPlatform: std::ptr::null_mut(),
-        xfa_disabled: 0,
-        FFI_DisplayCaret: None,
-        FFI_GetCurrentPageIndex: None,
-        FFI_SetCurrentPage: None,
-        FFI_GotoURL: None,
-        FFI_GetPageViewRect: None,
-        FFI_PageEvent: None,
-        FFI_PopupMenu: None,
-        FFI_OpenFile: None,
-        FFI_EmailTo: None,
-        FFI_UploadTo: None,
-        FFI_GetPlatform: None,
-        FFI_GetLanguage: None,
-        FFI_DownloadFromURL: None,
-        FFI_PostRequestURL: None,
-        FFI_PutRequestURL: None,
-        FFI_OnFocusChange: None,
-        FFI_DoURIActionWithKeyboardModifier: None,
-    });
-    let form = bindings.FPDFDOC_InitFormFillEnvironment(raw, form_fill_info.as_mut().get_mut());
-    if form.is_null() {
-        state.doc(doc)?.form_fields = Some(Vec::new());
-        return Ok(Vec::new());
-    }
-
-    let mut out = Vec::new();
-    for pi in 0..page_count {
-        let page = bindings.FPDF_LoadPage(raw, pi as i32);
-        if page.is_null() {
-            continue;
-        }
-        bindings.FORM_OnAfterLoadPage(page, form);
-        // Widget rects come out of PDFium in user space; the frontend places
-        // everything in display space, so they are mapped exactly as link
-        // rects and character boxes are.
-        let mapper = render::page_display_size(bindings, raw, pi as i32)
-            .map(|[w, h]| text::DispMapper::new(bindings, page, w, h));
-        let annotation_count = bindings.FPDFPage_GetAnnotCount(page).max(0);
-        for ai in 0..annotation_count {
-            let annotation = bindings.FPDFPage_GetAnnot(page, ai);
-            if annotation.is_null() {
-                continue;
-            }
-            let field_type = bindings.FPDFAnnot_GetFormFieldType(form, annotation);
-            if field_type < 0 {
-                bindings.FPDFPage_CloseAnnot(annotation);
-                continue;
-            };
-            let name = read_pdfium_utf16(|buffer, len| {
-                bindings.FPDFAnnot_GetFormFieldName(form, annotation, buffer, len)
-            });
-            let value = read_pdfium_utf16(|buffer, len| {
-                bindings.FPDFAnnot_GetFormFieldValue(form, annotation, buffer, len)
-            });
-            let export_value = read_pdfium_utf16(|buffer, len| {
-                bindings.FPDFAnnot_GetFormFieldExportValue(form, annotation, buffer, len)
-            });
-            let flags = bindings.FPDFAnnot_GetFormFieldFlags(form, annotation);
-            let rect = mapper
-                .as_ref()
-                .and_then(|m| widget_rect(bindings, annotation, m))
-                .unwrap_or(RectDto {
-                    x: 0.0,
-                    y: 0.0,
-                    w: 0.0,
-                    h: 0.0,
-                });
-            out.push(FormFieldDto {
-                name,
-                kind: form_field_kind(field_type).into(),
-                value,
-                page: pi,
-                read_only: flags & 1 != 0,
-                index: ai as u32,
-                rect,
-                export_value,
-                checked: bindings.FPDFAnnot_IsChecked(form, annotation) != 0,
-                signed: field_type == 7
-                    && crate::engine::signature::field_is_signed(bindings, annotation),
-            });
-            bindings.FPDFPage_CloseAnnot(annotation);
-        }
-        bindings.FORM_OnBeforeClosePage(page, form);
-        bindings.FPDF_ClosePage(page);
-    }
-
-    bindings.FPDFDOC_ExitFormFillEnvironment(form);
-    state.doc(doc)?.form_fields = Some(out.clone());
-    Ok(out)
-}
-
-/// One widget's rectangle, in display space, or `None` when PDFium reports
-/// none or reports a degenerate one - a control with no area cannot be aimed
-/// at, so offering it to the UI would only produce an invisible hit target.
-fn widget_rect(
-    b: &dyn PdfiumLibraryBindings,
-    annotation: FPDF_ANNOTATION,
-    mapper: &text::DispMapper,
-) -> Option<RectDto> {
-    let mut rect = FS_RECTF {
-        left: 0.0,
-        top: 0.0,
-        right: 0.0,
-        bottom: 0.0,
-    };
-    if b.FPDFAnnot_GetRect(annotation, &mut rect) == 0 {
-        return None;
-    }
-    let (x, y, w, h) = mapper.map_box(
-        rect.left as f64,
-        rect.right as f64,
-        rect.bottom as f64,
-        rect.top as f64,
-    );
-    (w > 0.0 && h > 0.0).then_some(RectDto { x, y, w, h })
-}
-
-fn form_field_kind(field_type: i32) -> &'static str {
-    match field_type {
-        1 => "button",
-        2 => "checkbox",
-        3 => "radio",
-        4 => "combo",
-        5 => "list",
-        6 => "text",
-        7 => "signature",
-        _ => "other",
-    }
+    let form = super::forms::read_form(state.bindings, raw, page_count, &path, password.as_deref());
+    state.doc(doc)?.form_fields = Some(form.clone());
+    Ok(form)
 }
 
 const MAX_FORM_STRING_BYTES: usize = 16 * 1024 * 1024;
@@ -4409,18 +4263,6 @@ mod tests {
         }));
         assert!(!is_generation_cancellable(&Work::LibraryScanNext));
         assert!(!is_generation_cancellable(&Work::Close { doc: 1 }));
-    }
-
-    #[test]
-    fn form_field_types_have_stable_ui_kinds() {
-        assert_eq!(form_field_kind(1), "button");
-        assert_eq!(form_field_kind(2), "checkbox");
-        assert_eq!(form_field_kind(3), "radio");
-        assert_eq!(form_field_kind(4), "combo");
-        assert_eq!(form_field_kind(5), "list");
-        assert_eq!(form_field_kind(6), "text");
-        assert_eq!(form_field_kind(7), "signature");
-        assert_eq!(form_field_kind(-1), "other");
     }
 
     #[test]

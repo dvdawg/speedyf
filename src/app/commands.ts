@@ -29,6 +29,8 @@ import { setActiveTool, type Tool } from '../features/annotations/toolStore';
 import { beginPrint } from '../features/print/printStore';
 import { settings, toggleSleepy, updateSettings } from '../stores/settings';
 import { forgetContributedText } from '../features/extensions/extensionStore';
+import { formFields, isFillable } from '../features/forms/formStore';
+import { resetForm } from '../features/forms/formNav';
 import {
   activePaper,
   activePaperKnown,
@@ -650,6 +652,29 @@ export const COMMANDS: readonly Command[] = [
     keywords: ['dark', 'night', 'invert', 'appearance', 'contrast'],
     enabled: () => true,
     run: () => updateSettings({ invertPages: !settings.invertPages }),
+  },
+  {
+    id: 'settings.toggleHighlightFields',
+    title: 'Toggle Highlight Form Fields',
+    group: 'Settings',
+    keywords: ['form', 'fields', 'tint', 'required', 'fill'],
+    enabled: () => true,
+    run: () => updateSettings({ highlightFields: !settings.highlightFields }),
+  },
+  {
+    id: 'forms.reset',
+    title: 'Reset Form',
+    group: 'Edit',
+    keywords: ['form', 'fields', 'clear', 'defaults'],
+    enabled: loaded,
+    run: (ctx) => {
+      const tab = ctx.tab;
+      const s = state(ctx);
+      if (!tab || !s?.loaded) return;
+      void formFields(s.docId).then((fields) => {
+        if (fields.some(isFillable)) resetForm(tab, fields);
+      });
+    },
   },
   {
     id: 'settings.toggleSleepyf',

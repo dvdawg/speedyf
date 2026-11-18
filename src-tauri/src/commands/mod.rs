@@ -436,7 +436,7 @@ pub async fn save_document(
 pub async fn get_form_fields(
     state: tauri::State<'_, EngineState>,
     doc_id: DocId,
-) -> AppResult<Vec<FormFieldDto>> {
+) -> AppResult<FormDto> {
     state
         .0
         .call_async(Priority::AdjacentPage, doc_id, move |respond| {

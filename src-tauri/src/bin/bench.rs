@@ -2,8 +2,8 @@
 
 use serde::Serialize;
 use speedyf_lib::engine::types::{
-    DocMetaDto, EditPlan, FormFieldDto, PageLinksDto, PageTextDto, PlanPage, PreviewSpecDto,
-    Priority, RenderKey, RenderKind, SaveResultDto, TileRect,
+    DocMetaDto, EditPlan, FormDto, FormFieldDto, PageLinksDto, PageTextDto, PlanPage,
+    PreviewSpecDto, Priority, RenderKey, RenderKind, SaveResultDto, TileRect,
 };
 use speedyf_lib::engine::{EngineHandle, Work};
 use speedyf_lib::errors::AppError;
@@ -652,6 +652,7 @@ fn benchmark_valid(
                 pages,
                 form: Vec::new(),
                 form_buttons: Vec::new(),
+                form_choices: Vec::new(),
             };
             let save_dir = tempfile::Builder::new()
                 .prefix(".speedyf-bench-save-")
@@ -732,10 +733,10 @@ fn extract_text(engine: &EngineHandle, doc: u32, src: u32) -> Result<PageTextDto
 }
 
 fn form_fields(engine: &EngineHandle, doc: u32) -> Result<Vec<FormFieldDto>, AppError> {
-    engine.call_blocking(Priority::AdjacentPage, doc, |respond| Work::FormFields {
-        doc,
-        respond,
-    })
+    let form: FormDto = engine.call_blocking(Priority::AdjacentPage, doc, |respond| {
+        Work::FormFields { doc, respond }
+    })?;
+    Ok(form.fields)
 }
 
 fn measure_citation_preview(

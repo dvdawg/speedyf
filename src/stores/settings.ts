@@ -19,6 +19,9 @@ interface Settings {
   sleepyf: SleepyMode;
   /** How far SleepyF dims and warms the pages, 0 to 100. */
   sleepyWarmth: number;
+  /** A faint tint over fillable form fields, and an outline on required
+   * ones. On by default: an unmarked form hides which boxes take typing. */
+  highlightFields: boolean;
   lowMemory: boolean;
   /** folders in the library; was a single optional root */
   libraryRoots: string[];
@@ -67,6 +70,7 @@ function load(): Settings {
           typeof parsed.sleepyWarmth === 'number' && Number.isFinite(parsed.sleepyWarmth)
             ? Math.min(100, Math.max(0, Math.round(parsed.sleepyWarmth)))
             : DEFAULT_WARMTH,
+        highlightFields: parsed.highlightFields !== false,
         lowMemory: parsed.lowMemory === true,
         libraryRoots: Array.isArray(parsed.libraryRoots)
           ? parsed.libraryRoots.filter((root): root is string => typeof root === 'string')
@@ -93,6 +97,7 @@ function load(): Settings {
     invertPages: false,
     sleepyf: 'off',
     sleepyWarmth: DEFAULT_WARMTH,
+    highlightFields: true,
     lowMemory: false,
     libraryRoots: [],
     trustedLinkHosts: [],
@@ -120,6 +125,7 @@ export function updateSettings(patch: Partial<Settings>) {
         invertPages: settings.invertPages,
         sleepyf: settings.sleepyf,
         sleepyWarmth: settings.sleepyWarmth,
+        highlightFields: settings.highlightFields,
         lowMemory: settings.lowMemory,
         libraryRoots: settings.libraryRoots,
         trustedLinkHosts: settings.trustedLinkHosts,
