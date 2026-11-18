@@ -247,6 +247,9 @@ pub enum Work {
         doc: DocId,
         plan: EditPlan,
         dest: PathBuf,
+        /// Rewrite a signed document if the plan needs to (a confirmed
+        /// "Save a copy"); otherwise such a save fails with `AppError::Signed`.
+        allow_signed_rewrite: bool,
         respond: Respond<SaveResultDto>,
     },
     FormFields {

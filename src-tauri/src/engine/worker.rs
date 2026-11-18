@@ -497,8 +497,9 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
             doc,
             plan,
             dest,
+            allow_signed_rewrite,
             respond,
-        } => respond(do_save(state, doc, plan, dest)),
+        } => respond(do_save(state, doc, plan, dest, allow_signed_rewrite)),
         Work::BuildPrintPdf {
             doc,
             plan,
@@ -2517,7 +2518,19 @@ fn do_build_print_pdf(
         let d = state.doc(doc)?;
         (d.path.clone(), d.password.clone())
     };
-    save::build_output(state.pdfium, &src_path, password.as_deref(), &plan, dest)
+    // A printout is a throwaway file: rewriting a signed source for it
+    // breaks nothing.
+    let options = save::SaveOptions {
+        allow_signed_rewrite: true,
+    };
+    save::build_output_with(
+        state.pdfium,
+        &src_path,
+        password.as_deref(),
+        &plan,
+        dest,
+        options,
+    )
 }
 
 fn do_save(
@@ -2525,6 +2538,7 @@ fn do_save(
     doc: DocId,
     plan: EditPlan,
     dest: PathBuf,
+    allow_signed_rewrite: bool,
 ) -> AppResult<SaveResultDto> {
     if plan.pages.len() > u16::MAX as usize {
         return Err(AppError::Unsupported(
@@ -2544,6 +2558,12 @@ fn do_save(
             d.form_fields.clone(),
         )
     };
+    if allow_signed_rewrite && same_file {
+        // Breaking the signatures is only ever done to a separate copy.
+        return Err(AppError::Signed(
+            "choose a new name for the copy: the signed original is kept as it is".into(),
+        ));
+    }
     let pdfium = state.pdfium;
     let bindings = state.bindings;
     let expected_pages = plan.pages.len();
@@ -2551,7 +2571,19 @@ fn do_save(
     let mut closed_for_replace = false;
     let save_result = save::verified_atomic_replace(
         &dest,
-        |temp_path| save::build_output(pdfium, &src_path, password.as_deref(), &plan, temp_path),
+        |temp_path| {
+            let options = save::SaveOptions {
+                allow_signed_rewrite,
+            };
+            save::build_output_with(
+                pdfium,
+                &src_path,
+                password.as_deref(),
+                &plan,
+                temp_path,
+                options,
+            )
+        },
         |temp_path| {
             let path = temp_path
                 .to_str()

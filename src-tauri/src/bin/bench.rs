@@ -666,6 +666,7 @@ fn benchmark_valid(
                     doc: fresh_doc,
                     plan,
                     dest,
+                    allow_signed_rewrite: false,
                     respond,
                 })
                 .map_err(|error| StageError::new("save", error))?;

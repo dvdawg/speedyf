@@ -434,6 +434,7 @@ pub fn run() {
             commands::signatures::signatures_save,
             commands::signatures::signature_outline,
             commands::signatures::signature_image,
+            commands::signing::check_signatures,
             markup_capture::markup_print_payload,
             markup_capture::markup_print_capture,
             markup_capture::markup_print_finish,

@@ -14,6 +14,7 @@ pub mod library;
 pub mod markup;
 pub mod projectfiles;
 pub mod signatures;
+pub mod signing;
 
 pub struct EngineState(pub EngineHandle);
 
@@ -415,6 +416,7 @@ pub async fn save_document(
     doc_id: DocId,
     plan: EditPlan,
     dest_path: String,
+    allow_signed_rewrite: Option<bool>,
 ) -> AppResult<SaveResultDto> {
     if plan.pages.is_empty() {
         return Err(AppError::Unsupported(
@@ -427,6 +429,7 @@ pub async fn save_document(
             doc: doc_id,
             plan,
             dest: PathBuf::from(dest_path),
+            allow_signed_rewrite: allow_signed_rewrite.unwrap_or(false),
             respond,
         })
         .await
