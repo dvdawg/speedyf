@@ -135,6 +135,32 @@ export interface Blank {
   cells: number;
 }
 
+/** A field Prepare form mode proposes from a printed blank (see
+ * src-tauri/src/engine/forms/detect.rs). */
+export interface ProposedField {
+  /** Source page index. */
+  page: number;
+  rect: { x: number; y: number; w: number; h: number };
+  kind: 'text' | 'checkbox';
+  /** From the nearest label, unique in the document. */
+  name: string;
+  /** The label it was named from; may be empty. */
+  label: string;
+  fontSize: number;
+  maxLen: number;
+  comb: boolean;
+  multiline: boolean;
+  blank: BlankKind;
+}
+
+/** One field's values in a form data file (FDF, XFDF, JSON, CSV). */
+export interface FormDataField {
+  name: string;
+  /** The field kind, on export; how FDF writes the value. */
+  kind?: string;
+  values: string[];
+}
+
 export interface PageBlanks {
   src: number;
   blanks: Blank[];

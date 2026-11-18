@@ -15,6 +15,8 @@ import type {
   PrintOption,
   FormalEntry,
   FormInfo,
+  FormDataField,
+  ProposedField,
   GeneratedOutline,
   LibraryStatus,
   OutlineNode,
@@ -163,6 +165,11 @@ export interface EngineApi {
   /** Check a permissions password; rejects with code `password` when wrong. */
   unlockPermissions(docId: number, password: string): Promise<ProtectionInfo>;
   getFormFields(docId: number): Promise<FormInfo>;
+  /** Fields proposed from every page's printed blanks (Prepare form). */
+  getFormProposals(docId: number): Promise<ProposedField[]>;
+  /** Write form values as FDF, XFDF, JSON or CSV, by the path's extension. */
+  exportFormData(path: string, pdfName: string, fields: FormDataField[]): Promise<void>;
+  importFormData(path: string): Promise<FormDataField[]>;
   getOutline(docId: number): Promise<OutlineNode[]>;
   /** One idle slice of generating an outline from the page headings; call
    * again until `done`. */
@@ -354,6 +361,9 @@ export const engine: EngineApi = {
     invoke('save_document', { docId, plan, destPath, protect: protect ?? null }),
   unlockPermissions: (docId, password) => invoke('unlock_permissions', { docId, password }),
   getFormFields: (docId) => invoke('get_form_fields', { docId }),
+  getFormProposals: (docId) => invoke('get_form_proposals', { docId }),
+  exportFormData: (path, pdfName, fields) => invoke('export_form_data', { path, pdfName, fields }),
+  importFormData: (path) => invoke('import_form_data', { path }),
   getOutline: (docId) => invoke('get_outline', { docId }),
   getGeneratedOutline: (docId) => invoke('get_generated_outline', { docId }),
   getAnnotations: (docId) => invoke('get_annotations', { docId }),
