@@ -55,6 +55,7 @@ fn plan_with(annots: Vec<PlanAnnot>, form: Vec<(String, String)>) -> EditPlan {
         form_choices: Vec::new(),
         form_display: Vec::new(),
         scrub: Default::default(),
+        form_design: None,
     }
 }
 
