@@ -149,8 +149,8 @@ describe('the date stamp', () => {
   const day = new Date(2026, 10, 7);
 
   it('writes the date in the chosen format', () => {
-    expect(formatDate(day, 'us')).toBe('11/07/2026');
-    expect(formatDate(day, 'iso')).toBe('2026-11-07');
-    expect(formatDate(day, 'dmy')).toBe('07/11/2026');
+    expect(formatDate(day, 'mm/dd/yyyy')).toBe('11/07/2026');
+    expect(formatDate(day, 'yyyy-mm-dd')).toBe('2026-11-07');
+    expect(formatDate(day, 'dd/mm/yyyy')).toBe('07/11/2026');
   });
 });

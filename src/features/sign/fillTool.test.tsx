@@ -260,7 +260,7 @@ it('places marks, centred in a checkbox, and undoes them', async () => {
 
 it('stamps today in the format the setting names', async () => {
   const before = settings.dateFormat;
-  updateSettings({ dateFormat: 'iso' });
+  updateSettings({ dateFormat: 'yyyy-mm-dd' });
   const view = mount();
   toggleFill('date');
   await tick();
@@ -268,7 +268,7 @@ it('stamps today in the format the setting names', async () => {
   view.click(200, 705);
   await tick();
   const stamp = view.annots()[0]!;
-  expect(stamp.text).toBe(formatDate(new Date(), 'iso'));
+  expect(stamp.text).toBe(formatDate(new Date(), 'yyyy-mm-dd'));
   expect(stamp.text).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   // A stamp, not a mode: the next click types again.
   view.click(400, 300);

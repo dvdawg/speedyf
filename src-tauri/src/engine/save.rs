@@ -1131,6 +1131,7 @@ pub fn build_output(
             texts: &plan.form,
             buttons: &plan.form_buttons,
             choices: &plan.form_choices,
+            display: &plan.form_display,
         },
     )?;
     Ok(())
@@ -1241,6 +1242,7 @@ mod tests {
             form: Vec::new(),
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
+            form_display: Vec::new(),
         };
         build_output(
             &pdfium,
@@ -1385,6 +1387,7 @@ mod tests {
             form: Vec::new(),
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
+            form_display: Vec::new(),
         };
         build_output(
             &pdfium,
@@ -1549,6 +1552,7 @@ mod tests {
             form: vec![],
             form_buttons: vec![],
             form_choices: Vec::new(),
+            form_display: Vec::new(),
         };
         build_output(&pdfium, source.to_str().unwrap(), None, &plan, &output).unwrap();
         let doc = pdfium.load_pdf_from_file(&output, None).unwrap();
@@ -1607,6 +1611,7 @@ mod tests {
                 form: Vec::new(),
                 form_buttons: Vec::new(),
                 form_choices: Vec::new(),
+                form_display: Vec::new(),
             },
             &output,
         )
@@ -1692,6 +1697,7 @@ mod tests {
             form: Vec::new(),
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
+            form_display: Vec::new(),
         };
         build_output(&pdfium, source.to_str().unwrap(), None, &plan, &output).unwrap();
         let doc = pdfium.load_pdf_from_file(&output, None).unwrap();
@@ -1777,6 +1783,7 @@ mod tests {
                 form: Vec::new(),
                 form_buttons: Vec::new(),
                 form_choices: Vec::new(),
+                form_display: Vec::new(),
             },
             &output,
         )
@@ -1853,6 +1860,7 @@ mod tests {
                 form: Vec::new(),
                 form_buttons: Vec::new(),
                 form_choices: Vec::new(),
+                form_display: Vec::new(),
             },
             &output,
         )
@@ -1932,6 +1940,7 @@ mod tests {
             form: Vec::new(),
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
+            form_display: Vec::new(),
         };
         build_output(
             &pdfium,
@@ -2000,6 +2009,7 @@ mod tests {
             form: Vec::new(),
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
+            form_display: Vec::new(),
         };
         build_output(
             &pdfium,
@@ -2282,6 +2292,7 @@ mod tests {
             form: Vec::new(),
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
+            form_display: Vec::new(),
         };
         build_output(
             pdfium,

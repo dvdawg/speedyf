@@ -232,6 +232,7 @@ mod tests {
             form: Vec::new(),
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
+            form_display: Vec::new(),
         };
         build_output(&pdfium, source.to_str().unwrap(), None, &plan, &output).expect("save");
 

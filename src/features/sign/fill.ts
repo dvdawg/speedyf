@@ -206,9 +206,9 @@ export function formatDate(date: Date, format: DateFormat): string {
   const m = String(date.getMonth() + 1).padStart(2, '0');
   const d = String(date.getDate()).padStart(2, '0');
   switch (format) {
-    case 'iso':
+    case 'yyyy-mm-dd':
       return `${y}-${m}-${d}`;
-    case 'dmy':
+    case 'dd/mm/yyyy':
       return `${d}/${m}/${y}`;
     default:
       return `${m}/${d}/${y}`;

@@ -7,9 +7,10 @@ export type ThemePref = 'system' | 'light' | 'dark';
 export type LaunchScreen = 'home' | 'projects';
 /** SleepyF, the night mode: off, on, or on while the system is dark. */
 export type SleepyMode = 'off' | 'on' | 'system';
-/** How the Fill tool writes today's date: US MM/DD/YYYY, ISO YYYY-MM-DD, or
- * DD/MM/YYYY. A form's own date format, where it has one, always wins. */
-export type DateFormat = 'us' | 'iso' | 'dmy';
+/** How dates are written: by the Fill tool's date stamp, and by form date
+ * fields with no picture of their own (forms/formBehaviour.ts). Values are
+ * Acrobat date pictures. A form's own date format always wins. */
+export type DateFormat = 'mm/dd/yyyy' | 'yyyy-mm-dd' | 'dd/mm/yyyy';
 
 interface Settings {
   theme: ThemePref;
@@ -77,7 +78,9 @@ function load(): Settings {
             : DEFAULT_WARMTH,
         highlightFields: parsed.highlightFields !== false,
         dateFormat:
-          parsed.dateFormat === 'iso' || parsed.dateFormat === 'dmy' ? parsed.dateFormat : 'us',
+          parsed.dateFormat === 'yyyy-mm-dd' || parsed.dateFormat === 'dd/mm/yyyy'
+            ? parsed.dateFormat
+            : 'mm/dd/yyyy',
         lowMemory: parsed.lowMemory === true,
         libraryRoots: Array.isArray(parsed.libraryRoots)
           ? parsed.libraryRoots.filter((root): root is string => typeof root === 'string')
@@ -105,7 +108,7 @@ function load(): Settings {
     sleepyf: 'off',
     sleepyWarmth: DEFAULT_WARMTH,
     highlightFields: true,
-    dateFormat: 'us',
+    dateFormat: 'mm/dd/yyyy',
     lowMemory: false,
     libraryRoots: [],
     trustedLinkHosts: [],

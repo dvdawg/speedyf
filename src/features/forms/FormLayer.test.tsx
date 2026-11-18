@@ -11,16 +11,19 @@
  */
 import { render, fireEvent, cleanup } from '@solidjs/testing-library';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { FormFieldInfo } from '../../types/engine';
+import type { FieldBehaviour, FormFieldInfo } from '../../types/engine';
 import type * as formStoreModule from './formStore';
 import { testField as field } from './testField';
 
 let fields: FormFieldInfo[] = [];
+let behaviours: Record<string, FieldBehaviour> = {};
+let calcOrder: string[] = [];
 vi.mock('./formStore', async (importOriginal) => {
   const actual = await importOriginal<typeof formStoreModule>();
   return {
     ...actual,
     formFields: () => Promise.resolve(fields),
+    formInfo: () => Promise.resolve({ fields, xfa: false, behaviours, calcOrder }),
   };
 });
 
@@ -67,6 +70,8 @@ const text = (over: Partial<FormFieldInfo>) =>
 
 beforeEach(() => {
   fields = [];
+  behaviours = {};
+  calcOrder = [];
   resetFormFocus();
   updateSettings({ highlightFields: true, invertPages: false, theme: 'light' });
 });
@@ -357,5 +362,140 @@ describe('FormLayer choice fields', () => {
     const box = await findByRole('listbox');
     fireEvent.keyDown(box, { key: 'ArrowDown' });
     expect(documentStore.state.formChoiceEdits.size).toEqual({ selected: [1] });
+  });
+});
+
+describe('FormLayer behaviour scripts', () => {
+  const money: FieldBehaviour = {
+    keystroke: {
+      kind: 'number',
+      decimals: 2,
+      sepStyle: 0,
+      negStyle: 0,
+      currency: '$',
+      prepend: true,
+    },
+    format: { kind: 'number', decimals: 2, sepStyle: 0, negStyle: 0, currency: '$', prepend: true },
+  };
+
+  it('drops keystrokes the format does not take', async () => {
+    fields = [text({ name: 'amount' })];
+    behaviours = { amount: money };
+    const { findByRole } = mount(0);
+    const input = await findByRole<HTMLInputElement>('textbox');
+    fireEvent.focus(input);
+    fireEvent.input(input, { target: { value: '12' } });
+    fireEvent.input(input, { target: { value: '12x' } });
+    expect(input.value).toBe('12');
+    expect(documentStore.state.formEdits).toEqual({ amount: '12' });
+  });
+
+  it('shows the raw value while focused and the formatted one after', async () => {
+    fields = [text({ name: 'amount' })];
+    behaviours = { amount: money };
+    const { findByRole } = mount(0);
+    const input = await findByRole<HTMLInputElement>('textbox');
+    fireEvent.focus(input);
+    fireEvent.input(input, { target: { value: '1234.5' } });
+    fireEvent.blur(input);
+    expect(input.value).toBe('$1,234.50');
+    expect(documentStore.state.formEdits.amount).toBe('1234.5');
+    fireEvent.focus(input);
+    expect(input.value).toBe('1234.5');
+  });
+
+  it('draws a negative value red when its format says so', async () => {
+    fields = [text({ name: 'net' })];
+    behaviours = {
+      net: {
+        format: {
+          kind: 'number',
+          decimals: 0,
+          sepStyle: 0,
+          negStyle: 3,
+          currency: '',
+          prepend: true,
+        },
+      },
+    };
+    const { findByRole, container } = mount(0);
+    const input = await findByRole<HTMLInputElement>('textbox');
+    fireEvent.focus(input);
+    fireEvent.input(input, { target: { value: '-5' } });
+    fireEvent.blur(input);
+    expect(input.value).toBe('(5)');
+    const box = container.querySelector<HTMLElement>('.form-text')!;
+    expect(box.style.getPropertyValue('--form-ink')).toBe('#ff0000');
+  });
+
+  it('puts a mask in as the user types', async () => {
+    fields = [text({ name: 'id' })];
+    behaviours = { id: { keystroke: { kind: 'mask', mask: '999-9999-9' } } };
+    const { findByRole } = mount(0);
+    const input = await findByRole<HTMLInputElement>('textbox');
+    fireEvent.focus(input);
+    fireEvent.input(input, { target: { value: '1234' } });
+    expect(documentStore.state.formEdits.id).toBe('123-4');
+  });
+
+  it('flags a value out of range without refusing it', async () => {
+    fields = [text({ name: 'pct' })];
+    behaviours = { pct: { validate: { min: 0, max: 1 } } };
+    const { findByRole, container } = mount(0);
+    const input = await findByRole<HTMLInputElement>('textbox');
+    fireEvent.focus(input);
+    fireEvent.input(input, { target: { value: '5' } });
+    const box = container.querySelector<HTMLElement>('.form-text')!;
+    expect(box.classList.contains('has-problem')).toBe(false);
+    fireEvent.blur(input);
+    expect(box.classList.contains('has-problem')).toBe(true);
+    expect(box.title).toContain('less than or equal to 1');
+    expect(documentStore.state.formEdits.pct).toBe('5');
+  });
+
+  it('recalculates a read-only total in the same undo step as the edit', async () => {
+    fields = [
+      text({ name: 'a', index: 0 }),
+      text({ name: 'b', index: 1, rect: { x: 20, y: 250, w: 200, h: 20 } }),
+      text({ name: 'total', index: 2, readOnly: true, rect: { x: 20, y: 200, w: 200, h: 20 } }),
+    ];
+    behaviours = {
+      a: money,
+      b: money,
+      total: { format: money.format!, calculate: { op: 'SUM', fields: ['a', 'b'] } },
+    };
+    calcOrder = ['total'];
+    const { findAllByRole, container } = mount(0);
+    const [a, b] = await findAllByRole<HTMLInputElement>('textbox');
+    fireEvent.focus(a!);
+    fireEvent.input(a!, { target: { value: '1' } });
+    fireEvent.input(a!, { target: { value: '10' } });
+    fireEvent.blur(a!);
+    fireEvent.focus(b!);
+    fireEvent.input(b!, { target: { value: '2.5' } });
+    fireEvent.blur(b!);
+    expect(documentStore.state.formEdits).toEqual({ a: '10', b: '2.5', total: '12.5' });
+    const total = container.querySelectorAll<HTMLInputElement>('input.form-input')[2]!;
+    expect(total.readOnly).toBe(true);
+    expect(total.value).toBe('$12.50');
+    documentStore.undo();
+    expect(documentStore.state.formEdits).toEqual({ a: '10', total: '10' });
+    documentStore.undo();
+    expect(documentStore.state.formEdits).toEqual({});
+  });
+
+  it('a checkbox read by a calculation recalculates with the click', async () => {
+    fields = [
+      field({ name: 'opt', index: 0, exportValue: '5' }),
+      text({ name: 'sum', index: 1, readOnly: true }),
+    ];
+    behaviours = { sum: { calculate: { op: 'SUM', fields: ['opt'] } } };
+    const { findByRole } = mount(0);
+    fireEvent.click(await findByRole('checkbox'));
+    expect(documentStore.state.formEdits).toEqual({ sum: '5' });
+    expect(documentStore.state.formButtonEdits).toEqual({ '0:0': true });
+    documentStore.undo();
+    expect(documentStore.state.formEdits).toEqual({});
+    expect(documentStore.state.formButtonEdits).toEqual({});
   });
 });
