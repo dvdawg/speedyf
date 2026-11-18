@@ -833,6 +833,7 @@ mod tests {
             form_choices: Vec::new(),
             scrub: Default::default(),
             form_display: Vec::new(),
+            form_design: None,
         }
     }
 

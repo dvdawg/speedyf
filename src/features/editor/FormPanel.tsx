@@ -26,6 +26,8 @@ import { behaviourOf, shownValue, userDatePicture } from '../forms/formBehaviour
 import { fieldProblem } from '../forms/formScripts';
 import { layoutIndexOf } from '../outline/jumpToAnchor';
 import { settings, updateSettings } from '../../stores/settings';
+import { startPreparing } from '../prepare/prepareStore';
+import { exportFormData, importFormData } from '../forms/formData';
 
 /** What a field holds, as one short line for the list: a text field as
  * its format shows it. */
@@ -108,6 +110,14 @@ export default function FormPanel() {
     <div class="form-panel" aria-label="Form fields">
       <div class="panel-head">
         <h2>Form</h2>
+        <button
+          type="button"
+          class="secondary-btn form-prepare-btn"
+          title="Add, change and arrange this document's form fields"
+          onClick={() => void startPreparing(tab)}
+        >
+          Prepare form
+        </button>
         <IconButton label="Close form panel" onClick={() => vp.setState('formPanelOpen', false)}>
           <IconClose />
         </IconButton>
@@ -119,7 +129,7 @@ export default function FormPanel() {
             <div class="panel-note">
               {info()?.xfa
                 ? "This form uses XFA, which SpeedyF can't fill."
-                : 'This document has no fillable form fields.'}
+                : 'This document has no fillable form fields. Prepare form adds them.'}
             </div>
           }
         >
@@ -186,6 +196,14 @@ export default function FormPanel() {
               {notRun() === 1 ? '1 script not run' : `${notRun()} scripts not run`}
             </div>
           </Show>
+          <div class="form-nav-data">
+            <button type="button" class="secondary-btn" onClick={() => void exportFormData(tab)}>
+              Export data...
+            </button>
+            <button type="button" class="secondary-btn" onClick={() => void importFormData(tab)}>
+              Import data...
+            </button>
+          </div>
           <div class="form-nav-foot">
             <span>Values are written into the PDF when you save.</span>
             <button

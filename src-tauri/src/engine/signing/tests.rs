@@ -979,6 +979,7 @@ mod saving {
             form_choices: Vec::new(),
             form_display: Vec::new(),
             scrub: Default::default(),
+            form_design: None,
         }
     }
 

@@ -15,6 +15,8 @@ import type {
   PrintOption,
   FormalEntry,
   FormInfo,
+  FormDataField,
+  ProposedField,
   GeneratedOutline,
   LibraryStatus,
   OutlineNode,
@@ -171,6 +173,11 @@ export interface EngineApi {
   /** Every digital signature in the PDF at `path`, checked offline. */
   checkSignatures(path: string): Promise<SignatureReport[]>;
   getFormFields(docId: number): Promise<FormInfo>;
+  /** Fields proposed from every page's printed blanks (Prepare form). */
+  getFormProposals(docId: number): Promise<ProposedField[]>;
+  /** Write form values as FDF, XFDF, JSON or CSV, by the path's extension. */
+  exportFormData(path: string, pdfName: string, fields: FormDataField[]): Promise<void>;
+  importFormData(path: string): Promise<FormDataField[]>;
   /** Search-and-redact: every match of a phrase or pattern. */
   findRedactions(docId: number, query: FindQuery): Promise<RedactMatch[]>;
   /** What hidden information the document carries. */
@@ -373,6 +380,9 @@ export const engine: EngineApi = {
   unlockPermissions: (docId, password) => invoke('unlock_permissions', { docId, password }),
   checkSignatures: (path) => invoke('check_signatures', { path }),
   getFormFields: (docId) => invoke('get_form_fields', { docId }),
+  getFormProposals: (docId) => invoke('get_form_proposals', { docId }),
+  exportFormData: (path, pdfName, fields) => invoke('export_form_data', { path, pdfName, fields }),
+  importFormData: (path) => invoke('import_form_data', { path }),
   findRedactions: (docId, query) => invoke('find_redactions', { docId, query }),
   scanHiddenInfo: (docId) => invoke('scan_hidden_info', { docId }),
   getOutline: (docId) => invoke('get_outline', { docId }),

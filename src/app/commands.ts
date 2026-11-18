@@ -51,6 +51,7 @@ import { PROJECT_COMMANDS } from '../features/projects/projectCommands';
 import { NOTE_EXPORT_COMMANDS } from '../features/extensions/noteExportCommands';
 import { MARKUP_COMMANDS } from '../features/markup/markupCommands';
 import { SIGN_COMMANDS } from '../features/sign/signCommands';
+import { PREPARE_COMMANDS } from '../features/prepare/prepareCommands';
 import { SIGNATURE_COMMANDS } from '../features/signatures/signatureCommands';
 import { REDACT_COMMANDS } from '../features/protect/redact/redactCommands';
 import { setUi, ui, type SidebarMode } from '../stores/uiStore';
@@ -622,6 +623,7 @@ const ALL_COMMANDS: readonly Command[] = [
   ...MARKUP_COMMANDS,
   // Visual signatures: signCommands.ts.
   ...SIGN_COMMANDS,
+  ...PREPARE_COMMANDS,
   ...SIGNATURE_COMMANDS,
   // Redaction and removing hidden information: redactCommands.ts.
   ...REDACT_COMMANDS,

@@ -15,6 +15,8 @@ import Viewer from '../features/viewer/Viewer';
 import ContextHeader from '../features/viewer/ContextHeader';
 import SearchPanel from '../features/search/SearchPanel';
 import FormPanel from '../features/editor/FormPanel';
+import PreparePanel from '../features/prepare/PreparePanel';
+import { preparing } from '../features/prepare/prepareStore';
 import SignaturesPanel from '../features/signatures/SignaturesPanel';
 import { engine } from '../lib/transport/engine';
 import { ui } from '../stores/uiStore';
@@ -242,7 +244,9 @@ export default function App() {
                             <SearchPanel />
                           </Show>
                           <Show when={tab.viewport.state.formPanelOpen && visible()}>
-                            <FormPanel />
+                            <Show when={preparing(tab)} fallback={<FormPanel />}>
+                              <PreparePanel />
+                            </Show>
                           </Show>
                           <Show when={tab.viewport.state.signaturesPanelOpen && visible()}>
                             <SignaturesPanel />

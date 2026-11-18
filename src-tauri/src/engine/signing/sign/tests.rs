@@ -422,6 +422,7 @@ fn a_form_fill_after_signing_keeps_the_signature_valid() {
         form_choices: Vec::new(),
         form_display: vec![("name".to_string(), "After (shown)".to_string(), None)],
         scrub: Default::default(),
+        form_design: None,
     };
     crate::engine::save::build_output(&pdfium, src.to_str().unwrap(), None, &plan, &filled)
         .unwrap();

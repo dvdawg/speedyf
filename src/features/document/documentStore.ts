@@ -12,6 +12,7 @@ import type { Annotation, DocMeta, PageEntry, PageId, PdfRect, Rotation } from '
 import type { ProtectRequest, ProtectionInfo } from '../../types/engine';
 import { deniedReason, rightForOp } from '../protect/permissions';
 import { flashStatus } from '../../stores/statusMessage';
+import { designPlan, type FormDesign, type PlanFormDesign } from '../prepare/model';
 
 export type EditOp =
   | { type: 'reorder'; pageId: PageId; toIndex: number }
@@ -34,6 +35,8 @@ export type EditOp =
   /** Protection the next save writes; null keeps the file's own. Its own
    * inverse, like setFlattenSignatures. */
   | { type: 'setProtection'; request: ProtectRequest | null }
+  /** The form as Prepare form mode designs it; its own inverse. */
+  | { type: 'setFormDesign'; design: FormDesign | null }
   // internal inverse-only ops:
   | { type: 'restorePage'; entry: PageEntry; index: number; annots: Annotation[] }
   | { type: 'restoreAnnot'; pageId: PageId; annot: Annotation; index: number }
@@ -180,6 +183,8 @@ export interface EditPlan {
   /** Formatted page text for text fields whose /V stays raw: name, text,
    * whether it is drawn red. See forms/formBehaviour.ts. */
   formDisplay?: [string, string, boolean | null][];
+  /** Fields made, changed or deleted in Prepare form mode. */
+  formDesign?: PlanFormDesign;
 }
 
 export interface DocState {
@@ -203,6 +208,9 @@ export interface DocState {
   protection: ProtectionInfo | null;
   /** New protection for the next save; null keeps the file's own. */
   protectChange: ProtectRequest | null;
+  /** The form as Prepare form mode left it; null when it was never edited
+   * there. See prepare/model.ts. */
+  formDesign: FormDesign | null;
   dirty: boolean;
   saving: boolean;
   /** bumped whenever engine-derived visuals must be re-fetched (reload) */
@@ -227,6 +235,7 @@ const emptyState = (): DocState => ({
   scrub: NO_SCRUB,
   protection: null,
   protectChange: null,
+  formDesign: null,
   dirty: false,
   saving: false,
   generation: 0,
@@ -392,6 +401,13 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
         return { type: 'setScrub', scrub: JSON.parse(JSON.stringify(state.scrub)) as ScrubPlan };
       case 'setProtection':
         return { type: 'setProtection', request: copyRequest(state.protectChange) };
+      case 'setFormDesign':
+        return {
+          type: 'setFormDesign',
+          design: state.formDesign
+            ? (JSON.parse(JSON.stringify(state.formDesign)) as FormDesign)
+            : null,
+        };
       case 'setFormChoice': {
         const prev = state.formChoiceEdits[op.field];
         return {
@@ -524,6 +540,10 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
             s.protectChange = copyRequest(op.request);
             break;
           }
+          case 'setFormDesign': {
+            s.formDesign = op.design ? (JSON.parse(JSON.stringify(op.design)) as FormDesign) : null;
+            break;
+          }
           case 'restorePage': {
             s.pages.splice(op.index, 0, JSON.parse(JSON.stringify(op.entry)) as PageEntry);
             s.annotations[op.entry.id] = JSON.parse(JSON.stringify(op.annots)) as Annotation[];
@@ -651,6 +671,9 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
           choices: { ...inverse.prev.choices, ...prev.choices },
         },
       };
+    } else if (coalesce && previous.op.type === 'setFormDesign' && mat.type === 'setFormDesign') {
+      // Typing a property, or nudging with the arrow keys: one step.
+      previous.op = mat;
     } else if (
       coalesce &&
       previous.op.type === 'setFormChoice' &&
@@ -903,6 +926,7 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
         selected: [...choice.selected],
         ...(choice.text !== undefined ? { text: choice.text } : {}),
       })),
+      ...withDesign(designPlan(state.formDesign, state.pages)),
       ...(state.scrub.applyRedactions || state.scrub.removeHidden
         ? { scrub: JSON.parse(JSON.stringify(state.scrub)) as ScrubPlan }
         : {}),
@@ -940,6 +964,7 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
       setState({
         ...snapshot.state,
         formChoiceEdits: snapshot.state.formChoiceEdits ?? {},
+        formDesign: snapshot.state.formDesign ?? null,
         scrub: snapshot.state.scrub ?? NO_SCRUB,
       });
       rebuildPageLookups();
@@ -979,6 +1004,10 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
     pageIndexById,
     buildEditPlan,
   };
+}
+
+function withDesign(plan: PlanFormDesign | null): { formDesign?: PlanFormDesign } {
+  return plan ? { formDesign: plan } : {};
 }
 
 /** App-wide singleton store (components import this; tests build their own). */

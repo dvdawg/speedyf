@@ -527,6 +527,47 @@ pub async fn get_form_fields(
         .await
 }
 
+/// Fields Prepare form mode proposes from the document's printed blanks.
+#[tauri::command]
+pub async fn get_form_proposals(
+    state: tauri::State<'_, EngineState>,
+    doc_id: DocId,
+) -> AppResult<Vec<ProposedFieldDto>> {
+    state
+        .0
+        .call_async(Priority::AdjacentPage, doc_id, move |respond| {
+            Work::FormProposals {
+                doc: doc_id,
+                respond,
+            }
+        })
+        .await
+}
+
+/// Write form values to `path` as FDF, XFDF, JSON or CSV (by extension).
+#[tauri::command]
+pub async fn export_form_data(
+    path: String,
+    pdf_name: String,
+    fields: Vec<crate::engine::forms::FormDataField>,
+) -> AppResult<()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::engine::forms::write_data_file(std::path::Path::new(&path), &pdf_name, &fields)
+    })
+    .await
+    .map_err(|e| crate::errors::AppError::Internal(e.to_string()))?
+}
+
+/// Read form values from an FDF, XFDF, JSON or CSV file.
+#[tauri::command]
+pub async fn import_form_data(path: String) -> AppResult<Vec<crate::engine::forms::FormDataField>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::engine::forms::read_data_file(std::path::Path::new(&path))
+    })
+    .await
+    .map_err(|e| crate::errors::AppError::Internal(e.to_string()))?
+}
+
 /// Every annotation already in the file, so they can be selected, moved and
 /// deleted rather than being pixels the renderer happens to draw.
 #[tauri::command]

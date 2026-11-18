@@ -58,6 +58,7 @@ import { MarkupToggle } from '../features/markup/MarkupToggle';
 import { SignMenu } from '../features/sign/SignMenu';
 import { RedactMenu } from '../features/protect/redact/RedactMenu';
 import FillTools from '../features/sign/FillTools';
+import PrepareTools from '../features/prepare/PrepareTools';
 
 export default function Toolbar() {
   const maxSavePages = 65_535;
@@ -455,6 +456,7 @@ export default function Toolbar() {
         </div>
         <TextTools />
         <FillTools />
+        <PrepareTools />
       </div>
     </Show>
   );

@@ -1319,6 +1319,7 @@ mod tests {
             form_choices: Vec::new(),
             scrub: Default::default(),
             form_display: Vec::new(),
+            form_design: None,
         };
         build_output(pdfium, src.to_str().unwrap(), None, &plan, &out).expect("save");
         if let Some(keep) = std::env::var_os("SPEEDYF_CARRY_KEEP") {
@@ -1534,6 +1535,7 @@ mod tests {
             form_choices: Vec::new(),
             scrub: Default::default(),
             form_display: Vec::new(),
+            form_design: None,
         };
         build_output(&pdfium, src.to_str().unwrap(), None, &plan, &out).expect("save");
         let document = pdfium.load_pdf_from_file(&out, None).expect("reopen");
@@ -1720,6 +1722,7 @@ mod eval {
             form_choices: Vec::new(),
             scrub: Default::default(),
             form_display: Vec::new(),
+            form_design: None,
         };
         SKIP_CARRY.with(|skip| skip.set(!carry));
         let started = std::time::Instant::now();

@@ -92,6 +92,10 @@ export const COMMAND_RIGHTS: Readonly<Record<string, Right>> = {
   'page.delete': 'assemble',
   'page.addBlank': 'assemble',
   'forms.reset': 'fillForms',
+  'forms.prepare': 'edit',
+  'forms.autodetect': 'edit',
+  'forms.flatten': 'edit',
+  'forms.importData': 'fillForms',
   'sign.place': 'annotate',
   'sign.placeInitials': 'annotate',
   'sign.flatten': 'edit',
@@ -117,6 +121,7 @@ export function rightForOp(type: string): Right | null {
     case 'setFormValues':
       return 'fillForms';
     case 'setFlattenSignatures':
+    case 'setFormDesign':
       return 'edit';
     case 'setProtection':
       return 'protect';
