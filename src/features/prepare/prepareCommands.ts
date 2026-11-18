@@ -3,10 +3,10 @@ import type { Command, CommandCtx } from '../../app/commands';
 import type { TabRecord } from '../../stores/tabsStore';
 import { exportFormData, importFormData } from '../forms/formData';
 import {
-  commitDesign,
   designOf,
   detectFields,
   preparing,
+  setFlatten,
   startPreparing,
   togglePreparing,
 } from './prepareStore';
@@ -16,8 +16,7 @@ async function toggleFlatten(tab: TabRecord | null) {
   if (!tab) return;
   if (!preparing(tab)) await startPreparing(tab);
   if (!preparing(tab)) return;
-  const design = designOf(tab);
-  commitDesign(tab, { ...design, flatten: !design.flatten });
+  await setFlatten(tab, !designOf(tab).flatten);
 }
 
 const docOpen = (ctx: CommandCtx) => ctx.tab?.documentStore.state.loaded === true;

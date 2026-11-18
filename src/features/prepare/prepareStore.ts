@@ -18,6 +18,8 @@ import { flashStatus } from '../../stores/statusMessage';
 import { formInfo } from '../forms/formStore';
 import { setActiveTool } from '../annotations/toolStore';
 import { allows } from '../protect/permissions';
+import { askConfirm } from '../../stores/modalStore';
+import { documentSignatures } from '../signatures/signatureStore';
 import {
   addFields,
   designFromForm,
@@ -73,6 +75,27 @@ export function designOf(tab: TabRecord): FormDesign {
 /** Record `next` as one edit (coalesced with others of the same `group`). */
 export function commitDesign(tab: TabRecord, next: FormDesign, group?: symbol) {
   tab.documentStore.apply({ type: 'setFormDesign', design: next }, group);
+}
+
+/** Turn flatten-on-save on or off. Flattening removes the whole form,
+ * signature fields included, so on a signed document it asks first. */
+export async function setFlatten(tab: TabRecord, on: boolean): Promise<boolean> {
+  const doc = tab.documentStore.state;
+  if (on) {
+    const signed = (await documentSignatures(doc.docId, doc.path)).length > 0;
+    if (
+      signed &&
+      !(await askConfirm(
+        'This document is digitally signed. Flattening the form removes its signature ' +
+          'fields, and the saved file will show its signatures as broken. Flatten anyway?',
+        'Flatten form'
+      ))
+    ) {
+      return false;
+    }
+  }
+  commitDesign(tab, { ...designOf(tab), flatten: on });
+  return true;
 }
 
 export async function startPreparing(tab: TabRecord | null | undefined = activeTab()) {

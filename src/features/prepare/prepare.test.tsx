@@ -15,6 +15,9 @@ const fake = vi.hoisted(() => ({
   blanks: new Map<number, unknown[]>(),
   form: { fields: [], xfa: false } as unknown,
   proposals: [] as unknown[],
+  signatures: [] as unknown[],
+  confirm: true,
+  asked: [] as string[],
 }));
 
 vi.mock('../../lib/transport/engine', async (importOriginal) => {
@@ -26,6 +29,18 @@ vi.mock('../../lib/transport/engine', async (importOriginal) => {
       getPageBlanks: (_docId: number, src: number) => Promise.resolve(fake.blanks.get(src) ?? []),
       getFormFields: () => Promise.resolve(fake.form),
       getFormProposals: () => Promise.resolve(fake.proposals),
+      checkSignatures: () => Promise.resolve(fake.signatures),
+    },
+  };
+});
+
+vi.mock('../../stores/modalStore', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../stores/modalStore')>();
+  return {
+    ...actual,
+    askConfirm: (message: string) => {
+      fake.asked.push(message);
+      return Promise.resolve(fake.confirm);
     },
   };
 });
@@ -34,6 +49,7 @@ import { TabContext } from '../../app/TabContext';
 import Toolbar from '../../components/Toolbar';
 import { addTab, createTab, removeTab, setActiveId, tabsStore } from '../../stores/tabsStore';
 import { clearFormFields } from '../forms/formStore';
+import { clearSignatures } from '../signatures/signatureStore';
 import { testField } from '../forms/testField';
 import { resetFill } from '../sign/fillStore';
 import PrepareLayer from './PrepareLayer';
@@ -46,6 +62,7 @@ import {
   preparing,
   resetPrepare,
   select,
+  setFlatten,
   setTool,
   startPreparing,
   stopPreparing,
@@ -85,6 +102,10 @@ beforeEach(() => {
     ],
   } satisfies FormInfo;
   fake.proposals = [];
+  fake.signatures = [];
+  fake.confirm = true;
+  fake.asked = [];
+  clearSignatures();
   resetFill();
   resetPrepare();
   clearFormFields();
@@ -351,6 +372,7 @@ describe('Tab order and the plan', () => {
     );
     expect(rows).toEqual(['Text 2', 'Text 1', 'existing']);
     fireEvent.click(view.getByRole('checkbox', { name: 'Flatten form on save' }));
+    await settle();
     const plan = view.tab.documentStore.buildEditPlan().formDesign!;
     expect(plan.fields.map((f) => f.name)).toEqual(['Text 1', 'Text 2']);
     expect(plan.tabOrders[0]!.mode).toBe('R');
@@ -360,5 +382,30 @@ describe('Tab order and the plan', () => {
     stopPreparing();
     // Leaving the mode keeps the edits for the save.
     expect(view.tab.documentStore.buildEditPlan().formDesign).toBeDefined();
+  });
+});
+
+describe('flatten', () => {
+  it('turns on without asking on an unsigned document', async () => {
+    const { tab, design } = await mount();
+    expect(await setFlatten(tab, true)).toBe(true);
+    expect(design().flatten).toBe(true);
+    expect(fake.asked).toEqual([]);
+  });
+
+  it('asks first on a signed document, and stays off if declined', async () => {
+    fake.signatures = [{ fieldName: 'Signature1' }];
+    fake.confirm = false;
+    const { tab, design } = await mount();
+    expect(await setFlatten(tab, true)).toBe(false);
+    expect(design().flatten).toBe(false);
+    expect(fake.asked[0]).toContain('digitally signed');
+
+    fake.confirm = true;
+    expect(await setFlatten(tab, true)).toBe(true);
+    expect(design().flatten).toBe(true);
+    // turning it back off never needs asking
+    expect(await setFlatten(tab, false)).toBe(true);
+    expect(fake.asked).toHaveLength(2);
   });
 });

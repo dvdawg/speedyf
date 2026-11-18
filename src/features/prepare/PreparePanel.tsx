@@ -43,6 +43,7 @@ import {
   rejectProposals,
   select,
   selectedIds,
+  setFlatten,
   setShowTabs,
   stopPreparing,
 } from './prepareStore';
@@ -235,7 +236,12 @@ export default function PreparePanel() {
             <input
               type="checkbox"
               checked={design().flatten}
-              onInput={(e) => commitDesign(tab, { ...design(), flatten: e.currentTarget.checked })}
+              onInput={(e) => {
+                const box = e.currentTarget;
+                void setFlatten(tab, box.checked).then((done) => {
+                  if (!done) box.checked = design().flatten;
+                });
+              }}
             />
             Flatten form on save
           </label>
