@@ -120,14 +120,21 @@ pub fn signatures_in(bytes: &[u8]) -> Vec<SignatureInfo> {
     if !has_signature_bytes(bytes) {
         return Vec::new();
     }
+    signatures_with(bytes, load(bytes).as_ref())
+}
+
+/// `signatures_in` for a caller that already loaded the final revision (or
+/// tried to: `None` when lopdf could not).
+pub fn signatures_with(bytes: &[u8], doc: Option<&Document>) -> Vec<SignatureInfo> {
     let raw = raw_byte_ranges(bytes);
-    let mut found = match load(bytes) {
-        Some(doc) => from_document(&doc, bytes),
+    let mut found = match doc {
+        Some(doc) => from_document(doc, bytes),
         None => Vec::new(),
     };
     // A signature dictionary a later revision replaced or orphaned is not in
     // the final object graph. Look for it in the revision that wrote it.
-    let known = |found: &[SignatureInfo], range: &[i64]| found.iter().any(|s| s.byte_range == range);
+    let known =
+        |found: &[SignatureInfo], range: &[i64]| found.iter().any(|s| s.byte_range == range);
     if raw.iter().any(|(_, range)| !known(&found, range)) {
         for end in revision_ends(bytes) {
             if end >= bytes.len() {
@@ -210,7 +217,9 @@ pub fn check_coverage(bytes: &[u8], range: &[i64]) -> Result<Coverage, String> {
     }
     Ok(Coverage {
         revision_end: end,
-        whole_file: bytes[end..].iter().all(|ch| ch.is_ascii_whitespace() || *ch == 0),
+        whole_file: bytes[end..]
+            .iter()
+            .all(|ch| ch.is_ascii_whitespace() || *ch == 0),
     })
 }
 
@@ -290,7 +299,11 @@ fn raw_byte_ranges(bytes: &[u8]) -> Vec<(usize, Vec<i64>)> {
         };
         let numbers: Option<Vec<i64>> = std::str::from_utf8(&rest[open + 1..open + close])
             .ok()
-            .map(|text| text.split_ascii_whitespace().map(|n| n.parse().ok()).collect())
+            .map(|text| {
+                text.split_ascii_whitespace()
+                    .map(|n| n.parse().ok())
+                    .collect()
+            })
             .and_then(|v: Vec<Option<i64>>| v.into_iter().collect());
         if let Some(numbers) = numbers {
             // A placeholder that was never filled in is not a signature.
@@ -637,7 +650,10 @@ fn walk_field(
     let Some(dict) = resolve(doc, node).and_then(|n| n.as_dict().ok()) else {
         return;
     };
-    let partial = dict.get(b"T").ok().and_then(|t| lopdf::decode_text_string(t).ok());
+    let partial = dict
+        .get(b"T")
+        .ok()
+        .and_then(|t| lopdf::decode_text_string(t).ok());
     let name = match (&partial, parent_name.is_empty()) {
         (Some(t), true) => t.clone(),
         (Some(t), false) => format!("{parent_name}.{t}"),

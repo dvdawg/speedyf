@@ -197,12 +197,16 @@ fn raw_signed_data(der: &[u8]) -> Result<RawSignedData<'_>, String> {
         return Err(bad());
     }
     let explicit = parts.get(1).filter(|t| t.tag == 0xa0).ok_or_else(bad)?;
-    let signed = tlv(explicit.value).filter(|t| t.tag == 0x30).ok_or_else(bad)?;
+    let signed = tlv(explicit.value)
+        .filter(|t| t.tag == 0x30)
+        .ok_or_else(bad)?;
     let fields = children(signed.value).ok_or_else(bad)?;
     // version, digestAlgorithms, encapContentInfo, [0] certs?, [1] crls?, signerInfos
     let encap = fields.get(2).filter(|t| t.tag == 0x30).ok_or_else(bad)?;
     let encap_parts = children(encap.value).ok_or_else(bad)?;
-    let econtent_type = encap_parts.first().and_then(|t| Oid::from_der(t.whole).ok());
+    let econtent_type = encap_parts
+        .first()
+        .and_then(|t| Oid::from_der(t.whole).ok());
     let econtent = encap_parts
         .get(1)
         .filter(|t| t.tag == 0xa0)
@@ -252,9 +256,7 @@ fn raw_signed_data(der: &[u8]) -> Result<RawSignedData<'_>, String> {
 /// `[0] IMPLICIT` tag replaced by the SET OF tag, bytes otherwise untouched.
 fn raw_signed_attrs(signer_info: &[u8]) -> Option<Vec<u8>> {
     let info = tlv(signer_info)?;
-    let attrs = children(info.value)?
-        .into_iter()
-        .find(|t| t.tag == 0xa0)?;
+    let attrs = children(info.value)?.into_iter().find(|t| t.tag == 0xa0)?;
     let mut out = attrs.whole.to_vec();
     out[0] = 0x31;
     Some(out)
@@ -323,20 +325,24 @@ fn verify_with_cert(
                 let key = p256::ecdsa::VerifyingKey::from_sec1_bytes(key_bytes)
                     .map_err(|_| "the certificate's EC key cannot be read".to_string())?;
                 let sig = p256::ecdsa::Signature::from_der(signature).map_err(|_| mismatch())?;
-                key.verify_prehash(message_digest, &sig).map_err(|_| mismatch())
+                key.verify_prehash(message_digest, &sig)
+                    .map_err(|_| mismatch())
             }
             Some(OID_P384) => {
                 let key = p384::ecdsa::VerifyingKey::from_sec1_bytes(key_bytes)
                     .map_err(|_| "the certificate's EC key cannot be read".to_string())?;
                 let sig = p384::ecdsa::Signature::from_der(signature).map_err(|_| mismatch())?;
-                key.verify_prehash(message_digest, &sig).map_err(|_| mismatch())
+                key.verify_prehash(message_digest, &sig)
+                    .map_err(|_| mismatch())
             }
             _ => Err("the signer's elliptic curve is not supported".into()),
         }
     } else if *sig_alg == OID_RSA_PSS {
         Err("RSA-PSS signatures are not supported".into())
     } else {
-        Err(format!("the signature algorithm {sig_alg} is not supported"))
+        Err(format!(
+            "the signature algorithm {sig_alg} is not supported"
+        ))
     }
 }
 
@@ -436,8 +442,9 @@ pub fn check_signed_data(der: &[u8], content: Content<'_>) -> CmsCheck {
             cert.tbs_certificate.issuer == id.issuer
                 && cert.tbs_certificate.serial_number == id.serial_number
         }
-        SignerIdentifier::SubjectKeyIdentifier(ski) => subject_key_id(cert)
-            .is_some_and(|own| own == ski.0.as_bytes()),
+        SignerIdentifier::SubjectKeyIdentifier(ski) => {
+            subject_key_id(cert).is_some_and(|own| own == ski.0.as_bytes())
+        }
     });
     if let Some(index) = signer {
         check.chain.push(certs[index].1.to_vec());
@@ -504,7 +511,7 @@ pub fn check_signed_data(der: &[u8], content: Content<'_>) -> CmsCheck {
         return check.fail("the signature does not include the signer's certificate");
     }
     let mut last_error = None;
-    for (n, cert) in candidates.iter().enumerate() {
+    for cert in &candidates {
         match verify_with_cert(
             cert,
             &info.signature_algorithm.oid,
@@ -520,7 +527,6 @@ pub fn check_signed_data(der: &[u8], content: Content<'_>) -> CmsCheck {
                     check.chain.retain(|c| *c != der);
                     check.chain.insert(0, der);
                 }
-                let _ = n;
                 break;
             }
             Err(e) => last_error = Some(e),
@@ -529,7 +535,6 @@ pub fn check_signed_data(der: &[u8], content: Content<'_>) -> CmsCheck {
     if !check.signature_ok {
         check = check.fail(last_error.unwrap_or_else(|| "the signature does not verify".into()));
     }
-    let _ = raw.econtent_type;
     check
 }
 
@@ -583,8 +588,8 @@ pub fn check_timestamp(token: &[u8], stamped: &[&[u8]]) -> TimestampCheck {
         return out;
     };
     out.time = tst.time;
-    let imprint_ok = DigestAlg::from_oid(&tst.imprint_alg)
-        .is_some_and(|alg| alg.digest(stamped) == tst.imprint);
+    let imprint_ok =
+        DigestAlg::from_oid(&tst.imprint_alg).is_some_and(|alg| alg.digest(stamped) == tst.imprint);
     if !imprint_ok {
         out.problem = Some("the timestamp is for different data".into());
     }
@@ -649,7 +654,11 @@ impl Identity {
         let email = subject(OID_EMAIL).or_else(|| {
             use x509_cert::ext::pkix::name::GeneralName;
             use x509_cert::ext::pkix::SubjectAltName;
-            let ext = tbs.extensions.as_ref()?.iter().find(|e| e.extn_id == OID_SAN)?;
+            let ext = tbs
+                .extensions
+                .as_ref()?
+                .iter()
+                .find(|e| e.extn_id == OID_SAN)?;
             let san = SubjectAltName::from_der(ext.extn_value.as_bytes()).ok()?;
             san.0.iter().find_map(|name| match name {
                 GeneralName::Rfc822Name(mail) => Some(mail.to_string()),
