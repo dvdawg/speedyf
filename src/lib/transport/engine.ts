@@ -28,6 +28,7 @@ import type {
   SaveResult,
   SearchQueryResult,
 } from '../../types/engine';
+import type { SignatureReport } from '../../features/signatures/types';
 import type {
   BundleReport,
   CitationLinks,
@@ -146,7 +147,17 @@ export interface EngineApi {
     start: number,
     len: number
   ): Promise<[number, number, number, number][]>;
-  saveDocument(docId: number, plan: EditPlan, destPath: string): Promise<SaveResult>;
+  /** `allowSignedRewrite`: a "Save a copy" the user confirmed, which may
+   * rewrite a signed document and break its signatures. Without it such a
+   * save fails with the `signed` error code. */
+  saveDocument(
+    docId: number,
+    plan: EditPlan,
+    destPath: string,
+    allowSignedRewrite?: boolean
+  ): Promise<SaveResult>;
+  /** Every digital signature in the PDF at `path`, checked offline. */
+  checkSignatures(path: string): Promise<SignatureReport[]>;
   getFormFields(docId: number): Promise<FormInfo>;
   getOutline(docId: number): Promise<OutlineNode[]>;
   /** One idle slice of generating an outline from the page headings; call
@@ -333,7 +344,14 @@ export const engine: EngineApi = {
   searchQuery: (docId, query, caseSensitive) =>
     invoke('search_query', { docId, query, caseSensitive }),
   getMatchRects: (docId, src, start, len) => invoke('get_match_rects', { docId, src, start, len }),
-  saveDocument: (docId, plan, destPath) => invoke('save_document', { docId, plan, destPath }),
+  saveDocument: (docId, plan, destPath, allowSignedRewrite) =>
+    invoke('save_document', {
+      docId,
+      plan,
+      destPath,
+      allowSignedRewrite: allowSignedRewrite ?? false,
+    }),
+  checkSignatures: (path) => invoke('check_signatures', { path }),
   getFormFields: (docId) => invoke('get_form_fields', { docId }),
   getOutline: (docId) => invoke('get_outline', { docId }),
   getGeneratedOutline: (docId) => invoke('get_generated_outline', { docId }),
@@ -432,7 +450,15 @@ export const engine: EngineApi = {
 /** Error shape produced by the Rust AppError serializer. */
 export interface EngineError {
   code:
-    'not_found' | 'engine' | 'password' | 'malformed' | 'io' | 'stale' | 'unsupported' | 'internal';
+    | 'not_found'
+    | 'engine'
+    | 'password'
+    | 'malformed'
+    | 'io'
+    | 'stale'
+    | 'unsupported'
+    | 'signed'
+    | 'internal';
   message: string;
 }
 
