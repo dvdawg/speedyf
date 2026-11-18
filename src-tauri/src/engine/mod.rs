@@ -27,6 +27,7 @@ pub mod layout_text;
 pub mod links;
 pub mod marks;
 pub mod markup_export;
+pub mod minimal_update;
 pub mod ocr;
 pub mod ocr_thread;
 pub mod outline_gen;
