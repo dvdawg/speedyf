@@ -30,6 +30,8 @@ import EquationLayer from '../extensions/EquationLayer';
 import StatementLayer from '../extensions/StatementLayer';
 import FormLayer from '../forms/FormLayer';
 import SignatureFieldLayer from '../sign/SignatureFieldLayer';
+import CertPlaceLayer from '../sign/certificate/CertPlaceLayer';
+import { certState } from '../sign/certificate/certStore';
 import MarkupLayer from '../markup/MarkupLayer';
 import { reveal } from '../../stores/revealStore';
 import type { Rotation } from '../../types/model';
@@ -446,6 +448,16 @@ export default function PageView(props: Props) {
             zoom={vp.state.zoom}
             runs={textLayout()?.runs ?? []}
             equations={equationBlocks() ?? []}
+          />
+        </Show>
+        <Show when={certState.placing && page()}>
+          <CertPlaceLayer
+            docId={doc.docId}
+            page={page()!}
+            pageIndex={props.index}
+            widthPt={props.geom.widthPt}
+            heightPt={props.geom.heightPt}
+            zoom={vp.state.zoom}
           />
         </Show>
       </div>

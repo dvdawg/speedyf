@@ -1,12 +1,16 @@
 //! Digital signatures: finding them (`parse`), checking them (`verify`) and
-//! telling what changed after each one was made (`changes`).
+//! telling what changed after each one was made (`changes`), and making
+//! certificate signatures (`sign`, with identities from `keys`).
 //!
-//! Everything here is offline. Trust in a signer's certificate comes from the
+//! Checking is offline, and signing goes online only for a timestamp the user
+//! turned on (`sign::tsa`). Trust in a signer's certificate comes from the
 //! system's own roots on macOS; elsewhere a signature is checked for
 //! integrity and the signer named, with the identity reported as not checked.
 
 pub mod changes;
+pub mod keys;
 pub mod parse;
+pub mod sign;
 pub mod verify;
 
 #[cfg(test)]

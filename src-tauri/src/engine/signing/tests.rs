@@ -8,9 +8,14 @@ use super::changes::ChangeKind;
 use super::parse::{self, SignatureKind};
 use super::verify::{self, DigestAlg};
 use super::{check_document, has_signatures, SignatureReport};
+use cms_02 as cms;
 use der::asn1::ObjectIdentifier as Oid;
 use der::{Decode, Encode};
+use der_07 as der;
+use p256_013 as p256;
+use rsa_09 as rsa;
 use x509_cert::Certificate;
+use x509_cert_02 as x509_cert;
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/signing");
 

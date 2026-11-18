@@ -370,6 +370,7 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         Work::MatchRects { respond, .. } => respond(Err(err())),
         Work::Save { respond, .. } => respond(Err(err())),
         Work::UnlockPermissions { respond, .. } => respond(Err(err())),
+        Work::WriteSigned { respond, .. } => respond(Err(err())),
         Work::BuildPrintPdf { respond, .. } => respond(Err(err())),
         Work::MarkupExport { respond, .. } => respond(Err(err())),
         Work::MarkupKey { respond, .. } => respond(Err(err())),
@@ -521,6 +522,12 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
             password,
             respond,
         } => respond(do_unlock_permissions(state, doc, password)),
+        Work::WriteSigned {
+            doc,
+            bytes,
+            dest,
+            respond,
+        } => respond(do_write_signed(state, doc, bytes, dest)),
         Work::BuildPrintPdf {
             doc,
             plan,
@@ -2594,6 +2601,62 @@ fn do_build_print_pdf(
         &plan,
         dest,
         options,
+    )
+}
+
+/// Put a signed file in place: written to a sibling, opened once to check
+/// it, then renamed over `dest`. A signature is appended to the file the
+/// document was opened from, so when `dest` is that file the document is
+/// closed before the rename (Windows cannot replace an open file); the
+/// frontend reopens the result either way.
+fn do_write_signed(
+    state: &mut WorkerState,
+    doc: DocId,
+    bytes: Vec<u8>,
+    dest: PathBuf,
+) -> AppResult<u64> {
+    let (same_file, page_count) = {
+        let d = state.doc(doc)?;
+        (
+            std::path::Path::new(&d.path) == dest.as_path(),
+            d.page_count as usize,
+        )
+    };
+    let bindings = state.bindings;
+    let docs = &mut state.docs;
+    save::verified_atomic_replace(
+        &dest,
+        |temp| {
+            let mut file = std::fs::File::create(temp)?;
+            std::io::Write::write_all(&mut file, &bytes)?;
+            file.sync_all()?;
+            Ok(())
+        },
+        |temp| {
+            let path = temp
+                .to_str()
+                .ok_or_else(|| AppError::Io("bad temp path".into()))?;
+            let verify = render::open_document(bindings, path, None)?;
+            let count = bindings.FPDF_GetPageCount(verify).max(0) as usize;
+            bindings.FPDF_CloseDocument(verify);
+            if count != page_count {
+                return Err(AppError::Internal(format!(
+                    "verification failed: the signed file has {count} pages, expected {page_count}"
+                )));
+            }
+            Ok(())
+        },
+        || {
+            if same_file {
+                if let Some(mut d) = docs.remove(&doc) {
+                    for (_, p) in d.pages.drain(..) {
+                        bindings.FPDF_ClosePage(p);
+                    }
+                    bindings.FPDF_CloseDocument(d.raw);
+                }
+            }
+            Ok(())
+        },
     )
 }
 

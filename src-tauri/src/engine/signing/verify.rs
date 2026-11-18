@@ -21,11 +21,16 @@
 
 use super::parse::SignatureInfo;
 use cms::signed_data::{SignerIdentifier, SignerInfo};
+use cms_02 as cms;
 use der::asn1::ObjectIdentifier as Oid;
 use der::{Decode, Encode, Tagged};
+use der_07 as der;
+use p256_013 as p256;
+use rsa_09 as rsa;
 use sha1::Sha1;
 use sha2::{Digest, Sha224, Sha256, Sha384, Sha512};
 use x509_cert::Certificate;
+use x509_cert_02 as x509_cert;
 
 const OID_SIGNED_DATA: Oid = Oid::new_unwrap("1.2.840.113549.1.7.2");
 const OID_CONTENT_TYPE: Oid = Oid::new_unwrap("1.2.840.113549.1.9.3");

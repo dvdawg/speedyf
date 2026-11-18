@@ -273,6 +273,15 @@ pub enum Work {
         password: String,
         respond: Respond<protect::ProtectionDto>,
     },
+    /// Write a certificate-signed copy of `doc` (signing/sign.rs) to `dest`,
+    /// verified and atomically, closing the document first when `dest` is
+    /// its own file. Answers the bytes written.
+    WriteSigned {
+        doc: DocId,
+        bytes: Vec<u8>,
+        dest: PathBuf,
+        respond: Respond<u64>,
+    },
     FormFields {
         doc: DocId,
         respond: Respond<FormDto>,

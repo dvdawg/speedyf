@@ -48,6 +48,12 @@ interface Settings {
   /** Optional Semantic Scholar API key: a better rate limit, nothing else.
    * Empty by default. */
   s2Key: string;
+  /** Whether certificate signing may ask a time-stamping server (RFC 3161)
+   * to countersign the time. Off by default: it goes online, and only to
+   * `timestampUrl`. Turned on from the signing dialog. */
+  timestampOnline: boolean;
+  /** The time-stamping server, typed by the user. Empty by default. */
+  timestampUrl: string;
 }
 
 const KEY = 'speedyf-settings';
@@ -97,6 +103,8 @@ function load(): Settings {
         onlineLookup: parsed.onlineLookup === true,
         lookupContact: typeof parsed.lookupContact === 'string' ? parsed.lookupContact : '',
         s2Key: typeof parsed.s2Key === 'string' ? parsed.s2Key : '',
+        timestampOnline: parsed.timestampOnline === true,
+        timestampUrl: typeof parsed.timestampUrl === 'string' ? parsed.timestampUrl : '',
       };
     }
   } catch {
@@ -117,6 +125,8 @@ function load(): Settings {
     onlineLookup: false,
     lookupContact: '',
     s2Key: '',
+    timestampOnline: false,
+    timestampUrl: '',
   };
 }
 
@@ -146,6 +156,8 @@ export function updateSettings(patch: Partial<Settings>) {
         onlineLookup: settings.onlineLookup,
         lookupContact: settings.lookupContact,
         s2Key: settings.s2Key,
+        timestampOnline: settings.timestampOnline,
+        timestampUrl: settings.timestampUrl,
       })
     );
   } catch {
