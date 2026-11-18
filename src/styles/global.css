@@ -3500,6 +3500,95 @@ html.is-dragging-tab * {
   margin: 0;
 }
 
+/* ---------- signatures panel ---------- */
+.sig-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.sig-item {
+  padding: 4px 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sig-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 6px;
+  border: none;
+  border-radius: var(--row-radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sig-row:hover:not(:disabled) {
+  background: var(--row-hover);
+}
+
+.sig-row:disabled {
+  cursor: default;
+}
+
+.sig-status {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sig-status[data-tone='warn'],
+.sb-signed[data-tone='warn'] {
+  color: var(--warn);
+}
+
+.sig-status[data-tone='bad'],
+.sb-signed[data-tone='bad'] {
+  color: var(--danger);
+}
+
+.sig-signer {
+  font-size: 13px;
+}
+
+.sig-meta {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.sig-detail {
+  padding: 0 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.sig-detail p {
+  margin: 4px 0 0;
+}
+
+.sig-changes-head {
+  margin: 8px 0 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sig-changes {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.sig-warn {
+  color: var(--warn);
+}
+
 /* ---------- narrow windows ---------- */
 @media (max-width: 900px) {
   .search-panel,

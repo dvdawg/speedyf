@@ -8,6 +8,13 @@ import { extensionsOnline } from '../features/extensions/extensionStore';
 import { installLibraryUndo } from '../features/projects/libraryUndo';
 import StatusMessage from './StatusMessage';
 import { formFields, isFillable, requiredCount, requiredLeft } from '../features/forms/formStore';
+import {
+  documentSignatures,
+  statusTone,
+  statusLine,
+  worstStatus,
+} from '../features/signatures/signatureStore';
+import { toggleSignaturesPanel } from '../features/signatures/signatureCommands';
 
 export default function StatusBar() {
   const doc = () => activeTab()?.documentStore.state;
@@ -21,6 +28,17 @@ export default function StatusBar() {
     () => (doc()?.loaded ? doc()!.docId : null),
     (docId) => formFields(docId)
   );
+  // Only signed documents say anything about signatures.
+  const [signatures] = createResource(
+    () => (doc()?.loaded ? { docId: doc()!.docId, path: doc()!.path } : null),
+    ({ docId, path }) => documentSignatures(docId, path)
+  );
+  const signedStatus = () => {
+    const reports = doc()?.loaded ? (signatures() ?? []) : [];
+    const worst = worstStatus(reports);
+    const label = statusLine(reports);
+    return worst && label ? { label, tone: statusTone(worst) } : null;
+  };
   const formStatus = () => {
     const state = doc();
     const all = fields() ?? [];
@@ -155,6 +173,22 @@ export default function StatusBar() {
         </Show>
       </div>
       <div class="sb-right">
+        <Show when={signedStatus()}>
+          {(status) => (
+            <button
+              type="button"
+              class="sb-sleepy sb-signed"
+              data-tone={status().tone}
+              title="Show the document's digital signatures"
+              onClick={() => {
+                const tab = activeTab();
+                if (tab) toggleSignaturesPanel(tab);
+              }}
+            >
+              {status().label}
+            </button>
+          )}
+        </Show>
         <Show when={formStatus()}>
           {(label) => (
             <button

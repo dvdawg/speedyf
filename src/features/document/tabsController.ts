@@ -28,6 +28,7 @@ import {
 } from '../../stores/tabsStore';
 import { askPassword, showError } from '../../stores/modalStore';
 import { clearImagePreviews } from '../editor/editorActions';
+import { clearSignatures } from '../signatures/signatureStore';
 import { clearFormFields } from '../forms/formStore';
 import { guardUnsaved, hydrateAnnotations, hydrateSizes } from './controller';
 import { recentStore } from '../../stores/recentStore';
@@ -172,6 +173,7 @@ async function openPath(
       // The fields belong to whatever file this document id last named; a
       // reopened or replaced document must not inherit the old ones.
       clearFormFields(meta.docId);
+      clearSignatures(meta.docId);
       setTabOpening(record.id, false);
       record.documentStore.initFromMeta(meta);
       record.searchStore.resetForDocument(meta.docId, meta.pageCount);

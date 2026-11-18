@@ -49,6 +49,7 @@ import { PROJECT_COMMANDS } from '../features/projects/projectCommands';
 import { NOTE_EXPORT_COMMANDS } from '../features/extensions/noteExportCommands';
 import { MARKUP_COMMANDS } from '../features/markup/markupCommands';
 import { SIGN_COMMANDS } from '../features/sign/signCommands';
+import { SIGNATURE_COMMANDS } from '../features/signatures/signatureCommands';
 import { setUi, ui, type SidebarMode } from '../stores/uiStore';
 import { tabsStore, type TabRecord } from '../stores/tabsStore';
 import type { Paper } from '../types/engine';
@@ -605,6 +606,7 @@ export const COMMANDS: readonly Command[] = [
   ...MARKUP_COMMANDS,
   // Visual signatures: signCommands.ts.
   ...SIGN_COMMANDS,
+  ...SIGNATURE_COMMANDS,
 
   // ---- Settings ------------------------------------------------------
   {
