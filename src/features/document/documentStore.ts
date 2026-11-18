@@ -21,6 +21,8 @@ export type EditOp =
   | { type: 'deleteAnnot'; pageId: PageId; id: string }
   | { type: 'setForm'; field: string; value: string }
   | { type: 'setFormButton'; page: number; index: number; checked: boolean }
+  /** Write this document's visual signatures into the page content at save. */
+  | { type: 'setFlattenSignatures'; value: boolean }
   // internal inverse-only ops:
   | { type: 'restorePage'; entry: PageEntry; index: number; annots: Annotation[] }
   | { type: 'restoreAnnot'; pageId: PageId; annot: Annotation; index: number }
@@ -28,7 +30,7 @@ export type EditOp =
   | { type: 'restoreFormButton'; page: number; index: number; prev: boolean | undefined };
 
 export interface PlanAnnot {
-  kind: 'highlight' | 'ink' | 'rect' | 'note';
+  kind: 'highlight' | 'ink' | 'rect' | 'note' | 'signature';
   rect: PdfRect;
   color: string;
   opacity: number;
@@ -36,6 +38,9 @@ export interface PlanAnnot {
   quads?: Annotation['quads'];
   strokes?: Annotation['strokes'];
   text?: string;
+  signature?: Annotation['signature'];
+  /** signatures only: into the page content rather than as an annotation */
+  flatten?: boolean;
 }
 
 export interface PlanText extends Partial<
@@ -100,6 +105,8 @@ export interface DocState {
   formEdits: Record<string, string>;
   /** Checkbox and radio states the user changed, keyed `"<page>:<index>"`. */
   formButtonEdits: Record<string, boolean>;
+  /** Visual signatures are written into the page content at save. */
+  flattenSignatures: boolean;
   dirty: boolean;
   saving: boolean;
   /** bumped whenever engine-derived visuals must be re-fetched (reload) */
@@ -119,6 +126,7 @@ const emptyState = (): DocState => ({
   annotations: {},
   formEdits: {},
   formButtonEdits: {},
+  flattenSignatures: false,
   dirty: false,
   saving: false,
   generation: 0,
@@ -275,6 +283,8 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
           index: op.index,
           prev: state.formButtonEdits[formButtonKey(op.page, op.index)],
         };
+      case 'setFlattenSignatures':
+        return { type: 'setFlattenSignatures', value: state.flattenSignatures };
       case 'restorePage':
       case 'restoreAnnot':
       case 'restoreForm':
@@ -369,6 +379,10 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
           }
           case 'setForm': {
             s.formEdits[op.field] = op.value;
+            break;
+          }
+          case 'setFlattenSignatures': {
+            s.flattenSignatures = op.value;
             break;
           }
           case 'restorePage': {
@@ -551,6 +565,7 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
       a.bold ?? false,
       a.italic ?? false,
       a.underline ?? false,
+      a.signature ?? null,
     ]);
 
   /** Adopt the annotations already in the file.
@@ -599,8 +614,13 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
       // An annotation read from the file and left alone is written by nobody:
       // the page it lives on is imported wholesale, so it arrives intact. Only
       // the ones that changed are dropped and written again.
+      // A signature to be flattened is rewritten even when it never moved:
+      // flattening is the edit.
       const untouched = new Set(
-        all.filter((a) => hydrated.get(a.id) === annotFingerprint(a)).map((a) => a.id)
+        all
+          .filter((a) => hydrated.get(a.id) === annotFingerprint(a))
+          .filter((a) => !(a.kind === 'signature' && state.flattenSignatures))
+          .map((a) => a.id)
       );
       const anns = all.filter((a) => !untouched.has(a.id));
 
@@ -618,7 +638,7 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
         dropSrcAnnots,
         annots: anns
           .filter((a): a is Annotation & { kind: PlanAnnot['kind'] } =>
-            ['highlight', 'ink', 'rect', 'note', 'bubble'].includes(a.kind)
+            ['highlight', 'ink', 'rect', 'note', 'bubble', 'signature'].includes(a.kind)
           )
           .map((a) => ({
             kind: a.kind,
@@ -629,6 +649,9 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
             ...(a.quads !== undefined ? { quads: a.quads } : {}),
             ...(a.strokes !== undefined ? { strokes: a.strokes } : {}),
             ...(a.text !== undefined ? { text: a.text } : {}),
+            ...(a.signature !== undefined
+              ? { signature: a.signature, flatten: state.flattenSignatures }
+              : {}),
           })),
         texts: anns
           .filter((a) => a.kind === 'textbox')

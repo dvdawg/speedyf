@@ -1,5 +1,5 @@
 /** DTOs mirrored from the Rust engine (serde camelCase). */
-import type { PdfPoint, PdfQuad, PdfRect, TextFormat } from './model';
+import type { PdfPoint, PdfQuad, PdfRect, SignatureArt, TextFormat } from './model';
 
 export interface DocMeta {
   docId: number;
@@ -196,6 +196,8 @@ export interface FormFieldInfo {
   exportValue: string;
   /** Whether this particular widget is currently on. */
   checked: boolean;
+  /** For a signature field: whether it already holds a signature. */
+  signed?: boolean;
 }
 
 /** A theorem, lemma, definition or caption recovered from a LaTeX PDF.
@@ -217,6 +219,8 @@ export interface StoredAnnotation extends TextFormat {
   strokes: PdfPoint[][] | null;
   text: string | null;
   fontSizePt: number | null;
+  /** Present on SpeedyF's own visual signatures. */
+  signature?: SignatureArt;
 }
 
 export interface PageAnnotations {
