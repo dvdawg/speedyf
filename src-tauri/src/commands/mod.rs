@@ -7,6 +7,7 @@ use crate::engine::{EngineHandle, Work};
 use crate::errors::{AppError, AppResult};
 use std::path::PathBuf;
 
+pub mod certsign;
 pub mod citations;
 pub mod health;
 pub mod hovers;
