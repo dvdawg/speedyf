@@ -506,8 +506,16 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
             plan,
             dest,
             protect,
+            allow_signed_rewrite,
             respond,
-        } => respond(do_save(state, doc, plan, dest, protect)),
+        } => respond(do_save(
+            state,
+            doc,
+            plan,
+            dest,
+            protect,
+            allow_signed_rewrite,
+        )),
         Work::UnlockPermissions {
             doc,
             password,
@@ -2574,7 +2582,19 @@ fn do_build_print_pdf(
         let d = state.doc(doc)?;
         (d.path.clone(), d.password.clone())
     };
-    save::build_output(state.pdfium, &src_path, password.as_deref(), &plan, dest)
+    // A printout is a throwaway file: rewriting a signed source for it
+    // breaks nothing.
+    let options = save::SaveOptions {
+        allow_signed_rewrite: true,
+    };
+    save::build_output_with(
+        state.pdfium,
+        &src_path,
+        password.as_deref(),
+        &plan,
+        dest,
+        options,
+    )
 }
 
 fn do_save(
@@ -2583,6 +2603,7 @@ fn do_save(
     plan: EditPlan,
     dest: PathBuf,
     protect_request: protect::ProtectRequest,
+    allow_signed_rewrite: bool,
 ) -> AppResult<SaveResultDto> {
     if plan.pages.len() > u16::MAX as usize {
         return Err(AppError::Unsupported(
@@ -2604,6 +2625,12 @@ fn do_save(
             protect::read(b, d.raw, false),
         )
     };
+    if allow_signed_rewrite && same_file {
+        // Breaking the signatures is only ever done to a separate copy.
+        return Err(AppError::Signed(
+            "choose a new name for the copy: the signed original is kept as it is".into(),
+        ));
+    }
     // Lifting or replacing a file's restrictions takes its permissions
     // password; the reader enforces the same, this is the backstop.
     // `UnlockPermissions` may have swapped in the permissions password since
@@ -2629,6 +2656,16 @@ fn do_save(
     } else {
         None
     };
+    // Encrypting is a full rewrite done after the save proper, so it would
+    // break any signature the incremental save just preserved.
+    if target.encrypts()
+        && !allow_signed_rewrite
+        && crate::engine::signing::file_has_signatures(Path::new(&src_path))
+    {
+        return Err(AppError::Signed(
+            "password protection rewrites the file, which would break its signatures".into(),
+        ));
+    }
     let pdfium = state.pdfium;
     let bindings = state.bindings;
     let expected_pages = plan.pages.len();
@@ -2637,7 +2674,17 @@ fn do_save(
     let save_result = save::verified_atomic_replace(
         &dest,
         |temp_path| {
-            save::build_output(pdfium, &src_path, password.as_deref(), &plan, temp_path)?;
+            let options = save::SaveOptions {
+                allow_signed_rewrite,
+            };
+            save::build_output_with(
+                pdfium,
+                &src_path,
+                password.as_deref(),
+                &plan,
+                temp_path,
+                options,
+            )?;
             protect::encrypt_file(temp_path, &target)
         },
         |temp_path| {

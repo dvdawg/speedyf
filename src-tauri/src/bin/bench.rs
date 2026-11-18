@@ -668,6 +668,7 @@ fn benchmark_valid(
                     plan,
                     dest,
                     protect: Default::default(),
+                    allow_signed_rewrite: false,
                     respond,
                 })
                 .map_err(|error| StageError::new("save", error))?;

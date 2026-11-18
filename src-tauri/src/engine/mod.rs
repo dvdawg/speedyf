@@ -42,6 +42,7 @@ mod reading_order_eval;
 pub mod render;
 pub mod save;
 pub mod signature;
+pub mod signing;
 pub mod tagged;
 pub mod text;
 pub mod types;
@@ -260,6 +261,9 @@ pub enum Work {
         /// Whether the output keeps, drops or replaces the source's
         /// password protection (`protect`).
         protect: protect::ProtectRequest,
+        /// Rewrite a signed document if the plan needs to (a confirmed
+        /// "Save a copy"); otherwise such a save fails with `AppError::Signed`.
+        allow_signed_rewrite: bool,
         respond: Respond<SaveResultDto>,
     },
     /// Check a permissions password against an open document; on success

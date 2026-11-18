@@ -15,6 +15,7 @@ import Viewer from '../features/viewer/Viewer';
 import ContextHeader from '../features/viewer/ContextHeader';
 import SearchPanel from '../features/search/SearchPanel';
 import FormPanel from '../features/editor/FormPanel';
+import SignaturesPanel from '../features/signatures/SignaturesPanel';
 import { engine } from '../lib/transport/engine';
 import { ui } from '../stores/uiStore';
 import { applyPageAppearance, settings } from '../stores/settings';
@@ -242,6 +243,9 @@ export default function App() {
                           </Show>
                           <Show when={tab.viewport.state.formPanelOpen && visible()}>
                             <FormPanel />
+                          </Show>
+                          <Show when={tab.viewport.state.signaturesPanelOpen && visible()}>
+                            <SignaturesPanel />
                           </Show>
                           <Show when={visible()}>
                             <ReaderPaneDrawer />

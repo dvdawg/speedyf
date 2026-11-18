@@ -279,7 +279,11 @@ function handleEscape(): void {
     setActiveTool('select');
     return;
   }
-  if (tab.viewport.state.formPanelOpen) tab.viewport.setState('formPanelOpen', false);
+  if (tab.viewport.state.formPanelOpen) {
+    tab.viewport.setState('formPanelOpen', false);
+    return;
+  }
+  if (tab.viewport.state.signaturesPanelOpen) tab.viewport.setState('signaturesPanelOpen', false);
 }
 
 export function installShortcuts(): () => void {

@@ -32,6 +32,7 @@ import type {
   SaveResult,
   SearchQueryResult,
 } from '../../types/engine';
+import type { SignatureReport } from '../../features/signatures/types';
 import type {
   BundleReport,
   CitationLinks,
@@ -154,14 +155,20 @@ export interface EngineApi {
     len: number
   ): Promise<[number, number, number, number][]>;
   /** `protect` defaults to keeping whatever protection the source has. */
+  /** `allowSignedRewrite`: a "Save a copy" the user confirmed, which may
+   * rewrite a signed document and break its signatures. Without it such a
+   * save fails with the `signed` error code. */
   saveDocument(
     docId: number,
     plan: EditPlan,
     destPath: string,
-    protect?: ProtectRequest
+    protect?: ProtectRequest,
+    allowSignedRewrite?: boolean
   ): Promise<SaveResult>;
   /** Check a permissions password; rejects with code `password` when wrong. */
   unlockPermissions(docId: number, password: string): Promise<ProtectionInfo>;
+  /** Every digital signature in the PDF at `path`, checked offline. */
+  checkSignatures(path: string): Promise<SignatureReport[]>;
   getFormFields(docId: number): Promise<FormInfo>;
   getOutline(docId: number): Promise<OutlineNode[]>;
   /** One idle slice of generating an outline from the page headings; call
@@ -350,9 +357,16 @@ export const engine: EngineApi = {
   searchQuery: (docId, query, caseSensitive) =>
     invoke('search_query', { docId, query, caseSensitive }),
   getMatchRects: (docId, src, start, len) => invoke('get_match_rects', { docId, src, start, len }),
-  saveDocument: (docId, plan, destPath, protect) =>
-    invoke('save_document', { docId, plan, destPath, protect: protect ?? null }),
+  saveDocument: (docId, plan, destPath, protect, allowSignedRewrite) =>
+    invoke('save_document', {
+      docId,
+      plan,
+      destPath,
+      protect: protect ?? null,
+      allowSignedRewrite: allowSignedRewrite ?? false,
+    }),
   unlockPermissions: (docId, password) => invoke('unlock_permissions', { docId, password }),
+  checkSignatures: (path) => invoke('check_signatures', { path }),
   getFormFields: (docId) => invoke('get_form_fields', { docId }),
   getOutline: (docId) => invoke('get_outline', { docId }),
   getGeneratedOutline: (docId) => invoke('get_generated_outline', { docId }),
@@ -451,7 +465,15 @@ export const engine: EngineApi = {
 /** Error shape produced by the Rust AppError serializer. */
 export interface EngineError {
   code:
-    'not_found' | 'engine' | 'password' | 'malformed' | 'io' | 'stale' | 'unsupported' | 'internal';
+    | 'not_found'
+    | 'engine'
+    | 'password'
+    | 'malformed'
+    | 'io'
+    | 'stale'
+    | 'unsupported'
+    | 'signed'
+    | 'internal';
   message: string;
 }
 

@@ -19,6 +19,8 @@ export interface ViewportState {
   currentPage: number;
   searchOpen: boolean;
   formPanelOpen: boolean;
+  /** the digital signatures panel (features/signatures) */
+  signaturesPanelOpen: boolean;
   editMode: boolean;
   /** Active text editor, separate from an annotation selected for moving. */
   editingText: { pageId: PageId; annotId: string } | null;
@@ -83,6 +85,7 @@ function emptyState(): ViewportState {
     currentPage: 0,
     searchOpen: false,
     formPanelOpen: false,
+    signaturesPanelOpen: false,
     editMode: false,
     editingText: null,
     scrollRequest: null,

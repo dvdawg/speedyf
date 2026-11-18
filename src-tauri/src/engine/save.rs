@@ -194,14 +194,42 @@ fn write_document(document: &PdfDocument<'_>, path: &Path, mode: SaveMode) -> Ap
 /// reading from it while the output is written. Write to a sibling and rename,
 /// as `verified_atomic_replace` does.
 pub fn save_incremental(document: &PdfDocument<'_>, path: &Path) -> AppResult<()> {
+    save_in_place(document, path, false)
+}
+
+/// `save_incremental`, refusing to fall back to a rewrite when
+/// `keep_signatures` is set: a rewrite breaks every signature in the file.
+fn save_in_place(document: &PdfDocument<'_>, path: &Path, keep_signatures: bool) -> AppResult<()> {
     let bindings = document.bindings();
     let mode = save_mode(bindings, bindings.get_handle_from_document(document));
+    if keep_signatures && mode != SaveMode::Incremental {
+        return Err(signed_rewrite_error());
+    }
     write_document(document, path, mode)?;
     if mode == SaveMode::Incremental && !mend_xref_stream_type(path)? {
+        if keep_signatures {
+            return Err(signed_rewrite_error());
+        }
         log::warn!("incremental save produced an unexpected tail; rewriting in full");
         write_document(document, path, SaveMode::Rewrite)?;
     }
     Ok(())
+}
+
+/// What a save may do beyond the default.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SaveOptions {
+    /// Rewrite a signed document in full, breaking its signatures. Only a
+    /// "Save a copy" the user confirmed asks for this.
+    pub allow_signed_rewrite: bool,
+}
+
+fn signed_rewrite_error() -> AppError {
+    AppError::Signed(
+        "this document is digitally signed, and saving these changes would rewrite it and \
+         break its signatures"
+            .into(),
+    )
 }
 
 /// Make the cross-reference section PDFium just appended to `path` well
@@ -1016,10 +1044,37 @@ pub fn build_output(
     plan: &EditPlan,
     out_path: &Path,
 ) -> AppResult<()> {
+    build_output_with(
+        pdfium,
+        src_path,
+        password,
+        plan,
+        out_path,
+        SaveOptions::default(),
+    )
+}
+
+/// `build_output`, with `options`. A signed source is only ever appended to:
+/// a plan that would rewrite it fails with `AppError::Signed` unless
+/// `options.allow_signed_rewrite` says the user chose to break the
+/// signatures (a separate copy).
+pub fn build_output_with(
+    pdfium: &Pdfium,
+    src_path: &str,
+    password: Option<&str>,
+    plan: &EditPlan,
+    out_path: &Path,
+    options: SaveOptions,
+) -> AppResult<()> {
+    let keep_signatures = !options.allow_signed_rewrite
+        && crate::engine::signing::file_has_signatures(Path::new(src_path));
     let src = pdfium
         .load_pdf_from_file(src_path, password)
         .map_err(|e| AppError::Malformed(format!("cannot reopen source: {e:?}")))?;
     let edit_in_place = preserves_source_pages(plan, src.pages().len());
+    if keep_signatures && !edit_in_place {
+        return Err(signed_rewrite_error());
+    }
     let source_info = if edit_in_place {
         Vec::new()
     } else {
@@ -1111,7 +1166,7 @@ pub fn build_output(
 
     // 3) write
     if edit_in_place {
-        save_incremental(&out, out_path)?;
+        save_in_place(&out, out_path, keep_signatures)?;
     } else {
         write_document(&out, out_path, SaveMode::Rewrite)?;
         append_info_update(out_path, &source_info)?;

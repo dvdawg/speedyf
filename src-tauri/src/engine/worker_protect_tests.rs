@@ -57,6 +57,7 @@ fn protected_fixture(state: &mut WorkerState, dir: &Path) -> PathBuf {
         highlight_plan(),
         src.clone(),
         set("user", "owner", restricted()),
+        false,
     )
     .expect("protect");
     assert_eq!(saved.reopen_password.as_deref(), Some("owner"));
@@ -121,6 +122,7 @@ fn saving_keeps_the_protection_it_was_opened_with() {
         highlight_plan(),
         out.clone(),
         ProtectRequest::Keep,
+        false,
     )
     .expect("save");
     assert_eq!(saved.reopen_password.as_deref(), Some("user"));
@@ -149,6 +151,7 @@ fn saving_keeps_the_protection_it_was_opened_with() {
         highlight_plan(),
         src.clone(),
         ProtectRequest::Keep,
+        false,
     )
     .expect("save in place");
     let reopened = do_open(
@@ -182,6 +185,7 @@ fn changing_a_restricted_document_takes_its_permissions_password() {
         highlight_plan(),
         out.clone(),
         ProtectRequest::Remove,
+        false,
     );
     assert!(matches!(refused, Err(AppError::Unsupported(_))));
     assert!(!out.exists());
@@ -199,6 +203,7 @@ fn changing_a_restricted_document_takes_its_permissions_password() {
         highlight_plan(),
         out.clone(),
         ProtectRequest::Remove,
+        false,
     )
     .expect("remove");
     assert_eq!(saved.reopen_password, None);
@@ -228,6 +233,7 @@ fn new_protection_replaces_the_old() {
         highlight_plan(),
         out.clone(),
         set("new open", "", PermissionSet::all()),
+        false,
     )
     .expect("change");
     assert_eq!(saved.reopen_password.as_deref(), Some("new open"));
