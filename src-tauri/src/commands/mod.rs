@@ -415,6 +415,7 @@ pub async fn save_document(
     doc_id: DocId,
     plan: EditPlan,
     dest_path: String,
+    protect: Option<crate::engine::protect::ProtectRequest>,
 ) -> AppResult<SaveResultDto> {
     if plan.pages.is_empty() {
         return Err(AppError::Unsupported(
@@ -427,7 +428,26 @@ pub async fn save_document(
             doc: doc_id,
             plan,
             dest: PathBuf::from(dest_path),
+            protect: protect.unwrap_or_default(),
             respond,
+        })
+        .await
+}
+
+#[tauri::command]
+pub async fn unlock_permissions(
+    state: tauri::State<'_, EngineState>,
+    doc_id: DocId,
+    password: String,
+) -> AppResult<crate::engine::protect::ProtectionDto> {
+    state
+        .0
+        .call_async(Priority::VisiblePage, doc_id, move |respond| {
+            Work::UnlockPermissions {
+                doc: doc_id,
+                password,
+                respond,
+            }
         })
         .await
 }

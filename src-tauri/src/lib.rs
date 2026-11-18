@@ -421,6 +421,7 @@ pub fn run() {
             commands::search_query,
             commands::get_match_rects,
             commands::save_document,
+            commands::unlock_permissions,
             commands::build_print_pdf,
             commands::discard_print_pdf,
             commands::export_print_pdf,

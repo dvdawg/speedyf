@@ -28,6 +28,7 @@ pub mod ocr_thread;
 pub mod outline_gen;
 pub mod pdfium_init;
 pub mod preview;
+pub mod protect;
 pub mod queue;
 #[cfg(test)]
 mod quote_eval;
@@ -246,7 +247,17 @@ pub enum Work {
         doc: DocId,
         plan: EditPlan,
         dest: PathBuf,
+        /// Whether the output keeps, drops or replaces the source's
+        /// password protection (`protect`).
+        protect: protect::ProtectRequest,
         respond: Respond<SaveResultDto>,
+    },
+    /// Check a permissions password against an open document; on success
+    /// the session holds every right the file can grant.
+    UnlockPermissions {
+        doc: DocId,
+        password: String,
+        respond: Respond<protect::ProtectionDto>,
     },
     FormFields {
         doc: DocId,

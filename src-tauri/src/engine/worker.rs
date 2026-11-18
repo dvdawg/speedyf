@@ -12,6 +12,7 @@ use super::ocr::{self, OcrLine};
 use super::ocr_thread::{OcrDone, OcrRequest, OcrService, Refused};
 use super::pdfium_init;
 use super::preview::{self, PREVIEW_SCALE_MILLI};
+use super::protect;
 use super::queue::JobMeta;
 use super::reading_order;
 use super::render;
@@ -363,6 +364,7 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         Work::LibraryScanFile { respond, .. } => respond(Err(err())),
         Work::MatchRects { respond, .. } => respond(Err(err())),
         Work::Save { respond, .. } => respond(Err(err())),
+        Work::UnlockPermissions { respond, .. } => respond(Err(err())),
         Work::BuildPrintPdf { respond, .. } => respond(Err(err())),
         Work::MarkupExport { respond, .. } => respond(Err(err())),
         Work::MarkupKey { respond, .. } => respond(Err(err())),
@@ -497,8 +499,14 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
             doc,
             plan,
             dest,
+            protect,
             respond,
-        } => respond(do_save(state, doc, plan, dest)),
+        } => respond(do_save(state, doc, plan, dest, protect)),
+        Work::UnlockPermissions {
+            doc,
+            password,
+            respond,
+        } => respond(do_unlock_permissions(state, doc, password)),
         Work::BuildPrintPdf {
             doc,
             plan,
@@ -594,6 +602,8 @@ fn do_open(
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.clone());
+    let open_password = protect::needs_open_password(state.bindings, &path, password.as_deref());
+    let protection = protect::read(state.bindings, raw, open_password);
     state.docs.insert(
         id,
         DocState {
@@ -618,6 +628,7 @@ fn do_open(
         page_count,
         sizes,
         estimated_size: estimated,
+        protection,
     })
 }
 
@@ -2525,6 +2536,7 @@ fn do_save(
     doc: DocId,
     plan: EditPlan,
     dest: PathBuf,
+    protect_request: protect::ProtectRequest,
 ) -> AppResult<SaveResultDto> {
     if plan.pages.len() > u16::MAX as usize {
         return Err(AppError::Unsupported(
@@ -2532,7 +2544,8 @@ fn do_save(
         ));
     }
     let started = Instant::now();
-    let (src_path, password, same_file, page_count, sizes, index_cursor, form_fields) = {
+    let (src_path, password, same_file, page_count, sizes, index_cursor, form_fields, protection) = {
+        let b = state.bindings;
         let d = state.doc(doc)?;
         (
             d.path.clone(),
@@ -2542,7 +2555,33 @@ fn do_save(
             d.sizes.clone(),
             d.index_cursor,
             d.form_fields.clone(),
+            protect::read(b, d.raw, false),
         )
+    };
+    // Lifting or replacing a file's restrictions takes its permissions
+    // password; the reader enforces the same, this is the backstop.
+    // `UnlockPermissions` may have swapped in the permissions password since
+    // the document was opened.
+    if protect_request != protect::ProtectRequest::Keep
+        && protection.restricted()
+        && !password
+            .as_deref()
+            .is_some_and(|pw| protect::is_owner_password(state.bindings, &src_path, pw))
+    {
+        return Err(AppError::Unsupported(
+            "changing this document's protection needs its permissions password".into(),
+        ));
+    }
+    let target = protect::plan(
+        &protect_request,
+        Path::new(&src_path),
+        password.as_deref(),
+        protection.encrypted,
+    )?;
+    let reopen_password = if target.encrypts() {
+        protect_request.reopen_password(password.as_deref())
+    } else {
+        None
     };
     let pdfium = state.pdfium;
     let bindings = state.bindings;
@@ -2551,17 +2590,28 @@ fn do_save(
     let mut closed_for_replace = false;
     let save_result = save::verified_atomic_replace(
         &dest,
-        |temp_path| save::build_output(pdfium, &src_path, password.as_deref(), &plan, temp_path),
+        |temp_path| {
+            save::build_output(pdfium, &src_path, password.as_deref(), &plan, temp_path)?;
+            protect::encrypt_file(temp_path, &target)
+        },
         |temp_path| {
             let path = temp_path
                 .to_str()
                 .ok_or_else(|| AppError::Io("bad temp path".into()))?;
-            let verify = render::open_document(bindings, path, None)?;
+            let verify = render::open_document(bindings, path, reopen_password.as_deref())?;
             let count = bindings.FPDF_GetPageCount(verify).max(0) as usize;
+            let revision = bindings.FPDF_GetSecurityHandlerRevision(verify);
             bindings.FPDF_CloseDocument(verify);
             if count != expected_pages {
                 return Err(AppError::Internal(format!(
                     "verification failed: wrote {count} pages, expected {expected_pages}"
+                )));
+            }
+            let expected_revision = target.revision().unwrap_or(-1);
+            if i64::from(revision) != expected_revision {
+                return Err(AppError::Internal(format!(
+                    "verification failed: security handler revision {revision}, \
+                     expected {expected_revision}"
                 )));
             }
             Ok(())
@@ -2625,7 +2675,28 @@ fn do_save(
         path: dest.to_string_lossy().into_owned(),
         bytes,
         duration_ms: started.elapsed().as_millis() as u64,
+        reopen_password,
     })
+}
+
+/// Check `password` as the permissions password of `doc`; when it is, the
+/// document is worked on with it from here on, so every right the file can
+/// grant is this session's, and a save can lift or change the protection.
+fn do_unlock_permissions(
+    state: &mut WorkerState,
+    doc: DocId,
+    password: String,
+) -> AppResult<protect::ProtectionDto> {
+    let b = state.bindings;
+    let d = state.doc(doc)?;
+    if !protect::is_owner_password(b, &d.path, &password) {
+        return Err(AppError::PasswordRequired);
+    }
+    let open_password = protect::needs_open_password(b, &d.path, d.password.as_deref());
+    let mut protection = protect::read(b, d.raw, open_password);
+    protection.owner_unlocked = true;
+    d.password = Some(password);
+    Ok(protection)
 }
 
 /// A bookmark's target is either a direct destination, or (more commonly for
@@ -4273,3 +4344,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "worker_protect_tests.rs"]
+mod protect_save_tests;
