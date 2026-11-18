@@ -427,6 +427,13 @@ pub struct FormDto {
     /// The document has an XFA form. With no AcroForm widgets alongside, it
     /// is an XFA-only form, which PDFium (and so SpeedyF) cannot fill.
     pub xfa: bool,
+    /// Per field name, the standard Acrobat helpers its scripts call.
+    pub behaviours:
+        std::collections::BTreeMap<String, crate::engine::forms::scripts::FieldBehaviour>,
+    /// Fields with a calculation, in the order the form recalculates them.
+    pub calc_order: Vec<String>,
+    /// How many scripts the form carries and how many were recognised.
+    pub scripts: crate::engine::forms::scripts::ScriptSummary,
 }
 
 /// One checkbox or radio button the user toggled, identified by the widget
@@ -672,4 +679,8 @@ pub struct EditPlan {
     /// Combo and list box selections, keyed by field name.
     #[serde(default)]
     pub form_choices: Vec<PlanFormChoice>,
+    /// Formatted page text for text fields whose /V stays raw: name, text,
+    /// and the colour a red negative style asks for. See `forms::appearance`.
+    #[serde(default)]
+    pub form_display: Vec<(String, String, Option<bool>)>,
 }

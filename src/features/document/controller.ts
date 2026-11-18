@@ -9,6 +9,7 @@ import type { TabRecord } from '../../stores/tabsStore';
 import { askUnsaved, showError } from '../../stores/modalStore';
 import { recentStore } from '../../stores/recentStore';
 import type { Annotation } from '../../types/model';
+import { withFormDisplay } from '../forms/formBehaviour';
 
 const SIZE_BATCH = 128;
 
@@ -118,7 +119,7 @@ export async function saveDocument(tab: TabRecord, saveAs: boolean): Promise<boo
   tab.documentStore.setSaving(true);
   const rememberPage = tab.viewport.state.currentPage;
   try {
-    const plan = tab.documentStore.buildEditPlan();
+    const plan = await withFormDisplay(docId, tab.documentStore.buildEditPlan());
     await engine.saveDocument(docId, plan, dest);
     // A discard/open can replace the active document while the native save
     // is running. The file was saved, but its completion must not overwrite

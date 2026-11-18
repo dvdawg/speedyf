@@ -11,13 +11,14 @@
 //! is the position in that array). When lopdf cannot read the file, the
 //! fields still come back, with those extras at their defaults.
 
+use super::scripts::{FieldBehaviour, ScriptSummary};
 use super::{form_fill_info, read_utf16};
 use crate::engine::render;
 use crate::engine::text::DispMapper;
 use crate::engine::types::{FormDto, FormFieldDto, FormOptionDto, RectDto};
 use lopdf::{Dictionary, Document, LoadOptions, Object};
 use pdfium_render::prelude::*;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// `FPDF_GetFormType` values for documents carrying XFA.
 const FORMTYPE_XFA_FULL: i32 = 2;
@@ -68,8 +69,8 @@ pub fn read_form(
     let form = b.FPDFDOC_InitFormFillEnvironment(raw, info.as_mut().get_mut());
     if form.is_null() {
         return FormDto {
-            fields: Vec::new(),
             xfa,
+            ..FormDto::default()
         };
     }
     let dicts = FieldDicts::load(path, password);
@@ -113,9 +114,32 @@ pub fn read_form(
     }
     b.FPDFDOC_ExitFormFillEnvironment(form);
 
-    let tabs = dicts.map(|d| d.tabs).unwrap_or_default();
-    assign_tab_order(&mut fields, &tabs);
-    FormDto { fields, xfa }
+    let Some(dicts) = dicts else {
+        assign_tab_order(&mut fields, &HashMap::new());
+        return FormDto {
+            fields,
+            xfa,
+            ..FormDto::default()
+        };
+    };
+    assign_tab_order(&mut fields, &dicts.tabs);
+    // Behaviour is per field, so it is keyed by the name PDFium reports -
+    // the same name every widget of the field, and the frontend, uses.
+    let mut behaviours = BTreeMap::new();
+    for f in &fields {
+        if let Some(extras) = dicts.widgets.get(&(f.page, f.index)) {
+            if !extras.behaviour.is_empty() && !behaviours.contains_key(&f.name) {
+                behaviours.insert(f.name.clone(), extras.behaviour.clone());
+            }
+        }
+    }
+    FormDto {
+        fields,
+        xfa,
+        behaviours,
+        calc_order: dicts.calc_order,
+        scripts: dicts.scripts,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -399,12 +423,18 @@ pub(super) struct WidgetDict {
     pub on_state: Option<String>,
     /// JavaScript actions on the widget and its field ancestry.
     pub scripts: u32,
+    /// Its field's keystroke, format, validate and calculate scripts, where
+    /// they are standard helpers.
+    pub behaviour: FieldBehaviour,
 }
 
 /// The extras for every widget in a document, keyed by (page, /Annots index).
 pub(super) struct FieldDicts {
     pub widgets: HashMap<(u32, u32), WidgetDict>,
     pub tabs: HashMap<u32, TabsOrder>,
+    /// Fully qualified names of the fields in /CO, in calculation order.
+    pub calc_order: Vec<String>,
+    pub scripts: ScriptSummary,
 }
 
 impl FieldDicts {
@@ -437,6 +467,8 @@ impl FieldDicts {
 
         let mut widgets = HashMap::new();
         let mut tabs = HashMap::new();
+        let mut seen = HashSet::new();
+        let mut scripts = ScriptSummary::default();
         for (number, page_id) in doc.get_pages() {
             let page_index = number.saturating_sub(1);
             let Ok(page) = doc.get_dictionary(page_id) else {
@@ -469,15 +501,46 @@ impl FieldDicts {
                 }
                 widgets.insert(
                     (page_index, ai as u32),
-                    widget_dict(doc, widget, form_q as u8),
+                    widget_dict(doc, widget, form_q as u8, &mut seen, &mut scripts),
                 );
             }
         }
-        FieldDicts { widgets, tabs }
+        let calc_order = acroform
+            .and_then(|f| f.get(b"CO").ok())
+            .and_then(|o| doc.dereference(o).ok())
+            .and_then(|(_, o)| o.as_array().ok())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| deref_dict(doc, item))
+                    .map(|field| full_name(doc, field))
+                    .filter(|name| !name.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        scripts.document = document_scripts(doc);
+        FieldDicts {
+            widgets,
+            tabs,
+            calc_order,
+            scripts,
+        }
     }
 }
 
-fn widget_dict(doc: &Document, widget: &Dictionary, form_q: u8) -> WidgetDict {
+/// Actions already counted, by the dictionary that carries them and the
+/// event: a field's actions are reached once through each of its widgets.
+/// The action object itself is not the key - forms share one action object
+/// between many fields, and it runs (or is not run) for each.
+type Seen = HashSet<(*const Dictionary, Vec<u8>)>;
+
+fn widget_dict(
+    doc: &Document,
+    widget: &Dictionary,
+    form_q: u8,
+    seen: &mut Seen,
+    summary: &mut ScriptSummary,
+) -> WidgetDict {
     let chain = ancestry(doc, widget);
     let inherited = |key: &[u8]| chain.iter().find_map(|d| d.get(key).ok());
     let max_len = inherited(b"MaxLen")
@@ -527,13 +590,35 @@ fn widget_dict(doc: &Document, widget: &Dictionary, form_q: u8) -> WidgetDict {
         .is_some_and(is_javascript)
     {
         scripts += 1;
+        if seen.insert((widget as *const Dictionary, b"A".to_vec())) {
+            summary.total += 1;
+        }
     }
+    let mut behaviour = FieldBehaviour::default();
+    let mut taken: Vec<&[u8]> = Vec::new();
     for dict in &chain {
-        if let Some(aa) = dict.get(b"AA").ok().and_then(|o| deref_dict(doc, o)) {
-            scripts += aa
-                .iter()
-                .filter(|(_, action)| deref_dict(doc, action).is_some_and(is_javascript))
-                .count() as u32;
+        let Some(aa) = dict.get(b"AA").ok().and_then(|o| deref_dict(doc, o)) else {
+            continue;
+        };
+        for (event, action) in aa.iter() {
+            let Some(action) = deref_dict(doc, action).filter(|a| is_javascript(a)) else {
+                continue;
+            };
+            scripts += 1;
+            let first = seen.insert((*dict as *const Dictionary, event.clone()));
+            if first {
+                summary.total += 1;
+            }
+            // The nearest dictionary carrying an event is the one that
+            // applies; one further up the chain is shadowed by it.
+            if taken.contains(&event.as_slice()) {
+                continue;
+            }
+            taken.push(event.as_slice());
+            let source = javascript_source(doc, action);
+            if behaviour.take(event, &source) && first {
+                summary.recognised += 1;
+            }
         }
     }
     WidgetDict {
@@ -543,7 +628,82 @@ fn widget_dict(doc: &Document, widget: &Dictionary, form_q: u8) -> WidgetDict {
         exports,
         on_state,
         scripts,
+        behaviour,
     }
+}
+
+/// An action's /JS, as text: a string or a stream, in PDFDocEncoding or
+/// UTF-16BE.
+fn javascript_source(doc: &Document, action: &Dictionary) -> String {
+    let Some(js) = action.get(b"JS").ok() else {
+        return String::new();
+    };
+    let js = doc.dereference(js).map_or(js, |(_, o)| o);
+    match js {
+        Object::String(..) => lopdf::decode_text_string(js).unwrap_or_default(),
+        Object::Stream(stream) => {
+            let bytes = stream
+                .decompressed_content()
+                .unwrap_or_else(|_| stream.content.clone());
+            if bytes.starts_with(&[0xFE, 0xFF]) {
+                let units: Vec<u16> = bytes[2..]
+                    .chunks_exact(2)
+                    .map(|c| u16::from_be_bytes([c[0], c[1]]))
+                    .collect();
+                String::from_utf16_lossy(&units)
+            } else {
+                bytes.iter().map(|b| *b as char).collect()
+            }
+        }
+        _ => String::new(),
+    }
+}
+
+/// A field's fully qualified name: the /T of it and each ancestor, joined
+/// by dots, outermost first.
+fn full_name(doc: &Document, field: &Dictionary) -> String {
+    let parts: Vec<String> = ancestry(doc, field)
+        .iter()
+        .rev()
+        .filter_map(|d| d.get(b"T").ok())
+        .map(|t| text_of(doc, t))
+        .collect();
+    parts.join(".")
+}
+
+/// Entries in the catalog's /JavaScript name tree: document-level scripts,
+/// which run when a form opens and are never run here.
+fn document_scripts(doc: &Document) -> u32 {
+    fn count(doc: &Document, node: &Dictionary, depth: usize) -> u32 {
+        if depth > MAX_PARENT_DEPTH {
+            return 0;
+        }
+        let leaves = node
+            .get(b"Names")
+            .ok()
+            .and_then(|o| doc.dereference(o).ok())
+            .and_then(|(_, o)| o.as_array().ok())
+            .map_or(0, |a| (a.len() / 2) as u32);
+        let kids = node
+            .get(b"Kids")
+            .ok()
+            .and_then(|o| doc.dereference(o).ok())
+            .and_then(|(_, o)| o.as_array().ok())
+            .map_or(0, |kids| {
+                kids.iter()
+                    .filter_map(|k| deref_dict(doc, k))
+                    .map(|k| count(doc, k, depth + 1))
+                    .sum()
+            });
+        leaves + kids
+    }
+    doc.catalog()
+        .ok()
+        .and_then(|c| c.get(b"Names").ok())
+        .and_then(|o| deref_dict(doc, o))
+        .and_then(|names| names.get(b"JavaScript").ok())
+        .and_then(|o| deref_dict(doc, o))
+        .map_or(0, |tree| count(doc, tree, 0))
 }
 
 /// The widget, then each field above it, nearest first.

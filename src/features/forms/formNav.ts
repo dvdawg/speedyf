@@ -1,7 +1,8 @@
 /** Moving between form fields: Tab on the page and clicks in the panel both
  * end here, so a field on a page that is not mounted yet is scrolled to and
  * focused the moment it appears. */
-import type { FormFieldInfo } from '../../types/engine';
+import type { FormFieldInfo, FormInfo } from '../../types/engine';
+import { calculatedValues } from './formBehaviour';
 import { formButtonKey, type DocumentStore, type FormValues } from '../document/documentStore';
 import type { ViewportStore } from '../../stores/viewportStore';
 import { layoutIndexOf } from '../outline/jumpToAnchor';
@@ -50,7 +51,7 @@ export function goToField(
  * Read-only fields are left alone, and so is a fixed combo with no default:
  * the engine has no way to empty one, so showing it empty would be a lie
  * the saved file did not keep. */
-export function resetForm(tab: TabLike, fields: FormFieldInfo[]): void {
+export function resetForm(tab: TabLike, fields: FormFieldInfo[], info?: FormInfo): void {
   const values: FormValues = { texts: {}, buttons: {}, choices: {} };
   for (const f of fields.filter(isFillable)) {
     switch (f.kind) {
@@ -70,6 +71,11 @@ export function resetForm(tab: TabLike, fields: FormFieldInfo[]): void {
         }
         break;
     }
+  }
+  // Calculated fields follow the reset, in the same step.
+  if (info) {
+    const names = [...new Set(fields.map((f) => f.name))];
+    Object.assign(values.texts, calculatedValues(tab.documentStore.state, info, names, values));
   }
   tab.documentStore.apply({ type: 'setFormValues', values });
 }
