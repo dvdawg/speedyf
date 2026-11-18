@@ -529,11 +529,14 @@ fn a_timestamp_token_is_requested_checked_and_embedded() {
         String::from_utf8_lossy(&ok.stderr)
     );
     std::fs::write(d.join("serial"), "01\n").unwrap();
+    // openssl's config syntax reads a backslash as an escape, so Windows
+    // paths go in with forward slashes, which it also accepts.
+    let conf_path = |name: &str| d.join(name).display().to_string().replace('\\', "/");
     let cfg = format!(
         "[ tsa ]\ndefault_tsa = tsa1\n[ tsa1 ]\nserial = {s}\nsigner_cert = {c}\nsigner_key = {k}\nsigner_digest = sha256\ndefault_policy = 1.2.3.4.1\ndigests = sha256\naccuracy = secs:1\ness_cert_id_alg = sha256\ncerts = {c}\n",
-        s = d.join("serial").display(),
-        c = d.join("tsa.crt").display(),
-        k = d.join("tsa.key").display(),
+        s = conf_path("serial"),
+        c = conf_path("tsa.crt"),
+        k = conf_path("tsa.key"),
     );
     std::fs::write(d.join("tsa.cnf"), cfg).unwrap();
 
