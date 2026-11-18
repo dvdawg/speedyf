@@ -1008,6 +1008,10 @@ fn unique(name: &str, taken: &HashSet<String>) -> String {
         .unwrap_or(base)
 }
 
+fn has_calc(f: &PlanDesignField) -> bool {
+    f.calc.as_ref().is_some_and(|c| !c.fields.is_empty())
+}
+
 /// Apply Prepare form mode's changes to the file at `path`. Returns whether
 /// anything was written.
 pub fn apply_design(path: &std::path::Path, design: &PlanFormDesign) -> Result<bool, String> {
@@ -1104,7 +1108,7 @@ fn build(tx: &mut Tx, design: &PlanFormDesign) -> Result<(), String> {
                 );
                 by_key.insert(f.key.clone(), *widget);
                 if f.calc_set {
-                    calc_fields.push((tx.field_of(*widget), f.calc.is_some()));
+                    calc_fields.push((tx.field_of(*widget), has_calc(f)));
                 }
             }
             (Some(_), None) => {
@@ -1122,7 +1126,7 @@ fn build(tx: &mut Tx, design: &PlanFormDesign) -> Result<(), String> {
                     rot,
                 );
                 by_key.insert(f.key.clone(), widget);
-                if f.calc.is_some() {
+                if has_calc(f) {
                     calc_fields.push((tx.field_of(widget), true));
                 }
             }

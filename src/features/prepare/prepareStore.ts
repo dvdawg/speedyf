@@ -56,7 +56,8 @@ export { state as prepareState };
 
 const [tabId, setTabId] = createSignal<string | null>(null);
 
-const baseKey = (tab: TabRecord) => `${tab.id}:${tab.documentStore.state.docId}`;
+const baseKey = (tab: TabRecord) =>
+  `${tab.id}:${tab.documentStore.state.docId}:${tab.documentStore.state.generation}`;
 
 /** Whether `tab` (else the active tab) is in Prepare form mode. */
 export function preparing(tab?: TabRecord | null): boolean {
@@ -97,6 +98,16 @@ export async function startPreparing(tab: TabRecord | null | undefined = activeT
     setActiveTool('select');
     tab.viewport.setState('formPanelOpen', true);
   });
+}
+
+/** Read the form in again for a tab whose document was reopened (a save
+ * reopens it) while the mode stayed on. */
+export async function ensureBase(tab: TabRecord) {
+  const key = baseKey(tab);
+  if (state.bases[key] || !tab.documentStore.state.loaded) return;
+  const info = await formInfo(tab.documentStore.state.docId);
+  if (baseKey(tab) !== key || state.bases[key]) return;
+  setState('bases', key, designFromForm(info, tab.documentStore.state.pages));
 }
 
 export function stopPreparing() {

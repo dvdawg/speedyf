@@ -11,6 +11,7 @@ import { deleteFields, duplicateFields, moveFields, type PrepareTool } from './m
 import {
   commitDesign,
   designOf,
+  ensureBase,
   prepareState,
   preparing,
   select,
@@ -182,6 +183,11 @@ export function prepareKey(e: KeyboardEvent): boolean {
 
 export default function PrepareTools() {
   const visible = () => preparing();
+
+  createEffect(() => {
+    const tab = activeTab();
+    if (tab && preparing(tab)) void ensureBase(tab);
+  });
 
   createEffect(() => {
     if (!visible()) return;
