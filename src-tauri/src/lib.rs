@@ -405,6 +405,7 @@ pub fn run() {
             commands::get_text_layout,
             commands::get_page_links,
             commands::get_page_bubbles,
+            commands::get_page_blanks,
             commands::get_page_glyphs,
             commands::get_math_tags,
             commands::get_equation_blocks,

@@ -8,6 +8,9 @@
 //! process pool can replace the thread without changing any caller.
 
 pub mod annots;
+pub mod blanks;
+#[cfg(test)]
+mod blanks_eval;
 pub mod bubbles;
 pub mod carry;
 pub mod citation;
@@ -22,6 +25,7 @@ pub mod hovers;
 pub mod invert;
 pub mod layout_text;
 pub mod links;
+pub mod marks;
 pub mod markup_export;
 pub mod ocr;
 pub mod ocr_thread;
@@ -125,6 +129,12 @@ pub enum Work {
         doc: DocId,
         src: u32,
         respond: Respond<PageBubblesDto>,
+    },
+    /// The blanks a printed form draws on one page, for the Fill tool.
+    PageBlanks {
+        doc: DocId,
+        src: u32,
+        respond: Respond<PageBlanksDto>,
     },
     /// A page's glyphs and rules inside `rects` (top-left `[x, y, w, h]`;
     /// none means the whole page), laid out on the page's raster, for

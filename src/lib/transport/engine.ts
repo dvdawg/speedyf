@@ -18,8 +18,10 @@ import type {
   GeneratedOutline,
   LibraryStatus,
   OutlineNode,
+  Blank,
   Bubble,
   PageAnnotations,
+  PageBlanks,
   PageBubbles,
   PageLinks,
   PageTextLayout,
@@ -118,6 +120,9 @@ export interface EngineApi {
   /** Bubbles and checkboxes the page draws as glyphs rather than declares as
    * form fields, for the shading tool. */
   getPageBubbles(docId: number, src: number): Promise<Bubble[]>;
+  /** The blanks a printed form draws on a page (rules, empty boxes, cells,
+   * comb rows), in reading order, for the Fill tool. */
+  getPageBlanks(docId: number, src: number): Promise<Blank[]>;
   /** The crop a link's destination previews. `from` - the link's own page
    * and rectangle - lets the engine read the link's words ("Theorem 2",
    * "[12]") for a destination that is only a page or that many links
@@ -325,6 +330,8 @@ export const engine: EngineApi = {
   getPageLinks: (docId, src) => invoke('get_page_links', { docId, src }),
   getPageBubbles: async (docId, src) =>
     (await invoke<PageBubbles>('get_page_bubbles', { docId, src })).bubbles,
+  getPageBlanks: async (docId, src) =>
+    (await invoke<PageBlanks>('get_page_blanks', { docId, src })).blanks,
   getPreviewRect: (docId, src, x, y, from) =>
     invoke('get_preview_rect', {
       docId,

@@ -7,7 +7,7 @@ import { fitTextBox, textStyleOf } from './textStyle';
 /** A second toolbar row stays available for creating and editing text boxes. */
 export default function TextTools() {
   const editing = () => {
-    if (toolState.active !== 'select') return;
+    if (toolState.active !== 'select' && toolState.active !== 'fill') return;
     const tab = activeTab();
     const state = tab?.documentStore.state;
     const sel = tab?.viewport.state.editingText;

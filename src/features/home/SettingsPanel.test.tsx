@@ -198,4 +198,19 @@ describe('SettingsPanel display settings', () => {
       lowMemory: false,
     });
   });
+
+  it('offers the Fill tool date formats, US first, and keeps the choice', () => {
+    updateSettings({ dateFormat: 'mm/dd/yyyy' });
+    render(() => <SettingsPanel />);
+    const select = screen.getByLabelText(/Date format/) as HTMLSelectElement;
+    expect(select.value).toBe('mm/dd/yyyy');
+    expect([...select.options].map((o) => o.textContent)).toEqual([
+      'MM/DD/YYYY',
+      'YYYY-MM-DD',
+      'DD/MM/YYYY',
+    ]);
+    fireEvent.input(select, { target: { value: 'dd/mm/yyyy' } });
+    expect(settings.dateFormat).toBe('dd/mm/yyyy');
+    updateSettings({ dateFormat: 'mm/dd/yyyy' });
+  });
 });

@@ -56,6 +56,7 @@ import TextTools from '../features/annotations/TextTools';
 import { ReaderPaneToggles } from '../features/extensions/ReaderPane';
 import { MarkupToggle } from '../features/markup/MarkupToggle';
 import { SignMenu } from '../features/sign/SignMenu';
+import FillTools from '../features/sign/FillTools';
 
 export default function Toolbar() {
   const maxSavePages = 65_535;
@@ -83,7 +84,8 @@ export default function Toolbar() {
   };
 
   const showStroke = () => toolState.active === 'ink' || toolState.active === 'rect';
-  const showStyle = () => toolState.active !== 'select' && toolState.active !== 'textbox';
+  const showStyle = () =>
+    toolState.active !== 'select' && toolState.active !== 'textbox' && toolState.active !== 'fill';
   // Home and Projects show no document, so every reader control would sit
   // there disabled, and Open alone would be an empty bar: there is no bar.
   // Open stays on Cmd+O, Home's own Open PDF... button and the palette.
@@ -450,6 +452,7 @@ export default function Toolbar() {
           <MarkupToggle />
         </div>
         <TextTools />
+        <FillTools />
       </div>
     </Show>
   );

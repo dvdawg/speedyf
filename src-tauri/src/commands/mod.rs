@@ -171,6 +171,25 @@ pub async fn get_page_bubbles(
         .await
 }
 
+/// The blanks a printed form draws on one page, for the Fill tool.
+#[tauri::command]
+pub async fn get_page_blanks(
+    state: tauri::State<'_, EngineState>,
+    doc_id: DocId,
+    src: u32,
+) -> AppResult<PageBlanksDto> {
+    state
+        .0
+        .call_async(Priority::AdjacentPage, doc_id, move |respond| {
+            Work::PageBlanks {
+                doc: doc_id,
+                src,
+                respond,
+            }
+        })
+        .await
+}
+
 #[tauri::command]
 pub async fn get_preview_rect(
     state: tauri::State<'_, EngineState>,

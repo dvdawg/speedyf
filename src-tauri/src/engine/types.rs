@@ -352,6 +352,31 @@ pub struct PageBubblesDto {
     pub bubbles: Vec<BubbleDto>,
 }
 
+/// One place a printed form leaves to write in - a rule, an empty box, the
+/// free part of a labelled cell, a comb row - found from what the page draws
+/// (see `engine::blanks`).
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct BlankDto {
+    /// Display-normalized page space, y-up. For a `line` the bottom edge is
+    /// the rule itself, where the writing's baseline goes.
+    pub rect: RectDto,
+    /// `line`, `box`, `cell`, `comb` or `check`.
+    pub kind: String,
+    /// What to write in it at: the size of the label beside it, clamped to
+    /// a readable range and to the room the blank has.
+    pub font_size_pt: f32,
+    /// For a comb: how many character cells it is divided into.
+    pub cells: u32,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PageBlanksDto {
+    pub src: u32,
+    pub blanks: Vec<BlankDto>,
+}
+
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct FormFieldDto {
@@ -547,6 +572,10 @@ pub struct PlanAnnot {
     /// Write a signature into the page content instead of as an annotation.
     #[serde(default)]
     pub flatten: bool,
+    /// Which Fill & Sign mark (`kind: "mark"`): check, cross, dot, line or
+    /// circle. See `engine/marks.rs`.
+    #[serde(default)]
+    pub mark: Option<String>,
 }
 
 /// A visual signature's artwork, in its own box of `w` x `h` units, y down.
@@ -601,6 +630,12 @@ pub struct AnnotationDto {
     pub text_style: TextStyle,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signature: Option<SignatureArt>,
+    /// A Fill & Sign mark's shape (`kind: "mark"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mark: Option<String>,
+    /// A text box written one character a cell (a comb row on a form).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comb_cells: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -638,6 +673,10 @@ pub struct PlanText {
     pub opacity: f32,
     #[serde(flatten)]
     pub style: TextStyle,
+    /// Write one character per cell across the box: text filled into a comb
+    /// row on a printed form.
+    #[serde(default)]
+    pub comb_cells: Option<u32>,
 }
 
 #[derive(Deserialize, Clone, Debug)]

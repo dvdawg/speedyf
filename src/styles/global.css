@@ -1971,6 +1971,10 @@ html.is-dragging-tab * {
   user-select: none;
 }
 
+.annot-layer.is-filling {
+  cursor: text;
+}
+
 .annot-svg {
   position: absolute;
   inset: 0;
@@ -2023,6 +2027,40 @@ html.is-dragging-tab * {
 .annot-svg .bubble-target.is-shaded:hover {
   fill-opacity: 0.12;
   stroke-opacity: 0.7;
+}
+
+/* Fill & Sign: printed-form blanks, faint, and only while the Fill tool is
+   held. A rule to write on is marked along its rule alone. */
+.annot-svg .fill-blank {
+  pointer-events: none;
+  fill: var(--accent);
+  fill-opacity: 0.05;
+  stroke: var(--accent);
+  stroke-opacity: 0.35;
+  stroke-width: 0.6;
+  stroke-dasharray: 2 2;
+}
+
+.annot-svg .fill-blank.is-line {
+  fill-opacity: 0.03;
+  stroke-opacity: 0.25;
+}
+
+.annot-text-comb {
+  display: flex;
+  white-space: pre;
+  line-height: 1.3;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.annot-text-comb > span {
+  flex: none;
+  text-align: center;
+}
+
+.fill-tool-options .fill-done {
+  margin-left: auto;
 }
 
 .annot-shape.is-selected {

@@ -35,6 +35,32 @@ import type { EquationBlock } from '../extensions/EquationLayer';
 import { placePendingSignature, signState } from '../sign/signStore';
 import { resizeKeepingAspect } from '../sign/art';
 import SignatureArtView from '../sign/SignatureArtView';
+import {
+  blankOfAnnot,
+  blanksOf,
+  fillActive,
+  fillState,
+  linkBlank,
+  loadBlanks,
+  requestArrival,
+  setFillMode,
+  takeArrival,
+  arrival,
+} from '../sign/fillStore';
+import {
+  blankAt,
+  formatDate,
+  freeText,
+  markPath,
+  markPen,
+  markRect,
+  nearbyFontSize,
+  nextStop,
+  snapText,
+} from '../sign/fill';
+import { settings } from '../../stores/settings';
+import type { Blank } from '../../types/engine';
+import type { MarkKind } from '../../types/model';
 
 interface Props {
   page: PageEntry;
@@ -78,10 +104,14 @@ export default function AnnotationLayer(props: Props) {
     }
   };
 
+  /** Tools a text box can be typed into under: Select, and Fill, which
+   * keeps the tool in hand while answering one blank after another. */
+  const typingTool = () => toolState.active === 'select' || toolState.active === 'fill';
+
   createEffect(() => {
     const id = editingId();
     if (!id) return;
-    if (selectedId() !== id || toolState.active !== 'select') untrack(finishEditing);
+    if (selectedId() !== id || !typingTool()) untrack(finishEditing);
   });
 
   createEffect(() => {
@@ -100,7 +130,7 @@ export default function AnnotationLayer(props: Props) {
   createEffect(() => {
     const id = selectedId();
     if (!id || annots().find((a) => a.id === id)?.kind !== 'textbox') return;
-    if (toolState.active !== 'select' || (activeTab() && activeTab()!.id !== tab.id)) {
+    if (!typingTool() || (activeTab() && activeTab()!.id !== tab.id)) {
       untrack(() => {
         finishEditing();
         documentStore.setSelected(null);
@@ -189,6 +219,204 @@ export default function AnnotationLayer(props: Props) {
         bubbleCharIndex: b.charIndex,
       },
     });
+  };
+
+  // ---------- Fill & Sign ----------
+
+  const docId = () => documentStore.state.docId;
+  // Asked for only while the tool is held, like bubbles: a reader who never
+  // fills a form never pays to have its blanks found.
+  createEffect(() => {
+    const src = props.page.srcIndex;
+    if (fillActive() && src !== null) void loadBlanks(docId(), src);
+  });
+  const blanks = (): Blank[] => {
+    const src = props.page.srcIndex;
+    return fillActive() && src !== null ? (blanksOf(docId(), src) ?? []) : [];
+  };
+
+  /** The text box already answering blank `index`: the one typed into it
+   * this session, or one sitting on it (read back from a saved file). */
+  const answerOf = (index: number): Annotation | undefined => {
+    const b = blanks()[index];
+    if (!b) return undefined;
+    return annots().find((a) => {
+      if (a.kind !== 'textbox') return false;
+      const link = blankOfAnnot(a.id);
+      if (link) return link.pageId === props.page.id && link.blank === index;
+      const cx = a.rect.x + Math.min(a.rect.w, 12) / 2;
+      const cy = a.rect.y + a.rect.h / 2;
+      return (
+        cx >= b.rect.x &&
+        cx <= b.rect.x + b.rect.w &&
+        cy >= b.rect.y - 4 &&
+        cy <= b.rect.y + b.rect.h + 4
+      );
+    });
+  };
+
+  const editText = (id: string) => {
+    documentStore.setSelected({ pageId: props.page.id, annotId: id });
+    setEditingId(id);
+  };
+
+  /** A new text box from the Fill tool's style. */
+  const fillTextBox = (
+    rect: PdfRect,
+    fontSizePt: number,
+    text: string,
+    combCells?: number
+  ): Annotation => {
+    const style = toolState.styles.fill;
+    const annot: Annotation = {
+      id: newAnnotId(),
+      pageId: props.page.id,
+      kind: 'textbox',
+      rect,
+      color: style.color,
+      opacity: style.opacity,
+      text,
+      autoSize: false,
+      ...textStyleOf(style),
+      fontSizePt,
+      ...(combCells ? { combCells } : {}),
+    };
+    annot.rect = fitTextBox(annot, props.page);
+    return annot;
+  };
+
+  /** Open blank `index` for typing: the answer already there, or a new text
+   * box snapped onto it. */
+  const openBlank = (index: number) => {
+    const existing = answerOf(index);
+    if (existing) {
+      editText(existing.id);
+      return;
+    }
+    const b = blanks()[index];
+    if (!b) return;
+    const snapped = snapText(b);
+    const annot = fillTextBox(snapped.rect, snapped.fontSizePt, '', snapped.combCells);
+    documentStore.apply({ type: 'addAnnot', annot });
+    linkBlank(annot.id, props.page.id, index);
+    editText(annot.id);
+  };
+
+  // Tab from another page: open the blank it was headed for once this page
+  // is mounted and its blanks are known.
+  createEffect(() => {
+    const a = arrival();
+    if (!a || a.pageId !== props.page.id || !fillActive() || blanks().length === 0) return;
+    const index = untrack(() => takeArrival(props.page.id));
+    if (index !== null) untrack(() => openBlank(index));
+  });
+
+  /** Tab and Shift-Tab: the next blank in reading order, on this page or the
+   * next one that has any. The box being left goes if it is still empty. */
+  const tabFrom = (a: Annotation, direction: 1 | -1) => {
+    const link = blankOfAnnot(a.id);
+    const here =
+      link?.pageId === props.page.id
+        ? link.blank
+        : blankAt(blanks(), { x: a.rect.x + 2, y: a.rect.y + a.rect.h / 2 });
+    finishEditing(true);
+    const next = nextStop(blanks(), here, direction);
+    if (next !== null) {
+      openBlank(next);
+      return;
+    }
+    void tabToPage(direction);
+  };
+
+  const tabToPage = async (direction: 1 | -1) => {
+    const pages = documentStore.state.pages;
+    const from = pages.findIndex((p) => p.id === props.page.id);
+    for (
+      let i = from + direction, seen = 0;
+      i >= 0 && i < pages.length && seen < 50;
+      i += direction, seen++
+    ) {
+      const page = pages[i]!;
+      if (page.srcIndex === null) continue;
+      const found = await loadBlanks(docId(), page.srcIndex);
+      const stop = nextStop(found, null, direction);
+      if (stop === null) continue;
+      const b = found[stop]!;
+      requestArrival(page.id, stop);
+      const rotation = (page.baseRotation + page.userRotation + viewport.state.viewRotation) % 360;
+      const heightPt = rotation % 180 === 0 ? page.heightPt : page.widthPt;
+      const top = b.rect.y + b.rect.h;
+      viewport.requestScrollToPage(
+        i,
+        Math.max(0, (heightPt - top) * viewport.state.zoom - viewport.state.containerH * 0.3)
+      );
+      return;
+    }
+  };
+
+  const placeMark = (mark: MarkKind, p: PdfPoint) => {
+    const index = blankAt(blanks(), p, ['check', 'box']);
+    const box = index === null ? null : blanks()[index]!.rect;
+    // Only a box about the size of a mark centres it; a big box takes the
+    // mark where it was dropped.
+    const fits = box && Math.max(box.w, box.h) <= 30 ? box : null;
+    const size = fits ? Math.min(fits.w, fits.h) : nearbyFontSize(props.runs, p);
+    const rect = markRect(mark, p, size, fits);
+    const style = toolState.styles.fill;
+    documentStore.apply({
+      type: 'addAnnot',
+      annot: {
+        id: newAnnotId(),
+        pageId: props.page.id,
+        kind: 'mark',
+        mark,
+        rect,
+        color: style.color,
+        opacity: style.opacity,
+        strokeWidth: markPen(rect),
+      },
+    });
+  };
+
+  /** A click with the Fill tool. */
+  const fillClick = (p: PdfPoint) => {
+    const mode = fillState.mode;
+    if (mode !== 'text' && mode !== 'date') {
+      placeMark(mode, p);
+      return;
+    }
+    const all = blanks();
+    const index = blankAt(all, p);
+    const b = index === null ? undefined : all[index];
+    if (mode === 'text' && b?.kind === 'check') {
+      placeMark('check', p);
+      return;
+    }
+    if (mode === 'date') {
+      const text = formatDate(new Date(), settings.dateFormat);
+      const size = b ? b.fontSizePt : nearbyFontSize(props.runs, p);
+      const rect = b
+        ? snapText({ ...b, kind: b.kind === 'comb' ? 'box' : b.kind }).rect
+        : freeText(p, size, props.page.widthPt);
+      const annot = fillTextBox(rect, size, text);
+      if (!b) annot.autoSize = true;
+      annot.rect = fitTextBox(annot, props.page);
+      documentStore.apply({ type: 'addAnnot', annot });
+      documentStore.setSelected({ pageId: props.page.id, annotId: annot.id });
+      // A stamp, not a mode: the next click types again.
+      setFillMode('text');
+      return;
+    }
+    if (index !== null) {
+      openBlank(index);
+      return;
+    }
+    const size = nearbyFontSize(props.runs, p);
+    const annot = fillTextBox(freeText(p, size, props.page.widthPt), size, '');
+    annot.autoSize = true;
+    annot.rect = fitTextBox(annot, props.page);
+    documentStore.apply({ type: 'addAnnot', annot });
+    editText(annot.id);
   };
 
   // ---------- creation ----------
@@ -312,6 +540,12 @@ export default function AnnotationLayer(props: Props) {
     // The bubble tool has no drag gesture of its own: it clicks targets that
     // are already on the page, and each target handles its own pointer.
     if (toolState.active === 'bubble') return;
+    if (toolState.active === 'fill') {
+      e.preventDefault();
+      e.stopPropagation();
+      fillClick(toPdf(e));
+      return;
+    }
     e.preventDefault();
     e.stopPropagation();
     const p = toPdf(e);
@@ -457,6 +691,7 @@ export default function AnnotationLayer(props: Props) {
       classList={{
         'is-drawing': drawingTool() || placing(),
         'is-placing-signature': placing(),
+        'is-filling': fillActive() && fillState.mode === 'text',
       }}
       onPointerDown={onLayerPointerDown}
       onPointerMove={onLayerPointerMove}
@@ -508,6 +743,24 @@ export default function AnnotationLayer(props: Props) {
                     onPointerDown={(e) => startMove(e, raw)}
                   />
                 </Show>
+                <Show when={a().kind === 'mark' && a().mark}>
+                  {(mark) => (
+                    <path
+                      class="annot-shape annot-mark"
+                      classList={{ 'is-selected': selectedId() === a().id }}
+                      d={markPath(mark(), a().rect, H())}
+                      fill={mark() === 'dot' ? a().color : 'none'}
+                      fill-opacity={a().opacity}
+                      stroke={mark() === 'dot' ? 'none' : a().color}
+                      stroke-opacity={a().opacity}
+                      stroke-width={a().strokeWidth ?? markPen(a().rect)}
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      pointer-events={toolState.active === 'select' ? 'all' : 'none'}
+                      onPointerDown={(e) => startMove(e, raw)}
+                    />
+                  )}
+                </Show>
                 <Show when={a().kind === 'rect'}>
                   <rect
                     class="annot-shape"
@@ -551,6 +804,23 @@ export default function AnnotationLayer(props: Props) {
             stroke-width={1}
             stroke-dasharray="4 3"
           />
+        </Show>
+
+        {/* Printed-form blanks, outlined only while the Fill tool is held.
+            Clicks go to the layer, which works out which blank was meant. */}
+        <Show when={fillActive()}>
+          <For each={blanks()}>
+            {(b) => (
+              <rect
+                class="fill-blank"
+                classList={{ 'is-line': b.kind === 'line' }}
+                x={b.rect.x}
+                y={H() - b.rect.y - b.rect.h}
+                width={b.rect.w}
+                height={b.rect.h}
+              />
+            )}
+          </For>
         </Show>
 
         {/* Bubble targets. Drawn last so they sit above the shadings they
@@ -621,10 +891,18 @@ export default function AnnotationLayer(props: Props) {
                     'font-weight': a().bold ? '700' : '400',
                     'font-style': a().italic ? 'italic' : 'normal',
                     'text-decoration': a().underline ? 'underline' : 'none',
-                    'pointer-events': toolState.active === 'select' ? 'auto' : 'none',
+                    'pointer-events': typingTool() ? 'auto' : 'none',
                   }}
                   onPointerDown={(e) => {
-                    if (editingId() !== a().id) startMove(e, raw);
+                    if (editingId() === a().id) return;
+                    if (toolState.active === 'fill') {
+                      // Filling: a click on an answer edits it again.
+                      e.stopPropagation();
+                      e.preventDefault();
+                      editText(a().id);
+                      return;
+                    }
+                    startMove(e, raw);
                   }}
                   onDblClick={() => {
                     if (toolState.active !== 'select') return;
@@ -634,10 +912,30 @@ export default function AnnotationLayer(props: Props) {
                 >
                   <Show
                     when={editingId() === a().id}
-                    fallback={<div class="annot-text-content">{a().text}</div>}
+                    fallback={
+                      <Show
+                        when={a().combCells}
+                        fallback={<div class="annot-text-content">{a().text}</div>}
+                      >
+                        {(cells) => (
+                          <div class="annot-text-comb">
+                            <For each={combChars(a().text ?? '', cells())}>
+                              {(c) => (
+                                <span style={{ width: `${(a().rect.w / cells()) * props.zoom}px` }}>
+                                  {c}
+                                </span>
+                              )}
+                            </For>
+                          </div>
+                        )}
+                      </Show>
+                    }
                   >
                     <textarea
                       class="annot-text-editor"
+                      classList={{ 'is-comb': !!a().combCells }}
+                      style={combEditorStyle(a(), props.zoom)}
+                      maxLength={a().combCells}
                       value={a().text ?? ''}
                       ref={(el) => queueMicrotask(() => el.isConnected && el.focus())}
                       onPointerDown={(e) => e.stopPropagation()}
@@ -662,6 +960,19 @@ export default function AnnotationLayer(props: Props) {
                         if (e.key === 'Escape') {
                           e.stopPropagation();
                           finishEditing(true);
+                        } else if (
+                          e.key === 'Tab' &&
+                          toolState.active === 'fill' &&
+                          !e.metaKey &&
+                          !e.ctrlKey &&
+                          !e.altKey
+                        ) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          tabFrom(raw, e.shiftKey ? -1 : 1);
+                        } else if (e.key === 'Enter' && a().combCells) {
+                          // One line of cells: Enter has nowhere to go.
+                          e.preventDefault();
                         }
                       }}
                       aria-label="Text box content"
@@ -785,7 +1096,13 @@ export default function AnnotationLayer(props: Props) {
               </Show>
 
               {/* selection chrome: resize handles + delete */}
-              <Show when={isSel() && ['rect', 'textbox', 'image', 'signature'].includes(a().kind)}>
+              <Show
+                when={
+                  isSel() &&
+                  toolState.active === 'select' &&
+                  ['rect', 'textbox', 'image', 'signature', 'mark'].includes(a().kind)
+                }
+              >
                 <For each={['nw', 'ne', 'sw', 'se'] as const}>
                   {(h) => (
                     <div
@@ -855,6 +1172,30 @@ function ImageAnnot(props: {
 }
 
 // ---------- pure helpers ----------
+
+/** The characters of a comb answer, one per cell, padded to fill the row. */
+function combChars(text: string, cells: number): string[] {
+  const chars = [...text.replace(/[\r\n]/g, '')].slice(0, cells);
+  while (chars.length < cells) chars.push('');
+  return chars;
+}
+
+/** Typing into a comb: a fixed-pitch font spaced to the cells, so each
+ * character lands in its box as it is typed. */
+function combEditorStyle(a: Annotation, zoom: number): Record<string, string> | undefined {
+  if (!a.combCells) return undefined;
+  const size = textStyleOf(a).fontSizePt;
+  const pitch = a.rect.w / a.combCells;
+  // Courier advances 0.6 em per character.
+  const spacing = Math.max(0, pitch - size * 0.6);
+  return {
+    'font-family': textFontCss.Courier,
+    'letter-spacing': `${spacing * zoom}px`,
+    'padding-left': `${(spacing / 2) * zoom}px`,
+    'white-space': 'nowrap',
+    overflow: 'hidden',
+  };
+}
 
 function rectFrom(a: PdfPoint, b: PdfPoint): PdfRect {
   return {

@@ -62,7 +62,7 @@ interface PriorFormValues {
 }
 
 export interface PlanAnnot {
-  kind: 'highlight' | 'ink' | 'rect' | 'note' | 'signature';
+  kind: 'highlight' | 'ink' | 'rect' | 'note' | 'bubble' | 'signature' | 'mark';
   rect: PdfRect;
   color: string;
   opacity: number;
@@ -73,6 +73,8 @@ export interface PlanAnnot {
   signature?: Annotation['signature'];
   /** signatures only: into the page content rather than as an annotation */
   flatten?: boolean;
+  /** marks only: which one */
+  mark?: Annotation['mark'];
 }
 
 export interface PlanText extends Partial<
@@ -83,6 +85,8 @@ export interface PlanText extends Partial<
   fontSizePt: number;
   color: string;
   opacity: number;
+  /** one character a cell across this many cells (a comb row) */
+  combCells?: number;
 }
 
 export interface PlanImage {
@@ -739,6 +743,8 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
       a.italic ?? false,
       a.underline ?? false,
       a.signature ?? null,
+      a.mark ?? null,
+      a.combCells ?? null,
     ]);
 
   /** Adopt the annotations already in the file.
@@ -811,7 +817,7 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
         dropSrcAnnots,
         annots: anns
           .filter((a): a is Annotation & { kind: PlanAnnot['kind'] } =>
-            ['highlight', 'ink', 'rect', 'note', 'bubble', 'signature'].includes(a.kind)
+            ['highlight', 'ink', 'rect', 'note', 'bubble', 'signature', 'mark'].includes(a.kind)
           )
           .map((a) => ({
             kind: a.kind,
@@ -825,6 +831,7 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
             ...(a.signature !== undefined
               ? { signature: a.signature, flatten: state.flattenSignatures }
               : {}),
+            ...(a.mark !== undefined ? { mark: a.mark } : {}),
           })),
         texts: anns
           .filter((a) => a.kind === 'textbox')
@@ -838,6 +845,7 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
             underline: a.underline ?? false,
             color: a.color,
             opacity: a.opacity,
+            ...(a.combCells ? { combCells: a.combCells } : {}),
           })),
         images: anns
           .filter((a) => a.kind === 'image' && a.sourcePath)

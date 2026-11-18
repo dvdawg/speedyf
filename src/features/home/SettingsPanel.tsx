@@ -22,7 +22,7 @@ import {
   sleepyActive,
   updateSettings,
 } from '../../stores/settings';
-import type { LaunchScreen, SleepyMode, ThemePref } from '../../stores/settings';
+import type { DateFormat, LaunchScreen, SleepyMode, ThemePref } from '../../stores/settings';
 import type { BibtexOptions, LibraryBackup, LibraryDataInfo } from '../../types/engine';
 import { formatDate } from './format';
 
@@ -239,6 +239,25 @@ export default function SettingsPanel() {
             checked={settings.highlightFields}
             onInput={(e) => updateSettings({ highlightFields: e.currentTarget.checked })}
           />
+        </div>
+
+        <div class="home-setting">
+          <label class="home-setting-text" for="setting-date-format">
+            <span class="home-setting-title">Date format</span>
+            <span class="home-setting-desc">
+              How Fill &amp; Sign and form date fields write dates. A form's own date format always
+              wins.
+            </span>
+          </label>
+          <select
+            id="setting-date-format"
+            value={settings.dateFormat}
+            onInput={(e) => updateSettings({ dateFormat: e.currentTarget.value as DateFormat })}
+          >
+            <option value="mm/dd/yyyy">MM/DD/YYYY</option>
+            <option value="yyyy-mm-dd">YYYY-MM-DD</option>
+            <option value="dd/mm/yyyy">DD/MM/YYYY</option>
+          </select>
         </div>
 
         <div class="home-setting">
