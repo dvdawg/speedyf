@@ -1136,6 +1136,18 @@ pub fn build_output(
             display: &plan.form_display,
         },
     )?;
+
+    // 5) Prepare form mode: fields created, changed, reordered or deleted,
+    //    then flattened if asked - after the values above, whose widgets
+    //    are found by annotation index, which this can change.
+    if let Some(design) = plan.form_design.as_ref().filter(|d| !d.is_empty()) {
+        forms::apply_design(out_path, design)
+            .map_err(|e| AppError::Internal(format!("prepare form: {e}")))?;
+        if design.flatten {
+            forms::flatten_form(out_path)
+                .map_err(|e| AppError::Internal(format!("flatten form: {e}")))?;
+        }
+    }
     Ok(())
 }
 
@@ -1245,6 +1257,7 @@ mod tests {
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
             form_display: Vec::new(),
+            form_design: None,
         };
         build_output(
             &pdfium,
@@ -1390,6 +1403,7 @@ mod tests {
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
             form_display: Vec::new(),
+            form_design: None,
         };
         build_output(
             &pdfium,
@@ -1555,6 +1569,7 @@ mod tests {
             form_buttons: vec![],
             form_choices: Vec::new(),
             form_display: Vec::new(),
+            form_design: None,
         };
         build_output(&pdfium, source.to_str().unwrap(), None, &plan, &output).unwrap();
         let doc = pdfium.load_pdf_from_file(&output, None).unwrap();
@@ -1614,6 +1629,7 @@ mod tests {
                 form_buttons: Vec::new(),
                 form_choices: Vec::new(),
                 form_display: Vec::new(),
+                form_design: None,
             },
             &output,
         )
@@ -1700,6 +1716,7 @@ mod tests {
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
             form_display: Vec::new(),
+            form_design: None,
         };
         build_output(&pdfium, source.to_str().unwrap(), None, &plan, &output).unwrap();
         let doc = pdfium.load_pdf_from_file(&output, None).unwrap();
@@ -1786,6 +1803,7 @@ mod tests {
                 form_buttons: Vec::new(),
                 form_choices: Vec::new(),
                 form_display: Vec::new(),
+                form_design: None,
             },
             &output,
         )
@@ -1863,6 +1881,7 @@ mod tests {
                 form_buttons: Vec::new(),
                 form_choices: Vec::new(),
                 form_display: Vec::new(),
+                form_design: None,
             },
             &output,
         )
@@ -1943,6 +1962,7 @@ mod tests {
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
             form_display: Vec::new(),
+            form_design: None,
         };
         build_output(
             &pdfium,
@@ -2012,6 +2032,7 @@ mod tests {
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
             form_display: Vec::new(),
+            form_design: None,
         };
         build_output(
             &pdfium,
@@ -2295,6 +2316,7 @@ mod tests {
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
             form_display: Vec::new(),
+            form_design: None,
         };
         build_output(
             pdfium,

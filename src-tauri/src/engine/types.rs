@@ -437,7 +437,7 @@ pub struct FormFieldDto {
     pub tab_order: u32,
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct FormOptionDto {
     /// What the reader sees.
@@ -529,7 +529,7 @@ pub struct EngineMetricsDto {
 
 // ---------- Edit plan (mirrors the TypeScript EditPlan exactly) ----------
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct RectDto {
     pub x: f32,
     pub y: f32,
@@ -726,4 +726,203 @@ pub struct EditPlan {
     /// and the colour a red negative style asks for. See `forms::appearance`.
     #[serde(default)]
     pub form_display: Vec<(String, String, Option<bool>)>,
+    /// Fields created, changed or deleted in Prepare form mode, and the
+    /// flatten-form switch. See `forms::design`.
+    #[serde(default)]
+    pub form_design: Option<PlanFormDesign>,
+}
+
+/// What Prepare form mode changes in a document's AcroForm at save.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanFormDesign {
+    /// New fields, and existing ones whose properties or place changed.
+    #[serde(default)]
+    pub fields: Vec<PlanDesignField>,
+    /// Existing widgets to remove.
+    #[serde(default)]
+    pub deleted: Vec<PlanWidgetRef>,
+    /// Pages whose Tab order was set by hand.
+    #[serde(default)]
+    pub tab_orders: Vec<PlanTabOrder>,
+    /// Merge every widget's appearance into its page and remove the form.
+    #[serde(default)]
+    pub flatten: bool,
+}
+
+impl PlanFormDesign {
+    pub fn is_empty(&self) -> bool {
+        self.fields.is_empty()
+            && self.deleted.is_empty()
+            && self.tab_orders.is_empty()
+            && !self.flatten
+    }
+}
+
+/// A widget already in the file, as the frontend last read it: its output
+/// page, its field's full name and its rect there (display space). Widgets
+/// are found by name and nearest rect rather than by annotation index,
+/// which other edits in the same save can shift.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanWidgetRef {
+    pub page: u32,
+    pub name: String,
+    pub rect: RectDto,
+}
+
+/// One field as Prepare form mode describes it. A field with an `origin`
+/// is an existing widget being changed; one without is created.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanDesignField {
+    /// The frontend's id for it, which tab orders refer to.
+    pub key: String,
+    #[serde(default)]
+    pub origin: Option<PlanWidgetRef>,
+    /// Output page index.
+    pub page: u32,
+    /// Display space, y-up.
+    pub rect: RectDto,
+    /// text, checkbox, radio, combo, list or signature.
+    pub kind: String,
+    pub name: String,
+    #[serde(default)]
+    pub tooltip: String,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub read_only: bool,
+    /// Text, a choice's export value, or for a checkbox or radio its export
+    /// value to start checked.
+    #[serde(default)]
+    pub default_value: String,
+    /// 0 is auto.
+    #[serde(default)]
+    pub font_size: f32,
+    #[serde(default)]
+    pub align: u8,
+    #[serde(default)]
+    pub max_len: u32,
+    #[serde(default)]
+    pub comb: bool,
+    #[serde(default)]
+    pub multiline: bool,
+    #[serde(default)]
+    pub options: Vec<FormOptionDto>,
+    /// The on-state of a checkbox or radio widget.
+    #[serde(default)]
+    pub export_value: String,
+    /// Draw a thin border round the widget.
+    #[serde(default)]
+    pub border: bool,
+    #[serde(default)]
+    pub format: Option<PlanFieldFormat>,
+    #[serde(default)]
+    pub calc: Option<PlanFieldCalc>,
+    /// For an existing field: `format` replaces its keystroke and format
+    /// actions. Unset, those are left as they are - they may be scripts
+    /// SpeedyF could not read, which must not be lost.
+    #[serde(default)]
+    pub format_set: bool,
+    /// For an existing field: `calc` replaces its calculate action.
+    #[serde(default)]
+    pub calc_set: bool,
+    /// For an existing field: draw a new appearance. Unset, the file's own
+    /// is kept, moved with the widget.
+    #[serde(default)]
+    pub restyle: bool,
+}
+
+/// A field format, written as the standard Acrobat helper calls.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum PlanFieldFormat {
+    Number {
+        decimals: u32,
+        #[serde(default)]
+        sep_style: u8,
+        #[serde(default)]
+        neg_style: u8,
+        #[serde(default)]
+        currency: String,
+        #[serde(default = "default_true")]
+        prepend: bool,
+    },
+    Percent {
+        decimals: u32,
+        #[serde(default)]
+        sep_style: u8,
+    },
+    Date {
+        format: String,
+    },
+    Time {
+        format: String,
+    },
+    /// 0 zip, 1 zip+4, 2 phone, 3 SSN.
+    Special {
+        style: u8,
+    },
+    Mask {
+        mask: String,
+    },
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// AFSimple_Calculate: SUM, PRD, AVG, MIN or MAX over `fields`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanFieldCalc {
+    pub op: String,
+    pub fields: Vec<String>,
+}
+
+/// A page's Tab order: design keys of new or changed fields, or refs to
+/// untouched existing widgets.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanTabOrder {
+    pub page: u32,
+    /// The page's /Tabs: R rows, C columns, S as listed.
+    #[serde(default)]
+    pub mode: String,
+    pub order: Vec<PlanTabEntry>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanTabEntry {
+    #[serde(default)]
+    pub key: Option<String>,
+    #[serde(default)]
+    pub widget: Option<PlanWidgetRef>,
+}
+
+/// A field Prepare form mode proposes from a printed blank.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProposedFieldDto {
+    pub page: u32,
+    pub rect: RectDto,
+    /// text or checkbox.
+    pub kind: String,
+    /// From the nearest label, unique in the document.
+    pub name: String,
+    /// The label text it was named from, for the tooltip; may be empty.
+    pub label: String,
+    pub font_size: f32,
+    /// Comb cells; 0 when not a comb.
+    pub max_len: u32,
+    pub comb: bool,
+    pub multiline: bool,
+    /// The blank kind it came from.
+    pub blank: String,
 }

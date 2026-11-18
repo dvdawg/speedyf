@@ -654,6 +654,7 @@ fn benchmark_valid(
                 form_buttons: Vec::new(),
                 form_choices: Vec::new(),
                 form_display: Vec::new(),
+                form_design: None,
             };
             let save_dir = tempfile::Builder::new()
                 .prefix(".speedyf-bench-save-")

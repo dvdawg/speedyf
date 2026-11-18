@@ -156,6 +156,7 @@ fn save() {
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
             form_display: plan_in.display.clone(),
+            form_design: None,
         };
         let output = out.join(format!("formatted-{name}.pdf"));
         let mut problems = Vec::new();

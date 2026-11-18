@@ -106,7 +106,7 @@ fn decode(doc: &lopdf::Document, object: &Object) -> Option<String> {
 
 /// A PDF text string: PDFDocEncoding-safe ASCII as a literal, anything
 /// else as UTF-16BE with a byte-order mark.
-fn text_string(s: &str) -> Object {
+pub(super) fn text_string(s: &str) -> Object {
     if s.bytes()
         .all(|b| (0x20..0x7f).contains(&b) || b == b'\n' || b == b'\r' || b == b'\t')
     {

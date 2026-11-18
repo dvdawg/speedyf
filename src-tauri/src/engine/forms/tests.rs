@@ -7,7 +7,7 @@ use std::path::Path;
 /// field. Written by hand because PDFium can read form fields but cannot
 /// create them, so there is no way to build this through the library the
 /// rest of the engine uses.
-fn write_form_fixture(path: &Path) {
+pub(super) fn write_form_fixture(path: &Path) {
     let mut objects: Vec<(u32, Vec<u8>)> = Vec::new();
     let mut add = |n: u32, body: &[u8]| objects.push((n, body.to_vec()));
 
@@ -160,6 +160,7 @@ fn a_form_survives_a_save_with_its_values() {
         ],
         form_choices: Vec::new(),
         form_display: Vec::new(),
+        form_design: None,
     };
     crate::engine::save::build_output(
         &pdfium,
@@ -217,6 +218,7 @@ fn text_field_updates_its_saved_appearance_without_button_edits() {
         form_buttons: Vec::new(),
         form_choices: Vec::new(),
         form_display: Vec::new(),
+        form_design: None,
     };
     crate::engine::save::build_output(&pdfium, source.to_str().unwrap(), None, &plan, &output)
         .expect("save text field");
@@ -282,6 +284,7 @@ fn shared_text_fields_save_multiline_values_and_can_be_cleared() {
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
             form_display: Vec::new(),
+            form_design: None,
         };
         crate::engine::save::build_output(&pdfium, input.to_str().unwrap(), None, &plan, output)
             .unwrap();
@@ -398,7 +401,7 @@ fn form_field_types_have_stable_ui_kinds() {
 /// inherited /MaxLen and comb flag, quadding, tooltips, /DV, /Opt pairs,
 /// scripts, and a page whose /Tabs asks for row order while its /Annots
 /// list the widgets scrambled.
-fn write_kinds_fixture(path: &Path) {
+pub(super) fn write_kinds_fixture(path: &Path) {
     write_kinds_fixture_with(path, b"<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [10 0 R 11 0 R 12 0 R 13 0 R 14 0 R 16 0 R 17 0 R] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv 30 0 R >> >> >> >>");
 }
 
@@ -432,7 +435,7 @@ fn write_kinds_fixture_with(path: &Path, catalog: &[u8]) {
     );
 }
 
-fn read_fields(pdfium: &Pdfium, path: &Path) -> crate::engine::types::FormDto {
+pub(super) fn read_fields(pdfium: &Pdfium, path: &Path) -> crate::engine::types::FormDto {
     let b = pdfium.bindings();
     let doc = b.FPDF_LoadDocument(path.to_str().unwrap(), None);
     assert!(!doc.is_null(), "open {}", path.display());
@@ -442,7 +445,7 @@ fn read_fields(pdfium: &Pdfium, path: &Path) -> crate::engine::types::FormDto {
     form
 }
 
-fn field<'f>(
+pub(super) fn field<'f>(
     form: &'f crate::engine::types::FormDto,
     name: &str,
 ) -> &'f crate::engine::types::FormFieldDto {
@@ -452,7 +455,7 @@ fn field<'f>(
         .unwrap_or_else(|| panic!("no field {name}"))
 }
 
-fn one_page_plan() -> EditPlan {
+pub(super) fn one_page_plan() -> EditPlan {
     EditPlan {
         pages: vec![PlanPage {
             src_index: Some(0),
@@ -468,6 +471,7 @@ fn one_page_plan() -> EditPlan {
         form_buttons: Vec::new(),
         form_choices: Vec::new(),
         form_display: Vec::new(),
+        form_design: None,
     }
 }
 
