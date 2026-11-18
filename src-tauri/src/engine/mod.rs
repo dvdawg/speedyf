@@ -37,6 +37,7 @@ mod reading_order_eval;
 pub mod render;
 pub mod save;
 pub mod signature;
+pub mod signing;
 pub mod tagged;
 pub mod text;
 pub mod types;
