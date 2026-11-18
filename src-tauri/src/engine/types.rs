@@ -672,4 +672,7 @@ pub struct EditPlan {
     /// Combo and list box selections, keyed by field name.
     #[serde(default)]
     pub form_choices: Vec<PlanFormChoice>,
+    /// Apply redactions / remove hidden information (`engine::redact`).
+    #[serde(default)]
+    pub scrub: crate::engine::redact::ScrubPlan,
 }

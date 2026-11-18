@@ -707,6 +707,9 @@ fn add_annotations<'a>(
             "signature" => {
                 crate::engine::signature::write(doc, page, &space, annot)?;
             }
+            // Redaction marks: PDFium cannot create /Redact annotations, so
+            // `redact::finish_output` writes (or applies) them after the save.
+            "redact" => {}
             other => {
                 log::warn!("unknown annotation kind ignored at save: {other}");
             }
@@ -1094,6 +1097,10 @@ pub fn build_output(
             choices: &plan.form_choices,
         },
     )?;
+
+    // 5) Redaction marks, applying them, removing hidden information: see
+    //    `engine::redact`. A full clean rewrite whenever anything is removed.
+    crate::engine::redact::finish_output(plan, out_path)?;
     Ok(())
 }
 
@@ -1201,6 +1208,7 @@ mod tests {
             form: Vec::new(),
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
+            scrub: Default::default(),
         };
         build_output(
             &pdfium,
@@ -1340,6 +1348,7 @@ mod tests {
             form: Vec::new(),
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
+            scrub: Default::default(),
         };
         build_output(
             &pdfium,
@@ -1504,6 +1513,7 @@ mod tests {
             form: vec![],
             form_buttons: vec![],
             form_choices: Vec::new(),
+            scrub: Default::default(),
         };
         build_output(&pdfium, source.to_str().unwrap(), None, &plan, &output).unwrap();
         let doc = pdfium.load_pdf_from_file(&output, None).unwrap();
@@ -1561,6 +1571,7 @@ mod tests {
                 form: Vec::new(),
                 form_buttons: Vec::new(),
                 form_choices: Vec::new(),
+                scrub: Default::default(),
             },
             &output,
         )
@@ -1645,6 +1656,7 @@ mod tests {
             form: Vec::new(),
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
+            scrub: Default::default(),
         };
         build_output(&pdfium, source.to_str().unwrap(), None, &plan, &output).unwrap();
         let doc = pdfium.load_pdf_from_file(&output, None).unwrap();
@@ -1729,6 +1741,7 @@ mod tests {
                 form: Vec::new(),
                 form_buttons: Vec::new(),
                 form_choices: Vec::new(),
+                scrub: Default::default(),
             },
             &output,
         )
@@ -1804,6 +1817,7 @@ mod tests {
                 form: Vec::new(),
                 form_buttons: Vec::new(),
                 form_choices: Vec::new(),
+                scrub: Default::default(),
             },
             &output,
         )
@@ -1883,6 +1897,7 @@ mod tests {
             form: Vec::new(),
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
+            scrub: Default::default(),
         };
         build_output(
             &pdfium,
@@ -1950,6 +1965,7 @@ mod tests {
             form: Vec::new(),
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
+            scrub: Default::default(),
         };
         build_output(
             &pdfium,
@@ -2231,6 +2247,7 @@ mod tests {
             form: Vec::new(),
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
+            scrub: Default::default(),
         };
         build_output(
             pdfium,

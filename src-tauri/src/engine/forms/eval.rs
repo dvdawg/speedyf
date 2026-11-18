@@ -74,6 +74,7 @@ fn plan_for(form: &FormDto, page_sizes: &[(f32, f32)]) -> (EditPlan, Expected) {
         form: Vec::new(),
         form_buttons: Vec::new(),
         form_choices: Vec::new(),
+        scrub: Default::default(),
     };
     let mut done: HashSet<&str> = HashSet::new();
     let fillable: Vec<&FormFieldDto> = form.fields.iter().filter(|f| is_fillable(f)).collect();
