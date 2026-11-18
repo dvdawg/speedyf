@@ -3,6 +3,7 @@
 //! bytes/DTOs through responder callbacks.
 
 use super::annots;
+use super::blanks;
 use super::bubbles;
 use super::glyphs;
 use super::hovers;
@@ -59,6 +60,9 @@ struct DocState {
     /// Display equations found per page (`glyphs::equation_blocks`), keyed
     /// by page in the file, so hovering a page twice costs nothing.
     equation_blocks: HashMap<u32, Vec<glyphs::EquationBlockDto>>,
+    /// Printed-form blanks found per page (`blanks::detect`), by page in the
+    /// file: found once, the first time the Fill tool looks at a page.
+    blanks: HashMap<u32, Vec<BlankDto>>,
     /// Pages rendered for layout analysis (`vision`), a few at a time.
     rasters: HashMap<u32, std::sync::Arc<vision::PageRaster>>,
 }
@@ -353,6 +357,7 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         Work::TextLayout { respond, .. } => respond(Err(err())),
         Work::PageLinks { respond, .. } => respond(Err(err())),
         Work::PageBubbles { respond, .. } => respond(Err(err())),
+        Work::PageBlanks { respond, .. } => respond(Err(err())),
         Work::PageGlyphs { respond, .. } => respond(Err(err())),
         Work::MathTags { respond, .. } => respond(Err(err())),
         Work::EquationBlocks { respond, .. } => respond(Err(err())),
@@ -434,6 +439,7 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
         Work::PageBubbles { doc, src, respond } => {
             respond(do_page_bubbles(state, shared, doc, src))
         }
+        Work::PageBlanks { doc, src, respond } => respond(do_page_blanks(state, doc, src)),
         Work::PageGlyphs {
             doc,
             src,
@@ -608,6 +614,7 @@ fn do_open(
             formal_envs: None,
             ocr_cache: None,
             equation_blocks: HashMap::new(),
+            blanks: HashMap::new(),
             rasters: HashMap::new(),
         },
     );
@@ -852,6 +859,44 @@ fn do_page_bubbles(
         src,
         bubbles: layout.bubbles.as_ref().clone(),
     })
+}
+
+/// Every printed-form blank on one page, for the Fill tool.
+///
+/// Found once per page and kept: the page's drawing does not change while it
+/// is open. Blanks an AcroForm widget already covers are left out - the
+/// form's own field is where that typing belongs.
+fn do_page_blanks(state: &mut WorkerState, doc: DocId, src: u32) -> AppResult<PageBlanksDto> {
+    if let Some(cached) = state.doc(doc)?.blanks.get(&src) {
+        return Ok(PageBlanksDto {
+            src,
+            blanks: cached.clone(),
+        });
+    }
+    if src >= state.doc(doc)?.page_count {
+        return Err(AppError::Malformed(format!("page {src} is out of range")));
+    }
+    let [w, h] = state.display_size(doc, src)?;
+    let widgets: Vec<RectDto> = do_form_fields(state, doc)
+        .map(|form| {
+            form.fields
+                .iter()
+                .filter(|f| f.page == src)
+                .map(|f| f.rect)
+                .collect()
+        })
+        .unwrap_or_default();
+    let page = state.page_handle(doc, src)?;
+    let started = Instant::now();
+    let input = blanks::collect(state.bindings, page, w, h);
+    let found = blanks::drop_covered(blanks::detect(&input), &widgets);
+    log::debug!(
+        "blanks: page {src}: {} in {:.1} ms",
+        found.len(),
+        started.elapsed().as_secs_f64() * 1000.0
+    );
+    state.doc(doc)?.blanks.insert(src, found.clone());
+    Ok(PageBlanksDto { src, blanks: found })
 }
 
 /// Every glyph and rule on a page, in display points from the top-left.
@@ -2327,6 +2372,7 @@ fn open_library_document(
             formal_envs: None,
             ocr_cache: None,
             equation_blocks: HashMap::new(),
+            blanks: HashMap::new(),
             rasters: HashMap::new(),
         },
     );
@@ -2606,6 +2652,7 @@ fn do_save(
                                 formal_envs: None,
                                 ocr_cache: None,
                                 equation_blocks: HashMap::new(),
+                                blanks: HashMap::new(),
                                 rasters: HashMap::new(),
                             },
                         );

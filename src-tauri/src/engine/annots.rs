@@ -14,6 +14,7 @@
 //! Coordinates come back through `PageSpace::user_to_disp`, the exact inverse of
 //! what writing applies. Both directions live in `save.rs` so they cannot drift.
 
+use super::marks;
 use super::save::PageSpace;
 use super::signature;
 use super::types::{
@@ -28,6 +29,34 @@ const DEFAULT_STROKE_PT: f32 = 2.0;
 /// Default size for text SpeedyF did not write itself.
 const DEFAULT_FONT_PT: f32 = 14.0;
 pub(crate) const TEXT_STAMP_CREATOR: &str = "SpeedyF Text";
+/// The text stamp key holding how many comb cells its text is spread over.
+pub(crate) const COMB_KEY: &str = "SpeedyFComb";
+
+/// The comb cell count stored on the text stamp at `index`, if any.
+fn read_comb(bindings: &dyn PdfiumLibraryBindings, page: FPDF_PAGE, index: u32) -> Option<u32> {
+    let annot = bindings.FPDFPage_GetAnnot(page, index as i32);
+    if annot.is_null() {
+        return None;
+    }
+    let mut value = None;
+    if bindings.is_true(bindings.FPDFAnnot_HasKey(annot, COMB_KEY)) {
+        let len = bindings.FPDFAnnot_GetStringValue(annot, COMB_KEY, std::ptr::null_mut(), 0);
+        if len > 2 && len < 64 {
+            let mut buffer = vec![0u16; (len as usize).div_ceil(2)];
+            bindings.FPDFAnnot_GetStringValue(annot, COMB_KEY, buffer.as_mut_ptr(), len);
+            while buffer.last() == Some(&0) {
+                buffer.pop();
+            }
+            value = String::from_utf16_lossy(&buffer)
+                .trim()
+                .parse::<u32>()
+                .ok()
+                .filter(|n| (1..=200).contains(n));
+        }
+    }
+    bindings.FPDFPage_CloseAnnot(annot);
+    value
+}
 
 fn hex_of(color: &PdfColor) -> String {
     format!(
@@ -214,6 +243,7 @@ fn read_annotation(
     index: u32,
     space: &PageSpace,
     signature: impl FnOnce() -> Option<(SignatureArt, String)>,
+    comb: impl FnOnce() -> Option<u32>,
 ) -> Option<AnnotationDto> {
     let rect = space.rect_from_user(&annot.bounds().ok()?);
     let mut dto = AnnotationDto {
@@ -229,6 +259,8 @@ fn read_annotation(
         font_size_pt: None,
         text_style: TextStyle::default(),
         signature: None,
+        mark: None,
+        comb_cells: None,
     };
 
     let style = style_of(annot.objects());
@@ -296,6 +328,24 @@ fn read_annotation(
             dto.color = color;
             dto.signature = Some(art);
         }
+        PdfPageAnnotationType::Stamp if annot.creator().as_deref() == Some(marks::MARK_CREATOR) => {
+            // A Fill & Sign mark: which one rides in /Contents, the colour
+            // and pen on its path, as `marks.rs` writes them.
+            let mark = annot.contents().unwrap_or_default();
+            if !marks::MARKS.contains(&mark.as_str()) {
+                return None;
+            }
+            let filled = mark == "dot";
+            let (color, opacity) =
+                color_or(if filled { style.fill } else { style.stroke }, "#1a1a1a");
+            dto.kind = "mark".into();
+            dto.color = color;
+            dto.opacity = opacity;
+            if !filled {
+                dto.stroke_width = style.width;
+            }
+            dto.mark = Some(mark);
+        }
         PdfPageAnnotationType::Stamp if annot.creator().as_deref() == Some(TEXT_STAMP_CREATOR) => {
             let (color, opacity) = color_or(style.fill, "#d81b60");
             dto.kind = "textbox".into();
@@ -307,6 +357,7 @@ fn read_annotation(
                 underline: style.has_paths,
                 ..style.text_style
             };
+            dto.comb_cells = comb();
         }
         PdfPageAnnotationType::Stamp if is_shaded_bubble(annot.objects()) => {
             // A shaded bubble is a Stamp too, so it has to be told apart from
@@ -378,9 +429,13 @@ pub fn read_annotations(
             .iter()
             .enumerate()
             .filter_map(|(index, annot)| {
-                read_annotation(&annot, index as u32, &space, || {
-                    signature::read_stored(bindings, handle, index as u32)
-                })
+                read_annotation(
+                    &annot,
+                    index as u32,
+                    &space,
+                    || signature::read_stored(bindings, handle, index as u32),
+                    || read_comb(bindings, handle, index as u32),
+                )
             })
             .collect();
         if annots.is_empty() {
