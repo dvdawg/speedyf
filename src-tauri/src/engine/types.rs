@@ -80,6 +80,8 @@ pub struct DocMetaDto {
     /// so cropX/cropY/baseRotation are always reported as 0 here.
     pub sizes: Vec<[f32; 5]>,
     pub estimated_size: [f32; 2],
+    /// Password protection, and what it allows this session.
+    pub protection: crate::engine::protect::ProtectionDto,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -477,6 +479,8 @@ pub struct SaveResultDto {
     pub path: String,
     pub bytes: u64,
     pub duration_ms: u64,
+    /// What to reopen the saved file with, when it is password protected.
+    pub reopen_password: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug, Default)]

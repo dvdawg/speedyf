@@ -10,6 +10,8 @@ export interface DocMeta {
    * folded into them engine-side, so cropX/cropY/baseRotation arrive as 0. */
   sizes: [number, number, number, number, number][];
   estimatedSize: [number, number];
+  /** Password protection; absent from fixtures that predate it. */
+  protection?: ProtectionInfo;
 }
 
 export interface TextRunDto {
@@ -365,7 +367,52 @@ export interface SaveResult {
   path: string;
   bytes: number;
   durationMs: number;
+  /** What to reopen the saved file with, when it is password protected. */
+  reopenPassword?: string | null;
 }
+
+/* ---------- password protection (mirrors src-tauri/src/engine/protect.rs) ---------- */
+
+export type PrintLevel = 'none' | 'low' | 'high';
+
+/** What a protected document allows without its permissions password. */
+export interface PermissionSet {
+  print: PrintLevel;
+  copy: boolean;
+  /** Change the content beyond the three below. */
+  edit: boolean;
+  /** Add and change comments (and fill forms). */
+  annotate: boolean;
+  fillForms: boolean;
+  /** Insert, delete and rotate pages. */
+  assemble: boolean;
+  accessibility: boolean;
+}
+
+export interface ProtectionInfo {
+  encrypted: boolean;
+  revision: number;
+  /** "AES-256", "RC4 128-bit", ...; empty when not encrypted. */
+  method: string;
+  /** Opening the file asks for a password. */
+  openPassword: boolean;
+  /** Nothing is withheld from this session. */
+  ownerUnlocked: boolean;
+  permissions: PermissionSet;
+  /** Digital signatures, which any change of protection invalidates. */
+  signatures: number;
+}
+
+/** What a save does about protection. Empty passwords mean none of that kind. */
+export type ProtectRequest =
+  | { kind: 'keep' }
+  | { kind: 'remove' }
+  | {
+      kind: 'set';
+      openPassword: string;
+      permissionsPassword: string;
+      permissions: PermissionSet;
+    };
 
 /* ---------- projects and paper records (mirrors src-tauri/src/library/types.rs) ---------- */
 

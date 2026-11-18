@@ -4,6 +4,8 @@ import PrintDialog from '../features/print/PrintDialog';
 import { closePrint, printState } from '../features/print/printStore';
 import SignDialog from '../features/sign/SignDialog';
 import { signState } from '../features/sign/signStore';
+import ProtectDialog from '../features/protect/ProtectDialog';
+import { protectTab } from '../features/protect/protectStore';
 import {
   dismissError,
   modal,
@@ -106,6 +108,10 @@ export default function Modals() {
       {/* Visual signatures: their own store, like print. */}
       <Show when={signState.dialog}>
         <SignDialog />
+      </Show>
+      {/* Protect...: its own store too, keyed by the tab it protects. */}
+      <Show when={protectTab()} keyed>
+        {(tab) => <ProtectDialog tab={tab} />}
       </Show>
       <Show when={modal.kind !== null}>
         <div

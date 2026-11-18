@@ -60,6 +60,7 @@ import {
   textChange,
   userDatePicture,
 } from './formBehaviour';
+import { allows } from '../protect/permissions';
 
 interface Props {
   docId: number;
@@ -101,8 +102,12 @@ export default function FormLayer(props: Props) {
     f.rect.w > 0 &&
     f.rect.h > 0 &&
     behaviourOf(info(), f.name)?.calculate !== undefined;
+  // A file whose permissions withhold filling keeps its fields as drawn:
+  // nothing to type into (protect/permissions.ts).
   const widgets = () =>
-    all().filter((f) => f.page === props.src && (isFillable(f) || calculated(f)));
+    allows(tab.documentStore.state.protection, 'fillForms')
+      ? all().filter((f) => f.page === props.src && (isFillable(f) || calculated(f)))
+      : [];
 
   const navigate = (from: FormFieldInfo, direction: 1 | -1) => {
     const stop = nextStop(all(), from, direction);

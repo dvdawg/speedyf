@@ -98,7 +98,9 @@ impl SaveMode {
 /// Encrypted sources are rewritten without their encryption. That is what
 /// every save of one produced before (a document assembled from imported pages
 /// never carried the source's security handler), and the save path reopens
-/// its output without a password to verify it.
+/// its output without a password to verify it. The protection is put back
+/// on the finished file afterwards (`protect::encrypt_file`), unless the
+/// save removes it.
 ///
 /// A document created in memory has no parser, which PDFium reports as an
 /// invalid cross-reference table - so it is rewritten too, as it must be.

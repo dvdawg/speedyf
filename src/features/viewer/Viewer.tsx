@@ -38,6 +38,8 @@ import { TabContext } from '../../app/TabContext';
 import { tabsStore, type TabRecord } from '../../stores/tabsStore';
 import { recentStore } from '../../stores/recentStore';
 import { navigateForMouseButton } from './navHistory';
+import { deniedReason } from '../protect/permissions';
+import { flashStatus } from '../../stores/statusMessage';
 
 /** WebKit's non-standard pinch event. Not in lib.dom, and deliberately typed
  * as only the fields used here — `scale` is cumulative since gesturestart. */
@@ -202,6 +204,13 @@ function ViewerContent(props: { tab: TabRecord }) {
     const selection = document.getSelection();
     if (!selection || selection.rangeCount === 0) return;
     if (!scroller.contains(selection.getRangeAt(0).commonAncestorContainer)) return;
+    const denied = deniedReason(doc.protection, 'copy');
+    if (denied) {
+      // Nothing reaches the clipboard, not even the browser's own copy.
+      event.preventDefault();
+      flashStatus(denied);
+      return;
+    }
     const text = smartCopyForSelection(selection, scroller);
     if (text === null || !event.clipboardData) return;
     event.preventDefault();

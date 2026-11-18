@@ -25,6 +25,8 @@ import type {
   PageTextLayout,
   PreviewSpec,
   ResolvedCitation,
+  ProtectRequest,
+  ProtectionInfo,
   SaveResult,
   SearchQueryResult,
 } from '../../types/engine';
@@ -146,7 +148,15 @@ export interface EngineApi {
     start: number,
     len: number
   ): Promise<[number, number, number, number][]>;
-  saveDocument(docId: number, plan: EditPlan, destPath: string): Promise<SaveResult>;
+  /** `protect` defaults to keeping whatever protection the source has. */
+  saveDocument(
+    docId: number,
+    plan: EditPlan,
+    destPath: string,
+    protect?: ProtectRequest
+  ): Promise<SaveResult>;
+  /** Check a permissions password; rejects with code `password` when wrong. */
+  unlockPermissions(docId: number, password: string): Promise<ProtectionInfo>;
   getFormFields(docId: number): Promise<FormInfo>;
   getOutline(docId: number): Promise<OutlineNode[]>;
   /** One idle slice of generating an outline from the page headings; call
@@ -333,7 +343,9 @@ export const engine: EngineApi = {
   searchQuery: (docId, query, caseSensitive) =>
     invoke('search_query', { docId, query, caseSensitive }),
   getMatchRects: (docId, src, start, len) => invoke('get_match_rects', { docId, src, start, len }),
-  saveDocument: (docId, plan, destPath) => invoke('save_document', { docId, plan, destPath }),
+  saveDocument: (docId, plan, destPath, protect) =>
+    invoke('save_document', { docId, plan, destPath, protect: protect ?? null }),
+  unlockPermissions: (docId, password) => invoke('unlock_permissions', { docId, password }),
   getFormFields: (docId) => invoke('get_form_fields', { docId }),
   getOutline: (docId) => invoke('get_outline', { docId }),
   getGeneratedOutline: (docId) => invoke('get_generated_outline', { docId }),

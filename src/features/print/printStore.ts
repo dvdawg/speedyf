@@ -17,6 +17,8 @@ import { showError } from '../../stores/modalStore';
 import type { TabRecord } from '../../stores/tabsStore';
 import { limitToRange, withoutAnnotations } from './printPlan';
 import { withFormDisplay } from '../forms/formBehaviour';
+import { deniedReason } from '../protect/permissions';
+import { flashStatus } from '../../stores/statusMessage';
 
 interface PrintState {
   /** true from the moment the dialog is asked for until it closes */
@@ -138,6 +140,11 @@ async function prepare(tab: TabRecord, includeAnnotations: boolean): Promise<voi
 export async function beginPrint(tab: TabRecord): Promise<void> {
   const doc = tab.documentStore.state;
   if (!doc.loaded || state.open) return;
+  const denied = deniedReason(doc.protection, 'print');
+  if (denied) {
+    flashStatus(denied);
+    return;
+  }
   if (doc.pages.length === 0) {
     showError('There are no pages to print.');
     return;
