@@ -17,6 +17,7 @@ const plan = (count: number): EditPlan => ({
   pages: Array.from({ length: count }, (_, i) => page(i)),
   form: [],
   formButtons: [],
+  formChoices: [],
 });
 
 describe('withoutAnnotations', () => {

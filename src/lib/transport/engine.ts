@@ -14,7 +14,7 @@ import type {
   PrintJob,
   PrintOption,
   FormalEntry,
-  FormFieldInfo,
+  FormInfo,
   GeneratedOutline,
   LibraryStatus,
   OutlineNode,
@@ -147,7 +147,7 @@ export interface EngineApi {
     len: number
   ): Promise<[number, number, number, number][]>;
   saveDocument(docId: number, plan: EditPlan, destPath: string): Promise<SaveResult>;
-  getFormFields(docId: number): Promise<FormFieldInfo[]>;
+  getFormFields(docId: number): Promise<FormInfo>;
   getOutline(docId: number): Promise<OutlineNode[]>;
   /** One idle slice of generating an outline from the page headings; call
    * again until `done`. */

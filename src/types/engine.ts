@@ -196,6 +196,52 @@ export interface FormFieldInfo {
   exportValue: string;
   /** Whether this particular widget is currently on. */
   checked: boolean;
+  /** The field's tooltip (/TU): the label forms give a human. */
+  tooltip: string;
+  required: boolean;
+  multiline: boolean;
+  password: boolean;
+  /** Text split into `maxLen` equal cells. */
+  comb: boolean;
+  noScroll: boolean;
+  /** A list box that takes more than one selection. */
+  multiSelect: boolean;
+  /** A combo box that also takes typed text. */
+  editable: boolean;
+  /** Longest value a text field takes; 0 when unlimited. */
+  maxLen: number;
+  /** Point size from the field's default appearance; 0 means auto-size. */
+  fontSize: number;
+  /** 0 left, 1 centred, 2 right. */
+  align: number;
+  /** Text colour from the default appearance, `#rrggbb`. */
+  color: string;
+  /** A combo or list box's choices, in file order. */
+  options: FormOption[];
+  /** Indices into `options` currently selected. */
+  selected: number[];
+  /** What Reset Form restores to a text field or editable combo. */
+  defaultValue: string;
+  /** What Reset Form selects in a combo or list box. */
+  defaultSelected: number[];
+  /** Whether Reset Form turns this checkbox or radio on. */
+  defaultChecked: boolean;
+  /** JavaScript actions on the field. Never run; counted. */
+  scriptCount: number;
+  /** Position in the document's Tab order. */
+  tabOrder: number;
+}
+
+export interface FormOption {
+  label: string;
+  export: string;
+}
+
+/** A document's form: its widgets, and whether it carries XFA. */
+export interface FormInfo {
+  fields: FormFieldInfo[];
+  /** With no fields alongside, an XFA-only form SpeedyF cannot fill. */
+  xfa: boolean;
 }
 
 /** A theorem, lemma, definition or caption recovered from a LaTeX PDF.

@@ -316,6 +316,63 @@ describe('form buttons', () => {
   });
 });
 
+describe('form choices', () => {
+  it('records a selection by field, with undo and redo', () => {
+    const s = fresh();
+    s.apply({ type: 'setFormChoice', field: 'state', choice: { selected: [2] } });
+    expect(s.state.formChoiceEdits.state).toEqual({ selected: [2] });
+    expect(s.state.dirty).toBe(true);
+    s.undo();
+    expect(s.state.formChoiceEdits.state).toBeUndefined();
+    expect(s.state.dirty).toBe(false);
+    s.redo();
+    expect(s.buildEditPlan().formChoices).toEqual([{ field: 'state', selected: [2] }]);
+  });
+
+  it('carries typed combo text into the plan', () => {
+    const s = fresh();
+    s.apply({ type: 'setFormChoice', field: 'state', choice: { selected: [], text: 'Oregon' } });
+    expect(s.buildEditPlan().formChoices).toEqual([
+      { field: 'state', selected: [], text: 'Oregon' },
+    ]);
+  });
+
+  it('folds a burst of typing into one undo step', () => {
+    const s = fresh();
+    const group = Symbol('typing');
+    s.apply({ type: 'setFormChoice', field: 'c', choice: { selected: [], text: 'O' } }, group);
+    s.apply({ type: 'setFormChoice', field: 'c', choice: { selected: [], text: 'Or' } }, group);
+    expect(s.state.historyDepth).toBe(1);
+    s.undo();
+    expect(s.state.formChoiceEdits).toEqual({});
+  });
+});
+
+describe('form values at once (Reset Form)', () => {
+  it('sets texts, buttons and choices as one step and restores each exactly', () => {
+    const s = fresh();
+    s.apply({ type: 'setForm', field: 'name', value: 'Ada' });
+    s.apply({ type: 'setFormChoice', field: 'c', choice: { selected: [1] } });
+    s.apply({
+      type: 'setFormValues',
+      values: {
+        texts: { name: '', other: 'default' },
+        buttons: { '0:1': false },
+        choices: { c: { selected: [0] } },
+      },
+    });
+    expect(s.state.formEdits).toEqual({ name: '', other: 'default' });
+    expect(s.state.formButtonEdits).toEqual({ '0:1': false });
+    expect(s.state.formChoiceEdits).toEqual({ c: { selected: [0] } });
+    s.undo();
+    expect(s.state.formEdits).toEqual({ name: 'Ada' });
+    expect(s.state.formButtonEdits).toEqual({});
+    expect(s.state.formChoiceEdits).toEqual({ c: { selected: [1] } });
+    s.redo();
+    expect(s.state.formEdits.other).toBe('default');
+  });
+});
+
 describe('dirty / savepoint semantics', () => {
   it('tracks the savepoint through undo and redo', () => {
     const s = fresh();
