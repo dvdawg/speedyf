@@ -50,6 +50,7 @@ import {
 import { TabContext } from '../../app/TabContext';
 import { pagesInverted, settings } from '../../stores/settings';
 import { invertInk } from '../../lib/rendering/invertColor';
+import { allows } from '../protect/permissions';
 
 interface Props {
   docId: number;
@@ -78,7 +79,12 @@ export default function FormLayer(props: Props) {
     (docId) => formFields(docId)
   );
   const all = () => fields() ?? [];
-  const widgets = () => all().filter((f) => f.page === props.src && isFillable(f));
+  // A file whose permissions withhold filling keeps its fields as drawn:
+  // nothing to type into (protect/permissions.ts).
+  const widgets = () =>
+    allows(tab.documentStore.state.protection, 'fillForms')
+      ? all().filter((f) => f.page === props.src && isFillable(f))
+      : [];
 
   const navigate = (from: FormFieldInfo, direction: 1 | -1) => {
     const stop = nextStop(all(), from, direction);

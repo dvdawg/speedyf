@@ -1,6 +1,8 @@
 /** Shared document-model types. UI state stores ONLY this lightweight metadata —
  * never PDF bytes, bitmaps, or rendered images. */
 
+import type { ProtectionInfo } from './engine';
+
 export type Rotation = 0 | 90 | 180 | 270;
 
 export type PageId = string;
@@ -140,6 +142,8 @@ export interface DocMeta {
   sizes: [number, number, number, number, number][];
   /** Estimated [w,h] applied to pages whose size is not yet known. */
   estimatedSize: [number, number];
+  /** Password protection, as the engine read it on open. */
+  protection?: ProtectionInfo;
 }
 
 export type FitMode = 'custom' | 'fit-page' | 'fit-width';

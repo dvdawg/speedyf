@@ -9,6 +9,9 @@
  */
 import { createStore, produce } from 'solid-js/store';
 import type { Annotation, DocMeta, PageEntry, PageId, PdfRect, Rotation } from '../../types/model';
+import type { ProtectRequest, ProtectionInfo } from '../../types/engine';
+import { deniedReason, rightForOp } from '../protect/permissions';
+import { flashStatus } from '../../stores/statusMessage';
 
 export type EditOp =
   | { type: 'reorder'; pageId: PageId; toIndex: number }
@@ -26,6 +29,9 @@ export type EditOp =
   | { type: 'setFormChoice'; field: string; choice: FormChoice }
   /** Several form values at once, as one undo step: Reset Form. */
   | { type: 'setFormValues'; values: FormValues }
+  /** Protection the next save writes; null keeps the file's own. Its own
+   * inverse, like setFlattenSignatures. */
+  | { type: 'setProtection'; request: ProtectRequest | null }
   // internal inverse-only ops:
   | { type: 'restorePage'; entry: PageEntry; index: number; annots: Annotation[] }
   | { type: 'restoreAnnot'; pageId: PageId; annot: Annotation; index: number }
@@ -107,6 +113,10 @@ export function formButtonKey(page: number, index: number): string {
   return `${page}:${index}`;
 }
 
+function copyRequest(request: ProtectRequest | null): ProtectRequest | null {
+  return request === null ? null : (JSON.parse(JSON.stringify(request)) as ProtectRequest);
+}
+
 function copyChoice(choice: FormChoice): FormChoice {
   return {
     selected: [...choice.selected],
@@ -151,6 +161,11 @@ export interface DocState {
   flattenSignatures: boolean;
   /** Combo and list box values the user changed, by field name. */
   formChoiceEdits: Record<string, FormChoice>;
+  /** The file's password protection, as the engine read it; null before a
+   * document is open or when the engine did not say. */
+  protection: ProtectionInfo | null;
+  /** New protection for the next save; null keeps the file's own. */
+  protectChange: ProtectRequest | null;
   dirty: boolean;
   saving: boolean;
   /** bumped whenever engine-derived visuals must be re-fetched (reload) */
@@ -172,6 +187,8 @@ const emptyState = (): DocState => ({
   formButtonEdits: {},
   flattenSignatures: false,
   formChoiceEdits: {},
+  protection: null,
+  protectChange: null,
   dirty: false,
   saving: false,
   generation: 0,
@@ -205,6 +222,9 @@ export interface DocumentStore {
   setSaving: (v: boolean) => void;
   setGeneration: (generation: number) => void;
   setSelected: (sel: DocState['selected']) => void;
+  /** The file's protection changed for this session (its permissions
+   * password was entered); not an edit. */
+  setProtectionInfo: (protection: ProtectionInfo) => void;
   setSearchIndex: (s: Partial<DocState['searchIndex']>) => void;
   reset: () => void;
   pageIndexById: (id: PageId) => number;
@@ -330,6 +350,8 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
         };
       case 'setFlattenSignatures':
         return { type: 'setFlattenSignatures', value: state.flattenSignatures };
+      case 'setProtection':
+        return { type: 'setProtection', request: copyRequest(state.protectChange) };
       case 'setFormChoice': {
         const prev = state.formChoiceEdits[op.field];
         return {
@@ -454,6 +476,10 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
             s.flattenSignatures = op.value;
             break;
           }
+          case 'setProtection': {
+            s.protectChange = copyRequest(op.request);
+            break;
+          }
           case 'restorePage': {
             s.pages.splice(op.index, 0, JSON.parse(JSON.stringify(op.entry)) as PageEntry);
             s.annotations[op.entry.id] = JSON.parse(JSON.stringify(op.annots)) as Annotation[];
@@ -516,6 +542,14 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
   };
 
   const apply = (op: EditOp, group?: symbol) => {
+    // A protected file's permissions are honoured, not stripped: what they
+    // withhold is refused here, whichever control asked, and says why.
+    const right = rightForOp(op.type);
+    const denied = right && deniedReason(state.protection, right);
+    if (denied) {
+      flashStatus(denied);
+      return;
+    }
     const mat = materialize(op);
     const inverse = computeInverse(mat);
     const previous = undoStack.at(-1);
@@ -610,6 +644,7 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
       path: meta.path,
       name: meta.name,
       pages,
+      protection: meta.protection ?? null,
       searchIndex: { indexed: 0, total: meta.pageCount, done: false },
     });
     rebuildPageLookups();
@@ -841,6 +876,7 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
     setSaving: (v) => setState('saving', v),
     setGeneration: (generation) => setState('generation', generation),
     setSelected: (sel) => setState('selected', sel),
+    setProtectionInfo: (protection) => setState('protection', protection),
     setSearchIndex: (s) =>
       setState(
         produce((st) => {
