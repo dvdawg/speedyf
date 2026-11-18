@@ -35,21 +35,26 @@ pub(crate) fn phrases(glyphs: &[Glyph]) -> Vec<Phrase> {
         let (ca, cb) = ((a.b.y0 + a.b.y1) / 2.0, (b.b.y0 + b.b.y1) / 2.0);
         cb.total_cmp(&ca).then(a.b.x0.total_cmp(&b.b.x0))
     });
-    // Lines: characters whose vertical centres are close.
-    let mut lines: Vec<Vec<&Glyph>> = Vec::new();
+    // Lines: characters whose boxes overlap a line's band by most of their
+    // height. Tight boxes differ by letter - descenders, ascenders - so
+    // their centres alone would split one word across lines.
+    let mut bands: Vec<(f32, f32, Vec<&Glyph>)> = Vec::new();
     for g in sorted {
-        let cy = (g.b.y0 + g.b.y1) / 2.0;
-        let size = g.size.max(4.0);
-        let joined = lines.iter_mut().rev().take(3).find(|line| {
-            let first = line[0];
-            let fy = (first.b.y0 + first.b.y1) / 2.0;
-            (fy - cy).abs() < 0.4 * size.min(first.size.max(4.0))
+        let h = (g.b.y1 - g.b.y0).max(0.5);
+        let joined = bands.iter_mut().rev().take(3).find(|(y0, y1, _)| {
+            let overlap = g.b.y1.min(*y1) - g.b.y0.max(*y0);
+            overlap >= 0.5 * h.min(*y1 - *y0)
         });
         match joined {
-            Some(line) => line.push(g),
-            None => lines.push(vec![g]),
+            Some((y0, y1, line)) => {
+                line.push(g);
+                *y0 = y0.min(g.b.y0);
+                *y1 = y1.max(g.b.y1);
+            }
+            None => bands.push((g.b.y0, g.b.y1, vec![g])),
         }
     }
+    let lines: Vec<Vec<&Glyph>> = bands.into_iter().map(|(_, _, line)| line).collect();
     let mut out = Vec::new();
     for mut line in lines {
         line.sort_by(|a, b| a.b.x0.total_cmp(&b.b.x0));
@@ -160,6 +165,16 @@ pub(crate) fn clean_label(text: &str) -> String {
             _ => {}
         }
     }
+    // A label running on into a sentence ends at the first full stop that
+    // follows two words or more ("City or town. If you have...").
+    let mut from = 0;
+    while let Some(at) = s[from..].find(". ").map(|i| i + from) {
+        if s[..at].split_whitespace().count() >= 2 {
+            s.truncate(at);
+            break;
+        }
+        from = at + 2;
+    }
     let words: Vec<&str> = s
         .split(|c: char| c.is_whitespace())
         .filter(|w| !w.is_empty())
@@ -196,7 +211,8 @@ pub(crate) fn clean_label(text: &str) -> String {
     }
     let mut name = out.join(" ");
     // A label running into a sentence: keep it to its first clause.
-    if let Some(i) = name.find(" if ").or_else(|| name.find(" see ")) {
+    let lower = name.to_ascii_lowercase();
+    if let Some(i) = lower.find(" if ").or_else(|| lower.find(" see ")) {
         name.truncate(i);
     }
     // Sentence case, as a person would type the name.
@@ -273,11 +289,23 @@ mod tests {
             .enumerate()
             .map(|(i, ch)| Glyph {
                 ch,
+                // Tight boxes, as PDFium gives them: descenders reach
+                // below the baseline, capitals and ascenders above the
+                // x-height.
                 b: Bounds {
                     x0: x + i as f32 * w,
-                    y0: y,
+                    y0: if "gpqy".contains(ch) {
+                        y - size * 0.2
+                    } else {
+                        y
+                    },
                     x1: x + i as f32 * w + if ch == ' ' { 0.0 } else { w * 0.9 },
-                    y1: y + size * 0.7,
+                    y1: y + size
+                        * if ch.is_uppercase() || "bdfhiklt".contains(ch) {
+                            0.72
+                        } else {
+                            0.52
+                        },
                 },
                 size,
             })
@@ -306,14 +334,25 @@ mod tests {
             "City state and ZIP code"
         );
         assert_eq!(clean_label("..."), "");
+        assert_eq!(
+            clean_label("City town or post office. If you have a foreign address"),
+            "City town or post office"
+        );
+        assert_eq!(clean_label("Apt. Number (if any)"), "Apt Number");
+        assert_eq!(
+            clean_label("Home address If you have a P O box"),
+            "Home address"
+        );
     }
 
     #[test]
     fn groups_words_into_phrases() {
         let mut glyphs = word("Name", 50.0, 700.0, 10.0);
         glyphs.extend(word("Date of birth", 300.0, 700.0, 10.0));
+        glyphs.extend(word("Foreign country spouse", 50.0, 680.0, 10.0));
         let p = phrases(&glyphs);
-        assert_eq!(p.len(), 2);
+        assert_eq!(p.len(), 3);
+        assert_eq!(p[2].text, "Foreign country spouse");
         assert_eq!(p[0].text, "Name");
         assert_eq!(p[1].text, "Date of birth");
     }

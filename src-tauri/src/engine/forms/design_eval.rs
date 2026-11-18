@@ -109,6 +109,14 @@ fn prepare_eval() {
             b.FPDF_ClosePage(handle);
         }
         b.FPDF_CloseDocument(doc);
+        if std::env::var("SPEEDYF_PREPARE_NAMES").is_ok() {
+            for p in proposals.iter().take(25) {
+                eprintln!(
+                    "  {name} p{} {:<9} {:<32} <- {:?}",
+                    p.page, p.kind, p.name, p.label
+                );
+            }
+        }
 
         let mut row = Row {
             truth: truth.len(),
@@ -161,8 +169,13 @@ fn prepare_eval() {
 
 fn print_row(name: &str, r: &Row) {
     let pct = |a: usize, b: usize| 100.0 * a as f64 / b.max(1) as f64;
+    let names = if r.named == 0 {
+        "-".to_string()
+    } else {
+        format!("{:.1}%", pct(r.name_hits, r.named))
+    };
     println!(
-        "{:<12} {:>6} {:>6} {:>7.1}% {:>7.1}% {:>7.1}% {:>7.1}% {:>6.1}%",
+        "{:<12} {:>6} {:>6} {:>7.1}% {:>7.1}% {:>7.1}% {:>7.1}% {:>7}",
         name,
         r.truth,
         r.proposed,
@@ -170,6 +183,6 @@ fn print_row(name: &str, r: &Row) {
         pct(r.found_kind, r.truth),
         pct(r.true_proposed, r.proposed),
         pct(r.true_kind, r.proposed),
-        pct(r.name_hits, r.named),
+        names,
     );
 }
