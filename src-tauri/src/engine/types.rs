@@ -371,6 +371,60 @@ pub struct FormFieldDto {
     pub export_value: String,
     /// Whether this particular widget is currently on.
     pub checked: bool,
+    /// The field's tooltip (/TU), which forms use as the human label.
+    pub tooltip: String,
+    pub required: bool,
+    pub multiline: bool,
+    pub password: bool,
+    /// Text fields divided into /MaxLen equally spaced cells.
+    pub comb: bool,
+    pub no_scroll: bool,
+    /// List boxes that accept more than one selection.
+    pub multi_select: bool,
+    /// Combo boxes that also take typed text.
+    pub editable: bool,
+    /// Longest value a text field accepts; 0 when unlimited.
+    pub max_len: u32,
+    /// Font size from the default appearance string; 0 means auto-size.
+    pub font_size: f32,
+    /// Quadding: 0 left, 1 centred, 2 right.
+    pub align: u8,
+    /// Text colour from the default appearance string, `#rrggbb`.
+    pub color: String,
+    /// The choices of a combo or list box, in file order.
+    pub options: Vec<FormOptionDto>,
+    /// Indices into `options` currently selected.
+    pub selected: Vec<u32>,
+    /// What resetting the form restores: /DV for text and editable combos.
+    pub default_value: String,
+    /// Option indices /DV selects, for combo and list boxes.
+    pub default_selected: Vec<u32>,
+    /// Whether /DV turns this checkbox or radio widget on.
+    pub default_checked: bool,
+    /// JavaScript actions attached to the field or widget. Never run; counted
+    /// so the UI can say what it did not do.
+    pub script_count: u32,
+    /// Position in the document's form order (Tab order), from 0.
+    pub tab_order: u32,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FormOptionDto {
+    /// What the reader sees.
+    pub label: String,
+    /// What is stored in /V when it is chosen.
+    pub export: String,
+}
+
+/// A document's form: its fields, and whether it also carries XFA.
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct FormDto {
+    pub fields: Vec<FormFieldDto>,
+    /// The document has an XFA form. With no AcroForm widgets alongside, it
+    /// is an XFA-only form, which PDFium (and so SpeedyF) cannot fill.
+    pub xfa: bool,
 }
 
 /// One checkbox or radio button the user toggled, identified by the widget
@@ -381,6 +435,17 @@ pub struct PlanFormButton {
     pub page: u32,
     pub index: u32,
     pub checked: bool,
+}
+
+/// A combo or list box value. `selected` holds option indices; `text`, when
+/// present, is free text typed into an editable combo and wins over them.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanFormChoice {
+    pub field: String,
+    pub selected: Vec<u32>,
+    #[serde(default)]
+    pub text: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -565,4 +630,7 @@ pub struct EditPlan {
     /// index - see `PlanFormButton`.
     #[serde(default)]
     pub form_buttons: Vec<PlanFormButton>,
+    /// Combo and list box selections, keyed by field name.
+    #[serde(default)]
+    pub form_choices: Vec<PlanFormChoice>,
 }

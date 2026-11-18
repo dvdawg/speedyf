@@ -249,7 +249,7 @@ pub enum Work {
     },
     FormFields {
         doc: DocId,
-        respond: Respond<Vec<FormFieldDto>>,
+        respond: Respond<FormDto>,
     },
     Outline {
         doc: DocId,
