@@ -172,6 +172,14 @@ export const IconPrint = () =>
       <path d="M4.5 9.5h7v4h-7z" />
     </>
   );
+/** A padlock: password protection. */
+export const IconLock = () =>
+  base(
+    <>
+      <rect x="3" y="7" width="10" height="7" rx="1" />
+      <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
+    </>
+  );
 /** A framed picture: the artwork a caption belongs to. */
 export const IconFigure = () =>
   base(

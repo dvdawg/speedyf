@@ -1,0 +1,110 @@
+/* Protect... dialog and the status bar's lock. */
+
+.modal.protect-dialog {
+  width: min(440px, calc(100vw - 40px));
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+}
+
+.modal .protect-status {
+  margin: 0 0 14px;
+}
+
+.protect-pair {
+  margin: -4px 0 12px 22px;
+}
+
+.modal .protect-pair input[type='password'] {
+  margin-bottom: 6px;
+}
+
+.protect-strength {
+  display: block;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.protect-strength[data-strength='weak'] {
+  color: var(--warn);
+}
+
+.protect-perms {
+  margin: -4px 0 12px 22px;
+  padding: 0;
+  border: 0;
+}
+
+.protect-perms legend {
+  padding: 0;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.protect-perms .modal-check {
+  margin-bottom: 6px;
+}
+
+.protect-print {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.protect-print select {
+  height: 26px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-inset);
+  color: var(--text);
+  font: inherit;
+}
+
+.modal .protect-note {
+  margin: 0 0 12px;
+  font-size: 12px;
+}
+
+.modal .protect-warn {
+  color: var(--warn);
+}
+
+.modal .protect-error {
+  margin: 0 0 10px;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.protect-remove {
+  margin-right: auto;
+}
+
+/* The lock beside the document's name. */
+.sb-lock {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.sb-lock:hover {
+  color: var(--text);
+}
+
+.sb-lock.is-pending {
+  color: var(--accent);
+}
+
+.sb-lock svg {
+  width: 12px;
+  height: 12px;
+}
