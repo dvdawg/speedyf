@@ -316,3 +316,11 @@ export const IconImport = () =>
       <path d="M8 2v8M5 7l3 3 3-3M2.5 10.5v2a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-2" />
     </>
   );
+/** Two chevrons pointing on: the toolbar's overflow, as AppKit draws it. */
+export const IconOverflow = () =>
+  base(
+    <>
+      <path d="M4 4.5 7.5 8 4 11.5" />
+      <path d="M8.5 4.5 12 8l-3.5 3.5" />
+    </>
+  );

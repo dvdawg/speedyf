@@ -1,5 +1,6 @@
 import { createSignal, Show } from 'solid-js';
 import IconButton from './IconButton';
+import OverflowRow, { type ToolbarGroup } from './OverflowRow';
 import { formatShortcut } from '../app/shortcutLabel';
 import {
   IconBack,
@@ -93,10 +94,13 @@ export default function Toolbar() {
   // Open stays on Cmd+O, Home's own Open PDF... button and the palette.
   const reader = () => tabsStore.state.activeId !== null;
 
-  return (
-    <Show when={reader()}>
-      <div class="toolbar" role="toolbar" aria-label="Main toolbar">
-        <div class="tb-group">
+  const groups: ToolbarGroup[] = [
+    {
+      id: 'sidebar',
+      label: 'Sidebar',
+      priority: Infinity,
+      render: () => (
+        <>
           <IconButton
             label="Toggle sidebar"
             active={ui.sidebarOpen}
@@ -104,9 +108,15 @@ export default function Toolbar() {
           >
             <IconSidebar />
           </IconButton>
-        </div>
-
-        <div class="tb-group">
+        </>
+      ),
+    },
+    {
+      id: 'file',
+      label: 'File',
+      priority: 1,
+      render: () => (
+        <>
           <IconButton
             label={`Open PDF (${formatShortcut('mod+o')})`}
             onClick={() => void openFromDialog()}
@@ -153,9 +163,15 @@ export default function Toolbar() {
           >
             <IconLock />
           </IconButton>
-        </div>
-
-        <div class="tb-group">
+        </>
+      ),
+    },
+    {
+      id: 'history',
+      label: 'Undo and redo',
+      priority: 2,
+      render: () => (
+        <>
           <IconButton
             label={`Undo (${formatShortcut('mod+z')})`}
             disabled={(doc()?.historyDepth ?? 0) === 0}
@@ -170,9 +186,15 @@ export default function Toolbar() {
           >
             <IconRedo />
           </IconButton>
-        </div>
-
-        <div class="tb-group">
+        </>
+      ),
+    },
+    {
+      id: 'navigate',
+      label: 'Navigation',
+      priority: 6,
+      render: () => (
+        <>
           <IconButton
             label={`Back (${formatShortcut('mod+[')})`}
             disabled={!loaded() || !canGoBack()}
@@ -209,39 +231,47 @@ export default function Toolbar() {
           >
             <IconChevronDown />
           </IconButton>
-          <label class="tb-field" title="Current page">
-            <span class="sr-only">Current page</span>
-            <input
-              class="tb-input page-input"
-              type="text"
-              inputmode="numeric"
-              disabled={!loaded()}
-              value={
-                pageInput() ??
-                (loaded() ? String((activeTab()?.viewport.state.currentPage ?? 0) + 1) : '-')
-              }
-              onFocus={(e) => {
-                setPageInput(e.currentTarget.value);
-                e.currentTarget.select();
-              }}
-              onInput={(e) => setPageInput(e.currentTarget.value)}
-              onBlur={(e) => commitPageInput(e.currentTarget.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') e.currentTarget.blur();
-                if (e.key === 'Escape') {
-                  setPageInput(null);
-                  e.currentTarget.blur();
+          <span class="tb-page-field">
+            <label class="tb-field" title="Current page">
+              <span class="sr-only">Current page</span>
+              <input
+                class="tb-input page-input"
+                type="text"
+                inputmode="numeric"
+                disabled={!loaded()}
+                value={
+                  pageInput() ??
+                  (loaded() ? String((activeTab()?.viewport.state.currentPage ?? 0) + 1) : '-')
                 }
-              }}
-              aria-label="Current page number"
-            />
-          </label>
-          <span class="tb-total" aria-label="Total pages">
-            / {loaded() ? pageCount() : '-'}
+                onFocus={(e) => {
+                  setPageInput(e.currentTarget.value);
+                  e.currentTarget.select();
+                }}
+                onInput={(e) => setPageInput(e.currentTarget.value)}
+                onBlur={(e) => commitPageInput(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') e.currentTarget.blur();
+                  if (e.key === 'Escape') {
+                    setPageInput(null);
+                    e.currentTarget.blur();
+                  }
+                }}
+                aria-label="Current page number"
+              />
+            </label>
+            <span class="tb-total" aria-label="Total pages">
+              / {loaded() ? pageCount() : '-'}
+            </span>
           </span>
-        </div>
-
-        <div class="tb-group">
+        </>
+      ),
+    },
+    {
+      id: 'zoom',
+      label: 'Zoom',
+      priority: 5,
+      render: () => (
+        <>
           <IconButton
             label={`Zoom out (${formatShortcut('mod+minus')})`}
             disabled={!loaded()}
@@ -304,9 +334,15 @@ export default function Toolbar() {
           >
             <IconRotate />
           </IconButton>
-        </div>
-
-        <div class="tb-group" role="group" aria-label="Annotation tools">
+        </>
+      ),
+    },
+    {
+      id: 'tools',
+      label: 'Annotation tools',
+      priority: 3,
+      render: () => (
+        <>
           <IconButton
             label="Select (Esc)"
             disabled={!loaded()}
@@ -405,9 +441,15 @@ export default function Toolbar() {
               </Show>
             </div>
           </Show>
-        </div>
-
-        <div class="tb-group tb-right">
+        </>
+      ),
+    },
+    {
+      id: 'panels',
+      label: 'Panels',
+      priority: 4,
+      render: () => (
+        <>
           <IconButton
             label="Add image to page"
             disabled={!loaded() || !activeTab()?.viewport.state.editMode}
@@ -453,7 +495,15 @@ export default function Toolbar() {
           </IconButton>
           <ReaderPaneToggles />
           <MarkupToggle />
-        </div>
+        </>
+      ),
+    },
+  ];
+
+  return (
+    <Show when={reader()}>
+      <div class="toolbar" role="toolbar" aria-label="Main toolbar" data-window-drag="">
+        <OverflowRow groups={groups} trailingId="panels" />
         <TextTools />
         <FillTools />
         <PrepareTools />

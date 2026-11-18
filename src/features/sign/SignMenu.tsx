@@ -115,6 +115,7 @@ export function SignMenu() {
     <div class="sign-menu-wrap" ref={wrap}>
       <IconButton
         label="Sign: signatures and filling printed forms"
+        submenu
         disabled={!loaded()}
         active={signState.menuOpen || signState.pending !== null || fillActive()}
         onClick={() => setSignMenuOpen(!signState.menuOpen)}

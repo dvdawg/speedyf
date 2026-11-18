@@ -65,6 +65,7 @@ export function RedactMenu() {
     <div class="redact-menu-wrap" ref={wrap}>
       <IconButton
         label="Redact"
+        submenu
         disabled={!loaded()}
         active={open() || toolState.active === 'redact'}
         onClick={() => setOpen(!open())}

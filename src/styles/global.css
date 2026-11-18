@@ -783,13 +783,138 @@ textarea,
 
 /* ---------- toolbar ---------- */
 .toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 10px;
   padding: 6px 10px;
   background: var(--bg-elev);
   border-bottom: 1px solid var(--border);
+}
+
+/* One row that never wraps: what does not fit folds into the overflow menu
+   (OverflowRow.tsx). The clip is only a guard for the frame between a
+   resize and the fold. */
+.toolbar-row {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  column-gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.toolbar > .text-tool-options {
+  margin-top: 6px;
+}
+
+.tb-overflow {
+  flex: none;
+  margin-left: auto;
+}
+
+.tb-right + .tb-overflow {
+  margin-left: 0;
+}
+
+.tb-page-field {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* The overflow menu: the folded groups as labelled rows. */
+.tb-menu {
+  position: fixed;
+  z-index: 70;
+  min-width: 220px;
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  box-shadow: var(--shadow);
+}
+
+.tb-menu-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.tb-menu-separator {
+  height: 1px;
+  flex: none;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
+.tb-menu-item {
+  height: 28px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.tb-menu-item:hover:not(:disabled),
+.tb-menu-item:focus-visible {
+  background: var(--accent-soft);
+  outline: none;
+}
+
+.tb-menu-item:disabled {
+  color: var(--text-dim);
+}
+
+.tb-menu-item:disabled .tb-menu-icon {
+  opacity: 0.45;
+}
+
+.tb-menu-item.is-active .tb-menu-icon {
+  color: var(--accent);
+}
+
+.tb-menu-icon {
+  display: inline-flex;
+  width: 16px;
+  justify-content: center;
+}
+
+.tb-menu-name {
+  flex: 1;
+}
+
+.tb-menu-key {
+  margin-left: 16px;
+  color: var(--text-dim);
+}
+
+/* Fields and option strips sit in the menu as rows of their own. */
+.tb-menu .tb-page-field,
+.tb-menu .zoom-input,
+.tb-menu .tool-options {
+  align-self: flex-start;
+  margin: 2px 8px;
+}
+
+/* A toolbar menu of its own (Sign, Redact) opens in place, under its row. */
+.tb-menu :is(.sign-menu-wrap, .redact-menu-wrap) {
+  display: flex;
+  flex-direction: column;
+}
+
+.tb-menu :is(.sign-menu, .redact-menu) {
+  position: static;
+  margin: 2px 0 4px 24px;
+  box-shadow: none;
 }
 
 .tb-group {
