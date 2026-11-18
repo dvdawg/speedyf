@@ -368,40 +368,35 @@ fn fields_detail(verb: &str, names: &[String]) -> String {
     )
 }
 
-/// Whether two versions of an object say the same thing. A stream counts
-/// as unchanged when it decodes to the same bytes: savers (PDFium among them)
-/// re-compress streams they rewrite without changing what they hold.
+/// Whether a later revision left an object exactly as it was signed.
+///
+/// As strict as pyHanko (and, as far as can be told, Acrobat): a stream
+/// counts as unchanged only when its encoded bytes are, so one written back
+/// re-compressed is a change even though it decodes to the same thing. A
+/// checker cannot tell a harmless re-encoding of a page's content from a
+/// rewrite without trusting the decoder, and Acrobat does not. Only how a
+/// string was spelled (hex or literal) and the order of dictionary keys are
+/// ignored, as pyHanko ignores them. SpeedyF's own saves write back nothing
+/// they did not change (see `engine::minimal_update`).
 fn same(before: &Object, after: &Object) -> bool {
-    if before == after {
-        return true;
-    }
-    let (Object::Stream(b), Object::Stream(a)) = (before, after) else {
-        return false;
-    };
-    let coding: &[&[u8]] = &[b"Length", b"Filter", b"DecodeParms"];
-    let strip = |d: &Dictionary| {
-        let mut d = d.clone();
-        for key in coding {
-            d.remove(key);
+    match (before, after) {
+        (Object::String(b, _), Object::String(a, _)) => b == a,
+        (Object::Array(b), Object::Array(a)) => {
+            b.len() == a.len() && b.iter().zip(a).all(|(x, y)| same(x, y))
         }
-        d
-    };
-    if strip(&b.dict) != strip(&a.dict) {
-        return false;
+        (Object::Dictionary(b), Object::Dictionary(a)) => same_dict(b, a),
+        (Object::Stream(b), Object::Stream(a)) => {
+            b.content == a.content && same_dict(&b.dict, &a.dict)
+        }
+        _ => before == after,
     }
-    let decoded = |s: &lopdf::Stream| -> Option<Vec<u8>> {
-        let bytes = if s.dict.has(b"Filter") {
-            s.decompressed_content().ok()?
-        } else {
-            s.content.clone()
-        };
-        let end = bytes
+}
+
+fn same_dict(before: &Dictionary, after: &Dictionary) -> bool {
+    before.len() == after.len()
+        && before
             .iter()
-            .rposition(|ch| !ch.is_ascii_whitespace())
-            .map_or(0, |i| i + 1);
-        Some(bytes[..end].to_vec())
-    };
-    matches!((decoded(b), decoded(a)), (Some(x), Some(y)) if x == y)
+            .all(|(key, b)| after.get(key).is_ok_and(|a| same(b, a)))
 }
 
 /// Cross-reference and object streams change with every update and say
@@ -497,6 +492,31 @@ fn page_changed(
             }
             _ => found.push(ChangeKind::Comment, page, "Comments were added".into()),
         }
+    }
+    // Annotations written inline in /Annots rather than as objects of their
+    // own (non-conforming, but PDFium writes them) are still comments.
+    let inline = |doc: &Document| -> Vec<Object> {
+        doc.get_dictionary(id)
+            .ok()
+            .and_then(|p| resolve(doc, p.get(b"Annots").ok()?))
+            .and_then(|a| a.as_array().ok())
+            .map(|list| {
+                list.iter()
+                    .filter(|o| matches!(o, Object::Dictionary(_)))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let inline_before = inline(old);
+    let inline_after = inline(new);
+    let unmatched =
+        |from: &[Object], to: &[Object]| from.iter().any(|a| !to.iter().any(|b| same(a, b)));
+    if unmatched(&inline_after, &inline_before) {
+        found.push(ChangeKind::Comment, page, "Comments were added".into());
+    }
+    if unmatched(&inline_before, &inline_after) {
+        found.push(ChangeKind::Comment, page, "Comments were removed".into());
     }
     for annot in before_annots.iter().filter(|a| !after_set.contains(a)) {
         let Some(dict) = old.get_object(*annot).ok().and_then(dict_of) else {
@@ -711,15 +731,22 @@ fn acroform_changed(
     if before_fields.difference(&after_fields).next().is_some() {
         found.push(ChangeKind::Other, None, "A form field was removed".into());
     }
-    // XFA is a second copy of the form; changing it changes what XFA readers
-    // show, which is still a form edit.
+    // XFA is a second definition of the form. Neither replacing nor removing
+    // it is form filling: pyHanko rejects both, and Acrobat judges a filled
+    // XFA form by its datasets, not by dropping them.
     let xfa = |o: &Object| dict_of(o).and_then(|d| d.get(b"XFA").ok().cloned());
-    if xfa(before) != xfa(after) && xfa(after).is_some() {
-        found.push(
+    match (xfa(before), xfa(after)) {
+        (Some(_), None) => found.push(
+            ChangeKind::Other,
+            None,
+            "The form's XFA data was removed".into(),
+        ),
+        (b, Some(a)) if b.as_ref() != Some(&a) => found.push(
             ChangeKind::Other,
             None,
             "The form's XFA data was changed".into(),
-        );
+        ),
+        _ => {}
     }
 }
 
