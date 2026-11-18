@@ -52,6 +52,7 @@ import { beginPrint } from '../features/print/printStore';
 import TextTools from '../features/annotations/TextTools';
 import { ReaderPaneToggles } from '../features/extensions/ReaderPane';
 import { MarkupToggle } from '../features/markup/MarkupToggle';
+import { SignMenu } from '../features/sign/SignMenu';
 
 export default function Toolbar() {
   const maxSavePages = 65_535;
@@ -344,6 +345,7 @@ export default function Toolbar() {
           >
             <IconBubble />
           </IconButton>
+          <SignMenu />
           <Show when={showStyle()}>
             <div class="tool-options" role="group" aria-label="Tool style">
               <input

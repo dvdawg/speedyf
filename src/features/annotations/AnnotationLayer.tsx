@@ -32,6 +32,9 @@ import { activeTab } from '../../stores/tabsStore';
 import { fitTextBox, textFontCss, textStyleOf } from './textStyle';
 import { highlightRects } from './highlightRects';
 import type { EquationBlock } from '../extensions/EquationLayer';
+import { placePendingSignature, signState } from '../sign/signStore';
+import { resizeKeepingAspect } from '../sign/art';
+import SignatureArtView from '../sign/SignatureArtView';
 
 interface Props {
   page: PageEntry;
@@ -141,6 +144,8 @@ export default function AnnotationLayer(props: Props) {
   const cssY = (y: number, h: number) => (H() - y - h) * props.zoom;
 
   const drawingTool = () => toolState.active !== 'select';
+  /** A saved signature is armed: the next click on this page places it. */
+  const placing = () => signState.pending !== null;
 
   // ---------- bubbles ----------
 
@@ -297,6 +302,12 @@ export default function AnnotationLayer(props: Props) {
   // ---------- pointer handling ----------
 
   const onLayerPointerDown = (e: PointerEvent) => {
+    if (placing() && e.button === 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      void placePendingSignature(documentStore, props.page, toPdf(e));
+      return;
+    }
     if (!drawingTool() || e.button !== 0) return;
     // The bubble tool has no drag gesture of its own: it clicks targets that
     // are already on the page, and each target handles its own pointer.
@@ -381,7 +392,7 @@ export default function AnnotationLayer(props: Props) {
     } else if (d.kind === 'resize' && d.annotId && d.handle) {
       const a = annots().find((x) => x.id === d.annotId);
       if (!a) return;
-      const rect = resizeRect(a.rect, d.handle, p);
+      const rect = resizeFor(a, d.handle, p);
       documentStore.apply({
         type: 'patchAnnot',
         pageId: props.page.id,
@@ -392,6 +403,8 @@ export default function AnnotationLayer(props: Props) {
   };
 
   const startMove = (e: PointerEvent, a: Annotation) => {
+    // Armed to place a signature: let the press reach the layer instead.
+    if (placing()) return;
     if (toolState.active !== 'select' || e.button !== 0) return;
     e.stopPropagation();
     documentStore.setSelected({ pageId: props.page.id, annotId: a.id });
@@ -417,7 +430,7 @@ export default function AnnotationLayer(props: Props) {
       return { ...a, ...movedPatch(a, dx, dy) } as Annotation;
     }
     if (d.kind === 'resize' && d.handle) {
-      return { ...a, rect: resizeRect(a.rect, d.handle, d.lastPdf) };
+      return { ...a, rect: resizeFor(a, d.handle, d.lastPdf) };
     }
     return a;
   };
@@ -441,7 +454,10 @@ export default function AnnotationLayer(props: Props) {
     <div
       ref={layerEl}
       class="annot-layer"
-      classList={{ 'is-drawing': drawingTool() }}
+      classList={{
+        'is-drawing': drawingTool() || placing(),
+        'is-placing-signature': placing(),
+      }}
       onPointerDown={onLayerPointerDown}
       onPointerMove={onLayerPointerMove}
       onPointerUp={onLayerPointerUp}
@@ -681,6 +697,26 @@ export default function AnnotationLayer(props: Props) {
                 </div>
               </Show>
 
+              <Show when={a().kind === 'signature' && a().signature}>
+                {(art) => (
+                  <div
+                    class="annot-signature"
+                    classList={{ 'is-selected': isSel() }}
+                    title="Visual signature (not a certificate signature)"
+                    style={{
+                      left: `${cssX(a().rect.x)}px`,
+                      top: `${cssY(a().rect.y, a().rect.h)}px`,
+                      width: `${a().rect.w * props.zoom}px`,
+                      height: `${a().rect.h * props.zoom}px`,
+                      'pointer-events': toolState.active === 'select' ? 'auto' : 'none',
+                    }}
+                    onPointerDown={(e) => startMove(e, raw)}
+                  >
+                    <SignatureArtView art={art()} color={a().color} />
+                  </div>
+                )}
+              </Show>
+
               <Show when={a().kind === 'image'}>
                 <ImageAnnot
                   annot={a()}
@@ -749,7 +785,7 @@ export default function AnnotationLayer(props: Props) {
               </Show>
 
               {/* selection chrome: resize handles + delete */}
-              <Show when={isSel() && ['rect', 'textbox', 'image'].includes(a().kind)}>
+              <Show when={isSel() && ['rect', 'textbox', 'image', 'signature'].includes(a().kind)}>
                 <For each={['nw', 'ne', 'sw', 'se'] as const}>
                   {(h) => (
                     <div
@@ -872,6 +908,13 @@ function movedPatch(a: Annotation, dx: number, dy: number): Partial<Annotation> 
     }));
   }
   return patch;
+}
+
+/** A signature keeps its proportions; everything else resizes freely. */
+function resizeFor(a: Annotation, handle: 'nw' | 'ne' | 'sw' | 'se', p: PdfPoint): PdfRect {
+  return a.kind === 'signature' && a.signature
+    ? resizeKeepingAspect(a.rect, handle, p, a.rect.w / Math.max(1e-3, a.rect.h))
+    : resizeRect(a.rect, handle, p);
 }
 
 function resizeRect(r: PdfRect, handle: 'nw' | 'ne' | 'sw' | 'se', p: PdfPoint): PdfRect {

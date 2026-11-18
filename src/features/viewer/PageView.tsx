@@ -29,6 +29,7 @@ import HoverSpanLayer from '../hovers/HoverSpanLayer';
 import EquationLayer from '../extensions/EquationLayer';
 import StatementLayer from '../extensions/StatementLayer';
 import FormLayer from '../forms/FormLayer';
+import SignatureFieldLayer from '../sign/SignatureFieldLayer';
 import MarkupLayer from '../markup/MarkupLayer';
 import { reveal } from '../../stores/revealStore';
 import type { Rotation } from '../../types/model';
@@ -384,6 +385,14 @@ export default function PageView(props: Props) {
             docId={doc.docId}
             src={srcIndex()!}
             pageHeightPt={props.geom.heightPt}
+            zoom={vp.state.zoom}
+          />
+        </Show>
+        <Show when={srcIndex() !== null && page()}>
+          <SignatureFieldLayer
+            docId={doc.docId}
+            src={srcIndex()!}
+            page={page()!}
             zoom={vp.state.zoom}
           />
         </Show>
