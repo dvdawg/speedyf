@@ -617,3 +617,6 @@ fn reads_the_request_the_dialog_sends() {
     assert!(matches!(existing.field, FieldChoice::Existing { .. }));
     assert_eq!(existing.lock, Lock::All);
 }
+
+#[path = "mdp_tests.rs"]
+mod mdp;
