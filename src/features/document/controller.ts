@@ -10,6 +10,7 @@ import { askConfirm, askUnsaved, showError } from '../../stores/modalStore';
 import { recentStore } from '../../stores/recentStore';
 import type { Annotation } from '../../types/model';
 import { clearSignatures } from '../signatures/signatureStore';
+import { withFormDisplay } from '../forms/formBehaviour';
 
 const SIZE_BATCH = 128;
 
@@ -135,7 +136,7 @@ export async function saveDocument(
   const rememberPage = tab.viewport.state.currentPage;
   let refusedSigned = false;
   try {
-    const plan = tab.documentStore.buildEditPlan();
+    const plan = await withFormDisplay(docId, tab.documentStore.buildEditPlan());
     await engine.saveDocument(docId, plan, dest, breakSignatures);
     // A discard/open can replace the active document while the native save
     // is running. The file was saved, but its completion must not overwrite

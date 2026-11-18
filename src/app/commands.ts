@@ -29,7 +29,7 @@ import { setActiveTool, type Tool } from '../features/annotations/toolStore';
 import { beginPrint } from '../features/print/printStore';
 import { settings, toggleSleepy, updateSettings } from '../stores/settings';
 import { forgetContributedText } from '../features/extensions/extensionStore';
-import { formFields, isFillable } from '../features/forms/formStore';
+import { formInfo, isFillable } from '../features/forms/formStore';
 import { resetForm } from '../features/forms/formNav';
 import {
   activePaper,
@@ -673,8 +673,8 @@ export const COMMANDS: readonly Command[] = [
       const tab = ctx.tab;
       const s = state(ctx);
       if (!tab || !s?.loaded) return;
-      void formFields(s.docId).then((fields) => {
-        if (fields.some(isFillable)) resetForm(tab, fields);
+      void formInfo(s.docId).then((info) => {
+        if (info.fields.some(isFillable)) resetForm(tab, info.fields, info);
       });
     },
   },
