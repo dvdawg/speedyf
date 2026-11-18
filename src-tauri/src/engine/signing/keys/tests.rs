@@ -197,6 +197,48 @@ fn signing_eligibility_reads_the_usages() {
     assert!(!can_sign_documents(&std::fs::read(crt).unwrap()));
 }
 
+#[test]
+fn the_file_store_refuses_a_certificate_that_cannot_sign_documents() {
+    let dir = tempfile::tempdir().unwrap();
+    if !openssl() {
+        return;
+    }
+    let key = dir.path().join("server.key");
+    let crt = dir.path().join("server.crt");
+    let p12 = dir.path().join("server.p12");
+    let made = Command::new("openssl")
+        .args([
+            "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2",
+        ])
+        .args(["-subj", "/CN=www.example.org"])
+        .args(["-addext", "extendedKeyUsage=serverAuth"])
+        .arg("-keyout")
+        .arg(&key)
+        .arg("-out")
+        .arg(&crt)
+        .output()
+        .unwrap();
+    assert!(made.status.success());
+    let exported = Command::new("openssl")
+        .args(["pkcs12", "-export", "-passout", "pass:pw"])
+        .arg("-inkey")
+        .arg(&key)
+        .arg("-in")
+        .arg(&crt)
+        .arg("-out")
+        .arg(&p12)
+        .output()
+        .unwrap();
+    assert!(exported.status.success());
+    let store_dir = dir.path().join("certificates");
+    let bytes = std::fs::read(&p12).unwrap();
+    assert!(import_p12(&store_dir, StoreKind::File, &bytes, "pw", Some("pass")).is_err());
+    assert!(FileStore::new(&store_dir)
+        .list()
+        .unwrap_or_default()
+        .is_empty());
+}
+
 /// The Keychain path, against a temporary keychain file that is deleted
 /// afterwards: the login keychain is never touched.
 #[cfg(target_os = "macos")]
