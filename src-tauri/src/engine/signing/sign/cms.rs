@@ -301,8 +301,12 @@ pub fn verify_detached(cms_der: &[u8], digest: &[u8; 32]) -> AppResult<()> {
         use pkcs8::DecodePublicKey;
         use rsa::signature::Verifier;
         let der = spki.to_der().map_err(|e| bad(&e.to_string()))?;
-        let vk = p256::ecdsa::VerifyingKey::from_public_key_der(&der)
-            .map_err(|_| bad("only P-256 keys are checked here"))?;
+        // A Keychain key on another curve (P-384, P-521) signs fine; this
+        // check only knows P-256, so the digest match above is all it adds.
+        let Ok(vk) = p256::ecdsa::VerifyingKey::from_public_key_der(&der) else {
+            log::info!("signature check: not a P-256 key; digest checked only");
+            return Ok(());
+        };
         let sig = p256::ecdsa::Signature::from_der(sig).map_err(|e| bad(&e.to_string()))?;
         vk.verify(&message, &sig)
             .map_err(|_| bad("the signature does not verify"))

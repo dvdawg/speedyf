@@ -580,3 +580,38 @@ fn a_timestamp_token_is_requested_checked_and_embedded() {
     )
     .unwrap();
 }
+
+/// The request exactly as the dialog sends it (certificate/api.ts).
+#[test]
+fn reads_the_request_the_dialog_sends() {
+    let json = r##"{
+        "field": { "kind": "new", "page": 1, "rect": { "x": 10, "y": 20, "w": 150, "h": 50 } },
+        "reason": "Approved", "location": "", "contact": "",
+        "dateText": "2026.01.02 00:00:00 +00'00'",
+        "art": { "art": { "type": "drawn", "w": 10, "h": 5, "width": 1,
+                          "strokes": [[{ "x": 1, "y": 1 }, { "x": 9, "y": 4 }]] },
+                 "color": "#1a1a1a" },
+        "certify": 2,
+        "lock": { "kind": "include", "fields": ["name"] },
+        "subFilter": "pkcs7",
+        "tsaUrl": null
+    }"##;
+    let req: SignRequest = serde_json::from_str(json).unwrap();
+    assert!(matches!(req.field, FieldChoice::New { page: 1, .. }));
+    assert_eq!(req.certify, Some(2));
+    assert_eq!(
+        req.lock,
+        Lock::Include {
+            fields: vec!["name".into()]
+        }
+    );
+    assert_eq!(req.sub_filter, SubFilter::Pkcs7);
+    assert!(req.tsa_url.is_none());
+    assert!(req.art.is_some());
+    let existing: SignRequest = serde_json::from_str(
+        r#"{ "field": { "kind": "existing", "name": "Approver" }, "lock": { "kind": "all" }, "subFilter": "cades" }"#,
+    )
+    .unwrap();
+    assert!(matches!(existing.field, FieldChoice::Existing { .. }));
+    assert_eq!(existing.lock, Lock::All);
+}
