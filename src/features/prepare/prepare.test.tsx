@@ -10,6 +10,7 @@ import { cleanup, fireEvent, render } from '@solidjs/testing-library';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Blank, FormInfo, ProposedField } from '../../types/engine';
 import type * as engineModule from '../../lib/transport/engine';
+import type * as modalModule from '../../stores/modalStore';
 
 const fake = vi.hoisted(() => ({
   blanks: new Map<number, unknown[]>(),
@@ -35,7 +36,7 @@ vi.mock('../../lib/transport/engine', async (importOriginal) => {
 });
 
 vi.mock('../../stores/modalStore', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../stores/modalStore')>();
+  const actual = await importOriginal<typeof modalModule>();
   return {
     ...actual,
     askConfirm: (message: string) => {
