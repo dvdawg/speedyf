@@ -10,6 +10,7 @@ mod markup_capture;
 mod markup_selftest;
 mod printing;
 mod search;
+mod titlebar;
 mod windows;
 
 use commands::EngineState;
@@ -385,6 +386,7 @@ pub fn run() {
             commands::extension_document_identifiers,
             commands::extension_contributed_text,
             commands::forget_contributed_text,
+            titlebar::titlebar_double_click,
             windows::take_pending_opens,
             windows::new_window,
             windows::detach_tab,

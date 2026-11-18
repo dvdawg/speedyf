@@ -48,6 +48,7 @@ import {
 import { windowTransferPending } from '../features/windows/windowController';
 import { showError } from '../stores/modalStore';
 import { TabContext } from './TabContext';
+import { installPlatformTitlebar } from '../lib/titlebar';
 
 export default function App() {
   /** What the overlay says while a file is held over the window; null when
@@ -74,6 +75,7 @@ export default function App() {
 
   onMount(() => {
     const cleanupShortcuts = installShortcuts();
+    const cleanupTitlebar = installPlatformTitlebar();
     let disposed = false;
 
     // engine events → the owning tab's own search store, even if it's a
@@ -197,6 +199,7 @@ export default function App() {
     onCleanup(() => {
       disposed = true;
       cleanupShortcuts();
+      cleanupTitlebar();
       unlistenProgress?.();
       unlistenOpen?.();
       unlistenDrop?.();

@@ -42,6 +42,12 @@
   /* Height of a standard control: buttons, the segmented toggles (24px
    * segments + 2px padding + 1px border) and fields that share their rows. */
   --control-h: 30px;
+  /* The tab strip's row. On macOS it is also the title bar, and the traffic
+     lights are centred on it: keep trafficLightPosition.y in
+     tauri.conf.json at 2 + half of this. */
+  --tabstrip-h: 38px;
+  /* Room the macOS traffic lights take at the start of that row. */
+  --traffic-light-inset: 84px;
   /* Screen heads (Home panels, Projects): 30px of content between these
    * paddings, so a 20px title, a count and a --control-h control share it. */
   --screen-head-pad: 22px 28px 10px;
@@ -957,10 +963,21 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 8px;
+  box-sizing: content-box;
+  height: var(--tabstrip-h);
+  padding: 0 8px;
   background: var(--bg-elev);
   border-bottom: 1px solid var(--border);
   min-width: 0;
+}
+
+/* macOS: the title bar is folded into this row (titleBarStyle Overlay in
+   tauri.conf.json) and the traffic lights sit on its left end, at x 14 to
+   74 and centred 19px down - half of --tabstrip-h. Full screen hides them
+   and the row takes its room back. Windows and Linux keep a native title
+   bar above the row. */
+:root[data-platform='macos']:not([data-fullscreen]) .tab-strip {
+  padding-left: var(--traffic-light-inset);
 }
 
 /* Scrolls once the pills stop shrinking. The scrollbar is hidden because the

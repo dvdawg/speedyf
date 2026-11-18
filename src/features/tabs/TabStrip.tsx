@@ -127,13 +127,20 @@ export default function TabStrip() {
   };
 
   return (
-    <div class="tab-strip" ref={stripRow} role="tablist" aria-label="Open documents">
+    <div
+      class="tab-strip"
+      ref={stripRow}
+      role="tablist"
+      aria-label="Open documents"
+      data-window-drag=""
+    >
       <IconButton label="Home" onClick={goHome}>
         <IconHome />
       </IconButton>
       <div
         class="tab-strip-tabs"
         ref={strip}
+        data-window-drag=""
         onWheel={onWheel}
         onScroll={() => {
           clearHover();
