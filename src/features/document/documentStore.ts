@@ -9,6 +9,9 @@
  */
 import { createStore, produce } from 'solid-js/store';
 import type { Annotation, DocMeta, PageEntry, PageId, PdfRect, Rotation } from '../../types/model';
+import type { ProtectRequest, ProtectionInfo } from '../../types/engine';
+import { deniedReason, rightForOp } from '../protect/permissions';
+import { flashStatus } from '../../stores/statusMessage';
 
 export type EditOp =
   | { type: 'reorder'; pageId: PageId; toIndex: number }
@@ -28,6 +31,9 @@ export type EditOp =
   | { type: 'setFormChoice'; field: string; choice: FormChoice }
   /** Several form values at once, as one undo step: Reset Form. */
   | { type: 'setFormValues'; values: FormValues }
+  /** Protection the next save writes; null keeps the file's own. Its own
+   * inverse, like setFlattenSignatures. */
+  | { type: 'setProtection'; request: ProtectRequest | null }
   // internal inverse-only ops:
   | { type: 'restorePage'; entry: PageEntry; index: number; annots: Annotation[] }
   | { type: 'restoreAnnot'; pageId: PageId; annot: Annotation; index: number }
@@ -83,7 +89,7 @@ export interface ScrubPlan {
 export const NO_SCRUB: ScrubPlan = { applyRedactions: false, removeHidden: null };
 
 export interface PlanAnnot {
-  kind: 'highlight' | 'ink' | 'rect' | 'note' | 'signature' | 'redact';
+  kind: 'highlight' | 'ink' | 'rect' | 'note' | 'bubble' | 'signature' | 'mark' | 'redact';
   rect: PdfRect;
   color: string;
   opacity: number;
@@ -94,6 +100,8 @@ export interface PlanAnnot {
   signature?: Annotation['signature'];
   /** signatures only: into the page content rather than as an annotation */
   flatten?: boolean;
+  /** marks only: which one */
+  mark?: Annotation['mark'];
 }
 
 export interface PlanText extends Partial<
@@ -104,6 +112,8 @@ export interface PlanText extends Partial<
   fontSizePt: number;
   color: string;
   opacity: number;
+  /** one character a cell across this many cells (a comb row) */
+  combCells?: number;
 }
 
 export interface PlanImage {
@@ -132,6 +142,10 @@ export interface PlanPage {
  * control: every button in a radio group carries the same one. */
 export function formButtonKey(page: number, index: number): string {
   return `${page}:${index}`;
+}
+
+function copyRequest(request: ProtectRequest | null): ProtectRequest | null {
+  return request === null ? null : (JSON.parse(JSON.stringify(request)) as ProtectRequest);
 }
 
 function copyChoice(choice: FormChoice): FormChoice {
@@ -163,6 +177,9 @@ export interface EditPlan {
   formButtons: PlanFormButton[];
   formChoices: PlanFormChoice[];
   scrub?: ScrubPlan;
+  /** Formatted page text for text fields whose /V stays raw: name, text,
+   * whether it is drawn red. See forms/formBehaviour.ts. */
+  formDisplay?: [string, string, boolean | null][];
 }
 
 export interface DocState {
@@ -181,6 +198,11 @@ export interface DocState {
   formChoiceEdits: Record<string, FormChoice>;
   /** Redactions to apply and hidden information to remove at save. */
   scrub: ScrubPlan;
+  /** The file's password protection, as the engine read it; null before a
+   * document is open or when the engine did not say. */
+  protection: ProtectionInfo | null;
+  /** New protection for the next save; null keeps the file's own. */
+  protectChange: ProtectRequest | null;
   dirty: boolean;
   saving: boolean;
   /** bumped whenever engine-derived visuals must be re-fetched (reload) */
@@ -203,6 +225,8 @@ const emptyState = (): DocState => ({
   flattenSignatures: false,
   formChoiceEdits: {},
   scrub: NO_SCRUB,
+  protection: null,
+  protectChange: null,
   dirty: false,
   saving: false,
   generation: 0,
@@ -236,6 +260,9 @@ export interface DocumentStore {
   setSaving: (v: boolean) => void;
   setGeneration: (generation: number) => void;
   setSelected: (sel: DocState['selected']) => void;
+  /** The file's protection changed for this session (its permissions
+   * password was entered); not an edit. */
+  setProtectionInfo: (protection: ProtectionInfo) => void;
   setSearchIndex: (s: Partial<DocState['searchIndex']>) => void;
   reset: () => void;
   pageIndexById: (id: PageId) => number;
@@ -363,6 +390,8 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
         return { type: 'setFlattenSignatures', value: state.flattenSignatures };
       case 'setScrub':
         return { type: 'setScrub', scrub: JSON.parse(JSON.stringify(state.scrub)) as ScrubPlan };
+      case 'setProtection':
+        return { type: 'setProtection', request: copyRequest(state.protectChange) };
       case 'setFormChoice': {
         const prev = state.formChoiceEdits[op.field];
         return {
@@ -491,6 +520,10 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
             s.scrub = JSON.parse(JSON.stringify(op.scrub)) as ScrubPlan;
             break;
           }
+          case 'setProtection': {
+            s.protectChange = copyRequest(op.request);
+            break;
+          }
           case 'restorePage': {
             s.pages.splice(op.index, 0, JSON.parse(JSON.stringify(op.entry)) as PageEntry);
             s.annotations[op.entry.id] = JSON.parse(JSON.stringify(op.annots)) as Annotation[];
@@ -553,6 +586,14 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
   };
 
   const apply = (op: EditOp, group?: symbol) => {
+    // A protected file's permissions are honoured, not stripped: what they
+    // withhold is refused here, whichever control asked, and says why.
+    const right = rightForOp(op.type);
+    const denied = right && deniedReason(state.protection, right);
+    if (denied) {
+      flashStatus(denied);
+      return;
+    }
     const mat = materialize(op);
     const inverse = computeInverse(mat);
     const previous = undoStack.at(-1);
@@ -583,6 +624,33 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
       previous.op.field === mat.field
     ) {
       previous.op = mat;
+    } else if (
+      coalesce &&
+      previous.op.type === 'setFormValues' &&
+      previous.inverse.type === 'restoreFormValues' &&
+      mat.type === 'setFormValues' &&
+      inverse.type === 'restoreFormValues'
+    ) {
+      // Typing in a field that feeds a calculation: the newest values win,
+      // and the inverse keeps what each key held before the first of them.
+      const values = previous.op.values;
+      previous.op = {
+        type: 'setFormValues',
+        values: {
+          texts: { ...values.texts, ...mat.values.texts },
+          buttons: { ...values.buttons, ...mat.values.buttons },
+          choices: { ...values.choices, ...mat.values.choices },
+        },
+      };
+      const prev = previous.inverse.prev;
+      previous.inverse = {
+        type: 'restoreFormValues',
+        prev: {
+          texts: { ...inverse.prev.texts, ...prev.texts },
+          buttons: { ...inverse.prev.buttons, ...prev.buttons },
+          choices: { ...inverse.prev.choices, ...prev.choices },
+        },
+      };
     } else if (
       coalesce &&
       previous.op.type === 'setFormChoice' &&
@@ -647,6 +715,7 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
       path: meta.path,
       name: meta.name,
       pages,
+      protection: meta.protection ?? null,
       searchIndex: { indexed: 0, total: meta.pageCount, done: false },
     });
     rebuildPageLookups();
@@ -711,6 +780,8 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
       a.italic ?? false,
       a.underline ?? false,
       a.signature ?? null,
+      a.mark ?? null,
+      a.combCells ?? null,
     ]);
 
   /** Adopt the annotations already in the file.
@@ -783,7 +854,9 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
         dropSrcAnnots,
         annots: anns
           .filter((a): a is Annotation & { kind: PlanAnnot['kind'] } =>
-            ['highlight', 'ink', 'rect', 'note', 'bubble', 'signature', 'redact'].includes(a.kind)
+            ['highlight', 'ink', 'rect', 'note', 'bubble', 'signature', 'mark', 'redact'].includes(
+              a.kind
+            )
           )
           .map((a) => ({
             kind: a.kind,
@@ -797,6 +870,7 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
             ...(a.signature !== undefined
               ? { signature: a.signature, flatten: state.flattenSignatures }
               : {}),
+            ...(a.mark !== undefined ? { mark: a.mark } : {}),
           })),
         texts: anns
           .filter((a) => a.kind === 'textbox')
@@ -810,6 +884,7 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
             underline: a.underline ?? false,
             color: a.color,
             opacity: a.opacity,
+            ...(a.combCells ? { combCells: a.combCells } : {}),
           })),
         images: anns
           .filter((a) => a.kind === 'image' && a.sourcePath)
@@ -885,6 +960,7 @@ export function createDocumentStore(opts?: { historyLimit?: number }): DocumentS
     setSaving: (v) => setState('saving', v),
     setGeneration: (generation) => setState('generation', generation),
     setSelected: (sel) => setState('selected', sel),
+    setProtectionInfo: (protection) => setState('protection', protection),
     setSearchIndex: (s) =>
       setState(
         produce((st) => {

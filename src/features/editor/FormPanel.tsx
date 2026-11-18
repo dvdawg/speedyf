@@ -8,7 +8,7 @@ import { createMemo, createResource, For, Show, useContext } from 'solid-js';
 import IconButton from '../../components/IconButton';
 import { IconClose } from '../../components/icons';
 import { TabContext } from '../../app/TabContext';
-import type { FormFieldInfo } from '../../types/engine';
+import type { FormFieldInfo, FormInfo } from '../../types/engine';
 import type { DocState } from '../document/documentStore';
 import {
   choiceText,
@@ -22,15 +22,21 @@ import {
   textValue,
 } from '../forms/formStore';
 import { goToField, resetForm } from '../forms/formNav';
+import { behaviourOf, shownValue, userDatePicture } from '../forms/formBehaviour';
+import { fieldProblem } from '../forms/formScripts';
 import { layoutIndexOf } from '../outline/jumpToAnchor';
 import { settings, updateSettings } from '../../stores/settings';
 
-/** What a field holds, as one short line for the list. */
-export function fieldSummary(doc: DocState, widgets: FormFieldInfo[]): string {
+/** What a field holds, as one short line for the list: a text field as
+ * its format shows it. */
+export function fieldSummary(doc: DocState, widgets: FormFieldInfo[], info?: FormInfo): string {
   const first = widgets[0]!;
   switch (first.kind) {
-    case 'text':
-      return first.password && textValue(doc, first) ? '(hidden)' : textValue(doc, first);
+    case 'text': {
+      const raw = textValue(doc, first);
+      if (first.password && raw) return '(hidden)';
+      return shownValue(info, first.name, raw).text;
+    }
     case 'combo':
     case 'list': {
       const choice = choiceValue(doc, first);
@@ -49,6 +55,25 @@ export function fieldSummary(doc: DocState, widgets: FormFieldInfo[]): string {
       return '';
   }
 }
+
+/** Scripts the form carries that SpeedyF did not do itself. */
+export function scriptsNotRun(info: FormInfo | undefined): number {
+  const s = info?.scripts;
+  return s ? Math.max(0, s.total - s.recognised) + s.document : 0;
+}
+
+/** What a field's value breaks, if anything: a format it does not fit or
+ * a range it falls outside. */
+function problemOf(doc: DocState, info: FormInfo | undefined, field: FormFieldInfo) {
+  if (field.kind !== 'text') return null;
+  return fieldProblem(behaviourOf(info, field.name), textValue(doc, field), userDatePicture);
+}
+
+const SCRIPTS_NOTE =
+  'This form carries JavaScript, which SpeedyF never runs. Standard number, date and ' +
+  'special formats, range checks and simple sums are done by SpeedyF itself; anything ' +
+  'else, such as a custom calculation or a pop-up check, is left out, so check those ' +
+  'values yourself.';
 
 export default function FormPanel() {
   const tab = useContext(TabContext)!;
@@ -76,7 +101,8 @@ export default function FormPanel() {
   });
   const left = () => requiredLeft(doc, fields());
   const unanswered = (widgets: FormFieldInfo[]) =>
-    widgets[0]!.required && fieldSummary(doc, widgets).trim() === '';
+    widgets[0]!.required && fieldSummary(doc, widgets, info()).trim() === '';
+  const notRun = () => scriptsNotRun(info());
 
   return (
     <div class="form-panel" aria-label="Form fields">
@@ -116,21 +142,34 @@ export default function FormPanel() {
                 <section class="form-page" aria-label={`Page ${page + 1}`}>
                   <h3 class="form-page-head">Page {page + 1}</h3>
                   <For each={groups}>
-                    {(widgets) => (
-                      <button
-                        type="button"
-                        role="listitem"
-                        class="form-nav-row"
-                        classList={{ 'is-owed': unanswered(widgets) }}
-                        title={widgets[0]!.name}
-                        onClick={() => goToField(tab, fields(), widgets[0]!, { record: true })}
-                      >
-                        <span class="form-nav-label">{fieldLabel(widgets[0]!)}</span>
-                        <span class="form-nav-value">
-                          {unanswered(widgets) ? 'Required' : fieldSummary(doc, widgets)}
-                        </span>
-                      </button>
-                    )}
+                    {(widgets) => {
+                      const problem = () => problemOf(doc, info(), widgets[0]!);
+                      return (
+                        <>
+                          <button
+                            type="button"
+                            role="listitem"
+                            class="form-nav-row"
+                            classList={{
+                              'is-owed': unanswered(widgets),
+                              'has-problem': problem() !== null,
+                            }}
+                            title={widgets[0]!.name}
+                            onClick={() => goToField(tab, fields(), widgets[0]!, { record: true })}
+                          >
+                            <span class="form-nav-label">{fieldLabel(widgets[0]!)}</span>
+                            <span class="form-nav-value">
+                              {unanswered(widgets)
+                                ? 'Required'
+                                : fieldSummary(doc, widgets, info())}
+                            </span>
+                          </button>
+                          <Show when={problem()}>
+                            {(message) => <div class="form-nav-problem">{message()}</div>}
+                          </Show>
+                        </>
+                      );
+                    }}
                   </For>
                 </section>
               )}
@@ -142,9 +181,18 @@ export default function FormPanel() {
               show the values you entered.
             </div>
           </Show>
+          <Show when={notRun() > 0}>
+            <div class="form-nav-scripts" title={SCRIPTS_NOTE}>
+              {notRun() === 1 ? '1 script not run' : `${notRun()} scripts not run`}
+            </div>
+          </Show>
           <div class="form-nav-foot">
             <span>Values are written into the PDF when you save.</span>
-            <button type="button" class="form-nav-reset" onClick={() => resetForm(tab, fields())}>
+            <button
+              type="button"
+              class="form-nav-reset"
+              onClick={() => resetForm(tab, fields(), info())}
+            >
               Reset form
             </button>
           </div>

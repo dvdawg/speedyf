@@ -3979,6 +3979,7 @@ dependencies = [
  "env_logger",
  "flate2",
  "futures-util",
+ "getrandom 0.4.3",
  "gtk",
  "image",
  "libc",

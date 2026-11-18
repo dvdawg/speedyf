@@ -8,7 +8,8 @@ import { engine, isEngineError } from '../../lib/transport/engine';
 import type { TabRecord } from '../../stores/tabsStore';
 import { askUnsaved, showError } from '../../stores/modalStore';
 import { recentStore } from '../../stores/recentStore';
-import type { Annotation } from '../../types/model';
+import type { Annotation, MarkKind } from '../../types/model';
+import { withFormDisplay } from '../forms/formBehaviour';
 
 const SIZE_BATCH = 128;
 
@@ -62,6 +63,8 @@ export async function hydrateAnnotations(tab: TabRecord, docId: number) {
         ...(a.text !== null ? { text: a.text } : {}),
         ...(a.fontSizePt !== null ? { fontSizePt: a.fontSizePt } : {}),
         ...(a.signature ? { signature: a.signature } : {}),
+        ...(a.mark ? { mark: a.mark as MarkKind } : {}),
+        ...(a.combCells ? { combCells: a.combCells } : {}),
         fontFamily: a.fontFamily,
         bold: a.bold,
         italic: a.italic,
@@ -118,8 +121,8 @@ export async function saveDocument(tab: TabRecord, saveAs: boolean): Promise<boo
   tab.documentStore.setSaving(true);
   const rememberPage = tab.viewport.state.currentPage;
   try {
-    const plan = tab.documentStore.buildEditPlan();
-    await engine.saveDocument(docId, plan, dest);
+    const plan = await withFormDisplay(docId, tab.documentStore.buildEditPlan());
+    const saved = await engine.saveDocument(docId, plan, dest, state.protectChange ?? undefined);
     // A discard/open can replace the active document while the native save
     // is running. The file was saved, but its completion must not overwrite
     // the newer session's model or navigation.
@@ -127,7 +130,7 @@ export async function saveDocument(tab: TabRecord, saveAs: boolean): Promise<boo
     tab.documentStore.markSaved();
     // Reload from disk so the saved file becomes the new baseline (edits are
     // baked in; undo history restarts clean).
-    await reloadTabFromDisk(tab, dest);
+    await reloadTabFromDisk(tab, dest, saved.reopenPassword ?? undefined);
     tab.viewport.requestScrollToPage(
       Math.min(rememberPage, tab.documentStore.state.pages.length - 1)
     );
@@ -147,10 +150,17 @@ export async function saveDocument(tab: TabRecord, saveAs: boolean): Promise<boo
 /** Reopens `dest` from disk into `tab`'s own stores in place, without
  * creating a new tab (used after Save/Save As, and only there — routing a
  * post-save reload through tabsController.openInNewTabOrFocus would spawn a
- * duplicate tab for the same file on every save). */
-export async function reloadTabFromDisk(tab: TabRecord, dest: string): Promise<void> {
+ * duplicate tab for the same file on every save).
+ *
+ * A protected file reopens with `password`, which the save hands back: the
+ * one it was opened with, or the new one it was just protected with. */
+export async function reloadTabFromDisk(
+  tab: TabRecord,
+  dest: string,
+  password?: string
+): Promise<void> {
   const previousDocId = tab.documentStore.state.docId;
-  const meta = await engine.open(dest);
+  const meta = await engine.open(dest, password);
   tab.documentStore.initFromMeta(meta);
   if (previousDocId >= 0) void engine.close(previousDocId);
   tab.searchStore.resetForDocument(meta.docId, meta.pageCount);

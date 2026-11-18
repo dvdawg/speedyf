@@ -10,6 +10,7 @@ import {
   toggleFlattenSignatures,
 } from './signStore';
 import type { SignatureRole } from './art';
+import { fillActive, toggleFill, type FillMode } from './fillStore';
 
 const docOpen = (ctx: CommandCtx) => ctx.tab?.documentStore.state.loaded === true;
 
@@ -23,7 +24,34 @@ async function placeDefault(role: SignatureRole) {
 
 const KEYWORDS = ['sign', 'signature', 'autograph', 'visual signature', 'fill and sign'];
 
+const FILL_KEYWORDS = ['fill', 'form', 'printed', 'flat', 'type on', 'fill and sign'];
+
+const fillMode = (id: string, title: string, mode: FillMode, keywords: string[]): Command => ({
+  id,
+  title,
+  group: 'Tools',
+  keywords: [...keywords, ...FILL_KEYWORDS],
+  enabled: docOpen,
+  run: () => toggleFill(mode),
+});
+
 export const SIGN_COMMANDS: Command[] = [
+  {
+    id: 'sign.fill',
+    get title() {
+      return fillActive() ? 'Fill & Sign: Stop Filling' : 'Fill & Sign: Fill Printed Form';
+    },
+    group: 'Tools',
+    keywords: ['blank', 'underline', 'type', ...FILL_KEYWORDS],
+    enabled: docOpen,
+    run: () => toggleFill('text'),
+  },
+  fillMode('sign.fillCheck', 'Fill & Sign: Place Check Mark', 'check', ['tick', 'checkbox']),
+  fillMode('sign.fillCross', 'Fill & Sign: Place Cross', 'cross', ['x', 'mark']),
+  fillMode('sign.fillDot', 'Fill & Sign: Place Dot', 'dot', ['bullet', 'mark']),
+  fillMode('sign.fillLine', 'Fill & Sign: Place Strike Line', 'line', ['strike', 'cross out']),
+  fillMode('sign.fillCircle', 'Fill & Sign: Place Circle', 'circle', ['ring', 'circle answer']),
+  fillMode('sign.fillDate', "Fill & Sign: Place Today's Date", 'date', ['today', 'date stamp']),
   {
     id: 'sign.place',
     title: 'Sign: Place Signature',

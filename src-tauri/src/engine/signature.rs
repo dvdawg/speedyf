@@ -414,7 +414,7 @@ pub(crate) fn field_is_signed(
 }
 
 /// Local signature space -> raw PDF user space for one placement.
-struct Placement<'s> {
+pub(crate) struct Placement<'s> {
     space: &'s PageSpace,
     rect: RectDto,
     sx: f32,
@@ -422,7 +422,7 @@ struct Placement<'s> {
 }
 
 impl Placement<'_> {
-    fn new<'s>(space: &'s PageSpace, rect: RectDto, w: f32, h: f32) -> Placement<'s> {
+    pub(crate) fn new<'s>(space: &'s PageSpace, rect: RectDto, w: f32, h: f32) -> Placement<'s> {
         Placement {
             space,
             rect,
@@ -445,7 +445,7 @@ enum Built<'a> {
     Image(PdfPageImageObject<'a>),
 }
 
-fn path_object<'a>(
+pub(crate) fn path_object<'a>(
     doc: &PdfDocument<'a>,
     segs: &[Seg],
     at: &Placement<'_>,
@@ -808,6 +808,7 @@ mod tests {
             text: None,
             signature: Some(art),
             flatten,
+            mark: None,
         }
     }
 
@@ -831,6 +832,7 @@ mod tests {
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
             scrub: Default::default(),
+            form_display: Vec::new(),
         }
     }
 

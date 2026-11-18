@@ -16,6 +16,9 @@ import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { showError } from '../../stores/modalStore';
 import type { TabRecord } from '../../stores/tabsStore';
 import { limitToRange, withoutAnnotations } from './printPlan';
+import { withFormDisplay } from '../forms/formBehaviour';
+import { deniedReason } from '../protect/permissions';
+import { flashStatus } from '../../stores/statusMessage';
 
 interface PrintState {
   /** true from the moment the dialog is asked for until it closes */
@@ -95,7 +98,7 @@ async function prepare(tab: TabRecord, includeAnnotations: boolean): Promise<voi
   const previous = untrack(() => ({ id: state.previewDocId, path: state.path }));
 
   try {
-    const full = tab.documentStore.buildEditPlan();
+    const full = await withFormDisplay(sourceDocId, tab.documentStore.buildEditPlan());
     const plan = includeAnnotations
       ? full
       : withoutAnnotations(full, tab.documentStore.ownedSrcAnnots());
@@ -137,6 +140,11 @@ async function prepare(tab: TabRecord, includeAnnotations: boolean): Promise<voi
 export async function beginPrint(tab: TabRecord): Promise<void> {
   const doc = tab.documentStore.state;
   if (!doc.loaded || state.open) return;
+  const denied = deniedReason(doc.protection, 'print');
+  if (denied) {
+    flashStatus(denied);
+    return;
+  }
   if (doc.pages.length === 0) {
     showError('There are no pages to print.');
     return;
@@ -229,7 +237,10 @@ export async function exportAsPdf(range: string | null): Promise<void> {
       await engine.exportPrintPdf(path, dest);
     } else {
       // Rebuild with only the chosen pages, then hand that over instead.
-      const full = tab.documentStore.buildEditPlan();
+      const full = await withFormDisplay(
+        tab.documentStore.state.docId,
+        tab.documentStore.buildEditPlan()
+      );
       const base = state.includeAnnotations
         ? full
         : withoutAnnotations(full, tab.documentStore.ownedSrcAnnots());

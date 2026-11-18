@@ -8,6 +8,8 @@ import RedactDialog from '../features/protect/redact/RedactDialog';
 import { redactState } from '../features/protect/redact/redactStore';
 import SanitizeDialog from '../features/protect/sanitize/SanitizeDialog';
 import { sanitizeState } from '../features/protect/sanitize/sanitizeStore';
+import ProtectDialog from '../features/protect/ProtectDialog';
+import { protectTab } from '../features/protect/protectStore';
 import {
   dismissError,
   modal,
@@ -117,6 +119,10 @@ export default function Modals() {
       </Show>
       <Show when={sanitizeState.open}>
         <SanitizeDialog />
+      </Show>
+      {/* Protect...: its own store too, keyed by the tab it protects. */}
+      <Show when={protectTab()} keyed>
+        {(tab) => <ProtectDialog tab={tab} />}
       </Show>
       <Show when={modal.kind !== null}>
         <div

@@ -25,13 +25,13 @@ import {
   useContext,
   type JSX,
 } from 'solid-js';
-import type { FormFieldInfo } from '../../types/engine';
-import { formButtonKey } from '../document/documentStore';
+import type { FormFieldInfo, FormInfo } from '../../types/engine';
+import { formButtonKey, type FormChoice, type FormValues } from '../document/documentStore';
 import {
   choiceText,
   choiceValue,
   fieldLabel,
-  formFields,
+  formInfo,
   isFillable,
   isOn,
   nextStop,
@@ -50,6 +50,17 @@ import {
 import { TabContext } from '../../app/TabContext';
 import { pagesInverted, settings } from '../../stores/settings';
 import { invertInk } from '../../lib/rendering/invertColor';
+import { acceptKeystroke, commitValue, fieldProblem } from './formScripts';
+import {
+  behaviourOf,
+  buttonChange,
+  formEdit,
+  hasDependents,
+  shownValue,
+  textChange,
+  userDatePicture,
+} from './formBehaviour';
+import { allows } from '../protect/permissions';
 
 interface Props {
   docId: number;
@@ -67,18 +78,36 @@ interface WidgetProps {
   onKey: (e: KeyboardEvent, f: FormFieldInfo) => boolean;
   /** Every field in the document, for radio groups. */
   all: () => FormFieldInfo[];
+  /** The whole form: behaviours and calculation order. */
+  info: () => FormInfo | undefined;
 }
+
+/** Ink Acrobat switches a number field to for a negative value, when its
+ * format asks for red: a colour of the document, like the field's own. */
+const NEGATIVE_INK = '#ff0000';
 
 const ALIGN = ['left', 'center', 'right'] as const;
 
 export default function FormLayer(props: Props) {
   const tab = useContext(TabContext)!;
-  const [fields] = createResource(
+  const [info] = createResource(
     () => props.docId,
-    (docId) => formFields(docId)
+    (docId) => formInfo(docId)
   );
-  const all = () => fields() ?? [];
-  const widgets = () => all().filter((f) => f.page === props.src && isFillable(f));
+  const all = () => info()?.fields ?? [];
+  /** A read-only field still has to show what a calculation puts in it. */
+  const calculated = (f: FormFieldInfo) =>
+    f.kind === 'text' &&
+    f.readOnly &&
+    f.rect.w > 0 &&
+    f.rect.h > 0 &&
+    behaviourOf(info(), f.name)?.calculate !== undefined;
+  // A file whose permissions withhold filling keeps its fields as drawn:
+  // nothing to type into (protect/permissions.ts).
+  const widgets = () =>
+    allows(tab.documentStore.state.protection, 'fillForms')
+      ? all().filter((f) => f.page === props.src && (isFillable(f) || calculated(f)))
+      : [];
 
   const navigate = (from: FormFieldInfo, direction: 1 | -1) => {
     const stop = nextStop(all(), from, direction);
@@ -113,6 +142,7 @@ export default function FormLayer(props: Props) {
     },
     onKey,
     all,
+    info,
   });
 
   return (
@@ -177,15 +207,25 @@ function TextWidget(p: WidgetProps & { onEnter: () => void }) {
   // One undo step per visit to the field, however many keystrokes it took.
   let typingGroup = Symbol('form text edit');
 
+  const behaviour = () => behaviourOf(p.info(), f.name);
+  /** The raw value: what /V holds and what the user edits. */
   const value = () => textValue(doc, f);
+  /** What the field shows: the raw value while editing, else as its
+   * format script would show it. */
+  const shown = createMemo(() =>
+    focused() ? { text: value(), red: false } : shownValue(p.info(), f.name, value())
+  );
+  const problem = createMemo(() =>
+    focused() ? null : fieldProblem(behaviour(), value(), userDatePicture)
+  );
   const covered = () => focused() || doc.formEdits[f.name] !== undefined;
-  const sizePt = createMemo(() => fieldFontSize(value(), f));
+  const sizePt = createMemo(() => fieldFontSize(shown().text, f));
   const comb = () => f.comb && f.maxLen > 0;
 
   const style = (): JSX.CSSProperties => {
     const base: JSX.CSSProperties = {
       ...boxStyle(p),
-      '--form-ink': inkOf(f),
+      '--form-ink': shown().red ? NEGATIVE_INK : inkOf(f),
       'font-size': `${sizePt() * p.zoom}px`,
       'text-align': ALIGN[f.align] ?? 'left',
     };
@@ -202,17 +242,55 @@ function TextWidget(p: WidgetProps & { onEnter: () => void }) {
     return base;
   };
 
+  /** Record `next` for this field, with whatever it recalculates. */
+  const write = (next: string) => {
+    const change: FormValues = textChange(f.name, next);
+    documentStore.apply(
+      formEdit(doc, p.info(), [f.name], change, { type: 'setForm', field: f.name, value: next }),
+      typingGroup
+    );
+  };
+
   const handlers = {
     onFocus: () => {
       typingGroup = Symbol('form text edit');
       setFocused(true);
     },
-    onBlur: () => setFocused(false),
-    onInput: (e: InputEvent & { currentTarget: HTMLInputElement | HTMLTextAreaElement }) =>
-      documentStore.apply(
-        { type: 'setForm', field: f.name, value: e.currentTarget.value },
-        typingGroup
-      ),
+    onBlur: () => {
+      setFocused(false);
+      // Commit: what Acrobat's keystroke script does with willCommit set.
+      // A value it would refuse is kept and flagged instead.
+      const spec = behaviour()?.keystroke;
+      if (!spec || f.readOnly) return;
+      const committed = commitValue(spec, value(), userDatePicture).value;
+      if (committed !== value()) write(committed);
+    },
+    onInput: (e: InputEvent & { currentTarget: HTMLInputElement | HTMLTextAreaElement }) => {
+      const el = e.currentTarget;
+      const proposed = el.value;
+      const spec = behaviour()?.keystroke;
+      if (spec) {
+        const before = value();
+        const caret = el.selectionStart ?? proposed.length;
+        const verdict = acceptKeystroke(spec, proposed);
+        if (!verdict.ok) {
+          // Drop the keystroke, as Acrobat does, leaving the caret where
+          // it was before it.
+          el.value = before;
+          const at = Math.max(0, caret - (proposed.length - before.length));
+          el.setSelectionRange(at, at);
+          return;
+        }
+        if (verdict.value !== proposed) {
+          el.value = verdict.value;
+          const at = Math.max(0, caret + (verdict.value.length - proposed.length));
+          el.setSelectionRange(at, at);
+        }
+        write(verdict.value);
+        return;
+      }
+      write(proposed);
+    },
     onKeyDown: (e: KeyboardEvent) => {
       if (p.onKey(e, f)) return;
       if (e.key === 'Enter' && !f.multiline && !e.isComposing) {
@@ -232,9 +310,12 @@ function TextWidget(p: WidgetProps & { onEnter: () => void }) {
         'is-empty': value() === '',
         'is-comb': comb(),
         'is-multiline': f.multiline,
+        'has-problem': problem() !== null,
+        'is-calculated': f.readOnly,
       }}
       data-align={comb() ? 'left' : (ALIGN[f.align] ?? 'left')}
       style={style()}
+      title={problem() ?? undefined}
     >
       <Show
         when={f.multiline}
@@ -243,12 +324,15 @@ function TextWidget(p: WidgetProps & { onEnter: () => void }) {
             ref={(el) => (input = el)}
             class="form-input"
             type={f.password ? 'password' : 'text'}
-            value={value()}
+            value={shown().text}
             maxLength={f.maxLen > 0 ? f.maxLen : undefined}
+            readOnly={f.readOnly}
+            tabIndex={f.readOnly ? -1 : undefined}
             spellcheck={false}
             autocomplete="off"
             aria-label={fieldLabel(f)}
             aria-required={f.required}
+            aria-invalid={problem() !== null}
             {...handlers}
           />
         }
@@ -256,11 +340,14 @@ function TextWidget(p: WidgetProps & { onEnter: () => void }) {
         <textarea
           ref={(el) => (input = el)}
           class="form-input"
-          value={value()}
+          value={shown().text}
           maxLength={f.maxLen > 0 ? f.maxLen : undefined}
+          readOnly={f.readOnly}
+          tabIndex={f.readOnly ? -1 : undefined}
           spellcheck={false}
           aria-label={fieldLabel(f)}
           aria-required={f.required}
+          aria-invalid={problem() !== null}
           style={{ 'line-height': String(LINE_HEIGHT) }}
           {...handlers}
         />
@@ -286,20 +373,24 @@ function ComboWidget(p: WidgetProps) {
     fieldFontSize(text(), { ...f, multiline: false, rect: { ...f.rect, w: f.rect.w - f.rect.h } })
   );
 
-  const pick = (index: number) =>
-    documentStore.apply({ type: 'setFormChoice', field: f.name, choice: { selected: [index] } });
+  const choose = (next: FormChoice, group?: symbol) =>
+    documentStore.apply(
+      formEdit(
+        doc,
+        p.info(),
+        [f.name],
+        { texts: {}, buttons: {}, choices: { [f.name]: next } },
+        { type: 'setFormChoice', field: f.name, choice: next }
+      ),
+      group
+    );
+
+  const pick = (index: number) => choose({ selected: [index] });
 
   const type = (value: string) => {
     // Text that names an option is that option, so /V gets its export value.
     const index = f.options.findIndex((o) => o.label === value);
-    documentStore.apply(
-      {
-        type: 'setFormChoice',
-        field: f.name,
-        choice: index >= 0 ? { selected: [index] } : { selected: [], text: value },
-      },
-      typingGroup
-    );
+    choose(index >= 0 ? { selected: [index] } : { selected: [], text: value }, typingGroup);
   };
 
   const options = (
@@ -402,12 +493,18 @@ function ListWidget(p: WidgetProps) {
   const covered = () => focused() || doc.formChoiceEdits[f.name] !== undefined;
   const sizePt = () => (f.fontSize > 0 ? f.fontSize : 12);
 
-  const set = (next: number[]) =>
-    documentStore.apply({
-      type: 'setFormChoice',
-      field: f.name,
-      choice: { selected: [...new Set(next)].sort((a, b) => a - b) },
-    });
+  const set = (next: number[]) => {
+    const choice: FormChoice = { selected: [...new Set(next)].sort((a, b) => a - b) };
+    documentStore.apply(
+      formEdit(
+        doc,
+        p.info(),
+        [f.name],
+        { texts: {}, buttons: {}, choices: { [f.name]: choice } },
+        { type: 'setFormChoice', field: f.name, choice }
+      )
+    );
+  };
 
   const range = (a: number, b: number) =>
     Array.from({ length: Math.abs(a - b) + 1 }, (_, k) => Math.min(a, b) + k);
@@ -519,6 +616,28 @@ function ButtonWidget(p: WidgetProps) {
       .sort((a, b) => a.tabOrder - b.tabOrder);
 
   const setOn = (target: FormFieldInfo, next: boolean) => {
+    if (hasDependents(p.info(), [target.name])) {
+      // A calculation reads this button: the click, the rest of a radio
+      // group going off, and the results are one step.
+      const states: [FormFieldInfo, boolean][] = [[target, next]];
+      if (next && target.kind === 'radio') {
+        for (const other of p.all()) {
+          if (
+            other.kind === 'radio' &&
+            other.name === target.name &&
+            !(other.page === target.page && other.index === target.index) &&
+            isOn(doc, other)
+          ) {
+            states.push([other, false]);
+          }
+        }
+      }
+      const change = buttonChange(states);
+      documentStore.apply(
+        formEdit(doc, p.info(), [target.name], change, { type: 'setFormValues', values: change })
+      );
+      return;
+    }
     documentStore.apply({
       type: 'setFormButton',
       page: target.page,

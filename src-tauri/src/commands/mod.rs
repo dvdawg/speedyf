@@ -171,6 +171,25 @@ pub async fn get_page_bubbles(
         .await
 }
 
+/// The blanks a printed form draws on one page, for the Fill tool.
+#[tauri::command]
+pub async fn get_page_blanks(
+    state: tauri::State<'_, EngineState>,
+    doc_id: DocId,
+    src: u32,
+) -> AppResult<PageBlanksDto> {
+    state
+        .0
+        .call_async(Priority::AdjacentPage, doc_id, move |respond| {
+            Work::PageBlanks {
+                doc: doc_id,
+                src,
+                respond,
+            }
+        })
+        .await
+}
+
 #[tauri::command]
 pub async fn get_preview_rect(
     state: tauri::State<'_, EngineState>,
@@ -415,6 +434,7 @@ pub async fn save_document(
     doc_id: DocId,
     plan: EditPlan,
     dest_path: String,
+    protect: Option<crate::engine::protect::ProtectRequest>,
 ) -> AppResult<SaveResultDto> {
     if plan.pages.is_empty() {
         return Err(AppError::Unsupported(
@@ -427,6 +447,7 @@ pub async fn save_document(
             doc: doc_id,
             plan,
             dest: PathBuf::from(dest_path),
+            protect: protect.unwrap_or_default(),
             respond,
         })
         .await
@@ -462,6 +483,24 @@ pub async fn scan_hidden_info(
         .call_async(Priority::VisiblePage, doc_id, move |respond| {
             Work::ScanHiddenInfo {
                 doc: doc_id,
+                respond,
+            }
+        })
+        .await
+}
+
+#[tauri::command]
+pub async fn unlock_permissions(
+    state: tauri::State<'_, EngineState>,
+    doc_id: DocId,
+    password: String,
+) -> AppResult<crate::engine::protect::ProtectionDto> {
+    state
+        .0
+        .call_async(Priority::VisiblePage, doc_id, move |respond| {
+            Work::UnlockPermissions {
+                doc: doc_id,
+                password,
                 respond,
             }
         })

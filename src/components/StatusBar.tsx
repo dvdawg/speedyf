@@ -8,6 +8,10 @@ import { extensionsOnline } from '../features/extensions/extensionStore';
 import { installLibraryUndo } from '../features/projects/libraryUndo';
 import StatusMessage from './StatusMessage';
 import { formFields, isFillable, requiredCount, requiredLeft } from '../features/forms/formStore';
+import { IconLock } from './icons';
+import { openProtect } from '../features/protect/protectStore';
+import { describeProtection } from '../features/protect/protectForm';
+import '../features/protect/protect.css';
 
 export default function StatusBar() {
   const doc = () => activeTab()?.documentStore.state;
@@ -90,6 +94,21 @@ export default function StatusBar() {
           <span class="sb-name" title={doc()!.path ?? doc()!.name}>
             {doc()!.name}
           </span>
+          <Show when={doc()!.protection?.encrypted || doc()!.protectChange}>
+            <button
+              type="button"
+              class="sb-lock"
+              classList={{ 'is-pending': doc()!.protectChange !== null }}
+              title={`${describeProtection(doc()!.protection, doc()!.protectChange)} Click for Protect...`}
+              aria-label="Protection"
+              onClick={() => {
+                const tab = activeTab();
+                if (tab) openProtect(tab);
+              }}
+            >
+              <IconLock />
+            </button>
+          </Show>
           <Show when={doc()!.dirty}>
             <span class="sb-dirty" title="Unsaved changes">
               edited

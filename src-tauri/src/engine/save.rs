@@ -98,7 +98,9 @@ impl SaveMode {
 /// Encrypted sources are rewritten without their encryption. That is what
 /// every save of one produced before (a document assembled from imported pages
 /// never carried the source's security handler), and the save path reopens
-/// its output without a password to verify it.
+/// its output without a password to verify it. The protection is put back
+/// on the finished file afterwards (`protect::encrypt_file`), unless the
+/// save removes it.
 ///
 /// A document created in memory has no parser, which PDFium reports as an
 /// invalid cross-reference table - so it is rewritten too, as it must be.
@@ -710,6 +712,9 @@ fn add_annotations<'a>(
             // Redaction marks: PDFium cannot create /Redact annotations, so
             // `redact::finish_output` writes (or applies) them after the save.
             "redact" => {}
+            "mark" => {
+                crate::engine::marks::write(doc, page, &space, annot)?;
+            }
             other => {
                 log::warn!("unknown annotation kind ignored at save: {other}");
             }
@@ -725,11 +730,47 @@ fn add_annotations<'a>(
         let user_rect = space.rect_to_user(&text.rect);
         let size = text.font_size_pt.max(4.0);
         let color = parse_color(&text.color, text.opacity);
+        let comb = text.comb_cells.filter(|n| (1..=200).contains(n));
         let mut a = page.annotations_mut().create_stamp_annotation()?;
         a.set_bounds(user_rect)?;
         a.set_contents(&text.text)?;
         a.set_creator(crate::engine::annots::TEXT_STAMP_CREATOR)?;
         a.set_is_printed(true)?;
+        if let Some(cells) = comb {
+            // A comb row: one character centred in each cell, on one line.
+            let pitch = text.rect.w / cells as f32;
+            let y = text.rect.y + text.rect.h - size;
+            let chars = text.text.chars().filter(|c| *c != '\n' && *c != '\r');
+            for (i, c) in chars.take(cells as usize).enumerate() {
+                if c.is_whitespace() {
+                    continue;
+                }
+                let mut object =
+                    PdfPageTextObject::new(doc, c.to_string(), font, PdfPoints::new(size))?;
+                object.set_fill_color(color)?;
+                let x = text.rect.x + pitch * i as f32 + (pitch - object.width()?.value) / 2.0;
+                let (x0, y0) = space.disp_to_user(x, y);
+                let (xx, xy) = space.disp_to_user(x + 1.0, y);
+                let (yx, yy) = space.disp_to_user(x, y + 1.0);
+                object.transform(xx - x0, xy - y0, yx - x0, yy - y0, x0, y0)?;
+                a.objects_mut().add_text_object(object)?;
+            }
+            // The cell count goes under a private key, so the box reopens
+            // as a comb (see annots.rs). The stamp is the page's last.
+            let bindings = page.bindings();
+            let handle = bindings.get_handle_from_page(page);
+            let raw =
+                bindings.FPDFPage_GetAnnot(handle, bindings.FPDFPage_GetAnnotCount(handle) - 1);
+            if !raw.is_null() {
+                bindings.FPDFAnnot_SetStringValue_str(
+                    raw,
+                    crate::engine::annots::COMB_KEY,
+                    &cells.to_string(),
+                );
+                bindings.FPDFPage_CloseAnnot(raw);
+            }
+            continue;
+        }
         let mut y = text.rect.y + text.rect.h - size;
         for line in wrapped_text_lines(doc, font, size, &text.text, text.rect.w)? {
             if y + size < text.rect.y {
@@ -1095,6 +1136,7 @@ pub fn build_output(
             texts: &plan.form,
             buttons: &plan.form_buttons,
             choices: &plan.form_choices,
+            display: &plan.form_display,
         },
     )?;
 
@@ -1184,6 +1226,7 @@ mod tests {
             style: Default::default(),
             color: "#000000".into(),
             opacity: 1.0,
+            comb_cells: None,
         });
         assert!(page_requires_mutation(&page));
     }
@@ -1209,6 +1252,7 @@ mod tests {
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
             scrub: Default::default(),
+            form_display: Vec::new(),
         };
         build_output(
             &pdfium,
@@ -1273,6 +1317,7 @@ mod tests {
                 text: None,
                 signature: None,
                 flatten: false,
+                mark: None,
             },
             PlanAnnot {
                 kind: "rect".into(),
@@ -1290,6 +1335,7 @@ mod tests {
                 text: None,
                 signature: None,
                 flatten: false,
+                mark: None,
             },
             PlanAnnot {
                 kind: "note".into(),
@@ -1307,6 +1353,7 @@ mod tests {
                 text: Some("fixture note".into()),
                 signature: None,
                 flatten: false,
+                mark: None,
             },
             PlanAnnot {
                 kind: "ink".into(),
@@ -1328,6 +1375,7 @@ mod tests {
                 text: None,
                 signature: None,
                 flatten: false,
+                mark: None,
             },
         ];
         page.texts.push(PlanText {
@@ -1342,6 +1390,7 @@ mod tests {
             style: Default::default(),
             color: "#111111".into(),
             opacity: 1.0,
+            comb_cells: None,
         });
         let plan = EditPlan {
             pages: vec![page],
@@ -1349,6 +1398,7 @@ mod tests {
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
             scrub: Default::default(),
+            form_display: Vec::new(),
         };
         build_output(
             &pdfium,
@@ -1514,6 +1564,7 @@ mod tests {
             form_buttons: vec![],
             form_choices: Vec::new(),
             scrub: Default::default(),
+            form_display: Vec::new(),
         };
         build_output(&pdfium, source.to_str().unwrap(), None, &plan, &output).unwrap();
         let doc = pdfium.load_pdf_from_file(&output, None).unwrap();
@@ -1561,6 +1612,7 @@ mod tests {
             style: Default::default(),
             color: "#111111".into(),
             opacity: 1.0,
+            comb_cells: None,
         });
         build_output(
             &pdfium,
@@ -1572,6 +1624,7 @@ mod tests {
                 form_buttons: Vec::new(),
                 form_choices: Vec::new(),
                 scrub: Default::default(),
+                form_display: Vec::new(),
             },
             &output,
         )
@@ -1649,6 +1702,7 @@ mod tests {
                         },
                         color: "#111111".into(),
                         opacity: 0.8,
+                        comb_cells: None,
                     });
                     page
                 })
@@ -1657,6 +1711,7 @@ mod tests {
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
             scrub: Default::default(),
+            form_display: Vec::new(),
         };
         build_output(&pdfium, source.to_str().unwrap(), None, &plan, &output).unwrap();
         let doc = pdfium.load_pdf_from_file(&output, None).unwrap();
@@ -1731,6 +1786,7 @@ mod tests {
             text: None,
             signature: None,
             flatten: false,
+            mark: None,
         });
         build_output(
             &pdfium,
@@ -1742,6 +1798,7 @@ mod tests {
                 form_buttons: Vec::new(),
                 form_choices: Vec::new(),
                 scrub: Default::default(),
+                form_display: Vec::new(),
             },
             &output,
         )
@@ -1807,6 +1864,7 @@ mod tests {
             text: None,
             signature: None,
             flatten: false,
+            mark: None,
         });
         build_output(
             &pdfium,
@@ -1818,6 +1876,7 @@ mod tests {
                 form_buttons: Vec::new(),
                 form_choices: Vec::new(),
                 scrub: Default::default(),
+                form_display: Vec::new(),
             },
             &output,
         )
@@ -1898,6 +1957,7 @@ mod tests {
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
             scrub: Default::default(),
+            form_display: Vec::new(),
         };
         build_output(
             &pdfium,
@@ -1959,6 +2019,7 @@ mod tests {
             text: None,
             signature: None,
             flatten: false,
+            mark: None,
         });
         let plan = EditPlan {
             pages: vec![page],
@@ -1966,6 +2027,7 @@ mod tests {
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
             scrub: Default::default(),
+            form_display: Vec::new(),
         };
         build_output(
             &pdfium,
@@ -2238,6 +2300,7 @@ mod tests {
             text: None,
             signature: None,
             flatten: false,
+            mark: None,
         }
     }
 
@@ -2248,6 +2311,7 @@ mod tests {
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
             scrub: Default::default(),
+            form_display: Vec::new(),
         };
         build_output(
             pdfium,

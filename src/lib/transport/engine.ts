@@ -18,13 +18,17 @@ import type {
   GeneratedOutline,
   LibraryStatus,
   OutlineNode,
+  Blank,
   Bubble,
   PageAnnotations,
+  PageBlanks,
   PageBubbles,
   PageLinks,
   PageTextLayout,
   PreviewSpec,
   ResolvedCitation,
+  ProtectRequest,
+  ProtectionInfo,
   SaveResult,
   SearchQueryResult,
 } from '../../types/engine';
@@ -117,6 +121,9 @@ export interface EngineApi {
   /** Bubbles and checkboxes the page draws as glyphs rather than declares as
    * form fields, for the shading tool. */
   getPageBubbles(docId: number, src: number): Promise<Bubble[]>;
+  /** The blanks a printed form draws on a page (rules, empty boxes, cells,
+   * comb rows), in reading order, for the Fill tool. */
+  getPageBlanks(docId: number, src: number): Promise<Blank[]>;
   /** The crop a link's destination previews. `from` - the link's own page
    * and rectangle - lets the engine read the link's words ("Theorem 2",
    * "[12]") for a destination that is only a page or that many links
@@ -147,7 +154,15 @@ export interface EngineApi {
     start: number,
     len: number
   ): Promise<[number, number, number, number][]>;
-  saveDocument(docId: number, plan: EditPlan, destPath: string): Promise<SaveResult>;
+  /** `protect` defaults to keeping whatever protection the source has. */
+  saveDocument(
+    docId: number,
+    plan: EditPlan,
+    destPath: string,
+    protect?: ProtectRequest
+  ): Promise<SaveResult>;
+  /** Check a permissions password; rejects with code `password` when wrong. */
+  unlockPermissions(docId: number, password: string): Promise<ProtectionInfo>;
   getFormFields(docId: number): Promise<FormInfo>;
   /** Search-and-redact: every match of a phrase or pattern. */
   findRedactions(docId: number, query: FindQuery): Promise<RedactMatch[]>;
@@ -320,6 +335,8 @@ export const engine: EngineApi = {
   getPageLinks: (docId, src) => invoke('get_page_links', { docId, src }),
   getPageBubbles: async (docId, src) =>
     (await invoke<PageBubbles>('get_page_bubbles', { docId, src })).bubbles,
+  getPageBlanks: async (docId, src) =>
+    (await invoke<PageBlanks>('get_page_blanks', { docId, src })).blanks,
   getPreviewRect: (docId, src, x, y, from) =>
     invoke('get_preview_rect', {
       docId,
@@ -338,7 +355,9 @@ export const engine: EngineApi = {
   searchQuery: (docId, query, caseSensitive) =>
     invoke('search_query', { docId, query, caseSensitive }),
   getMatchRects: (docId, src, start, len) => invoke('get_match_rects', { docId, src, start, len }),
-  saveDocument: (docId, plan, destPath) => invoke('save_document', { docId, plan, destPath }),
+  saveDocument: (docId, plan, destPath, protect) =>
+    invoke('save_document', { docId, plan, destPath, protect: protect ?? null }),
+  unlockPermissions: (docId, password) => invoke('unlock_permissions', { docId, password }),
   getFormFields: (docId) => invoke('get_form_fields', { docId }),
   findRedactions: (docId, query) => invoke('find_redactions', { docId, query }),
   scanHiddenInfo: (docId) => invoke('scan_hidden_info', { docId }),

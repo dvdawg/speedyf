@@ -27,9 +27,11 @@ import { closedTabCount } from '../features/document/closedTabs';
 import { addBlankPageAfter } from '../features/editor/editorActions';
 import { setActiveTool, type Tool } from '../features/annotations/toolStore';
 import { beginPrint } from '../features/print/printStore';
+import { openProtect } from '../features/protect/protectStore';
+import { allows, COMMAND_RIGHTS, deniedReason } from '../features/protect/permissions';
 import { settings, toggleSleepy, updateSettings } from '../stores/settings';
 import { forgetContributedText } from '../features/extensions/extensionStore';
-import { formFields, isFillable } from '../features/forms/formStore';
+import { formInfo, isFillable } from '../features/forms/formStore';
 import { resetForm } from '../features/forms/formNav';
 import {
   activePaper,
@@ -102,6 +104,9 @@ export { formatShortcut } from './shortcutLabel';
  * to keep true, for a state most of them never reach.
  */
 export function describeDisabled(command: Command, ctx: CommandCtx): string {
+  const right = COMMAND_RIGHTS[command.id];
+  const denied = right ? deniedReason(state(ctx)?.protection, right) : null;
+  if (denied && loaded(ctx)) return denied;
   if (command.disabledReason) return command.disabledReason;
   if (!ctx.tab || !loaded(ctx)) return 'no document open';
   if (command.group === 'Edit' && state(ctx)?.selected == null) return 'nothing selected';
@@ -246,7 +251,7 @@ function rotate(id: string, title: string, delta: 90 | 270): Command {
   };
 }
 
-export const COMMANDS: readonly Command[] = [
+const ALL_COMMANDS: readonly Command[] = [
   {
     id: 'file.newWindow',
     title: 'New Window',
@@ -293,6 +298,16 @@ export const COMMANDS: readonly Command[] = [
     enabled: loaded,
     run: (ctx) => {
       if (ctx.tab) void saveDocument(ctx.tab, true);
+    },
+  },
+  {
+    id: 'file.protect',
+    title: 'Protect...',
+    group: 'File',
+    keywords: ['password', 'encrypt', 'permissions', 'security', 'lock', 'unlock'],
+    enabled: (ctx) => loaded(ctx) && !state(ctx)?.saving,
+    run: (ctx) => {
+      if (ctx.tab) openProtect(ctx.tab);
     },
   },
   {
@@ -674,8 +689,8 @@ export const COMMANDS: readonly Command[] = [
       const tab = ctx.tab;
       const s = state(ctx);
       if (!tab || !s?.loaded) return;
-      void formFields(s.docId).then((fields) => {
-        if (fields.some(isFillable)) resetForm(tab, fields);
+      void formInfo(s.docId).then((info) => {
+        if (info.fields.some(isFillable)) resetForm(tab, info.fields, info);
       });
     },
   },
@@ -786,6 +801,19 @@ export const COMMANDS: readonly Command[] = [
     run: (ctx) => void goForward(ctx.tab),
   },
 ];
+
+/** A protected document's permissions, honoured: a command that needs a
+ * right the session does not hold is disabled, and says why. */
+function withPermission(command: Command): Command {
+  const right = COMMAND_RIGHTS[command.id];
+  if (!right) return command;
+  return {
+    ...command,
+    enabled: (ctx) => command.enabled(ctx) && allows(state(ctx)?.protection, right),
+  };
+}
+
+export const COMMANDS: readonly Command[] = ALL_COMMANDS.map(withPermission);
 
 const BY_ID = new Map(COMMANDS.map((command) => [command.id, command]));
 

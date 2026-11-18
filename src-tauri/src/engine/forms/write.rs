@@ -1,11 +1,11 @@
 //! Committing form edits through the form-fill environment at save time.
 
-use super::{read_utf16, BufferWriter, FormSession};
+use super::{appearance, read_utf16, BufferWriter, FormSession};
 use crate::engine::save::{mend_xref_stream_type, save_mode, SaveMode};
 use crate::engine::types::{PlanFormButton, PlanFormChoice};
 use crate::errors::{AppError, AppResult};
 use pdfium_render::prelude::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::os::raw::c_int;
 
 /// `FPDF_GetFormType` values for documents carrying XFA.
@@ -21,6 +21,10 @@ pub struct FormEdits<'a> {
     pub texts: &'a [(String, String)],
     pub buttons: &'a [PlanFormButton],
     pub choices: &'a [PlanFormChoice],
+    /// Text fields whose page appearance shows a formatted value while /V
+    /// keeps the raw one: name, formatted text, and the text colour a red
+    /// negative style asks for (None to leave it). See `appearance`.
+    pub display: &'a [(String, String, Option<bool>)],
 }
 
 impl FormEdits<'_> {
@@ -54,6 +58,29 @@ pub fn apply_edits(
         .to_str()
         .ok_or_else(|| AppError::Io("form edit pass: bad path".into()))?;
 
+    // Formatted appearances need two small updates of their own around
+    // PDFium's; on a file that cannot take them, fields are drawn raw.
+    let formatted = !edits.display.is_empty() && appearance::can_update(path);
+    let display: HashMap<&str, &str> = if formatted {
+        edits
+            .display
+            .iter()
+            .map(|(name, text, _)| (name.as_str(), text.as_str()))
+            .collect()
+    } else {
+        HashMap::new()
+    };
+    if formatted {
+        let colors: Vec<(&str, bool)> = edits
+            .display
+            .iter()
+            .filter(|(name, _, _)| edits.texts.iter().any(|(t, _)| t == name))
+            .filter_map(|(name, _, red)| red.map(|r| (name.as_str(), r)))
+            .collect();
+        appearance::set_text_colors(path, &colors)
+            .map_err(|e| AppError::Internal(format!("form edit pass: {e}")))?;
+    }
+
     let doc = b.FPDF_LoadDocument(path_str, None);
     if doc.is_null() {
         return Err(AppError::Internal(
@@ -65,8 +92,14 @@ pub fn apply_edits(
     let has_xfa = form_type == FORMTYPE_XFA_FULL || form_type == FORMTYPE_XFA_FOREGROUND;
     // Every path from here has to close the document, so the work is done in
     // a helper and the result inspected only after closing.
-    let saved = edited_document_bytes(b, doc, edits, mode);
+    let mut raw_values: Vec<(&str, &str)> = Vec::new();
+    let saved = edited_document_bytes(b, doc, edits, mode, &display, &mut raw_values);
     b.FPDF_CloseDocument(doc);
+    let restore = |raw_values: &[(&str, &str)]| {
+        appearance::restore_raw_values(path, raw_values)
+            .map(|_| ())
+            .map_err(|e| AppError::Internal(format!("form edit pass: {e}")))
+    };
     match saved? {
         Some(bytes) => {
             use std::io::Write;
@@ -83,10 +116,10 @@ pub fn apply_edits(
             if has_xfa {
                 drop_xfa(path).map_err(|e| AppError::Internal(format!("form edit pass: {e}")))?;
             }
-            Ok(())
+            restore(&raw_values)
         }
         // Nothing needed changing, so the file already says what it should.
-        None => Ok(()),
+        None => restore(&raw_values),
     }
 }
 
@@ -172,11 +205,16 @@ struct PageWork<'a> {
 
 /// Commit the requested edits and return the resulting document, or
 /// `None` if every widget was already in the state the plan asked for.
-fn edited_document_bytes(
+///
+/// A field in `display` is typed as its formatted text; each one that took
+/// it is added to `raw_values`, for /V to be put back afterwards.
+fn edited_document_bytes<'e>(
     b: &dyn PdfiumLibraryBindings,
     doc: FPDF_DOCUMENT,
-    edits: FormEdits<'_>,
+    edits: FormEdits<'e>,
     mode: SaveMode,
+    display: &HashMap<&str, &str>,
+    raw_values: &mut Vec<(&'e str, &'e str)>,
 ) -> AppResult<Option<Vec<u8>>> {
     let mut session = FormSession::new(b);
     let form = b.FPDFDOC_InitFormFillEnvironment(doc, &mut session.info);
@@ -265,7 +303,19 @@ fn edited_document_bytes(
             continue;
         }
         for (index, name, value) in &work.texts {
-            match fill_text(b, form, page, *index, name, value) {
+            let mut result = Err(AppError::Internal(String::new()));
+            if let Some(shown) = display.get(name).filter(|shown| **shown != *value) {
+                result = fill_text(b, form, page, *index, name, shown);
+                if result.is_ok() && !raw_values.iter().any(|(n, _)| n == name) {
+                    raw_values.push((*name, *value));
+                }
+            }
+            // No formatted text, or one the field would not take whole (a
+            // /MaxLen shorter than the formatting): draw the raw value.
+            if result.is_err() {
+                result = fill_text(b, form, page, *index, name, value);
+            }
+            match result {
                 Ok(did_change) => changed += usize::from(did_change),
                 Err(error) => {
                     edit_result = Err(error);

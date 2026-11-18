@@ -67,7 +67,7 @@ fn write_form_fixture(path: &Path) {
     write_objects(path, objects);
 }
 
-fn write_objects(path: &Path, mut objects: Vec<(u32, Vec<u8>)>) {
+pub(super) fn write_objects(path: &Path, mut objects: Vec<(u32, Vec<u8>)>) {
     objects.sort_by_key(|(n, _)| *n);
     let mut out: Vec<u8> = b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n".to_vec();
     let mut offsets: Vec<(u32, usize)> = Vec::new();
@@ -160,6 +160,7 @@ fn a_form_survives_a_save_with_its_values() {
         ],
         form_choices: Vec::new(),
         scrub: Default::default(),
+        form_display: Vec::new(),
     };
     crate::engine::save::build_output(
         &pdfium,
@@ -217,6 +218,7 @@ fn text_field_updates_its_saved_appearance_without_button_edits() {
         form_buttons: Vec::new(),
         form_choices: Vec::new(),
         scrub: Default::default(),
+        form_display: Vec::new(),
     };
     crate::engine::save::build_output(&pdfium, source.to_str().unwrap(), None, &plan, &output)
         .expect("save text field");
@@ -282,6 +284,7 @@ fn shared_text_fields_save_multiline_values_and_can_be_cleared() {
             form_buttons: Vec::new(),
             form_choices: Vec::new(),
             scrub: Default::default(),
+            form_display: Vec::new(),
         };
         crate::engine::save::build_output(&pdfium, input.to_str().unwrap(), None, &plan, output)
             .unwrap();
@@ -337,6 +340,7 @@ fn a_rejected_text_value_preserves_the_destination() {
                     texts: &[("shared".into(), "x".repeat(100))],
                     buttons: &[],
                     choices: &[],
+                    display: &[],
                 },
             )
         },
@@ -467,6 +471,7 @@ fn one_page_plan() -> EditPlan {
         form_buttons: Vec::new(),
         form_choices: Vec::new(),
         scrub: Default::default(),
+        form_display: Vec::new(),
     }
 }
 

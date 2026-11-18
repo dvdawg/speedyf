@@ -14,6 +14,7 @@ import {
   IconHighlight,
   IconImage,
   IconInk,
+  IconLock,
   IconNote,
   IconOpen,
   IconPrint,
@@ -49,11 +50,14 @@ import {
 } from '../features/annotations/toolStore';
 import { addImageFromDialog } from '../features/editor/editorActions';
 import { beginPrint } from '../features/print/printStore';
+import { openProtect } from '../features/protect/protectStore';
+import { deniedReason } from '../features/protect/permissions';
 import TextTools from '../features/annotations/TextTools';
 import { ReaderPaneToggles } from '../features/extensions/ReaderPane';
 import { MarkupToggle } from '../features/markup/MarkupToggle';
 import { SignMenu } from '../features/sign/SignMenu';
 import { RedactMenu } from '../features/protect/redact/RedactMenu';
+import FillTools from '../features/sign/FillTools';
 
 export default function Toolbar() {
   const maxSavePages = 65_535;
@@ -61,6 +65,7 @@ export default function Toolbar() {
   const loaded = () => doc()?.loaded ?? false;
   const pageCount = () => doc()?.pages.length ?? 0;
   const saveSupported = () => pageCount() <= maxSavePages;
+  const printDenied = () => deniedReason(doc()?.protection, 'print');
   const [pageInput, setPageInput] = createSignal<string | null>(null);
   const [zoomInput, setZoomInput] = createSignal<string | null>(null);
 
@@ -80,7 +85,8 @@ export default function Toolbar() {
   };
 
   const showStroke = () => toolState.active === 'ink' || toolState.active === 'rect';
-  const showStyle = () => toolState.active !== 'select' && toolState.active !== 'textbox';
+  const showStyle = () =>
+    toolState.active !== 'select' && toolState.active !== 'textbox' && toolState.active !== 'fill';
   // Home and Projects show no document, so every reader control would sit
   // there disabled, and Open alone would be an empty bar: there is no bar.
   // Open stays on Cmd+O, Home's own Open PDF... button and the palette.
@@ -127,14 +133,24 @@ export default function Toolbar() {
             <IconSaveAs />
           </IconButton>
           <IconButton
-            label={`Print (${formatShortcut('mod+p')})`}
-            disabled={!loaded()}
+            label={`Print (${formatShortcut('mod+p')})${printDenied() ? ` - ${printDenied()}` : ''}`}
+            disabled={!loaded() || printDenied() !== null}
             onClick={() => {
               const tab = activeTab();
               if (tab) void beginPrint(tab);
             }}
           >
             <IconPrint />
+          </IconButton>
+          <IconButton
+            label="Protect..."
+            disabled={!loaded() || doc()?.saving === true}
+            onClick={() => {
+              const tab = activeTab();
+              if (tab) openProtect(tab);
+            }}
+          >
+            <IconLock />
           </IconButton>
         </div>
 
@@ -438,6 +454,7 @@ export default function Toolbar() {
           <MarkupToggle />
         </div>
         <TextTools />
+        <FillTools />
       </div>
     </Show>
   );

@@ -58,6 +58,9 @@ notify = { version = "=8.2.0", default-features = false, features = ["macos_fsev
 lopdf = { version = "=0.47.0", default-features = false }
 # Search-and-redact patterns (engine/redact/find.rs). Already in the tree.
 regex = { version = "1", default-features = false, features = ["std", "perf", "unicode-case", "unicode-perl"] }
+# Password protection (engine/protect.rs): the random AES-256 file key. The
+# version lopdf itself already pulls in.
+getrandom = "0.4"
 # Markup storage key fallback (commands/markup.rs). Already in the tree.
 sha2 = "0.10"
 # Typed visual signatures (engine/signature.rs): glyph outlines of the bundled
