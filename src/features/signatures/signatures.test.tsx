@@ -31,7 +31,12 @@ function report(over: Partial<SignatureReport> = {}): SignatureReport {
     subFilter: 'adbe.pkcs7.detached',
     status: 'valid',
     summary: 'Signed by a trusted certificate; the signed bytes are intact.',
-    signer: { name: 'Ada Lovelace', email: 'ada@example.com', organization: null, issuer: 'Test CA' },
+    signer: {
+      name: 'Ada Lovelace',
+      email: 'ada@example.com',
+      organization: null,
+      issuer: 'Test CA',
+    },
     time: '2026-11-17 12:00 UTC',
     timeSource: 'signer',
     timestamp: null,

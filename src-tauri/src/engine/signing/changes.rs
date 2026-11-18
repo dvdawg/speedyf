@@ -135,7 +135,21 @@ pub fn changes_between(old: &Document, new: &Document, policy: &Policy) -> Vec<C
             .and_then(|id| new_page_index.get(id).copied())
     };
 
-    let mut found = Found::default();
+    let mut found = Found {
+        signed_before: all_fields(old)
+            .into_iter()
+            .filter(|(id, _, ft)| {
+                ft.as_deref() == Some(b"Sig".as_slice())
+                    && old
+                        .get_object(*id)
+                        .ok()
+                        .and_then(dict_of)
+                        .is_some_and(|d| d.has(b"V"))
+            })
+            .map(|(_, name, _)| name)
+            .collect(),
+        ..Found::default()
+    };
 
     // The page list itself.
     if old_pages != new_pages {
@@ -259,6 +273,8 @@ struct Found {
     filled: BTreeSet<String>,
     /// Signature fields that gained a value.
     signed: BTreeSet<String>,
+    /// Signature fields that already held a signature in the signed revision.
+    signed_before: BTreeSet<String>,
 }
 
 impl Found {
@@ -278,6 +294,21 @@ impl Found {
         // Signature fields that were signed are signatures, not form fill.
         for name in &self.signed {
             self.filled.remove(name);
+        }
+        // A signature already made cannot be redrawn: its appearance is what
+        // the signer saw and signed.
+        let redrawn: Vec<String> = self
+            .filled
+            .iter()
+            .filter(|name| self.signed_before.contains(*name))
+            .cloned()
+            .collect();
+        for name in redrawn {
+            self.filled.remove(&name);
+            self.groups
+                .entry((ChangeKind::Other, None))
+                .or_default()
+                .push(format!("The appearance of signature {name} was changed"));
         }
         if !self.signed.is_empty() {
             let names: Vec<&String> = self.signed.iter().collect();
@@ -506,6 +537,10 @@ fn field_changed(
                 format!("The signature in {name} was replaced"),
             );
         }
+    } else if is_sig && b.has(b"V") {
+        // Same signature, something else about its field or widget changed:
+        // finish() reports a signed field's redraw as such.
+        found.field(name);
     }
     // New kids that are fields are new fields.
     let kids = |doc: &Document, d: &Dictionary| -> HashSet<ObjectId> {
@@ -882,8 +917,10 @@ fn roles_of(doc: &Document) -> HashMap<ObjectId, Role> {
         }
     }
 
-    // Annotations and their appearances, page by page.
+    // Annotations and their appearances, page by page. A widget's
+    // appearance objects are named after the widget once fields are known.
     let pages = page_ids(doc);
+    let mut widget_parts: Vec<(ObjectId, HashSet<ObjectId>)> = Vec::new();
     for (index, page) in pages.iter().enumerate() {
         for annot in page_annots(doc, *page) {
             let Some(dict) = doc.get_object(annot).ok().and_then(dict_of) else {
@@ -896,12 +933,11 @@ fn roles_of(doc: &Document) -> HashMap<ObjectId, Role> {
                     reach(doc, value, &mut ids, LIMIT);
                 }
             }
-            let role = if subtype(dict) == Some(b"Widget") {
-                Role::Widget(String::new())
+            if subtype(dict) == Some(b"Widget") {
+                widget_parts.push((annot, ids));
             } else {
-                Role::Annotation(index as u32)
-            };
-            assign(ids, role, &mut roles);
+                assign(ids, Role::Annotation(index as u32), &mut roles);
+            }
         }
     }
 
@@ -923,22 +959,27 @@ fn roles_of(doc: &Document) -> HashMap<ObjectId, Role> {
             }
         }
     }
-    // Widgets whose name is still unknown (a widget on a page but not in the
-    // field tree) get their /Parent's name when there is one.
-    let unnamed: Vec<ObjectId> = roles
-        .iter()
-        .filter(|(_, r)| matches!(r, Role::Widget(n) if n.is_empty()))
-        .map(|(id, _)| *id)
-        .collect();
-    for id in unnamed {
-        let name = doc
-            .get_object(id)
-            .ok()
-            .and_then(dict_of)
-            .and_then(|d| d.get(b"T").ok())
-            .and_then(|t| lopdf::decode_text_string(t).ok())
-            .unwrap_or_else(|| format!("widget {}", id.0));
-        roles.insert(id, Role::Widget(name));
+    // Each widget's appearance objects carry its field's name. A widget the
+    // field tree does not reach is named by its own /T, if any.
+    for (widget, parts) in widget_parts {
+        let name = match roles.get(&widget) {
+            Some(Role::Widget(name)) => name.clone(),
+            _ => doc
+                .get_object(widget)
+                .ok()
+                .and_then(dict_of)
+                .and_then(|d| d.get(b"T").ok())
+                .and_then(|t| lopdf::decode_text_string(t).ok())
+                .unwrap_or_else(|| format!("unnamed field {}", widget.0)),
+        };
+        for id in parts {
+            match roles.get(&id) {
+                Some(Role::Field(_)) => {}
+                _ => {
+                    roles.insert(id, Role::Widget(name.clone()));
+                }
+            }
+        }
     }
 
     // Page content wins over everything above: an object a page draws is

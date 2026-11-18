@@ -134,18 +134,40 @@ struct Tlv<'a> {
     value: &'a [u8],
 }
 
-/// Read the element at the start of `bytes`. Definite lengths only.
+/// Read the element at the start of `bytes`.
+///
+/// Indefinite lengths (BER, which some signers - Java ones especially - use
+/// for the outer layers of a SignedData) are followed to their end-of-contents
+/// marker; `value` then excludes the marker.
 fn tlv(bytes: &[u8]) -> Option<Tlv<'_>> {
+    tlv_at_depth(bytes, 0)
+}
+
+fn tlv_at_depth(bytes: &[u8], depth: usize) -> Option<Tlv<'_>> {
     let tag = *bytes.first()?;
-    if tag & 0x1f == 0x1f {
+    if tag & 0x1f == 0x1f || depth > 64 {
         return None; // multi-byte tags never occur in the structures read here
     }
     let first = *bytes.get(1)?;
+    if first == 0x80 {
+        if tag & 0x20 == 0 {
+            return None; // only a constructed value can have an indefinite length
+        }
+        let mut pos = 2;
+        while bytes.get(pos..pos + 2)? != [0, 0] {
+            pos += tlv_at_depth(&bytes[pos..], depth + 1)?.whole.len();
+        }
+        return Some(Tlv {
+            tag,
+            whole: &bytes[..pos + 2],
+            value: &bytes[2..pos],
+        });
+    }
     let (len, head) = if first < 0x80 {
         (first as usize, 2)
     } else {
         let n = (first & 0x7f) as usize;
-        if n == 0 || n > 4 {
+        if n > 4 {
             return None;
         }
         let mut len = 0usize;
@@ -160,6 +182,22 @@ fn tlv(bytes: &[u8]) -> Option<Tlv<'_>> {
         whole,
         value: &whole[head..],
     })
+}
+
+/// A definite-length DER header and `value`, under `tag`.
+fn der_wrap(tag: u8, value: &[u8]) -> Vec<u8> {
+    let mut out = vec![tag];
+    let len = value.len();
+    if len < 0x80 {
+        out.push(len as u8);
+    } else {
+        let bytes = len.to_be_bytes();
+        let skip = bytes.iter().take_while(|b| **b == 0).count();
+        out.push(0x80 | (bytes.len() - skip) as u8);
+        out.extend_from_slice(&bytes[skip..]);
+    }
+    out.extend_from_slice(value);
+    out
 }
 
 /// The elements inside a constructed value, in order.
@@ -257,9 +295,9 @@ fn raw_signed_data(der: &[u8]) -> Result<RawSignedData<'_>, String> {
 fn raw_signed_attrs(signer_info: &[u8]) -> Option<Vec<u8>> {
     let info = tlv(signer_info)?;
     let attrs = children(info.value)?.into_iter().find(|t| t.tag == 0xa0)?;
-    let mut out = attrs.whole.to_vec();
-    out[0] = 0x31;
-    Some(out)
+    // Re-wrapped with a definite length: what is signed is the DER form even
+    // when the signer wrote this layer with an indefinite one.
+    Some(der_wrap(0x31, attrs.value))
 }
 
 // ---------------------------------------------------------------------------
@@ -617,13 +655,35 @@ fn tst_info(der: &[u8]) -> Option<TstInfo> {
     let hashed = imprint_parts.get(1).filter(|t| t.tag == 0x04)?;
     let time = fields
         .get(4)
-        .and_then(|t| der::asn1::GeneralizedTime::from_der(t.whole).ok())
-        .map(|t| t.to_unix_duration().as_secs() as i64);
+        .filter(|t| t.tag == 0x18)
+        .and_then(|t| generalized_time(t.value));
     Some(TstInfo {
         imprint_alg: alg_oid,
         imprint: hashed.value.to_vec(),
         time,
     })
+}
+
+/// A GeneralizedTime's text (`YYYYMMDDHHMMSS[.fff]Z`) as Unix seconds.
+/// Timestamp authorities routinely add fractions of a second, which the strict
+/// DER type refuses.
+fn generalized_time(text: &[u8]) -> Option<i64> {
+    let text = std::str::from_utf8(text).ok()?;
+    let digits = text.get(..14)?;
+    if !digits.bytes().all(|b| b.is_ascii_digit()) || !text.ends_with('Z') {
+        return None;
+    }
+    let n = |r: std::ops::Range<usize>| digits[r].parse::<u16>().ok();
+    let time = der::DateTime::new(
+        n(0..4)?,
+        n(4..6)? as u8,
+        n(6..8)? as u8,
+        n(8..10)? as u8,
+        n(10..12)? as u8,
+        n(12..14)?.min(59) as u8,
+    )
+    .ok()?;
+    Some(time.unix_duration().as_secs() as i64)
 }
 
 /// Whether `der` is a timestamp token (its content is a TSTInfo).

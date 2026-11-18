@@ -180,7 +180,13 @@ fn report(
     revisions: u32,
     doc: Option<&Document>,
 ) -> SignatureReport {
-    let coverage = parse::check_coverage(bytes, &sig.byte_range);
+    let coverage = parse::check_coverage(bytes, &sig.byte_range).and_then(|c| {
+        if sig.gap_is_own {
+            Ok(c)
+        } else {
+            Err("the byte range points at another signature's value, not this one's".into())
+        }
+    });
     let crypto = verify::check_crypto(bytes, sig);
     let intact = crypto.intact && coverage.is_ok();
     let problem = coverage.as_ref().err().cloned().or(crypto.problem.clone());

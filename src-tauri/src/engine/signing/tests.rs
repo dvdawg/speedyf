@@ -192,7 +192,7 @@ impl Signer {
             oid("1.2.3.4.1"),
             seq(&[alg(DigestAlg::Sha256), octets(imprint)]),
             int(7),
-            tlv(0x18, b"20261117123000Z"),
+            tlv(0x18, b"20261117123000.25Z"),
         ]);
         let digest = DigestAlg::Sha256.digest(&[&tst]);
         self.signed_data(DigestAlg::Sha256, TST_INFO, Some(&tst), &digest, None)
@@ -748,6 +748,99 @@ fn a_replaced_signature_object_is_found_in_its_own_revision() {
     assert_eq!(report.status, "modified", "{report:#?}");
 }
 
+/// The value of a definite-length DER element.
+fn der_value(der: &[u8]) -> &[u8] {
+    let (len, head) = match der[1] {
+        n if n < 0x80 => (n as usize, 2),
+        0x81 => (der[2] as usize, 3),
+        0x82 => ((der[2] as usize) << 8 | der[3] as usize, 4),
+        _ => (
+            (der[2] as usize) << 16 | (der[3] as usize) << 8 | der[4] as usize,
+            5,
+        ),
+    };
+    &der[head..head + len]
+}
+
+fn ber(tag: u8, content: &[u8]) -> Vec<u8> {
+    [&[tag, 0x80][..], content, &[0, 0]].concat()
+}
+
+#[test]
+fn ber_encoded_signed_data_with_indefinite_lengths_verifies() {
+    // Java signers write the outer layers with indefinite lengths.
+    let signer = Signer::ec();
+    let pdf = base(&form_objects(sig_dict("adbe.pkcs7.detached", ""), ""));
+    let pdf = sign_last(pdf, |spans| {
+        let der = detached(&signer)(spans);
+        let parts = der_value(&der);
+        let oid_len = parts[1] as usize + 2;
+        let (oid, explicit) = parts.split_at(oid_len);
+        let signed_data = der_value(der_value(explicit));
+        ber(0x30, &[oid, &ber(0xa0, &ber(0x30, signed_data))].concat())
+    });
+    let report = only(&pdf);
+    assert_eq!(report.status, INTACT, "{report:#?}");
+}
+
+#[test]
+fn redrawing_a_signature_after_signing_is_flagged() {
+    let pdf = update(
+        &signed_form("", ""),
+        &[
+            (
+                7,
+                b"<< /Type /Annot /Subtype /Widget /FT /Sig /T (Signature1) /Rect [72 500 300 550] /P 3 0 R /F 4 /V 9 0 R /AP << /N 14 0 R >> >>"
+                    .to_vec(),
+            ),
+            (14, stream("0 0 1 rg 0 0 228 50 re f")),
+        ],
+    );
+    let report = only(&pdf);
+    assert_eq!(report.status, "modified", "{report:#?}");
+    assert_eq!(
+        report.changes[0].detail,
+        "The appearance of signature Signature1 was changed"
+    );
+}
+
+#[test]
+fn a_byte_range_borrowed_from_another_signature_is_invalid() {
+    // A second signature dictionary that copies the first one's range: its
+    // own value sits outside the range, so nothing vouches for it.
+    let once = signed_form("", "");
+    let first = parse::signatures_in(&once).remove(0);
+    let range = format!(
+        "[0 {} {} {}]",
+        first.byte_range[1], first.byte_range[2], first.byte_range[3]
+    );
+    let copied = format!(
+        "<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /ByteRange {range} /Contents <3082> >>"
+    );
+    let pdf = update(
+        &once,
+        &[
+            (
+                10,
+                b"<< /Type /Annot /Subtype /Widget /FT /Sig /T (Signature2) /Rect [320 500 540 550] /P 3 0 R /F 4 /V 13 0 R >>"
+                    .to_vec(),
+            ),
+            (13, copied.into_bytes()),
+        ],
+    );
+    let reports = check_document(&pdf);
+    let second = reports
+        .iter()
+        .find(|r| r.field_name.as_deref() == Some("Signature2"))
+        .unwrap();
+    assert_eq!(second.status, "invalid");
+    assert!(second
+        .problem
+        .as_deref()
+        .unwrap()
+        .contains("another signature"));
+}
+
 #[test]
 fn pdf_dates_and_times_read_back() {
     assert_eq!(
@@ -882,5 +975,62 @@ mod saving {
                 .all(|r| !r.intact || !r.covers_whole_file || r.status == "modified"),
             "a rewritten copy cannot claim an intact, unmodified signature: {reports:#?}"
         );
+    }
+}
+
+/// Real signed PDFs, for an evaluation by eye. Not run by default:
+/// `SPEEDYF_SIGNING_SAMPLES=<dir> cargo test --lib eval_signing_samples -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn eval_signing_samples() {
+    let Ok(dir) = std::env::var("SPEEDYF_SIGNING_SAMPLES") else {
+        return;
+    };
+    let mut files: Vec<_> = std::fs::read_dir(dir)
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "pdf"))
+        .collect();
+    files.sort();
+    for path in files {
+        let bytes = std::fs::read(&path).unwrap();
+        let started = std::time::Instant::now();
+        let reports = check_document(&bytes);
+        let ms = started.elapsed().as_millis();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        println!(
+            "{name} ({} KB, {} signatures, {ms} ms)",
+            bytes.len() / 1024,
+            reports.len()
+        );
+        for r in reports {
+            let changes: Vec<String> = r
+                .changes
+                .iter()
+                .map(|c| {
+                    let flag = if c.allowed { "" } else { " [NOT ALLOWED]" };
+                    format!("{}{flag}", c.detail)
+                })
+                .collect();
+            println!(
+                "  {} | {} | {} | {} | intact={} trust={} | {} | {} | ts={:?} | rev {}/{} | {}",
+                r.field_name.as_deref().unwrap_or("-"),
+                r.sub_filter.as_deref().unwrap_or("-"),
+                r.kind,
+                r.status,
+                r.intact,
+                r.trust,
+                r.signer.name.as_deref().unwrap_or("-"),
+                r.time.as_deref().unwrap_or("-"),
+                r.timestamp.as_ref().map(|t| t.valid),
+                r.revision,
+                r.revisions,
+                format!(
+                    "{} {}",
+                    r.problem.clone().unwrap_or_default(),
+                    changes.join("; ")
+                )
+            );
+        }
     }
 }

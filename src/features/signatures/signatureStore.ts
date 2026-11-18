@@ -13,10 +13,7 @@ const inFlight = new Map<number, Promise<SignatureReport[]>>();
 const [settled, setSettled] = createSignal<ReadonlyMap<number, SignatureReport[]>>(new Map());
 
 /** The signatures in document `docId`, read from `path` on disk. */
-export function documentSignatures(
-  docId: number,
-  path: string | null
-): Promise<SignatureReport[]> {
+export function documentSignatures(docId: number, path: string | null): Promise<SignatureReport[]> {
   if (!path) return Promise.resolve([]);
   const hit = inFlight.get(docId);
   if (hit) return hit;

@@ -93,6 +93,9 @@ pub struct SignatureInfo {
     pub m: Option<String>,
     /// `/Cert` (only `adbe.x509.rsa_sha1` uses it): DER certificates.
     pub cert: Vec<Vec<u8>>,
+    /// False when the byte range's gap holds some other value than this
+    /// dictionary's own `/Contents` (a range copied from another signature).
+    pub gap_is_own: bool,
 }
 
 impl SignatureInfo {
@@ -229,6 +232,12 @@ pub fn contents_from_gap(bytes: &[u8], range: &[i64]) -> Option<Vec<u8>> {
     let gap = bytes.get(usize::try_from(b).ok()?..usize::try_from(c).ok()?)?;
     let inner = gap.strip_prefix(b"<")?.strip_suffix(b">")?;
     decode_hex(inner)
+}
+
+/// `bytes` without its trailing zero padding.
+fn trim_zeros(bytes: &[u8]) -> &[u8] {
+    let end = bytes.iter().rposition(|b| *b != 0).map_or(0, |i| i + 1);
+    &bytes[..end]
 }
 
 fn decode_hex(hex: &[u8]) -> Option<Vec<u8>> {
@@ -374,6 +383,7 @@ fn from_raw(bytes: &[u8], at: usize, range: Vec<i64>) -> Option<SignatureInfo> {
         contact_info: None,
         m: None,
         cert: Vec::new(),
+        gap_is_own: true,
     })
 }
 
@@ -480,12 +490,22 @@ fn from_dictionary(
     }
     // The gap in the file is authoritative: it is what the range excludes,
     // and lopdf may have run a decryption filter over the parsed string.
-    let contents = contents_from_gap(bytes, &byte_range).or_else(|| {
-        resolve(doc, dict.get(b"Contents").ok()?)?
-            .as_str()
-            .ok()
-            .map(<[u8]>::to_vec)
-    })?;
+    let own = resolve(doc, dict.get(b"Contents").ok()?)?
+        .as_str()
+        .ok()
+        .map(<[u8]>::to_vec);
+    let gap = contents_from_gap(bytes, &byte_range);
+    // A range has to exclude this dictionary's own value. One copied from
+    // another signature points at that signature's gap instead. (In an
+    // encrypted file the parsed string may have been decrypted, so the two
+    // cannot be compared there.)
+    let encrypted = doc.trailer.has(b"Encrypt");
+    let gap_is_own = encrypted
+        || match (&own, &gap) {
+            (Some(own), Some(gap)) => trim_zeros(own) == trim_zeros(gap),
+            _ => true,
+        };
+    let contents = gap.or(own)?;
     let name_of = |key: &[u8]| -> Option<String> {
         match resolve(doc, dict.get(key).ok()?)? {
             Object::Name(n) => Some(String::from_utf8_lossy(n).into_owned()),
@@ -575,6 +595,7 @@ fn from_dictionary(
             .and_then(|m| m.as_str().ok())
             .map(|m| String::from_utf8_lossy(m).into_owned()),
         cert,
+        gap_is_own,
     })
 }
 

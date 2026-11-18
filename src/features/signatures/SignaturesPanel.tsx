@@ -107,10 +107,7 @@ export default function SignaturesPanel() {
                     </Show>
                     <Show when={report.fieldName || report.page !== null}>
                       <span class="sig-meta">
-                        {[
-                          report.fieldName,
-                          report.page !== null ? `page ${report.page + 1}` : null,
-                        ]
+                        {[report.fieldName, report.page !== null ? `page ${report.page + 1}` : null]
                           .filter(Boolean)
                           .join(', ')}
                       </span>
