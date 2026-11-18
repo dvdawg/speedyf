@@ -273,6 +273,11 @@ pub enum Work {
         doc: DocId,
         respond: Respond<FormDto>,
     },
+    /// Fields proposed from every page's printed blanks, for Prepare form.
+    FormProposals {
+        doc: DocId,
+        respond: Respond<Vec<ProposedFieldDto>>,
+    },
     Outline {
         doc: DocId,
         respond: Respond<Vec<OutlineNodeDto>>,

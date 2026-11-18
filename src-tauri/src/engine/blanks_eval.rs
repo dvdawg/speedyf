@@ -41,7 +41,7 @@ fn inter(a: &RectDto, b: &RectDto) -> f32 {
     }
 }
 
-fn matches(truth: &RectDto, found: &RectDto) -> bool {
+pub(super) fn matches(truth: &RectDto, found: &RectDto) -> bool {
     let i = inter(truth, found);
     if i <= 0.0 {
         return false;
@@ -52,7 +52,7 @@ fn matches(truth: &RectDto, found: &RectDto) -> bool {
     iou >= 0.5 || ((i >= 0.7 * at || i >= 0.7 * af) && ratio <= 6.0)
 }
 
-fn pdfs(dir: &str) -> Vec<PathBuf> {
+pub(super) fn pdfs(dir: &str) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = std::fs::read_dir(dir)
         .map(|d| {
             d.filter_map(|e| e.ok().map(|e| e.path()))

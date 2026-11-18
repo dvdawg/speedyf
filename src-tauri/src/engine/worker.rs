@@ -374,6 +374,7 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         Work::MarkupExport { respond, .. } => respond(Err(err())),
         Work::MarkupKey { respond, .. } => respond(Err(err())),
         Work::FormFields { respond, .. } => respond(Err(err())),
+        Work::FormProposals { respond, .. } => respond(Err(err())),
         Work::Outline { respond, .. } => respond(Err(err())),
         Work::GeneratedOutline { respond, .. } => respond(Err(err())),
         Work::FormalEnvs { respond, .. } => respond(Err(err())),
@@ -533,6 +534,7 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
             &path,
         ))),
         Work::FormFields { doc, respond } => respond(do_form_fields(state, doc)),
+        Work::FormProposals { doc, respond } => respond(do_form_proposals(state, doc)),
         Work::Outline { doc, respond } => respond(do_outline(state, doc)),
         Work::GeneratedOutline { doc, respond } => {
             respond(do_generated_outline(state, shared, doc))
@@ -3271,6 +3273,30 @@ fn do_form_fields(state: &mut WorkerState, doc: DocId) -> AppResult<FormDto> {
     let form = super::forms::read_form(state.bindings, raw, page_count, &path, password.as_deref());
     state.doc(doc)?.form_fields = Some(form.clone());
     Ok(form)
+}
+
+/// Fields Prepare form mode proposes from the printed blanks on every page,
+/// skipping what existing widgets already cover, named uniquely against the
+/// form's own fields.
+fn do_form_proposals(state: &mut WorkerState, doc: DocId) -> AppResult<Vec<ProposedFieldDto>> {
+    let form = do_form_fields(state, doc)?;
+    let mut taken: HashSet<String> = form.fields.iter().map(|f| f.name.clone()).collect();
+    let page_count = state.doc(doc)?.page_count;
+    let mut out = Vec::new();
+    for src in 0..page_count {
+        let [w, h] = state.display_size(doc, src)?;
+        let widgets: Vec<RectDto> = form
+            .fields
+            .iter()
+            .filter(|f| f.page == src)
+            .map(|f| f.rect)
+            .collect();
+        let page = state.page_handle(doc, src)?;
+        let input = blanks::collect(state.bindings, page, w, h);
+        let found = blanks::drop_covered(blanks::detect(&input), &widgets);
+        out.extend(super::forms::propose(src, &input, &found, &mut taken));
+    }
+    Ok(out)
 }
 
 const MAX_FORM_STRING_BYTES: usize = 16 * 1024 * 1024;

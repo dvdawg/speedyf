@@ -21,6 +21,11 @@
 //! edits at save time.
 
 mod appearance;
+mod data;
+mod design;
+mod detect;
+mod draw;
+mod flatten;
 mod read;
 pub mod scripts;
 mod write;
@@ -30,10 +35,18 @@ mod behaviour_eval;
 #[cfg(test)]
 mod behaviour_tests;
 #[cfg(test)]
+mod design_eval;
+#[cfg(test)]
+mod design_tests;
+#[cfg(test)]
 mod eval;
 #[cfg(test)]
 mod tests;
 
+pub use data::{read_data_file, write_data_file, FormDataField};
+pub use design::apply_design;
+pub use detect::propose;
+pub use flatten::flatten_form;
 pub use read::read_form;
 pub use write::{apply_edits, FormEdits};
 
