@@ -27,6 +27,9 @@ use std::path::Path;
 pub(crate) fn minimize_file(source: &[u8], path: &Path) -> std::io::Result<()> {
     let output = std::fs::read(path)?;
     match minimal_update(source, &output) {
+        Ok(Some(bytes)) if !reads_back(&bytes, &output) => {
+            log::warn!("the minimised update did not read back; keeping PDFium's");
+        }
         Ok(Some(bytes)) => {
             let mut file = std::fs::File::create(path)?;
             std::io::Write::write_all(&mut file, &bytes)?;
@@ -38,6 +41,24 @@ pub(crate) fn minimize_file(source: &[u8], path: &Path) -> std::io::Result<()> {
         Err(error) => log::warn!("could not minimise the appended update: {error}"),
     }
     Ok(())
+}
+
+/// Whether `minimal` parses and has the pages, and the same objects, that
+/// `output` has (annotations lifted out of /Annots are new objects).
+fn reads_back(minimal: &[u8], output: &[u8]) -> bool {
+    let (Ok(a), Ok(b)) = (Document::load_mem(minimal), Document::load_mem(output)) else {
+        return false;
+    };
+    a.get_pages().len() == b.get_pages().len()
+        && b.objects
+            .iter()
+            .all(|(id, object)| match a.objects.get(id) {
+                // PDFium's unused scratch objects are dropped.
+                None => true,
+                Some(_) if is_bookkeeping(object) => true,
+                Some(Object::Dictionary(page)) if page.has(b"Annots") => true,
+                Some(mine) => equivalent(mine, object),
+            })
 }
 
 /// The source followed by one update holding only what `output` changed,
