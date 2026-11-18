@@ -132,6 +132,8 @@ describe('FormPanel', () => {
   it('says plainly when there is no form', async () => {
     info = { fields: [], xfa: false };
     const { view } = mount();
-    expect(await view.findByText('This document has no fillable form fields.')).toBeTruthy();
+    expect(
+      await view.findByText('This document has no fillable form fields. Prepare form adds them.')
+    ).toBeTruthy();
   });
 });

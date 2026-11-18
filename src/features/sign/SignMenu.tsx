@@ -1,6 +1,7 @@
 /** The toolbar's Sign button and its small menu: the saved signatures and
  * initials to place, making a new one, and whether this document's visual
  * signatures are flattened into the page when it is saved. */
+import { startPreparing } from '../prepare/prepareStore';
 import { For, onCleanup, Show, createEffect } from 'solid-js';
 import IconButton from '../../components/IconButton';
 import { IconTrash } from '../../components/icons';
@@ -147,6 +148,18 @@ export function SignMenu() {
               </Show>
             </span>
             Fill printed form
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            class="sign-menu-item"
+            title="Add fillable fields to this document: text, checkboxes, dropdowns, signatures"
+            onClick={() => {
+              setSignMenuOpen(false);
+              void startPreparing();
+            }}
+          >
+            Prepare form...
           </button>
           <div class="sign-menu-separator" role="separator" />
           <Group role="signature" />

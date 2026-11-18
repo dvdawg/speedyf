@@ -31,6 +31,8 @@ import StatementLayer from '../extensions/StatementLayer';
 import FormLayer from '../forms/FormLayer';
 import SignatureFieldLayer from '../sign/SignatureFieldLayer';
 import MarkupLayer from '../markup/MarkupLayer';
+import PrepareLayer from '../prepare/PrepareLayer';
+import { preparing } from '../prepare/prepareStore';
 import { reveal } from '../../stores/revealStore';
 import type { Rotation } from '../../types/model';
 import { TabContext } from '../../app/TabContext';
@@ -380,7 +382,7 @@ export default function PageView(props: Props) {
             )}
           </For>
         </div>
-        <Show when={srcIndex() !== null}>
+        <Show when={srcIndex() !== null && !preparing(tab)}>
           <FormLayer
             docId={doc.docId}
             src={srcIndex()!}
@@ -388,7 +390,7 @@ export default function PageView(props: Props) {
             zoom={vp.state.zoom}
           />
         </Show>
-        <Show when={srcIndex() !== null && page()}>
+        <Show when={srcIndex() !== null && page() && !preparing(tab)}>
           <SignatureFieldLayer
             docId={doc.docId}
             src={srcIndex()!}
@@ -446,6 +448,14 @@ export default function PageView(props: Props) {
             zoom={vp.state.zoom}
             runs={textLayout()?.runs ?? []}
             equations={equationBlocks() ?? []}
+          />
+        </Show>
+        <Show when={srcIndex() !== null && page()}>
+          <PrepareLayer
+            pageId={page()!.id}
+            src={srcIndex()!}
+            geom={props.geom}
+            zoom={vp.state.zoom}
           />
         </Show>
       </div>
