@@ -239,11 +239,68 @@ export interface FormOption {
   export: string;
 }
 
+/** How a field shows its value or what typing it takes: the standard
+ * Acrobat helper its script calls (see engine/forms/scripts.rs). */
+export type FieldFormat =
+  | {
+      kind: 'number';
+      decimals: number;
+      /** 0 `1,234.56`, 1 `1234.56`, 2 `1.234,56`, 3 `1234,56`, 4 `1'234.56`. */
+      sepStyle: number;
+      /** 0 minus, 1 red, 2 parentheses, 3 red parentheses. */
+      negStyle: number;
+      currency: string;
+      prepend: boolean;
+    }
+  | { kind: 'percent'; decimals: number; sepStyle: number; prepend: boolean }
+  /** An empty format means the reader's own date format. */
+  | { kind: 'date'; format: string }
+  | { kind: 'time'; format: string }
+  /** 0 zip, 1 zip+4, 2 phone, 3 SSN. */
+  | { kind: 'special'; style: number }
+  /** 9 digit, A letter, O letter or digit, X any character. */
+  | { kind: 'mask'; mask: string };
+
+/** AFRange_Validate bounds, inclusive; null where unbounded. */
+export interface FieldRange {
+  min: number | null;
+  max: number | null;
+}
+
+/** AFSimple_Calculate. */
+export interface FieldCalc {
+  op: string;
+  fields: string[];
+}
+
+/** A field's recognised keystroke, format, validate and calculate scripts. */
+export interface FieldBehaviour {
+  keystroke?: FieldFormat;
+  format?: FieldFormat;
+  validate?: FieldRange;
+  calculate?: FieldCalc;
+}
+
+/** JavaScript the form carries, none of which is run. */
+export interface ScriptSummary {
+  /** Field and widget actions. */
+  total: number;
+  /** Of those, the ones SpeedyF does itself (standard helpers). */
+  recognised: number;
+  /** Document-level scripts. */
+  document: number;
+}
+
 /** A document's form: its widgets, and whether it carries XFA. */
 export interface FormInfo {
   fields: FormFieldInfo[];
   /** With no fields alongside, an XFA-only form SpeedyF cannot fill. */
   xfa: boolean;
+  /** Per field name. */
+  behaviours?: Record<string, FieldBehaviour>;
+  /** Fields with a calculation, in the order the form recalculates them. */
+  calcOrder?: string[];
+  scripts?: ScriptSummary;
 }
 
 /** A theorem, lemma, definition or caption recovered from a LaTeX PDF.
