@@ -2,6 +2,8 @@
 import { createEffect, createSignal, Show } from 'solid-js';
 import PrintDialog from '../features/print/PrintDialog';
 import { closePrint, printState } from '../features/print/printStore';
+import SignDialog from '../features/sign/SignDialog';
+import { signState } from '../features/sign/signStore';
 import {
   dismissError,
   modal,
@@ -100,6 +102,10 @@ export default function Modals() {
             <PrintDialog />
           </div>
         </div>
+      </Show>
+      {/* Visual signatures: their own store, like print. */}
+      <Show when={signState.dialog}>
+        <SignDialog />
       </Show>
       <Show when={modal.kind !== null}>
         <div
