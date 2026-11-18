@@ -154,7 +154,8 @@ fn openssl_verifies(file: &[u8], range: [usize; 4], der: &[u8], cert: &[u8]) -> 
         .arg(dir.path().join("content.bin"))
         .arg("-CAfile")
         .arg(dir.path().join("cert.pem"))
-        .args(["-out", "/dev/null"])
+        .arg("-out")
+        .arg(dir.path().join("verified.bin"))
         .output()
         .unwrap();
     if !out.status.success() {

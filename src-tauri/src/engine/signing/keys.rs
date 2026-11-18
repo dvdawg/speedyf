@@ -440,6 +440,13 @@ pub fn import_p12(
         }
         StoreKind::File => {
             let (pkcs8, chain) = read_p12(bytes, password)?;
+            // The same rule the Keychain path applies: a CA or a TLS server
+            // certificate is not a signing identity.
+            if !chain.first().is_some_and(|leaf| can_sign_documents(leaf)) {
+                return Err(AppError::Unsupported(
+                    "this certificate is not allowed to sign documents".into(),
+                ));
+            }
             FileStore::new(dir).add(&pkcs8, chain, require(passphrase)?)
         }
     }
