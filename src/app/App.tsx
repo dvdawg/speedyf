@@ -89,10 +89,13 @@ export default function App() {
       : IS_MAC
         ? doc.name
         : `${doc.dirty ? '* ' : ''}${doc.name} - SpeedyF`;
-    void getCurrentWindow()
-      .setTitle(title)
-      .catch(() => undefined);
-    if (IS_MAC) void desktop.setDocumentState(loaded && doc.dirty, loaded ? doc.path : null);
+    // On macOS the title goes with the rest, in one pass that then puts the
+    // traffic lights back: each change lays the title bar out again.
+    if (IS_MAC) void desktop.setDocumentState(title, loaded && doc.dirty, loaded ? doc.path : null);
+    else
+      void getCurrentWindow()
+        .setTitle(title)
+        .catch(() => undefined);
   });
 
   onMount(() => {

@@ -23,8 +23,8 @@ export const desktop = {
   isQuitting: (): Promise<boolean> => quietly(invoke<boolean>('is_quitting'), false),
   cancelQuit: (): Promise<void> => quietly(invoke('cancel_quit'), undefined),
   /** The edited dot and proxy icon of this window's title bar (macOS). */
-  setDocumentState: (edited: boolean, path: string | null): Promise<void> =>
-    quietly(invoke('set_document_state', { edited, path }), undefined),
+  setDocumentState: (title: string, edited: boolean, path: string | null): Promise<void> =>
+    quietly(invoke('set_document_state', { title, edited, path }), undefined),
   /** The system's recent documents: the Dock menu's list on macOS. */
   noteRecentDocument: (path: string): Promise<void> =>
     quietly(invoke('note_recent_document', { path }), undefined),
