@@ -44,9 +44,51 @@ struct Registry {
     /// is built hidden so the user never sees it white and empty; one whose
     /// webview never gets that far is shown anyway after a grace period.
     revealed: HashSet<String>,
+    quit: QuitState,
+}
+
+/// Where a quit stands. However it was asked for - the app's own Quit, or on
+/// macOS the system (Dock, logout, restart) - it goes through every window's
+/// close guard.
+#[derive(Default)]
+struct QuitState {
     /// Quit was chosen: every window is closing, and each keeps its session
     /// for the next launch instead of forgetting it as a closed window does.
     quitting: bool,
+    /// macOS asked to terminate and was told to wait: it is owed exactly one
+    /// answer, yes once every window has closed, no if one refuses. Until it
+    /// gets one a logout or restart waits on us.
+    #[cfg(target_os = "macos")]
+    owes_reply: bool,
+}
+
+impl QuitState {
+    fn begin(&mut self) {
+        self.quitting = true;
+    }
+
+    /// The system asked to terminate. Joins a quit already under way rather
+    /// than starting a second one, so nobody is asked twice.
+    #[cfg(target_os = "macos")]
+    fn system_request(&mut self) {
+        self.quitting = true;
+        self.owes_reply = true;
+    }
+
+    /// A window refused to close. Answers whether the system is owed a no.
+    fn cancel(&mut self) -> bool {
+        self.quitting = false;
+        #[cfg(target_os = "macos")]
+        return std::mem::take(&mut self.owes_reply);
+        #[cfg(not(target_os = "macos"))]
+        false
+    }
+
+    /// The last window has gone. Answers whether the system is owed a yes.
+    #[cfg(target_os = "macos")]
+    fn all_closed(&mut self) -> bool {
+        std::mem::take(&mut self.owes_reply)
+    }
 }
 
 /// One window's open documents, in tab-strip order.
@@ -266,23 +308,62 @@ pub fn reveal_window(window: tauri::WebviewWindow, state: tauri::State<'_, Windo
 /// the process, is what keeps an unsaved document from being lost to Cmd+Q.
 #[tauri::command]
 pub fn request_quit(app: tauri::AppHandle, state: tauri::State<'_, Windows>) {
-    state.0.lock().unwrap().quitting = true;
+    state.0.lock().unwrap().quit.begin();
+    close_all(&app);
+}
+
+/// Asks every window to close. A window already asking about unsaved changes
+/// ignores the second request, so this never prompts twice.
+fn close_all(app: &tauri::AppHandle) {
     for window in app.webview_windows().into_values() {
         let _ = window.close();
     }
+}
+
+/// macOS asked to terminate (Dock Quit, logout, restart, shut down, a quit
+/// Apple event). Starts the same quit as Cmd+Q, or joins one under way, and
+/// answers whether there was anything to wait for: with no windows open the
+/// app may terminate at once.
+#[cfg(target_os = "macos")]
+pub fn system_quit(app: &tauri::AppHandle) -> bool {
+    if app.webview_windows().is_empty() {
+        return false;
+    }
+    let Some(state) = app.try_state::<Windows>() else {
+        return false;
+    };
+    state.0.lock().unwrap().quit.system_request();
+    // After the AppKit delegate call has returned, not inside it.
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move { close_all(&app) });
+    true
+}
+
+/// The last window has closed. Answers whether a system terminate request
+/// was waiting on it, in which case the system must be told yes.
+#[cfg(target_os = "macos")]
+pub fn take_system_quit(app: &tauri::AppHandle) -> bool {
+    app.try_state::<Windows>()
+        .is_some_and(|state| state.0.lock().unwrap().quit.all_closed())
 }
 
 /// Whether the windows closing now are closing because the app is quitting,
 /// in which case each keeps its session for the next launch.
 #[tauri::command]
 pub fn is_quitting(state: tauri::State<'_, Windows>) -> bool {
-    state.0.lock().unwrap().quitting
+    state.0.lock().unwrap().quit.quitting
 }
 
 /// A window refused to close (its user chose Cancel): the quit is off.
 #[tauri::command]
 pub fn cancel_quit(state: tauri::State<'_, Windows>) {
-    state.0.lock().unwrap().quitting = false;
+    let owed = state.0.lock().unwrap().quit.cancel();
+    #[cfg(target_os = "macos")]
+    if owed {
+        crate::system_quit::reply(false);
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = owed;
 }
 
 /// How far a new window is offset from the one it was spawned from, so it
@@ -817,6 +898,51 @@ fn disambiguate(entries: &mut [(String, Option<&str>)]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_quit_cancelled_owes_the_system_nothing() {
+        let mut quit = QuitState::default();
+        quit.begin();
+        assert!(quit.quitting);
+        assert!(!quit.cancel());
+        assert!(!quit.quitting);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn system_quit_is_answered_exactly_once() {
+        let mut quit = QuitState::default();
+        quit.system_request();
+        assert!(quit.quitting);
+        assert!(quit.all_closed());
+        assert!(!quit.all_closed());
+
+        let mut quit = QuitState::default();
+        quit.system_request();
+        assert!(quit.cancel());
+        assert!(!quit.quitting);
+        assert!(!quit.cancel());
+        assert!(!quit.all_closed());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn system_quit_joins_a_quit_already_under_way() {
+        // Cmd+Q first, then the Dock: one quit, answered when it ends.
+        let mut quit = QuitState::default();
+        quit.begin();
+        quit.system_request();
+        assert!(quit.quitting);
+        assert!(quit.cancel());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn closing_without_a_system_request_owes_nothing() {
+        let mut quit = QuitState::default();
+        quit.begin();
+        assert!(!quit.all_closed());
+    }
 
     fn pending() -> (Windows, mpsc::Receiver<()>) {
         let windows = Windows::default();

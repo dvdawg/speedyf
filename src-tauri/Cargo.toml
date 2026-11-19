@@ -113,6 +113,8 @@ objc2-vision = { version = "0.3", default-features = false, features = ["std", "
 objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-core-foundation", "WKPDFConfiguration"] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std"] }
 block2 = "0.6"
+# Answering a deferred quit from the main queue (system_quit.rs).
+dispatch2 = "0.3"
 # Digital signatures: whether a signer's certificate chains to a root the
 # system trusts (engine/signing/verify.rs), and certificate identities in the
 # Keychain (engine/signing/keys.rs): the key never leaves it; signing goes
