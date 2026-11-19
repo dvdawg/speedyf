@@ -5011,6 +5011,7 @@ dependencies = [
  "crossbeam-channel",
  "der 0.7.10",
  "der 0.8.3",
+ "dispatch2",
  "ecdsa 0.16.9",
  "env_logger",
  "flate2",
