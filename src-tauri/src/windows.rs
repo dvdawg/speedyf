@@ -546,19 +546,14 @@ pub fn update_window_tabs(
     tabs: Vec<String>,
     active_path: Option<String>,
 ) {
-    state
-        .0
-        .lock()
-        .unwrap()
-        .tabs
-        .insert(
-            window.label().into(),
-            WindowTabs {
-                tabs,
-                active_path,
-                bounds: None,
-            },
-        );
+    state.0.lock().unwrap().tabs.insert(
+        window.label().into(),
+        WindowTabs {
+            tabs,
+            active_path,
+            bounds: None,
+        },
+    );
 }
 
 /// The other windows, for a "move tab to..." menu, in creation order.
