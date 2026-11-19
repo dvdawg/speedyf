@@ -1606,7 +1606,7 @@ function NoteImage(props: { src: string; alt: string; noteKey: NoteKey }) {
   });
   return (
     <Show when={url()} fallback={<span class="np-image-missing">{props.alt || props.src}</span>}>
-      {(u) => <img class="np-image" src={u()} alt={props.alt} />}
+      {(u) => <img class="np-image" src={u()} alt={props.alt} draggable={false} />}
     </Show>
   );
 }

@@ -157,6 +157,42 @@ textarea,
   user-select: text;
 }
 
+/* Native tells. The chrome shows the arrow, as an AppKit window does - an
+   I-beam only where text can be typed or selected (fields here, the page's
+   text layer and selectable notes in their own rules), the pointing hand
+   only on links. The window itself never rubber-bands, chrome images and
+   icons never lift into a drag ghost, and a focus ring answers the
+   keyboard, not the mouse. */
+html,
+body {
+  cursor: default;
+  overscroll-behavior: none;
+}
+
+input:not(
+  [type='checkbox'],
+  [type='radio'],
+  [type='range'],
+  [type='color'],
+  [type='button'],
+  [type='submit'],
+  [type='reset'],
+  [type='file']
+),
+textarea,
+[contenteditable='true'] {
+  cursor: text;
+}
+
+img,
+svg {
+  -webkit-user-drag: none;
+}
+
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
