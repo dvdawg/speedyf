@@ -11,6 +11,8 @@ mod markup_capture;
 mod markup_selftest;
 mod printing;
 mod search;
+#[cfg(target_os = "macos")]
+mod system_quit;
 mod titlebar;
 mod windows;
 
@@ -258,6 +260,8 @@ pub fn run() {
             app.manage(commands::markup::MarkupKeys::default());
             #[cfg(target_os = "macos")]
             desktop::install_menu(app.handle())?;
+            #[cfg(target_os = "macos")]
+            system_quit::install(app.handle());
             // The main window is built hidden (tauri.conf.json) and shows
             // itself once it has painted; this is the fallback if it never
             // does.
@@ -563,6 +567,19 @@ pub fn run() {
 /// the command line instead. See `file_arguments`.
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 fn handle_run_event(app_handle: &tauri::AppHandle, event: tauri::RunEvent) {
+    // Every window has closed for a quit macOS asked for: tell it yes, which
+    // ends the app through AppKit (and lets a logout go on) rather than here.
+    #[cfg(target_os = "macos")]
+    if let tauri::RunEvent::ExitRequested {
+        code: None, api, ..
+    } = &event
+    {
+        if windows::take_system_quit(app_handle) {
+            api.prevent_exit();
+            system_quit::reply(true);
+        }
+        return;
+    }
     let tauri::RunEvent::Opened { urls } = event else {
         return;
     };
