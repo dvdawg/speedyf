@@ -8,6 +8,9 @@ import type { OutlineNode } from '../../types/engine';
 import { TabContext } from '../../app/TabContext';
 import { jumpToAnchor } from './jumpToAnchor';
 import ScriptText from '../../components/ScriptText';
+import { popupMenu, SEPARATOR } from '../../lib/nativeMenu';
+import { commandEntry } from '../../app/commandMenu';
+import { activeTab } from '../../stores/tabsStore';
 
 function OutlineEntry(props: {
   node: OutlineNode;
@@ -23,6 +26,21 @@ function OutlineEntry(props: {
         disabled={props.node.page === null}
         onClick={() => {
           if (props.node.page !== null) props.onNavigate(props.node.page, props.node.y);
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          const page = props.node.page;
+          void popupMenu([
+            {
+              text: 'Go to Section',
+              enabled: page !== null,
+              run: () => {
+                if (page !== null) props.onNavigate(page, props.node.y);
+              },
+            },
+            SEPARATOR,
+            ...commandEntry('nav.back', { tab: activeTab() }),
+          ]);
         }}
       >
         <ScriptText value={props.node.title.trim() || 'Untitled'} />
