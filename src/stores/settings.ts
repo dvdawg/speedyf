@@ -1,6 +1,7 @@
 /** User settings persisted to localStorage. */
 import { createSignal } from 'solid-js';
-import { createStore } from 'solid-js/store';
+import { createStore, reconcile } from 'solid-js/store';
+import { emit, listen } from '@tauri-apps/api/event';
 import { engine } from '../lib/transport/engine';
 
 export type ThemePref = 'system' | 'light' | 'dark';
@@ -54,6 +55,9 @@ interface Settings {
   timestampOnline: boolean;
   /** The time-stamping server, typed by the user. Empty by default. */
   timestampUrl: string;
+  /** Whether the windows and documents open at quit come back at the next
+   * launch. On by default, as in other desktop apps. */
+  restoreWindows: boolean;
 }
 
 const KEY = 'speedyf-settings';
@@ -105,6 +109,7 @@ function load(): Settings {
         s2Key: typeof parsed.s2Key === 'string' ? parsed.s2Key : '',
         timestampOnline: parsed.timestampOnline === true,
         timestampUrl: typeof parsed.timestampUrl === 'string' ? parsed.timestampUrl : '',
+        restoreWindows: parsed.restoreWindows !== false,
       };
     }
   } catch {
@@ -127,6 +132,7 @@ function load(): Settings {
     s2Key: '',
     timestampOnline: false,
     timestampUrl: '',
+    restoreWindows: true,
   };
 }
 
@@ -158,11 +164,44 @@ export function updateSettings(patch: Partial<Settings>) {
         s2Key: settings.s2Key,
         timestampOnline: settings.timestampOnline,
         timestampUrl: settings.timestampUrl,
+        restoreWindows: settings.restoreWindows,
       })
     );
   } catch {
     /* storage unavailable (private mode) — settings stay session-only */
   }
+  // Every other window (and the Settings window) re-reads: a change made in
+  // one shows in all of them at once.
+  void emit(SETTINGS_CHANGED, { from: instance }).catch(() => undefined);
+}
+
+const SETTINGS_CHANGED = 'settings:changed';
+/** Tells this window's own broadcasts from the others'. */
+const instance = Math.random().toString(36).slice(2);
+
+/** Takes up the settings another window has just written. The storage they
+ * live in is shared by every window of the app; only the store in memory is
+ * this window's. */
+export function reloadSettings(): void {
+  setSettingsStore(reconcile(load()));
+}
+
+/** Follows changes made in other windows, for as long as this one is open. */
+export function followSettingsFromOtherWindows(): () => void {
+  let disposed = false;
+  let unlisten: (() => void) | undefined;
+  void listen<{ from?: string }>(SETTINGS_CHANGED, (event) => {
+    if (event.payload?.from !== instance) reloadSettings();
+  })
+    .then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    })
+    .catch(() => undefined);
+  return () => {
+    disposed = true;
+    unlisten?.();
+  };
 }
 
 /** Low memory is the one setting with an effect beyond the store — the engine

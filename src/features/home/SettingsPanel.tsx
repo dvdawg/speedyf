@@ -261,6 +261,22 @@ export default function SettingsPanel() {
         </div>
 
         <div class="home-setting">
+          <label class="home-setting-text" for="setting-restore-windows">
+            <span class="home-setting-title">Reopen windows and documents on launch</span>
+            <span class="home-setting-desc">
+              Bring back the windows that were open when SpeedyF quit, with their tabs. A file that
+              has moved or gone is skipped.
+            </span>
+          </label>
+          <input
+            id="setting-restore-windows"
+            type="checkbox"
+            checked={settings.restoreWindows}
+            onInput={(e) => updateSettings({ restoreWindows: e.currentTarget.checked })}
+          />
+        </div>
+
+        <div class="home-setting">
           <label class="home-setting-text" for="setting-sleepyf">
             <span class="home-setting-title">SleepyF</span>
             <span class="home-setting-desc">

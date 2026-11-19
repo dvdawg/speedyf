@@ -15,22 +15,20 @@ import LaunchToggle from '../projects/LaunchToggle';
 import RecentsPanel from './RecentsPanel';
 import LibraryPanel from './LibraryPanel';
 import ExtensionsPanel from './ExtensionsPanel';
-import SettingsPanel from './SettingsPanel';
+import { desktop } from '../../lib/transport/desktop';
 
-export type PanelId = 'recents' | 'library' | 'extensions' | 'settings';
+export type PanelId = 'recents' | 'library' | 'extensions';
 
 const SECTIONS: { id: PanelId; label: string; icon: Component }[] = [
   { id: 'recents', label: 'Recents', icon: IconHome },
   { id: 'library', label: 'Library', icon: IconList },
   { id: 'extensions', label: 'Extensions', icon: IconExtension },
-  { id: 'settings', label: 'Settings', icon: IconSettings },
 ];
 
 const PANELS: Record<PanelId, Component> = {
   recents: RecentsPanel,
   library: LibraryPanel,
   extensions: ExtensionsPanel,
-  settings: SettingsPanel,
 };
 
 /** A panel another screen asked Home to show. The Projects screen hands its
@@ -81,6 +79,11 @@ export default function HomeScreen() {
               </button>
             )}
           </For>
+          {/* Settings live in a window of their own (Cmd+, / Ctrl+,). */}
+          <button type="button" class="home-nav-item" onClick={() => void desktop.openSettings()}>
+            <IconSettings />
+            <span>Settings...</span>
+          </button>
         </nav>
       </aside>
       <main class="home-panel">
