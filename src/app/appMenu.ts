@@ -86,6 +86,9 @@ export async function installAppMenu(kind: WindowKind, ctx: () => CommandCtx): P
   let windowsMenu: Submenu | null = null;
   let helpMenu: Submenu | null = null;
   let recentMenu: Submenu | null = null;
+  // Rebuilds of Open Recent, chained so two never interleave. Declared before
+  // the effects below, whose first run fills the menu straight away.
+  let filling = Promise.resolve();
   const version = await getVersion().catch(() => '');
 
   const build = async (node: MenuNode): Promise<NativeMenuItem | null> => {
@@ -179,7 +182,6 @@ export async function installAppMenu(kind: WindowKind, ctx: () => CommandCtx): P
     return dispose;
   });
 
-  let filling = Promise.resolve();
   function fillRecent(entries: ReturnType<typeof recentMenuEntries>): Promise<void> {
     const target = recentMenu;
     if (!target) return Promise.resolve();
