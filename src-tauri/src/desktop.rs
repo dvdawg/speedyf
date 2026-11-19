@@ -45,11 +45,40 @@ pub async fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
 /// the folder path). The other platforms have neither; their title carries
 /// the state instead, which the frontend sets.
 #[tauri::command]
-pub fn set_document_state(window: tauri::WebviewWindow, edited: bool, path: Option<String>) {
+pub fn set_document_state(
+    window: tauri::WebviewWindow,
+    title: String,
+    edited: bool,
+    path: Option<String>,
+) {
     #[cfg(target_os = "macos")]
-    macos::document_state(&window, edited, path);
+    macos::document_state(&window, title, edited, path);
     #[cfg(not(target_os = "macos"))]
-    let _ = (window, edited, path);
+    let _ = (window, title, edited, path);
+}
+
+/// Puts a document window's traffic lights back where tauri.conf.json asks.
+/// AppKit lays the title bar out afresh when the title, the proxy icon or the
+/// edited dot change, or the window resizes or leaves full screen, and that
+/// returns the buttons to their stock place: higher and further left than the
+/// tab strip they are centred on. Tauri only reapplies its position when its
+/// own view redraws, which the webview covering it never lets happen.
+#[cfg(target_os = "macos")]
+pub fn place_traffic_lights(window: &tauri::Window) {
+    if !crate::windows::is_document_window(window.label()) {
+        return;
+    }
+    let target = window.clone();
+    let _ = window.run_on_main_thread(move || {
+        let Ok(pointer) = target.ns_window() else {
+            return;
+        };
+        // SAFETY: on the main thread; `ns_window` is this window's live
+        // NSWindow, or null.
+        if let Some(ns_window) = unsafe { (pointer as *const objc2::runtime::AnyObject).as_ref() } {
+            macos::place_traffic_lights(&target.app_handle().clone(), ns_window);
+        }
+    });
 }
 
 /// Adds `path` to the system's recent documents: the Dock menu's list on
@@ -163,9 +192,15 @@ pub fn install_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
 mod macos {
     use objc2::msg_send;
     use objc2::runtime::{AnyClass, AnyObject};
-    use objc2_foundation::{NSString, NSURL};
+    use objc2_foundation::{NSRect, NSString, NSURL};
+    use tauri::Manager;
 
-    pub fn document_state(window: &tauri::WebviewWindow, edited: bool, path: Option<String>) {
+    pub fn document_state(
+        window: &tauri::WebviewWindow,
+        title: String,
+        edited: bool,
+        path: Option<String>,
+    ) {
         let target = window.clone();
         let _ = window.run_on_main_thread(move || {
             let Ok(pointer) = target.ns_window() else {
@@ -178,13 +213,72 @@ mod macos {
             };
             // An empty name clears the proxy icon (the Home screen).
             let name = NSString::from_str(path.as_deref().unwrap_or(""));
-            // SAFETY: both are plain NSWindow setters taking a BOOL and an
-            // NSString.
+            let title = NSString::from_str(&title);
+            // SAFETY: plain NSWindow setters taking an NSString or a BOOL.
             unsafe {
+                let _: () = msg_send![ns_window, setTitle: &*title];
                 let _: () = msg_send![ns_window, setDocumentEdited: edited];
                 let _: () = msg_send![ns_window, setRepresentedFilename: &*name];
             }
+            // Each of those lays the title bar out again.
+            if crate::windows::is_document_window(target.label()) {
+                place_traffic_lights(target.app_handle(), ns_window);
+            }
         });
+    }
+
+    /// The move Tauri makes for `trafficLightPosition`: the title bar's
+    /// container grows to the buttons' height plus `y`, so the buttons, which
+    /// keep their offset from its bottom, come down with it; each button then
+    /// starts `x` in, at the system's spacing.
+    pub fn place_traffic_lights(app: &tauri::AppHandle, ns_window: &AnyObject) {
+        let Some(position) = app
+            .config()
+            .app
+            .windows
+            .iter()
+            .find(|w| w.label == "main")
+            .and_then(|w| w.traffic_light_position.as_ref())
+            .map(|p| (p.x, p.y))
+        else {
+            return;
+        };
+        let (x, y) = position;
+        // SAFETY: on the main thread with a live NSWindow. The standard
+        // buttons exist on every titled window (null otherwise, checked), and
+        // their superview's superview is the title bar container AppKit
+        // lays them out in.
+        unsafe {
+            let button = |kind: usize| -> Option<&AnyObject> {
+                let b: *mut AnyObject = msg_send![ns_window, standardWindowButton: kind];
+                b.as_ref()
+            };
+            let (Some(close), Some(mini), Some(zoom)) = (button(0), button(1), button(2)) else {
+                return;
+            };
+            let parent: *mut AnyObject = msg_send![close, superview];
+            let Some(parent) = parent.as_ref() else {
+                return;
+            };
+            let container: *mut AnyObject = msg_send![parent, superview];
+            let Some(container) = container.as_ref() else {
+                return;
+            };
+            let close_rect: NSRect = msg_send![close, frame];
+            let window_rect: NSRect = msg_send![ns_window, frame];
+            let height = close_rect.size.height + y;
+            let mut bar: NSRect = msg_send![container, frame];
+            bar.size.height = height;
+            bar.origin.y = window_rect.size.height - height;
+            let _: () = msg_send![container, setFrame: bar];
+            let mini_rect: NSRect = msg_send![mini, frame];
+            let spacing = mini_rect.origin.x - close_rect.origin.x;
+            for (i, b) in [close, mini, zoom].into_iter().enumerate() {
+                let mut rect: NSRect = msg_send![b, frame];
+                rect.origin.x = x + i as f64 * spacing;
+                let _: () = msg_send![b, setFrameOrigin: rect.origin];
+            }
+        }
     }
 
     fn document_controller() -> Option<&'static AnyObject> {

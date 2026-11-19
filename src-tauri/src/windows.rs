@@ -719,6 +719,18 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     let Some(state) = app.try_state::<Windows>() else {
         return;
     };
+    // AppKit puts the traffic lights back in their stock place whenever it
+    // lays the title bar out again.
+    #[cfg(target_os = "macos")]
+    if matches!(
+        event,
+        tauri::WindowEvent::Resized(_)
+            | tauri::WindowEvent::Focused(_)
+            | tauri::WindowEvent::ScaleFactorChanged { .. }
+            | tauri::WindowEvent::ThemeChanged(_)
+    ) {
+        crate::desktop::place_traffic_lights(window);
+    }
     match event {
         // Only document windows: a file opened from the Dock while Settings
         // has focus belongs in the document window behind it.
