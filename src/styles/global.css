@@ -846,13 +846,16 @@ svg {
 
 /* One row that never wraps: what does not fit folds into the overflow menu
    (OverflowRow.tsx). The clip is only a guard for the frame between a
-   resize and the fold. */
+   resize and the fold. Its padding, given back by the margin, keeps focus
+   rings inside the clip. */
 .toolbar-row {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
   column-gap: 10px;
   min-width: 0;
+  margin: -4px;
+  padding: 4px;
   overflow: hidden;
 }
 
@@ -959,6 +962,24 @@ svg {
 .tb-menu .tool-options {
   align-self: flex-start;
   margin: 2px 8px;
+}
+
+/* A field folded into the menu: its name, then the control itself. */
+.tb-menu-field {
+  min-height: 28px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 8px 2px 32px;
+  font-size: var(--fs-md);
+  white-space: nowrap;
+}
+
+.tb-menu-field .tb-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 /* A toolbar menu of its own (Sign, Redact) opens in place, under its row. */
@@ -1109,13 +1130,19 @@ textarea:focus-visible {
 }
 
 .text-tool-options {
-  display: flex;
-  flex: 1 0 100%;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
   padding-top: 6px;
   border-top: 1px solid var(--border);
+}
+
+/* An option row is a toolbar row too (OverflowRow.tsx): one line, its
+   groups set apart by space rather than rules. */
+.options-row {
+  column-gap: 8px;
+}
+
+.options-row > .tb-group {
+  padding-right: 0;
+  border-right: none;
 }
 
 .text-tool-label,
@@ -1123,6 +1150,7 @@ textarea:focus-visible {
 .text-tool-hint {
   color: var(--text-dim);
   font-size: var(--fs-sm);
+  white-space: nowrap;
 }
 
 .font-family-input {
@@ -1130,12 +1158,7 @@ textarea:focus-visible {
   text-align: left;
 }
 
-.text-format-buttons {
-  display: flex;
-  gap: 2px;
-}
-
-.text-format-buttons .icon-btn {
+.text-format-glyph {
   font-size: var(--fs-lg);
 }
 
@@ -2199,10 +2222,6 @@ html.is-dragging-tab * {
 .annot-text-comb > span {
   flex: none;
   text-align: center;
-}
-
-.fill-tool-options .fill-done {
-  margin-left: auto;
 }
 
 .annot-shape.is-selected {

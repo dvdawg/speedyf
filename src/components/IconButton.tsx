@@ -13,6 +13,10 @@ interface Props {
   /** Opens a menu of its own: in the toolbar's overflow menu it expands in
    * place instead of closing the overflow. */
   submenu?: boolean;
+  /** One of a set of choices (a radio group): `active` marks the chosen. */
+  radio?: boolean;
+  /** Tooltip, when it says more than the label. */
+  title?: string | undefined;
 }
 
 /** Toolbar button with tooltip, accessible name, disabled/active/focus states.
@@ -33,9 +37,11 @@ function ToolbarButton(props: Props) {
       type="button"
       class="icon-btn"
       classList={{ 'is-active': props.active, 'is-wide': props.wide }}
-      title={props.label}
+      title={props.title ?? props.label}
       aria-label={props.label}
-      aria-pressed={props.active !== undefined ? props.active : undefined}
+      role={props.radio ? 'radio' : undefined}
+      aria-checked={props.radio ? !!props.active : undefined}
+      aria-pressed={!props.radio && props.active !== undefined ? props.active : undefined}
       aria-haspopup={props.submenu ? 'menu' : undefined}
       disabled={props.disabled}
       onClick={() => props.onClick()}
@@ -52,7 +58,9 @@ function MenuRow(props: Props & { menu: ToolbarMenu }) {
       type="button"
       class="tb-menu-item"
       classList={{ 'is-active': props.active }}
-      role={props.active !== undefined ? 'menuitemcheckbox' : 'menuitem'}
+      role={
+        props.radio ? 'menuitemradio' : props.active !== undefined ? 'menuitemcheckbox' : 'menuitem'
+      }
       aria-label={props.label}
       aria-checked={props.active !== undefined ? props.active : undefined}
       aria-haspopup={props.submenu ? 'menu' : undefined}

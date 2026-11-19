@@ -1,6 +1,8 @@
-/** The toolbar's one row. Groups that do not fit fold, least important
- * first (toolbarOverflow.ts), into a trailing overflow button whose menu
- * shows them as labelled rows. Widths are measured as the groups render and
+/** A toolbar row that never wraps: the main toolbar, and the option rows
+ * under it (text style, Fill, Prepare form). Groups that do not fit fold,
+ * least important first (toolbarOverflow.ts), into a trailing overflow
+ * button whose menu shows them as labelled rows; a group that `drops` (a
+ * hint) just leaves. Widths are measured as the groups render and
  * remembered while they are folded, so the row can tell when one fits again
  * without showing it to find out. */
 import { createEffect, createSignal, For, onCleanup, onMount, Show, type JSX } from 'solid-js';
@@ -15,6 +17,10 @@ export interface ToolbarGroup {
   label: string;
   /** Higher stays longer; Infinity never folds. */
   priority: number;
+  /** Leaves the row when it does not fit, with no place in the menu. */
+  drops?: boolean;
+  /** The group's role in the row; in the menu it is always a group. */
+  role?: 'group' | 'radiogroup';
   render: () => JSX.Element;
 }
 
@@ -23,6 +29,13 @@ const BUTTON_WIDTH = 28;
 
 const FOCUSABLE = 'button:not(:disabled), input:not(:disabled), select:not(:disabled)';
 
+/** A control that opens a native panel of its own: a colour well, a select. */
+function opensPanel(node: Node | null): boolean {
+  return (
+    node instanceof HTMLSelectElement || (node instanceof HTMLInputElement && node.type === 'color')
+  );
+}
+
 function sameList(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((id, i) => b[i] === id);
 }
@@ -30,8 +43,15 @@ function sameList(a: readonly string[], b: readonly string[]): boolean {
 export default function OverflowRow(props: {
   groups: readonly ToolbarGroup[];
   /** The group pushed to the far end of the row. */
-  trailingId: string;
+  trailingId?: string;
+  /** Extra classes for the row. */
+  class?: string;
+  /** Extra classes for the menu, which is portalled out of the row. */
+  menuClass?: string;
+  /** Names the overflow button and its menu. */
+  moreLabel?: string;
 }) {
+  const moreLabel = () => props.moreLabel ?? 'More tools';
   const [folded, setFolded] = createSignal<readonly string[]>([]);
   const [open, setOpen] = createSignal(false);
   const [anchor, setAnchor] = createSignal({ top: 0, right: 0 });
@@ -40,6 +60,8 @@ export default function OverflowRow(props: {
   let row!: HTMLDivElement;
   let button: HTMLButtonElement | undefined;
   let menu: HTMLDivElement | undefined;
+  /** A colour well or select in the menu has opened its native panel. */
+  let picking = false;
 
   const relayout = () => {
     if (!row?.isConnected || row.clientWidth === 0) return;
@@ -50,8 +72,17 @@ export default function OverflowRow(props: {
       (parseFloat(style.paddingLeft) || 0) -
       (parseFloat(style.paddingRight) || 0);
     const next = foldedGroups(
-      props.groups.map((g) => ({ id: g.id, priority: g.priority, width: widths.get(g.id) ?? 0 })),
-      { available, gap: parseFloat(style.columnGap) || 0, buttonWidth: BUTTON_WIDTH }
+      props.groups.map((g) => ({
+        id: g.id,
+        priority: g.priority,
+        drops: g.drops,
+        width: widths.get(g.id) ?? 0,
+      })),
+      {
+        available,
+        gap: parseFloat(style.columnGap) || 0,
+        buttonWidth: BUTTON_WIDTH,
+      }
     );
     if (!sameList(next, folded())) setFolded(next);
   };
@@ -80,7 +111,7 @@ export default function OverflowRow(props: {
         ref={el}
         class="tb-group"
         classList={{ 'tb-right': slot.group.id === props.trailingId }}
-        role="group"
+        role={slot.group.role ?? 'group'}
         aria-label={slot.group.label}
         data-window-drag=""
       >
@@ -110,22 +141,30 @@ export default function OverflowRow(props: {
     if (!button) return;
     const box = button.getBoundingClientRect();
     setAnchor({ top: box.bottom + 4, right: Math.max(4, window.innerWidth - box.right) });
+    picking = false;
     setOpen(true);
     queueMicrotask(() => focusItem('first'));
   };
 
+  const inMenu = () => props.groups.filter((g) => !g.drops && folded().includes(g.id));
+
   // Nothing folded, nothing to show; and a press elsewhere dismisses.
   createEffect(() => {
-    if (folded().length === 0) setOpen(false);
+    if (inMenu().length === 0) setOpen(false);
   });
   createEffect(() => {
     if (!open()) return;
     const outside = (e: PointerEvent) => {
       const target = e.target as Node | null;
+      picking = opensPanel(target) && !!menu?.contains(target);
       if (target && (menu?.contains(target) || button?.contains(target))) return;
       close(false);
     };
-    const blur = () => close(false);
+    // A native colour panel or pop-up list can take the window's focus while
+    // it is open: the control that opened it stays, so its choice lands.
+    const blur = () => {
+      if (!picking) close(false);
+    };
     document.addEventListener('pointerdown', outside, true);
     window.addEventListener('blur', blur);
     onCleanup(() => {
@@ -155,12 +194,17 @@ export default function OverflowRow(props: {
   // A choice in a menu nested inside this one (Sign, Redact) is a choice
   // made: the overflow goes with it.
   const onMenuClick = (e: MouseEvent) => {
+    if (opensPanel(e.target as Node | null)) picking = true;
     const item = (e.target as Element | null)?.closest('[role^="menuitem"]');
     if (item && item.closest('[role="menu"]') !== menu) close(true);
   };
 
   return (
-    <div class="toolbar-row" ref={row} data-window-drag="">
+    <div
+      class={props.class ? `toolbar-row ${props.class}` : 'toolbar-row'}
+      ref={row}
+      data-window-drag=""
+    >
       <For each={props.groups}>
         {(group) => (
           <Show when={!folded().includes(group.id)}>
@@ -168,14 +212,14 @@ export default function OverflowRow(props: {
           </Show>
         )}
       </For>
-      <Show when={folded().length > 0}>
+      <Show when={inMenu().length > 0}>
         <button
           ref={button}
           type="button"
           class="icon-btn tb-overflow"
           classList={{ 'is-active': open() }}
-          title="More tools"
-          aria-label="More tools"
+          title={moreLabel()}
+          aria-label={moreLabel()}
           aria-haspopup="menu"
           aria-expanded={open()}
           onClick={() => (open() ? close(false) : show())}
@@ -194,14 +238,14 @@ export default function OverflowRow(props: {
           <ToolbarMenuContext.Provider value={{ close: () => close(true) }}>
             <div
               ref={menu}
-              class="tb-menu"
+              class={props.menuClass ? `tb-menu ${props.menuClass}` : 'tb-menu'}
               role="menu"
-              aria-label="More tools"
+              aria-label={moreLabel()}
               style={{ top: `${anchor().top}px`, right: `${anchor().right}px` }}
               onKeyDown={onMenuKey}
               onClick={onMenuClick}
             >
-              <For each={props.groups.filter((g) => folded().includes(g.id))}>
+              <For each={inMenu()}>
                 {(group, i) => (
                   <>
                     <Show when={i() > 0}>

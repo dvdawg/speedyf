@@ -50,6 +50,23 @@ describe('foldedGroups', () => {
     ]);
   });
 
+  it('lets a dropping group go without making room for the button', () => {
+    const row: OverflowGroup[] = [
+      { id: 'caption', width: 40, priority: 2, drops: true },
+      { id: 'size', width: 100, priority: 5 },
+      { id: 'hint', width: 150, priority: 1, drops: true },
+      { id: 'done', width: 60, priority: Infinity },
+    ];
+    // 350 of groups and 3 gaps of 10.
+    expect(foldedGroups(row, layout(380))).toEqual([]);
+    // Without the hint the row is 220: it fits with no button beside it.
+    expect(foldedGroups(row, layout(220))).toEqual(['hint']);
+    expect(foldedGroups(row, layout(219))).toEqual(['caption', 'hint']);
+    // Size into the menu: done alone, plus the button and its gap.
+    expect(foldedGroups(row, layout(169))).toEqual(['caption', 'size', 'hint']);
+    expect(foldedGroups(row, layout(98))).toEqual(['caption', 'size', 'hint']);
+  });
+
   it('folds the later of two equal priorities first', () => {
     const twins: OverflowGroup[] = [
       { id: 'a', width: 100, priority: 1 },
