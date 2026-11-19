@@ -38,7 +38,15 @@ import {
   takeWindowSessions,
   type SessionFile,
 } from '../../stores/sessionStore';
-import { MAIN_LABEL, windowApi, windowLabel } from '../../lib/transport/windows';
+import {
+  isDocumentWindow,
+  MAIN_LABEL,
+  windowApi,
+  windowLabel,
+} from '../../lib/transport/windows';
+import { desktop } from '../../lib/transport/desktop';
+import { settings } from '../../stores/settings';
+import { fitToScreens, recordBounds, workAreas } from '../windows/windowState';
 import { abandonPrintFor } from '../print/printStore';
 import { captureView, forgetTab, noteTabSwitch, setNavTabActivator } from '../viewer/navHistory';
 import { popClosedTab, pushClosedTab, type ClosedTab } from './closedTabs';
@@ -374,14 +382,19 @@ export async function closeAllWithGuard(): Promise<boolean> {
 
 /** Reopens the windows that were open at last quit: this (main) window takes
  * its own tabs, and every other window comes back as a window of its own
- * with its own tabs. Called once, from initializeWindow. */
+ * with its own tabs, where it was. Called once, from initializeWindow. With
+ * "Reopen windows and documents on launch" off in Settings, the previous
+ * session is let go instead. */
 export async function restoreSession(): Promise<void> {
   const { main, others } = takeWindowSessions();
+  if (!settings.restoreWindows) return;
+  const screens = others.some((o) => o.bounds) ? await workAreas() : [];
   for (const other of others) {
     try {
       await windowApi.restoreWindow({
         tabs: other.tabs.map((t) => t.path),
         activePath: other.activePath,
+        ...(other.bounds ? { bounds: fitToScreens(other.bounds, screens) } : {}),
       });
     } catch {
       // A window that cannot be built costs the user those tabs, nothing more.
@@ -574,11 +587,15 @@ export async function initializeWindow(): Promise<void> {
   }
 }
 
-/** Flush before destroying a window. Only the last window keeps a launch
- * session; closing one of several must not resurrect its tabs next launch. */
+/** Flush before destroying a window. Only the last document window keeps a
+ * launch session; closing one of several must not resurrect its tabs next
+ * launch. Quitting closes every window, and every one keeps its session. */
 export async function prepareWindowClose(): Promise<void> {
   saveCurrentSession();
+  await recordBounds(windowLabel());
   // Notes typed in the last half second are saved before the window goes.
   await flushNotes();
-  if ((await getAllWindows()).length > 1) removeWindowSession(windowLabel());
+  if (await desktop.isQuitting()) return;
+  const documents = (await getAllWindows()).filter((w) => isDocumentWindow(w.label));
+  if (documents.length > 1) removeWindowSession(windowLabel());
 }

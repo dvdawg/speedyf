@@ -1,13 +1,35 @@
 /** Open-tabs sessions, persisted to localStorage so they can be restored on
  * relaunch — one per window, each under its own key, so two windows never
- * overwrite each other. Only remembers file paths + order + which was active
- * — never docId (meaningless across restarts), zoom, or scroll (deferred to
- * v1.1). */
+ * overwrite each other. Remembers file paths + order + which was active, and
+ * where the window was and how big — never docId (meaningless across
+ * restarts). Where reading stopped in each file is the recent list's
+ * (recentStore), which an open consults anyway. */
+
+/** A window's frame in logical pixels, and whether it was maximized (the
+ * frame is then the one it returns to). */
+export interface WindowBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  maximized: boolean;
+}
 
 export interface SessionFile {
   version: 1;
   tabs: { path: string }[];
   activePath: string | null;
+  bounds?: WindowBounds;
+}
+
+function validBounds(value: unknown): WindowBounds | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const b = value as Partial<WindowBounds>;
+  const finite = [b.x, b.y, b.width, b.height].every(
+    (n) => typeof n === 'number' && Number.isFinite(n)
+  );
+  if (!finite || b.width! <= 0 || b.height! <= 0) return null;
+  return { x: b.x!, y: b.y!, width: b.width!, height: b.height!, maximized: b.maximized === true };
 }
 
 const KEY = 'speedyf-session';
@@ -18,7 +40,7 @@ function readSession(key: string): SessionFile {
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<SessionFile>;
       if (Array.isArray(parsed.tabs)) {
-        return {
+        const session: SessionFile = {
           version: 1,
           tabs: parsed.tabs.filter(
             (t): t is { path: string } =>
@@ -26,6 +48,9 @@ function readSession(key: string): SessionFile {
           ),
           activePath: typeof parsed.activePath === 'string' ? parsed.activePath : null,
         };
+        const bounds = validBounds(parsed.bounds);
+        if (bounds) session.bounds = bounds;
+        return session;
       }
     }
   } catch {
@@ -34,11 +59,25 @@ function readSession(key: string): SessionFile {
   return { version: 1, tabs: [], activePath: null };
 }
 
+/** Writes a window's tabs. The frame it was saved with is kept unless the
+ * session brings one of its own: tabs and frame change at different times. */
 export function saveSession(session: SessionFile, label = 'main'): void {
   try {
-    localStorage.setItem(sessionKey(label), JSON.stringify(session));
+    const bounds = session.bounds ?? readSession(sessionKey(label)).bounds;
+    const next: SessionFile = bounds ? { ...session, bounds } : session;
+    localStorage.setItem(sessionKey(label), JSON.stringify(next));
   } catch {
     /* storage unavailable (private mode) — session stays unrestorable */
+  }
+}
+
+/** Remembers where a window is and how big, beside its tabs. */
+export function saveBounds(bounds: WindowBounds, label = 'main'): void {
+  try {
+    const current = readSession(sessionKey(label));
+    localStorage.setItem(sessionKey(label), JSON.stringify({ ...current, bounds }));
+  } catch {
+    /* storage unavailable */
   }
 }
 
@@ -86,7 +125,12 @@ export function takeWindowSessions(): { main: SessionFile; others: SessionFile[]
       for (const tab of tabs) seen.add(tab.path);
       if (tabs.length === 0) continue;
       const activePath = tabs.some((t) => t.path === other.activePath) ? other.activePath : null;
-      others.push({ version: 1, tabs, activePath });
+      others.push({
+        version: 1,
+        tabs,
+        activePath,
+        ...(other.bounds ? { bounds: other.bounds } : {}),
+      });
     }
     for (const key of keys) localStorage.removeItem(key);
   } catch {
