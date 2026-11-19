@@ -15,7 +15,6 @@ enum DoubleClickAction {
 /// The user's choice in System Settings > Desktop & Dock ("Double-click a
 /// window's title bar to"), as the global defaults record it. Older systems
 /// only kept a minimize flag; anything unrecognised (such as "Fill") zooms.
-#[cfg(any(target_os = "macos", test))]
 fn parse_action(action: Option<&str>, legacy_minimize: bool) -> DoubleClickAction {
     match action {
         Some("Minimize") => DoubleClickAction::Minimize,
@@ -39,7 +38,8 @@ fn system_action() -> DoubleClickAction {
 
 #[cfg(not(target_os = "macos"))]
 fn system_action() -> DoubleClickAction {
-    DoubleClickAction::Zoom
+    // No system setting to read: a native title bar would zoom.
+    parse_action(None, false)
 }
 
 /// A double-click on empty title-bar space (the tab strip or toolbar).
