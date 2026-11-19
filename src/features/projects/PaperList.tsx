@@ -44,7 +44,9 @@ import HealthList from './HealthList';
 import { nextSort, SORT_LABEL, sortRows } from './listSortPrefs';
 import { MergeConfirm } from './MergeConfirm';
 import { MissingList } from './MissingWorks';
-import { openPaper } from './openPaper';
+import { openPaper, pathForPaper } from './openPaper';
+import { popupMenu, type MenuEntry } from '../../lib/nativeMenu';
+import { fileMenuEntries } from '../home/fileMenu';
 import { metaLine } from './paperFields';
 import { beginPointerDrag } from './pointerDrag';
 import { projectsStore, rowsPending } from './projectsStore';
@@ -126,6 +128,22 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
     const cited = store.state.sort === 'cited' && sortable() ? store.state.citedHere[row.id] : 0;
     return [metaLine(row), citedHereText(cited)].filter(Boolean).join(', ');
   };
+  /** A row's right-click menu: the file's, plus taking the item out of the
+   * project being shown. */
+  const openRowMenu = async (id: string) => {
+    const path = await pathForPaper(id);
+    const shown = project();
+    const extra: MenuEntry[] = shown
+      ? [
+          {
+            text: `Remove from "${shown.name}"`,
+            run: () => void store.setMembership(id, shown.id, false),
+          },
+        ]
+      : [];
+    await popupMenu(fileMenuEntries(path, { open: () => void openPaper(id), extra }));
+  };
+
   const project = () => {
     const scope = store.state.scope;
     return scope.kind === 'project'
@@ -814,6 +832,10 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
                             title={row().missing ? 'file missing' : undefined}
                             onClick={(e) => clickRow(index, row(), e)}
                             onDblClick={() => void openPaper(row().id)}
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              void openRowMenu(row().id);
+                            }}
                             onPointerDown={(e) => onRowPointerDown(row(), e)}
                           >
                             <span class="paper-row-main">

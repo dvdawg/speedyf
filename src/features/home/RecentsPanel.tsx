@@ -5,6 +5,8 @@ import { openInNewTabOrFocus } from '../document/tabsController';
 import { recentStore } from '../../stores/recentStore';
 import { askConfirm } from '../../stores/modalStore';
 import { formatDate, formatSize } from './format';
+import { popupMenu } from '../../lib/nativeMenu';
+import { fileMenuEntries } from './fileMenu';
 
 export default function RecentsPanel() {
   const openRecent = async (path: string) => {
@@ -44,6 +46,20 @@ export default function RecentsPanel() {
                   class="home-recent-row"
                   role="listitem"
                   onClick={() => void openRecent(entry.path)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    void popupMenu(
+                      fileMenuEntries(entry.path, {
+                        open: () => void openRecent(entry.path),
+                        extra: [
+                          {
+                            text: 'Remove from Recents',
+                            run: () => recentStore.remove(entry.path),
+                          },
+                        ],
+                      })
+                    );
+                  }}
                 >
                   <span class="home-recent-top">
                     <span class="home-recent-name">{entry.name}</span>
