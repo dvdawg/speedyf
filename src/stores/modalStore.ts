@@ -15,6 +15,9 @@ interface ModalState {
   kind: null | 'password' | 'unsaved' | 'error' | 'confirm' | 'external-link';
   message: string;
   confirmLabel?: string;
+  /** The confirmed action cannot be taken back: it is drawn destructive and
+   * Cancel, not it, answers Return. */
+  destructive?: boolean | undefined;
   /** explicitly optional-or-undefined: clearing the modal writes undefined
    * back, which exactOptionalPropertyTypes otherwise rejects */
   link?: { href: string; host: string | null } | undefined;
@@ -54,15 +57,24 @@ export function resolveUnsaved(choice: UnsavedChoice) {
   unsavedResolve = null;
 }
 
-export function askConfirm(message: string, confirmLabel = 'Confirm'): Promise<boolean> {
-  setModal({ kind: 'confirm', message, confirmLabel });
+export interface ConfirmOptions {
+  /** See ModalState.destructive. */
+  destructive?: boolean;
+}
+
+export function askConfirm(
+  message: string,
+  confirmLabel = 'Confirm',
+  options: ConfirmOptions = {}
+): Promise<boolean> {
+  setModal({ kind: 'confirm', message, confirmLabel, destructive: options.destructive === true });
   return new Promise((resolve) => {
     confirmResolve = resolve;
   });
 }
 
 export function resolveConfirm(value: boolean) {
-  setModal({ kind: null, message: '' });
+  setModal({ kind: null, message: '', destructive: undefined });
   confirmResolve?.(value);
   confirmResolve = null;
 }

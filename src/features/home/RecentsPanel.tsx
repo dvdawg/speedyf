@@ -13,7 +13,8 @@ export default function RecentsPanel() {
   };
 
   const clearRecent = async () => {
-    if (await askConfirm('Clear all recent files?', 'Clear')) recentStore.clear();
+    if (await askConfirm('Clear all recent files?', 'Clear', { destructive: true }))
+      recentStore.clear();
   };
 
   return (

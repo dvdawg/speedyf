@@ -46,6 +46,8 @@
      lights are centred on it: keep trafficLightPosition.y in
      tauri.conf.json at 2 + half of this. */
   --tabstrip-h: 38px;
+  /* Where a sheet hangs from; see .sheet-backdrop. */
+  --sheet-top: 0px;
   /* Room the macOS traffic lights take at the start of that row. */
   --traffic-light-inset: 84px;
   /* Screen heads (Home panels, Projects): 30px of content between these
@@ -3617,32 +3619,64 @@ html.is-dragging-tab * {
   margin: 0 0 6px;
 }
 
+/* One button system, used by every sheet and panel. Primary is the default
+   (accent, answers Return in a sheet); secondary is everything else;
+   destructive names an action that throws something away - red text on the
+   secondary face, as AppKit draws it, so it never reads as the default.
+   One height, --control-h, for all three. */
 .primary-btn,
-.secondary-btn {
+.secondary-btn,
+.destructive-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   height: var(--control-h);
+  min-width: 72px;
   padding: 0 14px;
   border-radius: var(--radius-m);
   cursor: default;
   font: inherit;
+  font-size: var(--fs-md);
+  white-space: nowrap;
 }
 
 .primary-btn {
   background: var(--accent);
   color: var(--accent-text);
   border: 1px solid transparent;
+  font-weight: 500;
 }
 
-.primary-btn:hover {
+.primary-btn:hover:not(:disabled) {
   filter: brightness(1.08);
 }
 
-.secondary-btn {
+.secondary-btn,
+.destructive-btn {
   background: var(--bg-inset);
   color: var(--text);
   border: 1px solid var(--border);
+}
+
+.secondary-btn:hover:not(:disabled),
+.destructive-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--bg-inset) 85%, var(--text));
+}
+
+.destructive-btn {
+  color: var(--danger);
+}
+
+.primary-btn:disabled,
+.secondary-btn:disabled,
+.destructive-btn:disabled {
+  opacity: 0.5;
+}
+
+.destructive-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .empty-card .primary-btn {
@@ -3719,6 +3753,47 @@ html.is-dragging-tab * {
   justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+/* A destructive choice beside the usual pair stands apart, at the start. */
+.modal-actions-lead {
+  margin-right: auto;
+}
+
+/* Sheets hang from the top centre of the window: right under the title bar
+   row on macOS (where the traffic lights are), at the top of the content
+   elsewhere. The sheet is flush with that edge and rounded below. */
+.sheet-backdrop {
+  align-items: flex-start;
+  padding-top: var(--sheet-top);
+}
+
+:root[data-platform='macos']:not([data-fullscreen]) {
+  --sheet-top: calc(var(--tabstrip-h) + 1px);
+}
+
+.sheet {
+  max-height: calc(100vh - var(--sheet-top) - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-top: none;
+  border-radius: 0 0 var(--radius-l) var(--radius-l);
+}
+
+.sheet:focus {
+  outline: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .sheet-backdrop {
+    animation: sheet-fade 120ms ease-out;
+  }
+}
+
+@keyframes sheet-fade {
+  from {
+    opacity: 0;
+  }
 }
 
 /* The host is the part of an external link worth reading, so it is the part

@@ -35,7 +35,8 @@ export async function applyProtection(
     const ok = await askConfirm(
       `This document has ${plural(signatures, 'digital signature')}. Changing its protection ` +
         'rewrites the file when you save, and the signatures will no longer verify.',
-      'Change protection'
+      'Change protection',
+      { destructive: true }
     );
     if (!ok) return false;
   }
