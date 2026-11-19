@@ -42,6 +42,7 @@ import { isDocumentWindow, MAIN_LABEL, windowApi, windowLabel } from '../../lib/
 import { desktop } from '../../lib/transport/desktop';
 import { settings } from '../../stores/settings';
 import { fitToScreens, recordBounds, workAreas } from '../windows/windowState';
+import { resumeView } from './resumeView';
 import { abandonPrintFor } from '../print/printStore';
 import { captureView, forgetTab, noteTabSwitch, setNavTabActivator } from '../viewer/navHistory';
 import { popClosedTab, pushClosedTab, type ClosedTab } from './closedTabs';
@@ -182,24 +183,12 @@ async function openPath(
       record.searchStore.resetForDocument(meta.docId, meta.pageCount);
       record.citationStore.syncDocument(meta.docId);
       record.structureStore.syncDocument(meta.docId);
-      record.viewport.setState({ currentPage: 0, scrollTop: 0 });
-      // Pick up where this document was last left, when we have a position for
-      // it and it still points inside the document.
+      // Pick up where this document was last left, at the zoom it was read
+      // at, when we have a position for it and it still points inside the
+      // document. A reopened closed tab brings its own view.
       const reopen = opts?.reopen;
-      const resume = reopen ?? recentStore.positionFor(path);
-      if (reopen) {
-        record.viewport.setState({
-          zoom: reopen.zoom,
-          fitMode: reopen.fitMode,
-          viewRotation: reopen.viewRotation,
-        });
-      }
-      if (resume && resume.page < meta.pageCount) {
-        record.viewport.setState('currentPage', resume.page);
-        record.viewport.requestRestorePosition(resume.page, resume.fraction);
-      } else {
-        record.viewport.requestScrollToPage(0);
-      }
+      if (reopen) record.viewport.setState('viewRotation', reopen.viewRotation);
+      resumeView(record.viewport, reopen ?? recentStore.positionFor(path), meta.pageCount);
       void engine.startIndexing(meta.docId);
       record.ready = Promise.all([
         hydrateSizes(record, meta.pageCount),
