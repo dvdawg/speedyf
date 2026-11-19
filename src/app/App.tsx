@@ -36,6 +36,7 @@ import {
   trackBounds,
   workAreas,
 } from '../features/windows/windowState';
+import { restoreSidebar, trackSidebar } from '../features/windows/sidebarState';
 import { loadExtensions } from '../features/extensions/extensionStore';
 import { clearImagePreviews } from '../features/editor/editorActions';
 import { clearFormFields } from '../features/forms/formStore';
@@ -109,10 +110,16 @@ export default function App() {
     // Built hidden: the main window first goes back where it was last time,
     // then every window shows itself once it has painted.
     const label = windowLabel();
-    const saved =
+    const session =
       label === MAIN_LABEL && !new URLSearchParams(window.location.search).has('window')
-        ? loadSession().bounds
+        ? loadSession()
         : undefined;
+    const saved = session?.bounds;
+    // Its sidebar too, before the first paint, clamped to the frame it is
+    // about to get rather than the default one it has now. Like the frame,
+    // the window's own chrome comes back whatever the documents do.
+    restoreSidebar(session?.sidebar, saved?.width);
+    const stopSidebar = trackSidebar(label);
     let stopTracking: (() => void) | undefined;
     void (async () => {
       if (saved) await applyBounds(fitToScreens(saved, await workAreas()));
@@ -258,6 +265,7 @@ export default function App() {
       cleanupContextMenu();
       cleanupSettingsSync();
       stopTracking?.();
+      stopSidebar();
       stopMenu?.();
       unlistenProgress?.();
       unlistenOpen?.();

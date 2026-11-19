@@ -14,6 +14,9 @@ export interface WindowTabs {
   tabs: string[];
   activePath: string | null;
   bounds?: WindowBounds | null;
+  /** The window's sidebar as it was left. Checked by whoever reads it
+   * (uiStore sanitizeSidebar): it has been through storage and Rust. */
+  sidebar?: unknown;
 }
 
 /** Another window, as a "move tab to…" menu sees it. */

@@ -42,6 +42,8 @@ import { isDocumentWindow, MAIN_LABEL, windowApi, windowLabel } from '../../lib/
 import { desktop } from '../../lib/transport/desktop';
 import { settings } from '../../stores/settings';
 import { fitToScreens, recordBounds, workAreas } from '../windows/windowState';
+import { flushSidebar, restoreSidebar } from '../windows/sidebarState';
+import { sanitizeSidebar } from '../../stores/uiStore';
 import { resumeView } from './resumeView';
 import { abandonPrintFor } from '../print/printStore';
 import { captureView, forgetTab, noteTabSwitch, setNavTabActivator } from '../viewer/navHistory';
@@ -372,6 +374,9 @@ export async function closeAllWithGuard(): Promise<boolean> {
 export async function restoreSession(): Promise<void> {
   const { main, others } = takeWindowSessions();
   if (!settings.restoreWindows) return;
+  // Normally what App already put back; different only when this window
+  // takes over another's session because it had none of its own.
+  restoreSidebar(main.sidebar, main.bounds?.width);
   const screens = others.some((o) => o.bounds) ? await workAreas() : [];
   for (const other of others) {
     try {
@@ -379,6 +384,7 @@ export async function restoreSession(): Promise<void> {
         tabs: other.tabs.map((t) => t.path),
         activePath: other.activePath,
         ...(other.bounds ? { bounds: fitToScreens(other.bounds, screens) } : {}),
+        ...(other.sidebar ? { sidebar: other.sidebar } : {}),
       });
     } catch {
       // A window that cannot be built costs the user those tabs, nothing more.
@@ -558,6 +564,7 @@ export async function initializeWindow(): Promise<void> {
   // A window reopened from the previous launch's session.
   const restore = await windowApi.takeRestore();
   if (restore) {
+    restoreSidebar(sanitizeSidebar(restore.sidebar), restore.bounds?.width ?? undefined);
     await restoreTabs({
       version: 1,
       tabs: restore.tabs.map((path) => ({ path })),
@@ -576,6 +583,7 @@ export async function initializeWindow(): Promise<void> {
  * launch. Quitting closes every window, and every one keeps its session. */
 export async function prepareWindowClose(): Promise<void> {
   saveCurrentSession();
+  flushSidebar();
   await recordBounds(windowLabel());
   // Notes typed in the last half second are saved before the window goes.
   await flushNotes();

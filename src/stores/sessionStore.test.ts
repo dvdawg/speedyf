@@ -4,6 +4,7 @@ import {
   removeWindowSession,
   saveBounds,
   saveSession,
+  saveSidebar,
   takeWindowSessions,
 } from './sessionStore';
 
@@ -149,5 +150,46 @@ describe('window frames', () => {
     const session = loadSession();
     expect(session.tabs).toEqual([{ path: '/a.pdf' }]);
     expect(session.bounds).toBeUndefined();
+  });
+});
+
+describe('window sidebars', () => {
+  const sidebar = { open: false, width: 260, mode: 'notes' as const };
+
+  it('keeps a sidebar beside the tabs, and tab and frame saves do not drop it', () => {
+    saveSession({ version: 1, tabs: [{ path: '/m.pdf' }], activePath: null });
+    saveSidebar(sidebar, 'speedyf-2');
+    saveSession({ version: 1, tabs: [{ path: '/a.pdf' }], activePath: '/a.pdf' }, 'speedyf-2');
+    saveBounds({ x: 0, y: 30, width: 900, height: 700, maximized: false }, 'speedyf-2');
+    const { others } = takeWindowSessions();
+    expect(others[0]!.sidebar).toEqual(sidebar);
+  });
+
+  it('reads a session saved before sidebars were remembered', () => {
+    storage.setItem(
+      'speedyf-session',
+      JSON.stringify({ version: 1, tabs: [{ path: '/a.pdf' }], activePath: '/a.pdf' })
+    );
+    const session = loadSession();
+    expect(session.tabs).toEqual([{ path: '/a.pdf' }]);
+    expect(session.sidebar).toBeUndefined();
+  });
+
+  it('keeps the usable part of a damaged sidebar, and none of a hopeless one', () => {
+    storage.setItem(
+      'speedyf-session',
+      JSON.stringify({
+        version: 1,
+        tabs: [],
+        activePath: null,
+        sidebar: { open: true, width: 'wide', mode: 'removed-panel' },
+      })
+    );
+    expect(loadSession().sidebar).toEqual({ open: true });
+    storage.setItem(
+      'speedyf-session',
+      JSON.stringify({ version: 1, tabs: [], activePath: null, sidebar: [1, 2] })
+    );
+    expect(loadSession().sidebar).toBeUndefined();
   });
 });
