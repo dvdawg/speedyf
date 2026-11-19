@@ -11,7 +11,10 @@
  * with the keymap; the same command is reached by two different chords in more
  * than one case.
  */
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { newWindow } from '../features/windows/windowController';
+import { desktop } from '../lib/transport/desktop';
+import { openPalette } from '../features/palette/paletteStore';
 import { saveDocument } from '../features/document/controller';
 import {
   closeOtherTabs,
@@ -25,11 +28,11 @@ import {
 } from '../features/document/tabsController';
 import { closedTabCount } from '../features/document/closedTabs';
 import { addBlankPageAfter } from '../features/editor/editorActions';
-import { setActiveTool, type Tool } from '../features/annotations/toolStore';
+import { setActiveTool, toolState, type Tool } from '../features/annotations/toolStore';
 import { beginPrint } from '../features/print/printStore';
 import { openProtect } from '../features/protect/protectStore';
 import { allows, COMMAND_RIGHTS, deniedReason } from '../features/protect/permissions';
-import { settings, toggleSleepy, updateSettings } from '../stores/settings';
+import { settings, sleepyActive, toggleSleepy, updateSettings } from '../stores/settings';
 import { forgetContributedText } from '../features/extensions/extensionStore';
 import { formInfo, isFillable } from '../features/forms/formStore';
 import { resetForm } from '../features/forms/formNav';
@@ -93,6 +96,9 @@ export interface Command {
    * `formatShortcut`. Display only — `shortcuts.ts` owns the real binding. */
   shortcut?: string;
   enabled(ctx: CommandCtx): boolean;
+  /** For a command that turns something on or picks one of several: whether
+   * that is what is in effect now. The menu bar draws it as a checkmark. */
+  checked?(ctx: CommandCtx): boolean;
   run(ctx: CommandCtx): void;
   /** Why this is unavailable, when the generic reason would be wrong. */
   disabledReason?: string;
@@ -134,6 +140,7 @@ function tool(id: string, title: string, value: Tool, keywords: string[]): Comma
     group: 'Tools',
     keywords,
     enabled: loaded,
+    checked: (ctx) => loaded(ctx) && toolState.active === value,
     run: () => setActiveTool(value),
   };
 }
@@ -145,6 +152,7 @@ function panel(id: string, title: string, mode: SidebarMode, keywords: string[])
     group: 'Panels',
     keywords,
     enabled: (ctx) => ctx.tab !== null,
+    checked: (ctx) => ctx.tab !== null && ui.sidebarOpen && ui.sidebarMode === mode,
     run: () => setUi({ sidebarOpen: true, sidebarMode: mode }),
   };
 }
@@ -262,6 +270,16 @@ const ALL_COMMANDS: readonly Command[] = [
     keywords: ['window', 'new'],
     enabled: () => true,
     run: () => void newWindow(),
+  },
+  {
+    id: 'file.closeWindow',
+    title: 'Close Window',
+    group: 'File',
+    shortcut: 'mod+shift+w',
+    keywords: ['window', 'close'],
+    enabled: () => true,
+    // Through the window's own close guard, which asks about unsaved tabs.
+    run: () => void getCurrentWindow().close(),
   },
   {
     id: 'file.detachTab',
@@ -488,6 +506,7 @@ const ALL_COMMANDS: readonly Command[] = [
     group: 'View',
     shortcut: 'mod+0',
     enabled: loaded,
+    checked: (ctx) => loaded(ctx) && ctx.tab?.viewport.state.fitMode === 'fit-page',
     run: (ctx) => ctx.tab?.zoom.applyFit('fit-page'),
   },
   {
@@ -495,6 +514,7 @@ const ALL_COMMANDS: readonly Command[] = [
     title: 'Fit Width',
     group: 'View',
     enabled: loaded,
+    checked: (ctx) => loaded(ctx) && ctx.tab?.viewport.state.fitMode === 'fit-width',
     run: (ctx) => ctx.tab?.zoom.applyFit('fit-width'),
   },
   {
@@ -512,6 +532,7 @@ const ALL_COMMANDS: readonly Command[] = [
     group: 'View',
     keywords: ['hide', 'show', 'panel'],
     enabled: (ctx) => ctx.tab !== null,
+    checked: (ctx) => ctx.tab !== null && ui.sidebarOpen,
     run: () => setUi('sidebarOpen', !ui.sidebarOpen),
   },
   {
@@ -522,6 +543,15 @@ const ALL_COMMANDS: readonly Command[] = [
     keywords: ['keys', 'keybindings', 'hotkeys', 'help', 'cheat sheet'],
     enabled: () => true,
     run: () => toggleShortcutSheet(),
+  },
+  {
+    id: 'view.commandPalette',
+    title: 'Command Palette...',
+    group: 'View',
+    shortcut: 'mod+shift+p',
+    keywords: ['commands', 'actions', 'search'],
+    enabled: () => true,
+    run: () => openPalette(),
   },
 
   // ---- Panels --------------------------------------------------------
@@ -630,11 +660,21 @@ const ALL_COMMANDS: readonly Command[] = [
 
   // ---- Settings ------------------------------------------------------
   {
+    id: 'app.settings',
+    title: 'Settings...',
+    group: 'Settings',
+    shortcut: 'mod+,',
+    keywords: ['preferences', 'options', 'configure'],
+    enabled: () => true,
+    run: () => void desktop.openSettings(),
+  },
+  {
     id: 'settings.themeLight',
     title: 'Theme: Light',
     group: 'Settings',
     keywords: ['appearance'],
     enabled: () => settings.theme !== 'light',
+    checked: () => settings.theme === 'light',
     disabledReason: 'already active',
     run: () => updateSettings({ theme: 'light' }),
   },
@@ -644,6 +684,7 @@ const ALL_COMMANDS: readonly Command[] = [
     group: 'Settings',
     keywords: ['appearance', 'night'],
     enabled: () => settings.theme !== 'dark',
+    checked: () => settings.theme === 'dark',
     disabledReason: 'already active',
     run: () => updateSettings({ theme: 'dark' }),
   },
@@ -653,6 +694,7 @@ const ALL_COMMANDS: readonly Command[] = [
     group: 'Settings',
     keywords: ['appearance', 'auto'],
     enabled: () => settings.theme !== 'system',
+    checked: () => settings.theme === 'system',
     disabledReason: 'already active',
     run: () => updateSettings({ theme: 'system' }),
   },
@@ -673,6 +715,7 @@ const ALL_COMMANDS: readonly Command[] = [
     group: 'Settings',
     keywords: ['dark', 'night', 'invert', 'appearance', 'contrast'],
     enabled: () => true,
+    checked: () => settings.invertPages,
     run: () => updateSettings({ invertPages: !settings.invertPages }),
   },
   {
@@ -681,6 +724,7 @@ const ALL_COMMANDS: readonly Command[] = [
     group: 'Settings',
     keywords: ['form', 'fields', 'tint', 'required', 'fill'],
     enabled: () => true,
+    checked: () => settings.highlightFields,
     run: () => updateSettings({ highlightFields: !settings.highlightFields }),
   },
   {
@@ -704,6 +748,7 @@ const ALL_COMMANDS: readonly Command[] = [
     group: 'Settings',
     keywords: ['dark', 'night', 'sleep', 'dim', 'brightness', 'warm', 'appearance'],
     enabled: () => true,
+    checked: () => sleepyActive(),
     run: toggleSleepy,
   },
   {
@@ -712,6 +757,7 @@ const ALL_COMMANDS: readonly Command[] = [
     group: 'Settings',
     keywords: ['cache', 'performance', 'ram'],
     enabled: () => true,
+    checked: () => settings.lowMemory,
     run: () => updateSettings({ lowMemory: !settings.lowMemory }),
   },
 

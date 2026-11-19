@@ -20,8 +20,26 @@ import { preparing } from '../features/prepare/prepareStore';
 import SignaturesPanel from '../features/signatures/SignaturesPanel';
 import { engine } from '../lib/transport/engine';
 import { ui } from '../stores/uiStore';
-import { applyPageAppearance, settings } from '../stores/settings';
+import {
+  applyPageAppearance,
+  followSettingsFromOtherWindows,
+  settings,
+} from '../stores/settings';
 import { installShortcuts } from './shortcuts';
+import { installAppMenu } from './appMenu';
+import { installWebviewGuards } from './webviewGuards';
+import { installContextMenuGuard } from '../lib/nativeMenu';
+import { IS_MAC } from '../lib/platform';
+import { desktop } from '../lib/transport/desktop';
+import { MAIN_LABEL, windowLabel } from '../lib/transport/windows';
+import { loadSession } from '../stores/sessionStore';
+import {
+  applyBounds,
+  fitToScreens,
+  revealWhenPainted,
+  trackBounds,
+  workAreas,
+} from '../features/windows/windowState';
 import { loadExtensions } from '../features/extensions/extensionStore';
 import { clearImagePreviews } from '../features/editor/editorActions';
 import { clearFormFields } from '../features/forms/formStore';
@@ -63,18 +81,52 @@ export default function App() {
   // system preference itself, so this one effect covers both.
   createEffect(() => applyPageAppearance(document.documentElement));
 
-  // window title reflects the active tab's document + dirty state
+  // The window title names the active tab's document. On macOS unsaved
+  // changes are the dot in the close button and the file is the proxy icon
+  // beside the title; elsewhere the title says both.
   createEffect(() => {
     const doc = activeTab()?.documentStore.state;
-    const title = doc?.loaded ? `${doc.dirty ? '* ' : ''}${doc.name} - SpeedyF` : 'SpeedyF';
+    const loaded = doc?.loaded === true;
+    const title = !loaded
+      ? 'SpeedyF'
+      : IS_MAC
+        ? doc.name
+        : `${doc.dirty ? '* ' : ''}${doc.name} - SpeedyF`;
     void getCurrentWindow()
       .setTitle(title)
       .catch(() => undefined);
+    if (IS_MAC) void desktop.setDocumentState(loaded && doc.dirty, loaded ? doc.path : null);
   });
 
   onMount(() => {
     const cleanupShortcuts = installShortcuts();
+    const cleanupGuards = installWebviewGuards();
+    const cleanupContextMenu = installContextMenuGuard();
+    const cleanupSettingsSync = followSettingsFromOtherWindows();
     let disposed = false;
+
+    // Built hidden: the main window first goes back where it was last time,
+    // then every window shows itself once it has painted.
+    const label = windowLabel();
+    const saved =
+      label === MAIN_LABEL && !new URLSearchParams(window.location.search).has('window')
+        ? loadSession().bounds
+        : undefined;
+    let stopTracking: (() => void) | undefined;
+    void (async () => {
+      if (saved) await applyBounds(fitToScreens(saved, await workAreas()));
+      if (disposed) return;
+      revealWhenPainted();
+      stopTracking = trackBounds(label);
+    })();
+
+    let stopMenu: (() => void) | undefined;
+    void installAppMenu('document', () => ({ tab: activeTab() }))
+      .then((stop) => {
+        if (disposed) stop();
+        else stopMenu = stop;
+      })
+      .catch(() => undefined);
 
     // engine events → the owning tab's own search store, even if it's a
     // background tab (not the currently visible one)
@@ -178,6 +230,9 @@ export default function App() {
           if (await closeAllWithGuard()) {
             await prepareWindowClose();
             await win.destroy();
+          } else {
+            // Cancel in the unsaved-changes prompt calls off a quit too.
+            void desktop.cancelQuit();
           }
         } finally {
           closing = false;
@@ -197,6 +252,11 @@ export default function App() {
     onCleanup(() => {
       disposed = true;
       cleanupShortcuts();
+      cleanupGuards();
+      cleanupContextMenu();
+      cleanupSettingsSync();
+      stopTracking?.();
+      stopMenu?.();
       unlistenProgress?.();
       unlistenOpen?.();
       unlistenDrop?.();
