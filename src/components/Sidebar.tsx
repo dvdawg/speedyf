@@ -5,7 +5,11 @@ import { createEffect, For, Show } from 'solid-js';
 import IconButton from './IconButton';
 import { IconFigure, IconList, IconNote, IconPages, IconQed } from './icons';
 import { ui, setUi, extensionPanelId, resetSidebarWidth, setSidebarWidth } from '../stores/uiStore';
-import { extensionIconPath, extensionPanels } from '../features/extensions/extensionStore';
+import {
+  extensionIconPath,
+  extensionPanels,
+  extensionState,
+} from '../features/extensions/extensionStore';
 import ExtensionIcon from '../features/extensions/ExtensionIcon';
 import ExtensionPanelView from '../features/extensions/ExtensionPanel';
 import PageThumbnails from '../features/outline/PageThumbnails';
@@ -54,6 +58,16 @@ export default function Sidebar() {
     else return;
     e.preventDefault();
   };
+
+  // A panel whose extension is gone (uninstalled or turned off since it was
+  // last shown, perhaps in a previous launch) leaves the sidebar on Pages
+  // rather than on nothing. Only once extensions have loaded: before that,
+  // every contributed panel looks missing.
+  createEffect(() => {
+    const id = extensionPanelId(ui.sidebarMode);
+    if (id === null || !extensionState.loaded) return;
+    if (!extensionPanels().some((panel) => panel.id === id)) setUi('sidebarMode', 'pages');
+  });
 
   let strip!: HTMLDivElement;
   // Keep the active mode's button in view when the strip scrolls sideways.
