@@ -8,91 +8,85 @@ import {
   HIDDEN_LABELS,
   sanitizeState,
 } from './sanitizeStore';
-import { useDialogKeys } from '../redact/dialogKeys';
 import '../redact/redact.css';
+import Sheet from '../../../components/Sheet';
 
 export default function SanitizeDialog() {
-  let dialogEl: HTMLDivElement | undefined;
-  const onKey = useDialogKeys(() => dialogEl, closeSanitize);
   const items = () => sanitizeState.info?.items ?? [];
   const anyChosen = () =>
     items().some((i) => i.key === 'revisions' || sanitizeState.chosen[i.key] === true);
 
   return (
-    <div class="modal-backdrop" onKeyDown={onKey}>
-      <div
-        ref={dialogEl}
-        class="modal protect-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Remove hidden information"
+    <Sheet
+      label="Remove hidden information"
+      class="protect-dialog"
+      onCancel={() => closeSanitize()}
+    >
+      <h2>Remove hidden information</h2>
+      <Show
+        when={!sanitizeState.scanning}
+        fallback={<p class="protect-hint">Inspecting the document...</p>}
       >
-        <h2>Remove hidden information</h2>
         <Show
-          when={!sanitizeState.scanning}
-          fallback={<p class="protect-hint">Inspecting the document...</p>}
+          when={items().length > 0}
+          fallback={<p class="protect-hint">Nothing hidden was found in this document.</p>}
         >
-          <Show
-            when={items().length > 0}
-            fallback={<p class="protect-hint">Nothing hidden was found in this document.</p>}
-          >
-            <p class="protect-hint">
-              Found in this document. Ticked items are removed when you next save; the file is
-              rewritten in full.
-            </p>
-            <ul class="protect-list" role="list">
-              <For each={items()}>
-                {(item) => {
-                  const fixed = item.key === 'revisions';
-                  return (
-                    <li>
-                      <label class="protect-row">
-                        <input
-                          type="checkbox"
-                          checked={fixed || sanitizeState.chosen[item.key] === true}
-                          disabled={fixed}
-                          onChange={(e) => choose(item.key, e.currentTarget.checked)}
-                        />
-                        <span class="protect-row-text">
-                          <span>
-                            {HIDDEN_LABELS[item.key]}
-                            <span class="protect-count"> ({item.count})</span>
-                          </span>
-                          <Show when={fixed}>
-                            <span class="protect-detail">Always removed by a clean save.</span>
-                          </Show>
-                          <Show when={!fixed && item.detail}>
-                            <span class="protect-detail">{item.detail}</span>
-                          </Show>
+          <p class="protect-hint">
+            Found in this document. Ticked items are removed when you next save; the file is
+            rewritten in full.
+          </p>
+          <ul class="protect-list" role="list">
+            <For each={items()}>
+              {(item) => {
+                const fixed = item.key === 'revisions';
+                return (
+                  <li>
+                    <label class="protect-row">
+                      <input
+                        type="checkbox"
+                        checked={fixed || sanitizeState.chosen[item.key] === true}
+                        disabled={fixed}
+                        onChange={(e) => choose(item.key, e.currentTarget.checked)}
+                      />
+                      <span class="protect-row-text">
+                        <span>
+                          {HIDDEN_LABELS[item.key]}
+                          <span class="protect-count"> ({item.count})</span>
                         </span>
-                      </label>
-                    </li>
-                  );
-                }}
-              </For>
-            </ul>
-            <Show when={sanitizeState.info?.signed}>
-              <p class="protect-warn" role="alert">
-                This document is digitally signed. Removing anything rewrites it and the signatures
-                will no longer be valid.
-              </p>
-            </Show>
+                        <Show when={fixed}>
+                          <span class="protect-detail">Always removed by a clean save.</span>
+                        </Show>
+                        <Show when={!fixed && item.detail}>
+                          <span class="protect-detail">{item.detail}</span>
+                        </Show>
+                      </span>
+                    </label>
+                  </li>
+                );
+              }}
+            </For>
+          </ul>
+          <Show when={sanitizeState.info?.signed}>
+            <p class="protect-warn" role="alert">
+              This document is digitally signed. Removing anything rewrites it and the signatures
+              will no longer be valid.
+            </p>
           </Show>
         </Show>
-        <div class="modal-actions">
-          <button type="button" class="secondary-btn" onClick={() => closeSanitize()}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            class="primary-btn"
-            disabled={sanitizeState.scanning || !anyChosen()}
-            onClick={() => confirmSanitize()}
-          >
-            Remove when saving
-          </button>
-        </div>
+      </Show>
+      <div class="modal-actions">
+        <button type="button" class="secondary-btn" onClick={() => closeSanitize()}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          class="primary-btn"
+          disabled={sanitizeState.scanning || !anyChosen()}
+          onClick={() => confirmSanitize()}
+        >
+          Remove when saving
+        </button>
       </div>
-    </div>
+    </Sheet>
   );
 }
