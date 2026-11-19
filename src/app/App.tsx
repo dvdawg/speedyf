@@ -20,11 +20,7 @@ import { preparing } from '../features/prepare/prepareStore';
 import SignaturesPanel from '../features/signatures/SignaturesPanel';
 import { engine } from '../lib/transport/engine';
 import { ui } from '../stores/uiStore';
-import {
-  applyPageAppearance,
-  followSettingsFromOtherWindows,
-  settings,
-} from '../stores/settings';
+import { applyPageAppearance, followSettingsFromOtherWindows, settings } from '../stores/settings';
 import { installShortcuts } from './shortcuts';
 import { installAppMenu } from './appMenu';
 import { installWebviewGuards } from './webviewGuards';

@@ -58,11 +58,7 @@ const cmd = (id: string, extra?: Partial<Extract<MenuNode, { kind: 'command' }>>
 });
 const sep: MenuNode = { kind: 'separator' };
 const native = (item: NativeItem): MenuNode => ({ kind: 'native', item });
-const submenu = (
-  text: string,
-  items: readonly MenuNode[],
-  role?: 'window' | 'help'
-): MenuNode => ({
+const submenu = (text: string, items: readonly MenuNode[], role?: 'window' | 'help'): MenuNode => ({
   kind: 'submenu',
   text,
   items,
@@ -230,6 +226,12 @@ const DOCUMENT_MENUS: readonly MenuNode[] = [
     cmd('file.protect'),
   ]),
   submenu('Library', [
+    cmd('library.showAllItems'),
+    cmd('library.showNotFiled'),
+    cmd('library.showOtherPdfs'),
+    cmd('library.showNewItems'),
+    cmd('library.showLibraryHealth'),
+    sep,
     cmd('library.lookup'),
     sep,
     cmd('library.newProject'),
@@ -372,7 +374,8 @@ export function itemState(
   const command = commandById(node.id);
   if (!command) return null;
   const enabled =
-    (typing && node.textEditing !== undefined) || commandChain(node, ctx).some((c) => c.enabled(ctx));
+    (typing && node.textEditing !== undefined) ||
+    commandChain(node, ctx).some((c) => c.enabled(ctx));
   const state: ItemState = {
     text: command.title,
     enabled,

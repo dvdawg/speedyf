@@ -74,10 +74,7 @@ const CREDITS =
 
 /** Builds this window's menu bar and keeps it current. Resolves to a
  * function that stops following its state. */
-export async function installAppMenu(
-  kind: WindowKind,
-  ctx: () => CommandCtx
-): Promise<() => void> {
+export async function installAppMenu(kind: WindowKind, ctx: () => CommandCtx): Promise<() => void> {
   if (!IS_MAC) return () => undefined;
 
   const [typing, setTyping] = createSignal(false);

@@ -11,8 +11,7 @@
  */
 import { invoke } from '@tauri-apps/api/core';
 
-const quietly = <T>(promise: Promise<T>, fallback: T): Promise<T> =>
-  promise.catch(() => fallback);
+const quietly = <T>(promise: Promise<T>, fallback: T): Promise<T> => promise.catch(() => fallback);
 
 export const desktop = {
   /** Opens the Settings window, or raises the one already open. */
@@ -32,6 +31,5 @@ export const desktop = {
   clearRecentDocuments: (): Promise<void> => quietly(invoke('clear_recent_documents'), undefined),
   /** Shows `path` selected in Finder or Explorer. Rejects with a message
    * when the file is gone, which the caller shows. */
-  revealInFileManager: (path: string): Promise<void> =>
-    invoke('reveal_in_file_manager', { path }),
+  revealInFileManager: (path: string): Promise<void> => invoke('reveal_in_file_manager', { path }),
 };

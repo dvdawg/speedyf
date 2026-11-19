@@ -83,7 +83,14 @@ const BINDINGS: readonly Binding[] = [
     whileTyping: true,
     preventAlways: true,
   },
-  { key: 'w', mod: true, shift: false, id: 'file.closeTab', whileTyping: true, preventAlways: true },
+  {
+    key: 'w',
+    mod: true,
+    shift: false,
+    id: 'file.closeTab',
+    whileTyping: true,
+    preventAlways: true,
+  },
   // Settings, on the chord every desktop app uses for its preferences.
   { key: ',', mod: true, id: 'app.settings', whileTyping: true, preventAlways: true },
   {

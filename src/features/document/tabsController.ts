@@ -38,12 +38,7 @@ import {
   takeWindowSessions,
   type SessionFile,
 } from '../../stores/sessionStore';
-import {
-  isDocumentWindow,
-  MAIN_LABEL,
-  windowApi,
-  windowLabel,
-} from '../../lib/transport/windows';
+import { isDocumentWindow, MAIN_LABEL, windowApi, windowLabel } from '../../lib/transport/windows';
 import { desktop } from '../../lib/transport/desktop';
 import { settings } from '../../stores/settings';
 import { fitToScreens, recordBounds, workAreas } from '../windows/windowState';
