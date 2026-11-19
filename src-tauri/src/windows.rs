@@ -40,6 +40,13 @@ struct Registry {
     /// Tabs a window restored from the previous launch should reopen, handed
     /// to it once when it asks.
     restores: HashMap<String, WindowTabs>,
+    /// Windows that have shown themselves after their first paint. A window
+    /// is built hidden so the user never sees it white and empty; one whose
+    /// webview never gets that far is shown anyway after a grace period.
+    revealed: HashSet<String>,
+    /// Quit was chosen: every window is closing, and each keeps its session
+    /// for the next launch instead of forgetting it as a closed window does.
+    quitting: bool,
 }
 
 /// One window's open documents, in tab-strip order.
@@ -50,6 +57,43 @@ pub struct WindowTabs {
     pub tabs: Vec<String>,
     #[serde(default)]
     pub active_path: Option<String>,
+    /// Where the window was and how big, in logical pixels. Only a restored
+    /// window carries one; the live registry never needs it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bounds: Option<WindowBounds>,
+}
+
+/// A window's frame as the previous launch left it. Already checked against
+/// the monitors present now by the window that asks for it to be rebuilt.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowBounds {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    #[serde(default)]
+    pub maximized: bool,
+}
+
+impl WindowBounds {
+    /// Usable as a frame: finite, and no smaller than a window can be made.
+    fn sane(&self) -> Option<WindowBounds> {
+        let finite = [self.x, self.y, self.width, self.height]
+            .iter()
+            .all(|v| v.is_finite());
+        (finite && self.width >= 200.0 && self.height >= 150.0).then_some(*self)
+    }
+}
+
+/// The label of the one Settings window.
+pub const SETTINGS_LABEL: &str = "settings";
+
+/// Whether `label` names a document window (the main one or a `speedyf-N`),
+/// as opposed to the Settings window, which holds no documents and must never
+/// be the window a file opens in.
+pub fn is_document_window(label: &str) -> bool {
+    label == "main" || label.starts_with("speedyf-")
 }
 
 /// A window as another window's "move tab to..." menu sees it.
@@ -67,6 +111,7 @@ pub struct WindowSummaryDto {
 static EMPTY_TABS: WindowTabs = WindowTabs {
     tabs: Vec::new(),
     active_path: None,
+    bounds: None,
 };
 
 impl Windows {
@@ -96,9 +141,9 @@ pub fn target_window(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
         .and_then(|label| app.get_webview_window(label))
         .or_else(|| app.get_webview_window("main"))
         .or_else(|| {
-            app.webview_windows()
-                .into_values()
-                .find(|w| !registry.transfers.contains_key(w.label()))
+            app.webview_windows().into_values().find(|w| {
+                is_document_window(w.label()) && !registry.transfers.contains_key(w.label())
+            })
         })
 }
 
@@ -136,29 +181,108 @@ pub fn take_pending_opens(
         .unwrap_or_default()
 }
 
+/// Builds a document window, always hidden: either its webview shows it once
+/// it has painted (`reveal_window`), or - for a window built to receive a
+/// dragged-out tab - the handoff shows it when the tab has arrived.
 pub fn build_window(
     app: &tauri::AppHandle,
     label: &str,
     position: Option<(f64, f64)>,
-    visible: bool,
+    bounds: Option<WindowBounds>,
+    reveal_when_painted: bool,
 ) -> Result<tauri::WebviewWindow, String> {
     let mut config = app.config().app.windows[0].clone();
     config.label = label.into();
-    config.visible = visible;
-    config.focus = visible;
+    config.visible = false;
+    config.focus = false;
     // New windows start at Home, never by replaying the previous app session.
     config.url = tauri::WebviewUrl::App("index.html?window=new".into());
-    let position = position
+    let bounds = bounds.and_then(|b| b.sane());
+    let position = bounds
+        .map(|b| (b.x, b.y))
+        .or(position)
         .filter(|(x, y)| x.is_finite() && y.is_finite())
         .or_else(|| cascade_position(app));
     if let Some((x, y)) = position {
         config.x = Some(x);
         config.y = Some(y);
     }
-    tauri::WebviewWindowBuilder::from_config(app, &config)
+    if let Some(b) = bounds {
+        config.width = b.width.max(config.min_width.unwrap_or(0.0));
+        config.height = b.height.max(config.min_height.unwrap_or(0.0));
+        config.maximized = b.maximized;
+    }
+    let window = tauri::WebviewWindowBuilder::from_config(app, &config)
         .map_err(|e| e.to_string())?
         .build()
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    if reveal_when_painted {
+        reveal_eventually(app, label);
+    }
+    Ok(window)
+}
+
+/// How long a window may stay hidden waiting for its first paint before it is
+/// shown regardless. A webview that failed to load is better seen than lost.
+const REVEAL_GRACE: Duration = Duration::from_millis(2500);
+
+/// Shows `label` after the grace period unless its webview has done so.
+pub fn reveal_eventually(app: &tauri::AppHandle, label: &str) {
+    let app = app.clone();
+    let label = label.to_string();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(REVEAL_GRACE).await;
+        let Some(window) = app.get_webview_window(&label) else {
+            return;
+        };
+        let Some(state) = app.try_state::<Windows>() else {
+            return;
+        };
+        if !state.0.lock().unwrap().should_reveal(&label) {
+            return;
+        }
+        log::warn!("window {label} did not paint in time; showing it anyway");
+        show_and_focus(&window);
+    });
+}
+
+fn show_and_focus(window: &tauri::WebviewWindow) {
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
+/// The window's webview has painted its first frame: show it. A window that
+/// is being built to receive a tab stays hidden until the tab has arrived.
+#[tauri::command]
+pub fn reveal_window(window: tauri::WebviewWindow, state: tauri::State<'_, Windows>) {
+    if state.0.lock().unwrap().should_reveal(window.label()) {
+        show_and_focus(&window);
+    }
+}
+
+/// Quit, by way of each window's own close guard: every window is asked to
+/// close, and each one with unsaved changes asks about them first. The app
+/// ends when the last window has gone. Quitting this way, rather than ending
+/// the process, is what keeps an unsaved document from being lost to Cmd+Q.
+#[tauri::command]
+pub fn request_quit(app: tauri::AppHandle, state: tauri::State<'_, Windows>) {
+    state.0.lock().unwrap().quitting = true;
+    for window in app.webview_windows().into_values() {
+        let _ = window.close();
+    }
+}
+
+/// Whether the windows closing now are closing because the app is quitting,
+/// in which case each keeps its session for the next launch.
+#[tauri::command]
+pub fn is_quitting(state: tauri::State<'_, Windows>) -> bool {
+    state.0.lock().unwrap().quitting
+}
+
+/// A window refused to close (its user chose Cancel): the quit is off.
+#[tauri::command]
+pub fn cancel_quit(state: tauri::State<'_, Windows>) {
+    state.0.lock().unwrap().quitting = false;
 }
 
 /// How far a new window is offset from the one it was spawned from, so it
@@ -208,6 +332,7 @@ fn next_label(state: &Windows) -> String {
 pub async fn new_window(app: tauri::AppHandle, restore: Option<WindowTabs>) -> Result<(), String> {
     let state = app.state::<Windows>();
     let label = next_label(&state);
+    let bounds = restore.as_ref().and_then(|r| r.bounds);
     if let Some(restore) = restore {
         state
             .0
@@ -216,7 +341,7 @@ pub async fn new_window(app: tauri::AppHandle, restore: Option<WindowTabs>) -> R
             .restores
             .insert(label.clone(), restore);
     }
-    if let Err(error) = build_window(&app, &label, None, true) {
+    if let Err(error) = build_window(&app, &label, None, bounds, true) {
         state.0.lock().unwrap().restores.remove(&label);
         return Err(error);
     }
@@ -256,7 +381,7 @@ pub async fn open_in_new_window(app: tauri::AppHandle, path: String) -> Result<b
         let _ = other.set_focus();
         return Ok(false);
     }
-    if let Err(error) = build_window(&app, &label, None, true) {
+    if let Err(error) = build_window(&app, &label, None, None, true) {
         state.0.lock().unwrap().restores.remove(&label);
         return Err(error);
     }
@@ -302,7 +427,7 @@ pub async fn detach_tab(
             },
         );
     }
-    let target = match build_window(&app, &label, position, false) {
+    let target = match build_window(&app, &label, position, None, false) {
         Ok(target) => target,
         Err(error) => {
             state.0.lock().unwrap().transfers.remove(&label);
@@ -327,8 +452,8 @@ pub async fn detach_tab(
         let _ = target.destroy();
         return Err("The new window did not finish opening. Your tab is still here.".into());
     }
-    let _ = target.show();
-    let _ = target.set_focus();
+    state.0.lock().unwrap().revealed.insert(label);
+    show_and_focus(&target);
     Ok(())
 }
 
@@ -426,7 +551,14 @@ pub fn update_window_tabs(
         .lock()
         .unwrap()
         .tabs
-        .insert(window.label().into(), WindowTabs { tabs, active_path });
+        .insert(
+            window.label().into(),
+            WindowTabs {
+                tabs,
+                active_path,
+                bounds: None,
+            },
+        );
 }
 
 /// The other windows, for a "move tab to..." menu, in creation order.
@@ -527,6 +659,7 @@ impl Registry {
             WindowTabs {
                 tabs: vec![path.clone()],
                 active_path: Some(path),
+                bounds: None,
             },
         );
         None
@@ -559,6 +692,16 @@ impl Registry {
             .collect()
     }
 
+    /// Whether a window may be shown now: not yet shown, and not a window
+    /// still being built to receive a tab (it is shown once the tab has
+    /// arrived). Marks it shown when it may.
+    fn should_reveal(&mut self, label: &str) -> bool {
+        if self.transfers.contains_key(label) && !self.ready.contains(label) {
+            return false;
+        }
+        self.revealed.insert(label.to_string())
+    }
+
     fn accept_transfer(&mut self, label: &str) -> Result<(), String> {
         let transfer = self
             .transfers
@@ -582,7 +725,9 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
         return;
     };
     match event {
-        tauri::WindowEvent::Focused(true) => {
+        // Only document windows: a file opened from the Dock while Settings
+        // has focus belongs in the document window behind it.
+        tauri::WindowEvent::Focused(true) if is_document_window(window.label()) => {
             state.0.lock().unwrap().focused = Some(window.label().into())
         }
         tauri::WindowEvent::Destroyed => {
@@ -591,6 +736,7 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
             registry.pending_opens.remove(window.label());
             registry.tabs.remove(window.label());
             registry.restores.remove(window.label());
+            registry.revealed.remove(window.label());
             let docs = registry
                 .documents
                 .remove(window.label())
@@ -661,35 +807,6 @@ fn disambiguate(entries: &mut [(String, Option<&str>)]) {
     }
 }
 
-pub fn install_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
-    use tauri::menu::{Menu, MenuItem, MenuItemKind, Submenu};
-    let menu = Menu::default(app)?;
-    let item = MenuItem::with_id(app, "new-window", "New Window", true, Some("CmdOrCtrl+N"))?;
-    let file = menu.items()?.into_iter().find_map(|item| match item {
-        MenuItemKind::Submenu(submenu) if submenu.text().ok().as_deref() == Some("File") => {
-            Some(submenu)
-        }
-        _ => None,
-    });
-    if let Some(file) = file {
-        file.prepend(&item)?;
-    } else {
-        menu.prepend(&Submenu::with_items(app, "File", true, &[&item])?)?;
-    }
-    app.set_menu(menu)?;
-    app.on_menu_event(|app, event| {
-        if event.id().as_ref() == "new-window" {
-            let app = app.clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(error) = new_window(app, None).await {
-                    log::error!("new window: {error}");
-                }
-            });
-        }
-    });
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -742,6 +859,7 @@ mod tests {
         WindowTabs {
             tabs: paths.iter().map(|p| p.to_string()).collect(),
             active_path: active.map(str::to_string),
+            bounds: None,
         }
     }
 
@@ -927,5 +1045,82 @@ mod tests {
         let registry = windows.0.lock().unwrap();
         assert!(registry.documents["main"].is_empty());
         assert_eq!(registry.documents["speedyf-1"], HashSet::from([2]));
+    }
+
+    #[test]
+    fn a_window_is_shown_once_and_never_while_it_waits_for_a_tab() {
+        let mut registry = Registry::default();
+        assert!(registry.should_reveal("main"));
+        // The fallback timer arriving after the webview showed itself.
+        assert!(!registry.should_reveal("main"));
+
+        let (ready, _receiver) = mpsc::channel();
+        registry.transfers.insert(
+            "speedyf-1".into(),
+            Transfer {
+                source: "main".into(),
+                doc: 1,
+                snapshot: Value::Null,
+                ready,
+            },
+        );
+        assert!(!registry.should_reveal("speedyf-1"));
+        // An existing, ready window receiving a tab is already on screen.
+        registry.ready.insert("speedyf-1".into());
+        assert!(registry.should_reveal("speedyf-1"));
+    }
+
+    #[test]
+    fn only_document_windows_take_files() {
+        assert!(is_document_window("main"));
+        assert!(is_document_window("speedyf-12"));
+        assert!(!is_document_window(SETTINGS_LABEL));
+    }
+
+    #[test]
+    fn a_saved_frame_is_used_only_when_it_could_be_a_window() {
+        let frame = WindowBounds {
+            x: -1440.0,
+            y: 120.0,
+            width: 1280.0,
+            height: 840.0,
+            maximized: false,
+        };
+        assert_eq!(frame.sane(), Some(frame));
+        assert_eq!(
+            WindowBounds {
+                width: f64::NAN,
+                ..frame
+            }
+            .sane(),
+            None
+        );
+        assert_eq!(
+            WindowBounds {
+                height: 20.0,
+                ..frame
+            }
+            .sane(),
+            None
+        );
+        let restored: WindowTabs = serde_json::from_value(serde_json::json!({
+            "tabs": ["/a.pdf"],
+            "activePath": "/a.pdf",
+            "bounds": { "x": 10, "y": 20, "width": 900, "height": 700, "maximized": true }
+        }))
+        .unwrap();
+        assert_eq!(
+            restored.bounds,
+            Some(WindowBounds {
+                x: 10.0,
+                y: 20.0,
+                width: 900.0,
+                height: 700.0,
+                maximized: true
+            })
+        );
+        // Older restores without a frame still parse.
+        let bare: WindowTabs = serde_json::from_value(serde_json::json!({ "tabs": [] })).unwrap();
+        assert_eq!(bare.bounds, None);
     }
 }

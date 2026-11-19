@@ -1,5 +1,6 @@
 mod cache;
 mod commands;
+mod desktop;
 pub mod engine;
 pub mod errors;
 mod extensions;
@@ -254,7 +255,12 @@ pub fn run() {
             app.manage(windows::Windows::default());
             app.manage(markup_capture::PrintJobs::default());
             app.manage(commands::markup::MarkupKeys::default());
-            windows::install_menu(app.handle())?;
+            #[cfg(target_os = "macos")]
+            desktop::install_menu(app.handle())?;
+            // The main window is built hidden (tauri.conf.json) and shows
+            // itself once it has painted; this is the fallback if it never
+            // does.
+            windows::reveal_eventually(app.handle(), "main");
             #[cfg(debug_assertions)]
             markup_selftest::maybe_run(app.handle());
 
@@ -397,6 +403,15 @@ pub fn run() {
             windows::update_window_tabs,
             windows::window_roster,
             windows::focus_window_for_path,
+            windows::reveal_window,
+            windows::request_quit,
+            windows::is_quitting,
+            windows::cancel_quit,
+            desktop::open_settings,
+            desktop::set_document_state,
+            desktop::note_recent_document,
+            desktop::clear_recent_documents,
+            desktop::reveal_in_file_manager,
             commands::file_metadata,
             commands::open_document,
             commands::close_document,
