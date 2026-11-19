@@ -26,7 +26,7 @@ vi.mock('../lib/transport/engine', () => ({
   engine: { fileMetadata: vi.fn(async () => ({ sizeBytes: 4096, modifiedMs: 0 })) },
 }));
 
-const { recentStore } = await import('./recentStore');
+const { recentStore, sanitizePosition } = await import('./recentStore');
 const { engine } = await import('../lib/transport/engine');
 
 beforeEach(() => {
@@ -129,5 +129,129 @@ describe('reading position', () => {
   it('has no position for a file never read', () => {
     recentStore.recordOpen({ path: '/tmp/b.pdf', name: 'b.pdf' });
     expect(recentStore.positionFor('/tmp/b.pdf')).toBeNull();
+  });
+});
+
+describe('zoom with the reading position', () => {
+  it('remembers the zoom and fit mode a file was read at', () => {
+    recentStore.recordOpen({ path: '/tmp/a.pdf', name: 'a.pdf' });
+    recentStore.recordPosition('/tmp/a.pdf', {
+      page: 3,
+      fraction: 0.5,
+      zoom: 1.5,
+      fitMode: 'custom',
+    });
+    expect(recentStore.positionFor('/tmp/a.pdf')).toEqual({
+      page: 3,
+      fraction: 0.5,
+      zoom: 1.5,
+      fitMode: 'custom',
+    });
+    const saved = JSON.parse(storage.getItem('speedyf-recent')!).entries[0].position;
+    expect(saved).toEqual({ page: 3, fraction: 0.5, zoom: 1.5, fitMode: 'custom' });
+  });
+
+  it('records a zoom change at the same place', () => {
+    recentStore.recordOpen({ path: '/tmp/a.pdf', name: 'a.pdf' });
+    recentStore.recordPosition('/tmp/a.pdf', {
+      page: 3,
+      fraction: 0.5,
+      zoom: 1.5,
+      fitMode: 'custom',
+    });
+    recentStore.recordPosition('/tmp/a.pdf', {
+      page: 3,
+      fraction: 0.5,
+      zoom: 1.2,
+      fitMode: 'fit-width',
+    });
+    expect(recentStore.positionFor('/tmp/a.pdf')).toMatchObject({
+      zoom: 1.2,
+      fitMode: 'fit-width',
+    });
+  });
+
+  it('does not keep a stale zoom when a position without one replaces it', () => {
+    recentStore.recordOpen({ path: '/tmp/a.pdf', name: 'a.pdf' });
+    recentStore.recordPosition('/tmp/a.pdf', {
+      page: 3,
+      fraction: 0.5,
+      zoom: 1.5,
+      fitMode: 'custom',
+    });
+    recentStore.recordPosition('/tmp/a.pdf', { page: 4, fraction: 0 });
+    expect(recentStore.positionFor('/tmp/a.pdf')).toEqual({ page: 4, fraction: 0 });
+  });
+});
+
+describe('sanitizePosition', () => {
+  it('reads a position saved before zoom was remembered', () => {
+    expect(sanitizePosition({ page: 2, fraction: 0.1 })).toEqual({ page: 2, fraction: 0.1 });
+  });
+
+  it('clamps an out-of-range zoom into what the viewer supports', () => {
+    expect(sanitizePosition({ page: 0, fraction: 0, zoom: 40, fitMode: 'custom' })).toMatchObject({
+      zoom: 6,
+    });
+    expect(sanitizePosition({ page: 0, fraction: 0, zoom: 0.01, fitMode: 'custom' })).toMatchObject(
+      { zoom: 0.2 }
+    );
+  });
+
+  it('drops an unusable zoom but keeps the place', () => {
+    expect(sanitizePosition({ page: 1, fraction: 0.5, zoom: 'big', fitMode: 'custom' })).toEqual({
+      page: 1,
+      fraction: 0.5,
+    });
+    expect(sanitizePosition({ page: 1, fraction: 0.5, zoom: 2, fitMode: 'fit-height' })).toEqual({
+      page: 1,
+      fraction: 0.5,
+    });
+  });
+
+  it('keeps a fit mode without a usable zoom: the fit works it out', () => {
+    expect(
+      sanitizePosition({ page: 1, fraction: 0, zoom: Number.NaN, fitMode: 'fit-page' })
+    ).toEqual({ page: 1, fraction: 0, fitMode: 'fit-page' });
+  });
+
+  it('rejects a position that is not one', () => {
+    expect(sanitizePosition({ page: 1.5, fraction: 0 })).toBeNull();
+    expect(sanitizePosition(null)).toBeNull();
+  });
+
+  it('keeps the entry when its saved position is damaged', async () => {
+    storage.setItem(
+      'speedyf-recent',
+      JSON.stringify({
+        version: 1,
+        entries: [
+          {
+            path: '/tmp/a.pdf',
+            name: 'a.pdf',
+            lastOpened: 1,
+            sizeBytes: null,
+            position: { page: 2, fraction: 0.3, zoom: 99, fitMode: 'custom' },
+          },
+          {
+            path: '/tmp/b.pdf',
+            name: 'b.pdf',
+            lastOpened: 1,
+            sizeBytes: null,
+            position: { page: 'x' },
+          },
+        ],
+      })
+    );
+    vi.resetModules();
+    const { recentStore: reloaded } = await import('./recentStore');
+    expect(reloaded.positionFor('/tmp/a.pdf')).toEqual({
+      page: 2,
+      fraction: 0.3,
+      zoom: 6,
+      fitMode: 'custom',
+    });
+    expect(reloaded.state.entries.map((e) => e.path)).toEqual(['/tmp/a.pdf', '/tmp/b.pdf']);
+    expect(reloaded.positionFor('/tmp/b.pdf')).toBeNull();
   });
 });

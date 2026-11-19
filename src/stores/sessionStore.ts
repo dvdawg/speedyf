@@ -2,8 +2,13 @@
  * relaunch — one per window, each under its own key, so two windows never
  * overwrite each other. Remembers file paths + order + which was active, and
  * where the window was and how big — never docId (meaningless across
- * restarts). Where reading stopped in each file is the recent list's
- * (recentStore), which an open consults anyway. */
+ * restarts). Where reading stopped in each file, and at what zoom, is the
+ * recent list's (recentStore), which an open consults anyway.
+ *
+ * Every field after `tabs` was added later and is optional: a session from an
+ * older launch reads back with them missing, and an older build reading a
+ * newer session drops what it does not know. */
+import { sanitizeSidebar, type SavedSidebar } from './uiStore';
 
 /** A window's frame in logical pixels, and whether it was maximized (the
  * frame is then the one it returns to). */
@@ -20,6 +25,8 @@ export interface SessionFile {
   tabs: { path: string }[];
   activePath: string | null;
   bounds?: WindowBounds;
+  /** The window's sidebar: open, width, panel. */
+  sidebar?: SavedSidebar;
 }
 
 function validBounds(value: unknown): WindowBounds | null {
@@ -50,6 +57,8 @@ function readSession(key: string): SessionFile {
         };
         const bounds = validBounds(parsed.bounds);
         if (bounds) session.bounds = bounds;
+        const sidebar = sanitizeSidebar(parsed.sidebar);
+        if (sidebar) session.sidebar = sidebar;
         return session;
       }
     }
@@ -59,15 +68,32 @@ function readSession(key: string): SessionFile {
   return { version: 1, tabs: [], activePath: null };
 }
 
-/** Writes a window's tabs. The frame it was saved with is kept unless the
- * session brings one of its own: tabs and frame change at different times. */
+/** Writes a window's tabs. The frame and sidebar it was saved with are kept
+ * unless the session brings its own: tabs, frame and sidebar change at
+ * different times. */
 export function saveSession(session: SessionFile, label = 'main'): void {
   try {
-    const bounds = session.bounds ?? readSession(sessionKey(label)).bounds;
-    const next: SessionFile = bounds ? { ...session, bounds } : session;
+    const saved = readSession(sessionKey(label));
+    const bounds = session.bounds ?? saved.bounds;
+    const sidebar = session.sidebar ?? saved.sidebar;
+    const next: SessionFile = {
+      ...session,
+      ...(bounds ? { bounds } : {}),
+      ...(sidebar ? { sidebar } : {}),
+    };
     localStorage.setItem(sessionKey(label), JSON.stringify(next));
   } catch {
     /* storage unavailable (private mode) — session stays unrestorable */
+  }
+}
+
+/** Remembers a window's sidebar, beside its tabs. */
+export function saveSidebar(sidebar: SavedSidebar, label = 'main'): void {
+  try {
+    const current = readSession(sessionKey(label));
+    localStorage.setItem(sessionKey(label), JSON.stringify({ ...current, sidebar }));
+  } catch {
+    /* storage unavailable */
   }
 }
 
@@ -130,6 +156,7 @@ export function takeWindowSessions(): { main: SessionFile; others: SessionFile[]
         tabs,
         activePath,
         ...(other.bounds ? { bounds: other.bounds } : {}),
+        ...(other.sidebar ? { sidebar: other.sidebar } : {}),
       });
     }
     for (const key of keys) localStorage.removeItem(key);

@@ -103,6 +103,10 @@ pub struct WindowTabs {
     /// window carries one; the live registry never needs it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bounds: Option<WindowBounds>,
+    /// The window's sidebar (open, width, panel) as it was left. Opaque
+    /// here: only the webview reads it, and validates it when it does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidebar: Option<serde_json::Value>,
 }
 
 /// A window's frame as the previous launch left it. Already checked against
@@ -154,6 +158,7 @@ static EMPTY_TABS: WindowTabs = WindowTabs {
     tabs: Vec::new(),
     active_path: None,
     bounds: None,
+    sidebar: None,
 };
 
 impl Windows {
@@ -633,6 +638,7 @@ pub fn update_window_tabs(
             tabs,
             active_path,
             bounds: None,
+            sidebar: None,
         },
     );
 }
@@ -736,6 +742,7 @@ impl Registry {
                 tabs: vec![path.clone()],
                 active_path: Some(path),
                 bounds: None,
+                sidebar: None,
             },
         );
         None
@@ -993,6 +1000,7 @@ mod tests {
             tabs: paths.iter().map(|p| p.to_string()).collect(),
             active_path: active.map(str::to_string),
             bounds: None,
+            sidebar: None,
         }
     }
 
@@ -1255,5 +1263,11 @@ mod tests {
         // Older restores without a frame still parse.
         let bare: WindowTabs = serde_json::from_value(serde_json::json!({ "tabs": [] })).unwrap();
         assert_eq!(bare.bounds, None);
+        assert_eq!(bare.sidebar, None);
+        // The sidebar travels through untouched, for the webview to check.
+        let sidebar = serde_json::json!({ "open": false, "width": 240, "mode": "outline" });
+        let with_sidebar: WindowTabs =
+            serde_json::from_value(serde_json::json!({ "tabs": [], "sidebar": sidebar })).unwrap();
+        assert_eq!(with_sidebar.sidebar, Some(sidebar));
     }
 }

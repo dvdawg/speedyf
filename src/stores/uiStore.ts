@@ -40,43 +40,130 @@ export function clampSidebarWidth(desired: number, windowWidth: number): number 
   return Math.round(Math.min(Math.max(desired, MIN_SIDEBAR_WIDTH), ceiling));
 }
 
-const WIDTH_KEY = 'speedyf-sidebar-width';
+/** Where the sidebar stands in one window: shown or not, how wide, and which
+ * panel it shows. Saved per window beside its tabs (sessionStore), and once
+ * more as the last one used, which a brand-new window starts from. */
+export interface SidebarState {
+  open: boolean;
+  width: number;
+  mode: SidebarMode;
+}
 
-function storedWidth(): number {
+/** A saved sidebar as read back: any field may be missing, from an older
+ * launch or a damaged record, and is then taken from somewhere else. */
+export type SavedSidebar = Partial<SidebarState>;
+
+export const DEFAULT_SIDEBAR: SidebarState = {
+  open: true,
+  width: DEFAULT_SIDEBAR_WIDTH,
+  mode: 'pages',
+};
+
+const BUILT_IN_MODES: readonly string[] = [
+  'pages',
+  'outline',
+  'formal',
+  'figures',
+  'notes',
+  'paper',
+];
+
+/** A mode this version knows how to show. An extension panel is accepted on
+ * its form alone: whether that extension is still installed is only known
+ * once extensions have loaded (see Sidebar). */
+export function isSidebarMode(value: unknown): value is SidebarMode {
+  if (typeof value !== 'string') return false;
+  if (BUILT_IN_MODES.includes(value)) return true;
+  return value.startsWith(EXTENSION_MODE_PREFIX) && value.length > EXTENSION_MODE_PREFIX.length;
+}
+
+/** The well-formed fields of a saved sidebar; undefined when none are. Pure. */
+export function sanitizeSidebar(value: unknown): SavedSidebar | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const v = value as Record<string, unknown>;
+  const out: SavedSidebar = {};
+  if (typeof v.open === 'boolean') out.open = v.open;
+  if (typeof v.width === 'number' && Number.isFinite(v.width) && v.width > 0) {
+    out.width = v.width;
+  }
+  if (isSidebarMode(v.mode)) out.mode = v.mode;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** A saved sidebar made whole: missing fields from `fallback`, and the width
+ * clamped to the window it is restored into, not the one it was saved in (a
+ * width saved on an external display must not swallow a laptop). Pure. */
+export function resolveSidebar(
+  saved: SavedSidebar | undefined,
+  fallback: SidebarState,
+  windowWidth: number
+): SidebarState {
+  return {
+    open: saved?.open ?? fallback.open,
+    mode: saved?.mode ?? fallback.mode,
+    width: clampSidebarWidth(saved?.width ?? fallback.width, windowWidth),
+  };
+}
+
+const LAST_USED_KEY = 'speedyf-sidebar';
+/** Before the whole sidebar was remembered, only its width was. */
+const LEGACY_WIDTH_KEY = 'speedyf-sidebar-width';
+
+function currentWindowWidth(): number {
+  return typeof window === 'undefined' ? 1280 : window.innerWidth;
+}
+
+/** The sidebar the last window to change one left, for a window with nothing
+ * of its own to restore. */
+export function lastUsedSidebar(): SavedSidebar | undefined {
   try {
-    const raw = localStorage.getItem(WIDTH_KEY);
-    if (raw === null) return DEFAULT_SIDEBAR_WIDTH;
-    const parsed = Number(raw);
-    // Clamped against the window it is being restored into, not the one it was
-    // set in: a width saved on an external display must not swallow a laptop.
-    return clampSidebarWidth(parsed, typeof window === 'undefined' ? 1280 : window.innerWidth);
+    const raw = localStorage.getItem(LAST_USED_KEY);
+    if (raw !== null) return sanitizeSidebar(JSON.parse(raw));
+    const legacy = localStorage.getItem(LEGACY_WIDTH_KEY);
+    if (legacy !== null) return sanitizeSidebar({ width: Number(legacy) });
   } catch {
-    return DEFAULT_SIDEBAR_WIDTH;
+    /* unreadable: the defaults */
+  }
+  return undefined;
+}
+
+export function saveLastUsedSidebar(state: SidebarState): void {
+  try {
+    localStorage.setItem(LAST_USED_KEY, JSON.stringify(state));
+  } catch {
+    /* storage unavailable: remembered for this run only */
   }
 }
 
+const initial = resolveSidebar(lastUsedSidebar(), DEFAULT_SIDEBAR, currentWindowWidth());
+
 export const [ui, setUi] = createStore({
-  sidebarOpen: true,
-  sidebarMode: 'pages' as SidebarMode,
-  sidebarWidth: storedWidth(),
+  sidebarOpen: initial.open,
+  sidebarMode: initial.mode,
+  sidebarWidth: initial.width,
 });
 
-/** Set the sidebar width, clamped and persisted.
- *
- * Written on every pointer move during a drag, which is why the write is
- * cheap and guarded: a failing localStorage must not break resizing.
- */
+/** This window's sidebar as it stands. */
+export function sidebarState(): SidebarState {
+  return { open: ui.sidebarOpen, width: ui.sidebarWidth, mode: ui.sidebarMode };
+}
+
+/** Puts back a saved sidebar. Fields it lacks keep what the window has now,
+ * and the width is clamped to `windowWidth` (the window as it is, unless the
+ * caller knows the frame it is about to have). */
+export function applySidebar(
+  saved: SavedSidebar | undefined,
+  windowWidth = currentWindowWidth()
+): void {
+  const next = resolveSidebar(saved, sidebarState(), windowWidth);
+  setUi({ sidebarOpen: next.open, sidebarMode: next.mode, sidebarWidth: next.width });
+}
+
+/** Set the sidebar width, clamped. Written on every pointer move during a
+ * drag, so it only touches the store: saving is debounced elsewhere
+ * (features/windows/sidebarState.ts). */
 export function setSidebarWidth(desired: number): void {
-  const width = clampSidebarWidth(
-    desired,
-    typeof window === 'undefined' ? 1280 : window.innerWidth
-  );
-  setUi('sidebarWidth', width);
-  try {
-    localStorage.setItem(WIDTH_KEY, String(width));
-  } catch {
-    /* storage unavailable — the width stays session-only */
-  }
+  setUi('sidebarWidth', clampSidebarWidth(desired, currentWindowWidth()));
 }
 
 export function resetSidebarWidth(): void {

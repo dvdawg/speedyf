@@ -2,14 +2,24 @@
 import { createStore } from 'solid-js/store';
 import { engine } from '../lib/transport/engine';
 import { desktop } from '../lib/transport/desktop';
+import type { FitMode } from '../types/model';
+import { restoredZoom } from '../features/document/resumeView';
 
 /** Where reading stopped, stored zoom-independently: a page plus how far down
  * it the viewport's top edge sat. Storing a raw scroll offset would restore
- * wrongly at any other zoom or window size. */
+ * wrongly at any other zoom or window size.
+ *
+ * And the zoom it was read at, so the file comes back the same way however
+ * it is reopened (see features/document/resumeView.ts). Added later, so both
+ * are optional: a position from an older launch has neither and opens at the
+ * default zoom, as it always did. */
 export interface ReadingPosition {
   page: number;
   /** 0..1 down the page */
   fraction: number;
+  /** The zoom factor; for a fit mode, the last one it worked out to. */
+  zoom?: number;
+  fitMode?: FitMode;
 }
 
 export interface RecentEntry {
@@ -31,6 +41,24 @@ function validPosition(value: unknown): value is ReadingPosition {
     Number.isFinite(p.fraction) &&
     p.fraction >= 0 &&
     p.fraction <= 1
+  );
+}
+
+/** A saved position as it can be used: page and fraction checked, the zoom
+ * clamped into range, and a zoom that cannot be used dropped on its own
+ * rather than taking the position with it. Null when the position itself is
+ * unusable. Pure. */
+export function sanitizePosition(value: unknown): ReadingPosition | null {
+  if (!validPosition(value)) return null;
+  const position: ReadingPosition = { page: value.page, fraction: value.fraction };
+  const zoom = restoredZoom(value);
+  if (zoom) Object.assign(position, zoom);
+  return position;
+}
+
+function samePosition(a: ReadingPosition, b: ReadingPosition): boolean {
+  return (
+    a.page === b.page && a.fraction === b.fraction && a.zoom === b.zoom && a.fitMode === b.fitMode
   );
 }
 
@@ -59,9 +87,9 @@ function load(): RecentEntry[] {
           )
           .map((e) => {
             // drop a malformed position rather than the whole entry
-            if (validPosition(e.position)) return e;
-            const { position: _discarded, ...rest } = e;
-            return rest;
+            const { position: saved, ...rest } = e;
+            const position = sanitizePosition(saved);
+            return position ? { ...rest, position } : rest;
           });
       }
     }
@@ -121,12 +149,12 @@ export const recentStore = {
    * off the list — a position with nothing to resume is not worth keeping. */
   recordPosition(path: string, position: ReadingPosition) {
     const index = state.entries.findIndex((e) => e.path === path);
-    if (index < 0 || !validPosition(position)) return;
+    const next = sanitizePosition(position);
+    if (index < 0 || !next) return;
     const current = state.entries[index]!.position;
-    if (current && current.page === position.page && current.fraction === position.fraction) {
-      return;
-    }
-    setState('entries', index, 'position', position);
+    if (current && samePosition(current, next)) return;
+    // Replaced whole, not merged: a store merge would keep a stale zoom.
+    setState('entries', index, { position: next });
     persist();
   },
 

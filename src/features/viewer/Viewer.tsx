@@ -11,6 +11,7 @@ import {
   createMemo,
   createSignal,
   For,
+  on,
   onCleanup,
   onMount,
   Show,
@@ -248,10 +249,26 @@ function ViewerContent(props: { tab: TabRecord }) {
       const height = l.heights[page];
       if (top === undefined || !height) return;
       const fraction = Math.min(1, Math.max(0, (scroller.scrollTop - top + VIEW_PADDING) / height));
-      recentStore.recordPosition(path, { page, fraction });
+      recentStore.recordPosition(path, {
+        page,
+        fraction,
+        // Four places is far below a visible difference, and keeps a pinch's
+        // long tail of digits out of storage.
+        zoom: Math.round(vp.state.zoom * 1e4) / 1e4,
+        fitMode: vp.state.fitMode,
+      });
     }, 500);
   };
   onCleanup(() => clearTimeout(rememberTimer));
+  // A zoom that does not move the scroll position (Fit Width when the page
+  // already fits) is still a change worth remembering.
+  createEffect(
+    on(
+      () => [vp.state.zoom, vp.state.fitMode],
+      () => rememberPosition(),
+      { defer: true }
+    )
+  );
 
   // --- pinch / ctrl-wheel zoom -------------------------------------------
   //
