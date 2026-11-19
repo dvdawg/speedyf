@@ -149,7 +149,8 @@ export default function AnnotationLayer(props: Props) {
     const leaveTextBox = (e: Event) => {
       const target = e.target;
       if (!(target instanceof Element)) return;
-      if (editingId() === id && target.closest('.text-tool-options')) return;
+      // The option rows' overflow menus are portalled out of the rows.
+      if (editingId() === id && target.closest('.text-tool-options, .text-tool-menu')) return;
       const owner = target.closest<HTMLElement>('[data-annot-id]');
       if (owner?.dataset.annotId === id && layerEl.contains(owner)) return;
       finishEditing();

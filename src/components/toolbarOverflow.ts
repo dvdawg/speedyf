@@ -12,6 +12,9 @@ export interface OverflowGroup {
   width: number;
   /** Higher stays longer; Infinity never folds. */
   priority: number;
+  /** Leaves the row without a place in the menu (a hint, a caption), so
+   * folding it alone needs no overflow button. */
+  drops?: boolean | undefined;
 }
 
 export interface OverflowLayout {
@@ -31,22 +34,26 @@ function rowWidth(groups: readonly OverflowGroup[], gap: number): number {
 /** Ids of the groups to fold, in toolbar order. */
 export function foldedGroups(groups: readonly OverflowGroup[], layout: OverflowLayout): string[] {
   if (rowWidth(groups, layout.gap) <= layout.available) return [];
-  // The overflow button takes a slot of its own at the end of the row.
-  const budget = layout.available - layout.buttonWidth - layout.gap;
   // Lowest priority first; between equals, the later one folds first.
   const order = groups
     .map((g, index) => ({ g, index }))
     .filter(({ g }) => g.priority !== Infinity)
     .sort((a, b) => a.g.priority - b.g.priority || b.index - a.index);
   const folded = new Set<string>();
-  for (const { g } of order) {
-    if (
+  const fits = () => {
+    // Once anything goes to the menu, the overflow button takes a slot of
+    // its own at the end of the row.
+    const button = groups.some((g) => folded.has(g.id) && !g.drops);
+    const budget = layout.available - (button ? layout.buttonWidth + layout.gap : 0);
+    return (
       rowWidth(
         groups.filter((x) => !folded.has(x.id)),
         layout.gap
       ) <= budget
-    )
-      break;
+    );
+  };
+  for (const { g } of order) {
+    if (fits()) break;
     folded.add(g.id);
   }
   return groups.filter((g) => folded.has(g.id)).map((g) => g.id);

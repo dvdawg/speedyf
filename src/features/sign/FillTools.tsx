@@ -1,7 +1,13 @@
 /** The Fill tool's row under the toolbar: what a click places - typed text,
  * a mark or today's date - and a way to put the tool down. Shown only while
- * the tool is held. */
+ * the tool is held.
+ *
+ * The row never wraps. Done never folds; typed text, the check and the
+ * cross (most answers on a paper form) stay longest, then the date, then the
+ * dot, strike line and circle; the caption and the hint simply leave first. */
 import { For, Show, type JSX } from 'solid-js';
+import IconButton from '../../components/IconButton';
+import OverflowRow, { type ToolbarGroup } from '../../components/OverflowRow';
 import { activeTab } from '../../stores/tabsStore';
 import { setActiveTool, toolState } from '../annotations/toolStore';
 import { fillState, setFillMode, type FillMode } from './fillStore';
@@ -52,56 +58,105 @@ const MODES: { mode: FillMode; label: string; icon: () => JSX.Element }[] = [
   },
 ];
 
+function modes(which: readonly FillMode[]) {
+  return (
+    <For each={MODES.filter((m) => which.includes(m.mode))}>
+      {(m) => (
+        <IconButton
+          label={m.label}
+          radio
+          active={fillState.mode === m.mode}
+          title={
+            m.mode === 'date'
+              ? `Date: click to place ${formatDate(new Date(), settings.dateFormat)}`
+              : undefined
+          }
+          onClick={() => setFillMode(m.mode)}
+        >
+          {m.icon()}
+        </IconButton>
+      )}
+    </For>
+  );
+}
+
+export const FILL_GROUPS: ToolbarGroup[] = [
+  {
+    id: 'label',
+    label: 'Fill',
+    priority: 2,
+    drops: true,
+    render: () => <span class="text-tool-label">Fill</span>,
+  },
+  {
+    id: 'answers',
+    label: 'Place text and marks',
+    role: 'radiogroup',
+    priority: 6,
+    render: () => modes(['text', 'check', 'cross']),
+  },
+  {
+    id: 'shapes',
+    label: 'Place dots and lines',
+    role: 'radiogroup',
+    priority: 4,
+    render: () => modes(['dot', 'line', 'circle']),
+  },
+  {
+    id: 'date',
+    label: 'Place the date',
+    role: 'radiogroup',
+    priority: 5,
+    render: () => modes(['date']),
+  },
+  {
+    id: 'hint',
+    label: 'Hint',
+    priority: 1,
+    drops: true,
+    render: () => (
+      <span class="text-tool-hint">
+        {fillState.mode === 'text'
+          ? 'Click a blank to type; Tab moves to the next'
+          : fillState.mode === 'date'
+            ? 'Click to place the date'
+            : 'Click to place; on a box it is centred'}
+      </span>
+    ),
+  },
+  {
+    id: 'done',
+    label: 'Done',
+    priority: Infinity,
+    render: () => (
+      <button type="button" class="secondary-btn" onClick={() => setActiveTool('select')}>
+        Done
+      </button>
+    ),
+  },
+];
+
 export default function FillTools() {
   const visible = () => toolState.active === 'fill' && activeTab()?.documentStore.state.loaded;
   return (
     <Show when={visible()}>
       <div
-        class="text-tool-options fill-tool-options"
+        class="text-tool-options"
         role="toolbar"
         aria-label="Fill and sign"
         onPointerDown={(e) => {
-          // Keep the caret in the answer being typed.
+          // Keep the caret in the answer being typed; the overflow menu's
+          // rows reach here through its portal.
           if ((e.target as HTMLElement).closest('button')) e.preventDefault();
         }}
       >
-        <span class="text-tool-label">Fill</span>
-        <div class="text-format-buttons" role="radiogroup" aria-label="Place">
-          <For each={MODES}>
-            {(m) => (
-              <button
-                type="button"
-                class="icon-btn"
-                role="radio"
-                classList={{ 'is-active': fillState.mode === m.mode }}
-                aria-checked={fillState.mode === m.mode}
-                aria-label={m.label}
-                title={
-                  m.mode === 'date'
-                    ? `Date: click to place ${formatDate(new Date(), settings.dateFormat)}`
-                    : m.label
-                }
-                onClick={() => setFillMode(m.mode)}
-              >
-                {m.icon()}
-              </button>
-            )}
-          </For>
-        </div>
-        <span class="text-tool-hint">
-          {fillState.mode === 'text'
-            ? 'Click a blank to type; Tab moves to the next'
-            : fillState.mode === 'date'
-              ? 'Click to place the date'
-              : 'Click to place; on a box it is centred'}
-        </span>
-        <button
-          type="button"
-          class="secondary-btn fill-done"
-          onClick={() => setActiveTool('select')}
-        >
-          Done
-        </button>
+        <OverflowRow
+          groups={FILL_GROUPS}
+          trailingId="done"
+          class="options-row"
+          menuClass="text-tool-menu"
+          moreLabel="More fill options"
+        />
       </div>
     </Show>
   );
