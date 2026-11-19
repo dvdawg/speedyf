@@ -20,6 +20,8 @@ import { openInNewTabOrFocus } from '../document/tabsController';
 import { activeTab, tabsStore } from '../../stores/tabsStore';
 import { jumpToPage } from '../viewer/navHistory';
 import { IconClose, IconPlus, IconSearch } from '../../components/icons';
+import { popupMenu } from '../../lib/nativeMenu';
+import { fileMenuEntries } from './fileMenu';
 import MathText from '../../components/MathText';
 import { splitSnippet } from './snippet';
 import type { LibraryHit } from '../../types/engine';
@@ -172,7 +174,17 @@ export default function LibraryPanel() {
               <div class="library-results">
                 <For each={libraryStore.state.results}>
                   {(hit) => (
-                    <article class="library-result">
+                    <article
+                      class="library-result"
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        void popupMenu(
+                          fileMenuEntries(hit.path, {
+                            open: () => void openHit(hit, hit.pages[0]?.src ?? 0),
+                          })
+                        );
+                      }}
+                    >
                       <button
                         type="button"
                         class="library-result-head"

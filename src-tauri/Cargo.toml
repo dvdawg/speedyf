@@ -106,7 +106,7 @@ chacha20poly1305 = { version = "0.11", default-features = false, features = ["al
 # CoreMedia, AVFoundation and friends.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSDictionary", "NSString", "NSError", "NSUserDefaults"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSDictionary", "NSString", "NSError", "NSUserDefaults", "NSURL"] }
 objc2-vision = { version = "0.3", default-features = false, features = ["std", "objc2-core-foundation", "VNObservation", "VNRecognizeTextRequest", "VNRequest", "VNRequestHandler", "VNTypes"] }
 # Markup export: WKWebView createPDF turns each HTML comment sheet into one
 # vector PDF page (markup_capture.rs).

@@ -35,6 +35,8 @@ import { addBlankPageAfter } from '../editor/editorActions';
 import type { Rotation } from '../../types/model';
 import { TabContext } from '../../app/TabContext';
 import { jumpToPage } from '../viewer/navHistory';
+import { popupMenu } from '../../lib/nativeMenu';
+import { thumbnailMenuEntries } from '../viewer/pageMenu';
 
 const THUMB_W = 148;
 const SLOT_PAD = 30; // label + spacing
@@ -406,6 +408,10 @@ export default function PageThumbnails() {
                     onDragEnd={() => {
                       setDragIndex(null);
                       setDropIndex(null);
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      void popupMenu(thumbnailMenuEntries(tab, i));
                     }}
                   >
                     <button

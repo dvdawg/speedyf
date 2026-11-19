@@ -6,11 +6,14 @@
  */
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import type { WindowBounds } from '../../stores/sessionStore';
 
-/** One window's open documents, in tab-strip order. */
+/** One window's open documents, in tab-strip order, and - for a window
+ * reopened from the last launch - where it was. */
 export interface WindowTabs {
   tabs: string[];
   activePath: string | null;
+  bounds?: WindowBounds | null;
 }
 
 /** Another window, as a "move tab to…" menu sees it. */
@@ -22,6 +25,12 @@ export interface WindowSummary {
 }
 
 export const MAIN_LABEL = 'main';
+export const SETTINGS_LABEL = 'settings';
+
+/** A window that holds documents, as opposed to the Settings window. */
+export function isDocumentWindow(label: string): boolean {
+  return label === MAIN_LABEL || label.startsWith('speedyf-');
+}
 
 /** This window's label. Falls back to the main window's outside a webview
  * (the unit tests), where asking Tauri throws. */

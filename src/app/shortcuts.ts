@@ -75,7 +75,24 @@ const BINDINGS: readonly Binding[] = [
   { key: 'p', mod: true, shift: false, id: 'file.print', whileTyping: true, preventAlways: true },
   { key: 's', mod: true, shift: false, id: 'file.save', whileTyping: true, preventAlways: true },
   { key: 's', mod: true, shift: true, id: 'file.saveAs', whileTyping: true, preventAlways: true },
-  { key: 'w', mod: true, id: 'file.closeTab', whileTyping: true, preventAlways: true },
+  {
+    key: 'w',
+    mod: true,
+    shift: true,
+    id: 'file.closeWindow',
+    whileTyping: true,
+    preventAlways: true,
+  },
+  {
+    key: 'w',
+    mod: true,
+    shift: false,
+    id: 'file.closeTab',
+    whileTyping: true,
+    preventAlways: true,
+  },
+  // Settings, on the chord every desktop app uses for its preferences.
+  { key: ',', mod: true, id: 'app.settings', whileTyping: true, preventAlways: true },
   {
     key: 't',
     mod: true,
@@ -175,7 +192,6 @@ const NAV_ALT: readonly Binding[] = [
  * `shortcut`: what the shortcut sheet lists for them. Keep in step with the
  * handler below and with `reservedChords`. */
 export const UNLISTED_SHORTCUTS: readonly { spec: string; title: string; area: ShortcutArea }[] = [
-  { spec: 'mod+shift+p', title: 'Command Palette', area: 'View' },
   { spec: 'mod+1-9', title: 'Go to Tab 1 to 9', area: 'Navigation' },
   { spec: 'Escape', title: 'Close Search, Selection or Tool', area: 'View' },
 ];

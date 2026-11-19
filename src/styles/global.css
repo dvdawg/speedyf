@@ -10217,3 +10217,12 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
     transition: none;
   }
 }
+
+/* ---- Settings window (features/settings/SettingsWindow.tsx) ---- */
+.settings-window {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  background: var(--bg);
+  overflow: hidden;
+}

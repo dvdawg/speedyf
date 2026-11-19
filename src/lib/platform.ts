@@ -18,3 +18,7 @@ export const platform: Platform = detectPlatform(
 export function markPlatform(root: HTMLElement, which: Platform = platform) {
   root.dataset.platform = which;
 }
+
+/** Which desktop the app is running on, for the few things that differ: the
+ * menu bar (macOS only), the title bar's document state, and key names. */
+export const IS_MAC = platform === 'macos';

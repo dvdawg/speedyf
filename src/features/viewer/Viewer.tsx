@@ -38,6 +38,8 @@ import { TabContext } from '../../app/TabContext';
 import { tabsStore, type TabRecord } from '../../stores/tabsStore';
 import { recentStore } from '../../stores/recentStore';
 import { navigateForMouseButton } from './navHistory';
+import { isEditableTarget, popupMenu } from '../../lib/nativeMenu';
+import { pageMenuEntries } from './pageMenu';
 import { deniedReason } from '../protect/permissions';
 import { flashStatus } from '../../stores/statusMessage';
 
@@ -453,6 +455,15 @@ function ViewerContent(props: { tab: TabRecord }) {
       }}
       onMouseUp={(e) => {
         if (navigateForMouseButton(e.button, props.tab)) e.preventDefault();
+      }}
+      // A native menu for the page and the text selected on it. An
+      // annotation's own menu (AnnotationLayer) has already claimed its
+      // right-clicks; a text field keeps the system's Cut/Copy/Paste.
+      onContextMenu={(e) => {
+        if (e.defaultPrevented || isEditableTarget(e.target)) return;
+        e.preventDefault();
+        const onFormField = e.target instanceof Element && e.target.closest('.form-field') !== null;
+        void popupMenu(pageMenuEntries(props.tab, scroller, { onFormField }));
       }}
       role="document"
       aria-label="Document pages"

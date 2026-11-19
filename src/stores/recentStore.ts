@@ -1,6 +1,7 @@
 /** Recent-files list persisted to localStorage, capped at 20 entries. */
 import { createStore } from 'solid-js/store';
 import { engine } from '../lib/transport/engine';
+import { desktop } from '../lib/transport/desktop';
 
 /** Where reading stopped, stored zoom-independently: a page plus how far down
  * it the viewport's top edge sat. Storing a raw scroll offset would restore
@@ -98,6 +99,8 @@ export const recentStore = {
     });
     setState('entries', next.slice(0, MAX_ENTRIES));
     persist();
+    // The system's list too: the Dock menu's recent documents on macOS.
+    void desktop.noteRecentDocument(path);
 
     void engine
       .fileMetadata(path)
@@ -142,5 +145,6 @@ export const recentStore = {
   clear() {
     setState('entries', []);
     persist();
+    void desktop.clearRecentDocuments();
   },
 };

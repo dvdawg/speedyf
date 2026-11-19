@@ -15,6 +15,7 @@
  * another column. Keyboard handling lives on the list element with a roving
  * tabindex: the active scope is the one row in the tab order, and arrows
  * move the scope itself, the way a sidebar does. */
+import { popupMenu, SEPARATOR, type MenuEntry } from '../../lib/nativeMenu';
 import { createEffect, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { IconImport, IconMore, IconPlus } from '../../components/icons';
 import type { Project } from '../../types/engine';
@@ -75,6 +76,24 @@ function InlineInput(props: {
   );
 }
 
+/** What can be done to one project: the row's own menu and its right-click
+ * menu offer the same. */
+function projectMenuItems(
+  project: Project,
+  onRename: () => void,
+  onDelete: () => void
+): { label: string; run: () => void; danger?: boolean }[] {
+  return [
+    { label: 'Rename', run: onRename },
+    { label: 'Export .bib...', run: () => void exportBib(project) },
+    { label: 'Export bundle (.zip)...', run: () => void exportBundle(project) },
+    project.bibPath
+      ? { label: 'Stop syncing .bib', run: () => void stopSyncingBib(project) }
+      : { label: 'Sync .bib...', run: () => void syncBib(project) },
+    { label: 'Delete', run: onDelete, danger: true },
+  ];
+}
+
 /** The per-project menu. Closes on Escape, on a click anywhere else, and
  * before any item runs, since half the items replace the row underneath. */
 function ProjectMenu(props: {
@@ -84,15 +103,7 @@ function ProjectMenu(props: {
   onDelete: () => void;
 }) {
   let menu!: HTMLDivElement;
-  const items = (): { label: string; run: () => void; danger?: boolean }[] => [
-    { label: 'Rename', run: props.onRename },
-    { label: 'Export .bib...', run: () => void exportBib(props.project) },
-    { label: 'Export bundle (.zip)...', run: () => void exportBundle(props.project) },
-    props.project.bibPath
-      ? { label: 'Stop syncing .bib', run: () => void stopSyncingBib(props.project) }
-      : { label: 'Sync .bib...', run: () => void syncBib(props.project) },
-    { label: 'Delete', run: props.onDelete, danger: true },
-  ];
+  const items = () => projectMenuItems(props.project, props.onRename, props.onDelete);
   const focusItem = (delta: number) => {
     const buttons = Array.from(menu.querySelectorAll<HTMLButtonElement>('button'));
     const current = buttons.findIndex((b) => b === document.activeElement);
@@ -371,6 +382,22 @@ export default function ProjectsColumn(props: { onMoveFocus: (dir: -1 | 1) => vo
                 data-drop-project={project.id}
                 onClick={() => enter(scope())}
                 onDblClick={() => setRenaming(project.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  const items = projectMenuItems(
+                    project,
+                    () => setRenaming(project.id),
+                    () => setConfirming(project.id)
+                  );
+                  void popupMenu([
+                    { text: 'Show Project', run: () => enter(scope()) },
+                    SEPARATOR,
+                    ...items.flatMap((item): MenuEntry[] => [
+                      ...(item.danger ? [SEPARATOR] : []),
+                      { text: item.label, run: item.run },
+                    ]),
+                  ]);
+                }}
                 onPointerDown={(e) => onRowPointerDown(project, e)}
               >
                 <Show

@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { loadSession, removeWindowSession, saveSession, takeWindowSessions } from './sessionStore';
+import {
+  loadSession,
+  removeWindowSession,
+  saveBounds,
+  saveSession,
+  takeWindowSessions,
+} from './sessionStore';
 
 const map = new Map<string, string>();
 const storage: Storage = {
@@ -114,5 +120,34 @@ describe('takeWindowSessions', () => {
   it('leaves the main session alone when no other window survived', () => {
     saveSession({ version: 1, tabs: [{ path: '/a.pdf' }], activePath: '/a.pdf' });
     expect(takeWindowSessions()).toEqual({ main: loadSession(), others: [] });
+  });
+});
+
+describe('window frames', () => {
+  const bounds = { x: -1400, y: 80, width: 1100, height: 760, maximized: false };
+
+  it('keeps a frame beside the tabs, and tab saves do not drop it', () => {
+    saveSession({ version: 1, tabs: [{ path: '/m.pdf' }], activePath: null });
+    saveBounds(bounds, 'speedyf-3');
+    saveSession({ version: 1, tabs: [{ path: '/a.pdf' }], activePath: '/a.pdf' }, 'speedyf-3');
+    const { others } = takeWindowSessions();
+    expect(others).toEqual([
+      { version: 1, tabs: [{ path: '/a.pdf' }], activePath: '/a.pdf', bounds },
+    ]);
+  });
+
+  it('ignores a malformed frame rather than the whole session', () => {
+    storage.setItem(
+      'speedyf-session',
+      JSON.stringify({
+        version: 1,
+        tabs: [{ path: '/a.pdf' }],
+        activePath: null,
+        bounds: { x: 'no' },
+      })
+    );
+    const session = loadSession();
+    expect(session.tabs).toEqual([{ path: '/a.pdf' }]);
+    expect(session.bounds).toBeUndefined();
   });
 });

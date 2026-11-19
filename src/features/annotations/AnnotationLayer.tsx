@@ -62,6 +62,10 @@ import {
   snapText,
 } from '../sign/fill';
 import { settings } from '../../stores/settings';
+import { popupMenu } from '../../lib/nativeMenu';
+import { IS_MAC } from '../../lib/platform';
+import { allows } from '../protect/permissions';
+import { annotationMenuEntries } from './annotationMenu';
 import type { Blank } from '../../types/engine';
 import type { MarkKind } from '../../types/model';
 
@@ -647,9 +651,21 @@ export default function AnnotationLayer(props: Props) {
     }
   };
 
+  /** The annotation a secondary press landed on, for the context menu that
+   * follows it (`onContextMenu` below). Stamped, so a press whose menu
+   * never came cannot leave it set. */
+  let menuTarget: { annot: Annotation; at: number } | null = null;
+
   const startMove = (e: PointerEvent, a: Annotation) => {
     // Armed to place a signature: let the press reach the layer instead.
     if (placing()) return;
+    const secondary = e.button === 2 || (IS_MAC && e.button === 0 && e.ctrlKey);
+    if (secondary && toolState.active === 'select') {
+      e.stopPropagation();
+      documentStore.setSelected({ pageId: props.page.id, annotId: a.id });
+      menuTarget = { annot: a, at: performance.now() };
+      return;
+    }
     if (toolState.active !== 'select' || e.button !== 0) return;
     e.stopPropagation();
     documentStore.setSelected({ pageId: props.page.id, annotId: a.id });
@@ -695,6 +711,28 @@ export default function AnnotationLayer(props: Props) {
     documentStore.apply({ type: 'deleteAnnot', pageId: props.page.id, id: a.id });
   };
 
+  const onContextMenu = (e: MouseEvent) => {
+    const target = menuTarget;
+    menuTarget = null;
+    if (!target || performance.now() - target.at > 1000) return;
+    e.preventDefault();
+    const a = target.annot;
+    void popupMenu(
+      annotationMenuEntries(a, {
+        editable: allows(documentStore.state.protection, 'annotate'),
+        editText: () => editText(a.id),
+        recolour: (color) =>
+          documentStore.apply({
+            type: 'patchAnnot',
+            pageId: props.page.id,
+            id: a.id,
+            patch: { color },
+          }),
+        remove: () => deleteSelected(a),
+      })
+    );
+  };
+
   return (
     <div
       ref={layerEl}
@@ -707,6 +745,7 @@ export default function AnnotationLayer(props: Props) {
       onPointerDown={onLayerPointerDown}
       onPointerMove={onLayerPointerMove}
       onPointerUp={onLayerPointerUp}
+      onContextMenu={onContextMenu}
     >
       <svg
         class="annot-svg"
