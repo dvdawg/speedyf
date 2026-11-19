@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@solidjs/testing-library';
+import { cleanup, fireEvent, render } from '@solidjs/testing-library';
 import TabStrip from './TabStrip';
 import {
   activateTab,
@@ -12,6 +12,8 @@ import {
   reorderTab,
 } from '../document/tabsController';
 import { addTab, createTab, removeTab, setActiveId, tabsStore } from '../../stores/tabsStore';
+import type * as nativeMenuModule from '../../lib/nativeMenu';
+import type { MenuEntry } from '../../lib/nativeMenu';
 
 vi.mock('../document/tabsController', () => ({
   activateTab: vi.fn(),
@@ -30,9 +32,26 @@ vi.mock('../windows/windowController', () => ({
 const roster = vi.fn();
 vi.mock('../../lib/transport/windows', () => ({ windowApi: { roster: () => roster() } }));
 vi.mock('./TabPreview', () => ({ default: () => null }));
+const popped: MenuEntry[][] = [];
+vi.mock('../../lib/nativeMenu', async (importOriginal) => ({
+  ...(await importOriginal<typeof nativeMenuModule>()),
+  popupMenu: vi.fn((entries: MenuEntry[]) => {
+    popped.push(entries);
+    return Promise.resolve();
+  }),
+}));
+
+/** The items of the last native menu popped up, by label. */
+async function lastMenu(): Promise<Extract<MenuEntry, { run: unknown }>[]> {
+  await vi.waitFor(() => expect(popped.length).toBeGreaterThan(0));
+  return popped.at(-1)!.filter((e): e is Extract<MenuEntry, { run: unknown }> => 'run' in e);
+}
+const item = (entries: Extract<MenuEntry, { run: unknown }>[], text: string) =>
+  entries.find((e) => e.text === text)!;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  popped.length = 0;
   roster.mockResolvedValue([]);
   vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(() => {});
   HTMLElement.prototype.setPointerCapture = vi.fn();
@@ -228,9 +247,8 @@ it('right-click opens a tab menu offering the other open windows as destinations
   ]);
   const { tabs } = setup();
   fireEvent.contextMenu(tabs[1]!, { clientX: 300, clientY: 20 });
-  const item = await screen.findByRole('menuitem', { name: 'Move to "notes.pdf"' });
-  const labels = screen.getAllByRole('menuitem').map((b) => b.textContent);
-  expect(labels).toEqual([
+  const menu = await lastMenu();
+  expect(menu.map((e) => e.text)).toEqual([
     'Close Tab',
     'Close Other Tabs',
     'Close Tabs to the Right',
@@ -238,27 +256,20 @@ it('right-click opens a tab menu offering the other open windows as destinations
     'Move to "notes.pdf"',
     'Move to "Empty window"',
   ]);
-  fireEvent.click(item);
+  item(menu, 'Move to "notes.pdf"').run();
   expect(moveTabToWindow).toHaveBeenCalledWith(tabsStore.state.tabs[1]!.id, 'speedyf-2');
-  // The menu closes before it acts: every item changes the strip under it.
-  expect(screen.queryByRole('menu')).toBeNull();
 });
 
 it('tab menu closes neighbours and detaches through the same paths as the strip', async () => {
   const { tabs } = setup();
   const id = tabsStore.state.tabs[2]!.id;
-  const open = async () => {
-    fireEvent.contextMenu(tabs[2]!, { clientX: 500, clientY: 20 });
-    return screen.findByRole('menu');
-  };
-  await open();
+  fireEvent.contextMenu(tabs[2]!, { clientX: 500, clientY: 20 });
+  const menu = await lastMenu();
   // The last tab has nothing to its right.
-  const right = screen.getByRole('menuitem', { name: 'Close Tabs to the Right' });
-  expect((right as HTMLButtonElement).disabled).toBe(true);
-  fireEvent.click(screen.getByRole('menuitem', { name: 'Close Other Tabs' }));
+  expect(item(menu, 'Close Tabs to the Right').enabled).toBe(false);
+  item(menu, 'Close Other Tabs').run();
   expect(closeOtherTabs).toHaveBeenCalledWith(id);
-  await open();
-  fireEvent.click(screen.getByRole('menuitem', { name: 'Move to New Window' }));
+  item(menu, 'Move to New Window').run();
   expect(detachTab).toHaveBeenCalledWith(id);
   expect(closeTabsToTheRight).not.toHaveBeenCalled();
 });

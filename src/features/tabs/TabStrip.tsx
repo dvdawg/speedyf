@@ -10,7 +10,8 @@
  *
  * Captured pointer gestures reorder in the strip or detach outside it. The
  * rest of what can be done to one tab — close the ones around it, or hand it
- * to another existing window — is on its right-click menu (TabMenu). */
+ * to another existing window — is on its right-click menu (tabMenu.ts), a
+ * native one. */
 import { createEffect, createSignal, For, onCleanup, Show } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import IconButton from '../../components/IconButton';
@@ -20,7 +21,7 @@ import { isOutsideTabStrip, isTabDrag } from './tabDrag';
 import { tabsStore } from '../../stores/tabsStore';
 import { activateTab, closeTab, goHome, reorderTab, detachTab } from '../document/tabsController';
 import TabPreview from './TabPreview';
-import TabMenu, { type TabMenuTarget } from './TabMenu';
+import { openTabMenu } from './tabMenu';
 import type { Anchor } from './tabPreviewLayout';
 
 /** Long enough that sweeping across the strip does not flash cards, short
@@ -45,7 +46,6 @@ export default function TabStrip() {
   let stripRow!: HTMLDivElement;
   const [dropIndex, setDropIndex] = createSignal<number | null>(null);
   const [hovered, setHovered] = createSignal<{ id: string; anchor: Anchor } | null>(null);
-  const [menu, setMenu] = createSignal<TabMenuTarget | null>(null);
   let hoverTimer: ReturnType<typeof setTimeout> | undefined;
   let strip!: HTMLDivElement;
 
@@ -90,7 +90,7 @@ export default function TabStrip() {
     e.preventDefault();
     cancelDrag();
     clearHover();
-    setMenu({ tabId: id, x: e.clientX, y: e.clientY });
+    void openTabMenu(id);
   };
 
   const hoverTab = (id: string, element: HTMLElement) => {
@@ -137,7 +137,6 @@ export default function TabStrip() {
         onWheel={onWheel}
         onScroll={() => {
           clearHover();
-          setMenu(null);
         }}
       >
         <For each={tabsStore.state.tabs}>
@@ -325,13 +324,6 @@ export default function TabStrip() {
               </Show>
             </div>
           </Portal>
-        )}
-      </Show>
-      <Show when={menu()}>
-        {(target) => (
-          <Show when={tabsStore.state.tabs.some((t) => t.id === target().tabId)}>
-            <TabMenu target={target()} onClose={() => setMenu(null)} />
-          </Show>
         )}
       </Show>
       <Show when={hovered()}>
