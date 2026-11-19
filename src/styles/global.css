@@ -42,6 +42,14 @@
   /* Height of a standard control: buttons, the segmented toggles (24px
    * segments + 2px padding + 1px border) and fields that share their rows. */
   --control-h: 30px;
+  /* The tab strip's row. On macOS it is also the title bar, and the traffic
+     lights are centred on it: keep trafficLightPosition.y in
+     tauri.conf.json at 2 + half of this. */
+  --tabstrip-h: 38px;
+  /* Where a sheet hangs from; see .sheet-backdrop. */
+  --sheet-top: 0px;
+  /* Room the macOS traffic lights take at the start of that row. */
+  --traffic-light-inset: 84px;
   /* Screen heads (Home panels, Projects): 30px of content between these
    * paddings, so a 20px title, a count and a --control-h control share it. */
   --screen-head-pad: 22px 28px 10px;
@@ -60,7 +68,26 @@
   --row-hover: color-mix(in srgb, var(--text) 6%, transparent);
   --row-selected: var(--accent-soft);
   --row-selected-text: var(--text);
-  --row-radius: 6px;
+  --row-radius: var(--radius-m);
+  /* Type scale: the five sizes macOS itself uses for interface text. Every
+     font-size outside this block is one of these, or an em of its context
+     (note and markup text); style.test.ts holds the line.
+       xs  11  captions, badges, secondary lines
+       sm  12  dense lists, panels, field labels
+       md  13  body text, buttons, menus
+       lg  15  sheet titles, the palette field
+       xl  20  screen titles */
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 15px;
+  --fs-xl: 20px;
+  /* Corner radii: small for chips, marks and inline bits; medium for
+     controls, rows and fields; large for floating surfaces (menus,
+     popovers, sheets, cards). 50% for circles. */
+  --radius-s: 4px;
+  --radius-m: 6px;
+  --radius-l: 10px;
 }
 
 :root[data-theme='dark'] {
@@ -115,7 +142,7 @@ body,
 body {
   background: var(--bg);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-md);
   -webkit-font-smoothing: antialiased;
   -webkit-user-select: none;
   user-select: none;
@@ -130,6 +157,42 @@ textarea,
 [contenteditable='true'] {
   -webkit-user-select: text;
   user-select: text;
+}
+
+/* Native tells. The chrome shows the arrow, as an AppKit window does - an
+   I-beam only where text can be typed or selected (fields here, the page's
+   text layer and selectable notes in their own rules), the pointing hand
+   only on links. The window itself never rubber-bands, chrome images and
+   icons never lift into a drag ghost, and a focus ring answers the
+   keyboard, not the mouse. */
+html,
+body {
+  cursor: default;
+  overscroll-behavior: none;
+}
+
+input:not(
+  [type='checkbox'],
+  [type='radio'],
+  [type='range'],
+  [type='color'],
+  [type='button'],
+  [type='submit'],
+  [type='reset'],
+  [type='file']
+),
+textarea,
+[contenteditable='true'] {
+  cursor: text;
+}
+
+img,
+svg {
+  -webkit-user-drag: none;
+}
+
+:focus:not(:focus-visible) {
+  outline: none;
 }
 
 .sr-only {
@@ -216,7 +279,7 @@ textarea,
 .skeleton-bar {
   display: inline-block;
   height: 0.6em;
-  border-radius: 0.3em;
+  border-radius: var(--radius-s);
   background: var(--bg-inset);
   vertical-align: middle;
 }
@@ -278,7 +341,7 @@ textarea,
   .palette-list
 )::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: var(--scrollbar-thumb) padding-box;
 }
 
@@ -484,7 +547,7 @@ textarea,
   margin: 0;
   /* On the nav labels' left edge (rail 14px + item 10px). */
   padding: 0 10px;
-  font-size: 20px;
+  font-size: var(--fs-xl);
   font-weight: 400;
   line-height: 30px;
   color: var(--text);
@@ -508,12 +571,12 @@ textarea,
   width: 100%;
   padding: 8px 10px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: transparent;
   color: var(--text-dim);
   text-align: left;
   font: inherit;
-  cursor: pointer;
+  cursor: default;
 }
 
 .home-nav-item:hover {
@@ -557,7 +620,7 @@ textarea,
 
 .home-panel-head h2 {
   margin: 0;
-  font-size: 20px;
+  font-size: var(--fs-xl);
   font-weight: 400;
   line-height: 30px;
   color: var(--text);
@@ -596,7 +659,7 @@ textarea,
   padding: 12px;
   margin-bottom: 12px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-l);
   color: var(--text-dim);
 }
 
@@ -627,7 +690,7 @@ textarea,
   color: var(--text);
   text-align: left;
   font: inherit;
-  cursor: pointer;
+  cursor: default;
 }
 
 .home-recent-row:hover {
@@ -654,7 +717,7 @@ textarea,
 .home-recent-size {
   flex: none;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-md);
   white-space: nowrap;
 }
 
@@ -668,7 +731,7 @@ textarea,
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 /* ---------- home: settings ---------- */
@@ -698,7 +761,7 @@ textarea,
   display: flex;
   flex-direction: column;
   gap: 3px;
-  cursor: pointer;
+  cursor: default;
 }
 
 .home-setting-title {
@@ -708,7 +771,7 @@ textarea,
 
 .home-setting-desc {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 /* ---------- home: library ---------- */
@@ -725,12 +788,12 @@ textarea,
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .home-library-empty {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-style: italic;
 }
 
@@ -739,7 +802,7 @@ textarea,
   align-items: center;
   gap: 10px;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 /* The default progress widget renders system blue, which fights the accent.
@@ -749,7 +812,7 @@ textarea,
   width: 180px;
   height: 6px;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--radius-s);
   background: var(--bg-inset);
   overflow: hidden;
 }
@@ -770,20 +833,145 @@ textarea,
   margin: 0;
   padding: 8px 10px;
   border: 1px solid var(--danger);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 /* ---------- toolbar ---------- */
 .toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 10px;
   padding: 6px 10px;
   background: var(--bg-elev);
   border-bottom: 1px solid var(--border);
+}
+
+/* One row that never wraps: what does not fit folds into the overflow menu
+   (OverflowRow.tsx). The clip is only a guard for the frame between a
+   resize and the fold. */
+.toolbar-row {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  column-gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.toolbar > .text-tool-options {
+  margin-top: 6px;
+}
+
+.tb-overflow {
+  flex: none;
+  margin-left: auto;
+}
+
+.tb-right + .tb-overflow {
+  margin-left: 0;
+}
+
+.tb-page-field {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* The overflow menu: the folded groups as labelled rows. */
+.tb-menu {
+  position: fixed;
+  z-index: 70;
+  min-width: 220px;
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  background: var(--bg-elev);
+  box-shadow: var(--shadow);
+}
+
+.tb-menu-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.tb-menu-separator {
+  height: 1px;
+  flex: none;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
+.tb-menu-item {
+  height: 28px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--radius-m);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-md);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.tb-menu-item:hover:not(:disabled),
+.tb-menu-item:focus-visible {
+  background: var(--accent-soft);
+  outline: none;
+}
+
+.tb-menu-item:disabled {
+  color: var(--text-dim);
+}
+
+.tb-menu-item:disabled .tb-menu-icon {
+  opacity: 0.45;
+}
+
+.tb-menu-item.is-active .tb-menu-icon {
+  color: var(--accent);
+}
+
+.tb-menu-icon {
+  display: inline-flex;
+  width: 16px;
+  justify-content: center;
+}
+
+.tb-menu-name {
+  flex: 1;
+}
+
+.tb-menu-key {
+  margin-left: 16px;
+  color: var(--text-dim);
+}
+
+/* Fields and option strips sit in the menu as rows of their own. */
+.tb-menu .tb-page-field,
+.tb-menu .zoom-input,
+.tb-menu .tool-options {
+  align-self: flex-start;
+  margin: 2px 8px;
+}
+
+/* A toolbar menu of its own (Sign, Redact) opens in place, under its row. */
+.tb-menu :is(.sign-menu-wrap, .redact-menu-wrap) {
+  display: flex;
+  flex-direction: column;
+}
+
+.tb-menu :is(.sign-menu, .redact-menu) {
+  position: static;
+  margin: 2px 0 4px 24px;
+  box-shadow: none;
 }
 
 .tb-group {
@@ -813,10 +1001,10 @@ textarea,
   min-width: 28px;
   padding: 0 5px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: transparent;
   color: var(--text);
-  cursor: pointer;
+  cursor: default;
   font: inherit;
 }
 
@@ -868,7 +1056,7 @@ textarea:focus-visible {
 .tb-input {
   height: 28px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-inset);
   color: var(--text);
   text-align: center;
@@ -904,7 +1092,7 @@ textarea:focus-visible {
   margin-left: 6px;
   padding: 2px 6px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-inset);
 }
 
@@ -913,7 +1101,7 @@ textarea:focus-visible {
   height: 22px;
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: none;
 }
 
@@ -935,7 +1123,7 @@ textarea:focus-visible {
 .text-tool-unit,
 .text-tool-hint {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .font-family-input {
@@ -949,7 +1137,7 @@ textarea:focus-visible {
 }
 
 .text-format-buttons .icon-btn {
-  font-size: 16px;
+  font-size: var(--fs-lg);
 }
 
 /* ---------- tab strip ---------- */
@@ -957,10 +1145,21 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 8px;
+  box-sizing: content-box;
+  height: var(--tabstrip-h);
+  padding: 0 8px;
   background: var(--bg-elev);
   border-bottom: 1px solid var(--border);
   min-width: 0;
+}
+
+/* macOS: the title bar is folded into this row (titleBarStyle Overlay in
+   tauri.conf.json) and the traffic lights sit on its left end, at x 14 to
+   74 and centred 19px down - half of --tabstrip-h. Full screen hides them
+   and the row takes its room back. Windows and Linux keep a native title
+   bar above the row. */
+:root[data-platform='macos']:not([data-fullscreen]) .tab-strip {
+  padding-left: var(--traffic-light-inset);
 }
 
 /* Scrolls once the pills stop shrinking. The scrollbar is hidden because the
@@ -993,10 +1192,10 @@ textarea:focus-visible {
   flex: 0 1 200px;
   padding: 0 4px 0 10px;
   border: 1px solid transparent;
-  border-radius: 6px 6px 0 0;
+  border-radius: var(--radius-m) var(--radius-m) 0 0;
   background: var(--bg-inset);
   color: var(--text-dim);
-  cursor: pointer;
+  cursor: default;
 }
 
 .tab-pill:hover {
@@ -1047,7 +1246,7 @@ html.is-dragging-tab * {
 .tab-drag-preview .tab-pill {
   flex: none;
   max-width: none;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   box-shadow:
     0 4px 8px rgba(0, 0, 0, 0.18),
     0 12px 24px rgba(0, 0, 0, 0.16);
@@ -1059,11 +1258,11 @@ html.is-dragging-tab * {
   left: 0;
   width: max-content;
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   background: var(--bg-elev);
   color: var(--text);
   box-shadow: var(--shadow);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .window-transfer-overlay {
@@ -1079,7 +1278,7 @@ html.is-dragging-tab * {
 .tab-pill.is-drop-target {
   outline: 2px dashed var(--accent);
   outline-offset: -2px;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
 }
 
 .tab-pill-name {
@@ -1120,7 +1319,7 @@ html.is-dragging-tab * {
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   background: var(--bg-elev);
   box-shadow: var(--shadow);
 }
@@ -1132,16 +1331,16 @@ html.is-dragging-tab * {
   align-items: center;
   padding: 0 8px;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--radius-m);
   background: none;
   color: var(--text);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-md);
   text-align: left;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  cursor: pointer;
+  cursor: default;
 }
 
 .tab-menu-item:hover:not(:disabled),
@@ -1170,7 +1369,7 @@ html.is-dragging-tab * {
   width: 232px;
   padding: 8px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   background: var(--bg-elev);
   box-shadow: var(--shadow);
   pointer-events: none;
@@ -1184,7 +1383,7 @@ html.is-dragging-tab * {
   object-position: top center;
   background: var(--page-bg);
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--radius-s);
 }
 
 .tab-preview-empty {
@@ -1194,10 +1393,10 @@ html.is-dragging-tab * {
   aspect-ratio: 8.5 / 11;
   max-height: 300px;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--radius-s);
   background: var(--bg-inset);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .tab-preview-meta {
@@ -1214,13 +1413,13 @@ html.is-dragging-tab * {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .tab-preview-pages {
   flex: none;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   white-space: nowrap;
 }
 
@@ -1280,16 +1479,16 @@ html.is-dragging-tab * {
 .thumb-slot.is-drop-target {
   outline: 2px dashed var(--accent);
   outline-offset: 3px;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
 }
 
 .thumb-btn {
   position: relative;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   padding: 0;
   background: var(--page-bg);
-  cursor: pointer;
+  cursor: default;
   overflow: hidden;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
 }
@@ -1320,7 +1519,7 @@ html.is-dragging-tab * {
 .thumb-viewport {
   position: absolute;
   border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
-  border-radius: 5px;
+  border-radius: var(--radius-m);
   background: color-mix(in srgb, var(--accent) 15%, transparent);
   cursor: grab;
   touch-action: none;
@@ -1384,7 +1583,7 @@ html.is-dragging-tab * {
 
 .thumb-num {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .thumb-ops {
@@ -1415,7 +1614,7 @@ html.is-dragging-tab * {
   min-height: 26px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-elev);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-dim);
   white-space: nowrap;
   overflow: hidden;
@@ -1442,10 +1641,10 @@ html.is-dragging-tab * {
   border: none;
   background: transparent;
   padding: 1px 4px;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   font: inherit;
   color: inherit;
-  cursor: pointer;
+  cursor: default;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -1555,11 +1754,11 @@ html.is-dragging-tab * {
   max-width: min(320px, calc(100% - 24px));
   padding: 7px 9px;
   border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--border));
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   color: var(--warn);
   background: color-mix(in srgb, var(--panel) 92%, transparent);
   box-shadow: var(--shadow);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .page-blank {
@@ -1731,7 +1930,7 @@ html.is-dragging-tab * {
   overflow: auto;
   padding: 4px;
   border: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
-  border-radius: 10px;
+  border-radius: var(--radius-l);
   background: var(--bg-elev);
   color: var(--text);
   box-shadow: 0 14px 38px rgba(0, 0, 0, 0.2);
@@ -1749,11 +1948,11 @@ html.is-dragging-tab * {
   padding: 0;
   overflow: hidden;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-m);
   background: var(--bg-inset);
   color: var(--text);
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .citation-preview-action:focus-visible {
@@ -1793,7 +1992,7 @@ html.is-dragging-tab * {
 }
 
 .citation-preview-skeleton.is-popover {
-  border-radius: 7px;
+  border-radius: var(--radius-m);
   height: 260px;
 }
 
@@ -1880,7 +2079,7 @@ html.is-dragging-tab * {
   min-height: 38px;
   padding: 7px 9px;
   border-top: 1px solid var(--border);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .citation-preview-page-number {
@@ -1888,7 +2087,7 @@ html.is-dragging-tab * {
   right: 9px;
   bottom: 7px;
   color: #5c6570;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 1;
   pointer-events: none;
 }
@@ -1912,7 +2111,7 @@ html.is-dragging-tab * {
   overflow: auto;
   background: var(--bg-inset);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.5;
   white-space: pre-wrap;
 }
@@ -1924,7 +2123,7 @@ html.is-dragging-tab * {
   align-items: flex-start;
   justify-content: center;
   gap: 10px;
-  border-radius: 7px;
+  border-radius: var(--radius-m);
 }
 
 .citation-uri {
@@ -1936,10 +2135,10 @@ html.is-dragging-tab * {
 .citation-library-action {
   padding: 6px 9px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-elev);
   color: var(--text);
-  cursor: pointer;
+  cursor: default;
 }
 
 .citation-library-action:hover {
@@ -2006,7 +2205,7 @@ html.is-dragging-tab * {
  * ring; a shaded one keeps a target too, since clicking it again clears it. */
 .annot-svg .bubble-target {
   pointer-events: fill;
-  cursor: pointer;
+  cursor: default;
   fill: var(--accent);
   fill-opacity: 0.14;
   stroke: var(--accent);
@@ -2143,7 +2342,7 @@ html.is-dragging-tab * {
   width: 200px;
   background: var(--bg-elev);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   box-shadow: var(--shadow);
   padding: 6px;
   pointer-events: auto;
@@ -2153,7 +2352,7 @@ html.is-dragging-tab * {
   width: 100%;
   height: 84px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: var(--bg-inset);
   color: var(--text);
   font: inherit;
@@ -2217,11 +2416,11 @@ html.is-dragging-tab * {
   justify-content: center;
   width: 24px;
   height: 24px;
-  border-radius: 12px;
+  border-radius: 50%;
   border: 1px solid var(--border);
   background: var(--bg-elev);
   color: var(--danger);
-  cursor: pointer;
+  cursor: default;
   box-shadow: var(--shadow);
 }
 
@@ -2249,7 +2448,7 @@ html.is-dragging-tab * {
   min-width: 0;
   height: 28px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-inset);
   color: var(--text);
   padding: 0 8px;
@@ -2268,7 +2467,7 @@ html.is-dragging-tab * {
   display: flex;
   align-items: center;
   gap: 6px;
-  cursor: pointer;
+  cursor: default;
 }
 
 .search-count {
@@ -2280,10 +2479,10 @@ html.is-dragging-tab * {
 .panel-note {
   margin: 6px 10px;
   padding: 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-inset);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .outline-panel {
@@ -2295,7 +2494,7 @@ html.is-dragging-tab * {
 .outline-generated-note {
   margin: 2px 10px 6px;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .outline-row {
@@ -2307,9 +2506,9 @@ html.is-dragging-tab * {
   color: var(--text);
   text-align: left;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.35;
-  cursor: pointer;
+  cursor: default;
   border-radius: var(--row-radius);
 }
 
@@ -2362,7 +2561,7 @@ html.is-dragging-tab * {
   height: 38px;
   padding: 0 10px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-m);
   background: var(--bg-inset);
 }
 
@@ -2387,7 +2586,7 @@ html.is-dragging-tab * {
   background: none;
   color: var(--text);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--fs-md);
 }
 
 .library-search-field input:focus,
@@ -2410,9 +2609,9 @@ html.is-dragging-tab * {
   border-radius: 50%;
   background: none;
   color: var(--text-dim);
-  font-size: 16px;
+  font-size: var(--fs-lg);
   line-height: 1;
-  cursor: pointer;
+  cursor: default;
 }
 
 .library-search-clear:hover {
@@ -2433,9 +2632,9 @@ html.is-dragging-tab * {
   background: none;
   color: var(--text-dim);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   text-overflow: ellipsis;
-  cursor: pointer;
+  cursor: default;
 }
 
 .library-search-scope:hover {
@@ -2464,7 +2663,7 @@ html.is-dragging-tab * {
 .library-status {
   margin: 10px 0 0;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 /* The one scrolling region on this screen. */
@@ -2479,7 +2678,7 @@ html.is-dragging-tab * {
   margin: 0;
   max-width: 52ch;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 
 .library-results {
@@ -2491,7 +2690,7 @@ html.is-dragging-tab * {
 
 .library-result {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-m);
   overflow: hidden;
 }
 
@@ -2507,8 +2706,8 @@ html.is-dragging-tab * {
   color: var(--text);
   text-align: left;
   font: inherit;
-  font-size: 13px;
-  cursor: pointer;
+  font-size: var(--fs-md);
+  cursor: default;
 }
 
 .library-result-head:hover {
@@ -2538,13 +2737,13 @@ html.is-dragging-tab * {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .library-result-count {
   flex: none;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
 }
 
@@ -2560,9 +2759,9 @@ html.is-dragging-tab * {
   color: var(--text-dim);
   text-align: left;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.45;
-  cursor: pointer;
+  cursor: default;
 }
 
 .library-result-hit:hover {
@@ -2595,7 +2794,7 @@ html.is-dragging-tab * {
    here looks like the passage you land on. */
 .library-result-snippet mark {
   padding: 0 1px;
-  border-radius: 3px;
+  border-radius: var(--radius-s);
   background: var(--hit);
   color: inherit;
 }
@@ -2605,7 +2804,7 @@ html.is-dragging-tab * {
   padding: 6px 11px;
   border-top: 1px solid var(--border);
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .library-folders {
@@ -2620,7 +2819,7 @@ html.is-dragging-tab * {
   justify-content: space-between;
   gap: 10px;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .library-add-folder {
@@ -2645,9 +2844,9 @@ html.is-dragging-tab * {
   max-width: 100%;
   padding: 3px 4px 3px 9px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-l);
   background: var(--bg-inset);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .library-folder-path {
@@ -2669,9 +2868,9 @@ html.is-dragging-tab * {
   border-radius: 50%;
   background: none;
   color: var(--text-dim);
-  font-size: 14px;
+  font-size: var(--fs-md);
   line-height: 1;
-  cursor: pointer;
+  cursor: default;
 }
 
 .library-folder-remove:hover {
@@ -2688,7 +2887,7 @@ html.is-dragging-tab * {
 .library-error {
   margin: 8px 0 0;
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 /* ---------- notes panel ---------- */
@@ -2705,7 +2904,7 @@ html.is-dragging-tab * {
   /* On the rows' content edge (their 8px padding). */
   padding: 4px 8px 8px;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .note-row {
@@ -2720,7 +2919,7 @@ html.is-dragging-tab * {
   color: var(--text);
   text-align: left;
   font: inherit;
-  cursor: pointer;
+  cursor: default;
 }
 
 .note-row:hover {
@@ -2733,7 +2932,7 @@ html.is-dragging-tab * {
   width: 4px;
   align-self: stretch;
   min-height: 28px;
-  border-radius: 2px;
+  border-radius: var(--radius-s);
 }
 
 .note-body {
@@ -2746,7 +2945,7 @@ html.is-dragging-tab * {
 
 .note-meta {
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 /* The words under a highlight. Clamped rather than truncated to one line: a
@@ -2756,13 +2955,13 @@ html.is-dragging-tab * {
   -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.45;
 }
 
 .note-text {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-style: italic;
   line-height: 1.4;
 }
@@ -2834,7 +3033,7 @@ html.is-dragging-tab * {
   justify-content: center;
   gap: 14px;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   white-space: nowrap;
 }
 
@@ -2846,12 +3045,12 @@ html.is-dragging-tab * {
   height: 24px;
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius-m);
   background: var(--bg-elev);
   color: var(--text);
-  font-size: 14px;
+  font-size: var(--fs-md);
   line-height: 1;
-  cursor: pointer;
+  cursor: default;
 }
 
 .print-pager button:hover:not(:disabled) {
@@ -2876,7 +3075,7 @@ html.is-dragging-tab * {
 
 .print-settings h2 {
   margin: 0 0 2px;
-  font-size: 16px;
+  font-size: var(--fs-lg);
 }
 
 .print-field {
@@ -2885,7 +3084,7 @@ html.is-dragging-tab * {
   gap: 5px;
   min-width: 0;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .print-field select,
@@ -2895,11 +3094,11 @@ html.is-dragging-tab * {
   height: 30px;
   padding: 0 7px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-inset);
   color: var(--text);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 
 .print-row {
@@ -2931,7 +3130,7 @@ html.is-dragging-tab * {
   gap: 6px;
   min-width: 0;
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 
 .print-choice input[type='radio'] {
@@ -2946,7 +3145,7 @@ html.is-dragging-tab * {
 .print-problem {
   margin: -4px 0 0;
   color: var(--warn);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .print-toggle {
@@ -2957,8 +3156,8 @@ html.is-dragging-tab * {
   padding-top: 12px;
   border-top: 1px solid var(--border);
   color: var(--text);
-  font-size: 13px;
-  cursor: pointer;
+  font-size: var(--fs-md);
+  cursor: default;
 }
 
 .print-toggle input {
@@ -2970,7 +3169,7 @@ html.is-dragging-tab * {
   display: block;
   margin-top: 2px;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 /* Pinned to the bottom of the column so Print sits in the same place whether
@@ -3019,7 +3218,7 @@ html.is-dragging-tab * {
   color: var(--text);
   text-align: left;
   font: inherit;
-  cursor: pointer;
+  cursor: default;
 }
 
 .figure-row:hover {
@@ -3036,7 +3235,7 @@ html.is-dragging-tab * {
   object-fit: contain;
   object-position: top left;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: var(--page-bg);
 }
 
@@ -3045,13 +3244,13 @@ html.is-dragging-tab * {
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   font-weight: 500;
 }
 
 .figure-page {
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 400;
   white-space: nowrap;
 }
@@ -3064,7 +3263,7 @@ html.is-dragging-tab * {
   -webkit-box-orient: vertical;
   overflow: hidden;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.35;
 }
 
@@ -3080,7 +3279,7 @@ html.is-dragging-tab * {
 .progress-track {
   margin-top: 6px;
   height: 4px;
-  border-radius: 2px;
+  border-radius: var(--radius-s);
   background: var(--border);
   overflow: hidden;
 }
@@ -3101,7 +3300,7 @@ html.is-dragging-tab * {
   padding: 8px 6px 3px;
   color: var(--text-dim);
   font-weight: 600;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -3115,7 +3314,7 @@ html.is-dragging-tab * {
   color: var(--text);
   padding: 6px 8px;
   border-radius: var(--row-radius);
-  cursor: pointer;
+  cursor: default;
   font: inherit;
   white-space: nowrap;
   overflow: hidden;
@@ -3135,7 +3334,7 @@ html.is-dragging-tab * {
 .search-result-where {
   display: block;
   margin-top: 2px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
@@ -3164,7 +3363,7 @@ html.is-dragging-tab * {
 
 .panel-head h2 {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 
 .form-list {
@@ -3184,7 +3383,7 @@ html.is-dragging-tab * {
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .form-nav-count.is-owed {
@@ -3195,7 +3394,7 @@ html.is-dragging-tab * {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  cursor: pointer;
+  cursor: default;
 }
 
 .form-nav-toggle input {
@@ -3205,7 +3404,7 @@ html.is-dragging-tab * {
 .form-page-head {
   margin: 8px 10px 2px;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 600;
 }
 
@@ -3221,9 +3420,9 @@ html.is-dragging-tab * {
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .form-nav-row:hover {
@@ -3264,18 +3463,18 @@ html.is-dragging-tab * {
   padding: 8px 10px;
   border-top: 1px solid var(--border);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .form-nav-reset {
   flex: none;
   padding: 3px 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-elev);
   color: var(--text);
   font: inherit;
-  cursor: pointer;
+  cursor: default;
 }
 
 .form-nav-reset:hover {
@@ -3290,7 +3489,7 @@ html.is-dragging-tab * {
 .form-nav-problem {
   margin: 0 10px 4px;
   color: var(--danger);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 /* Scripts the form carries that were not run; the reason is the tooltip. */
@@ -3298,7 +3497,7 @@ html.is-dragging-tab * {
   padding: 6px 10px;
   border-top: 1px solid var(--border);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   cursor: help;
 }
 
@@ -3311,7 +3510,7 @@ html.is-dragging-tab * {
   padding: 0 10px;
   background: var(--bg-elev);
   border-top: 1px solid var(--border);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .sb-left,
@@ -3371,7 +3570,7 @@ html.is-dragging-tab * {
   background: transparent;
   color: var(--text-dim);
   font: inherit;
-  cursor: pointer;
+  cursor: default;
 }
 
 .sb-clear:hover {
@@ -3380,7 +3579,7 @@ html.is-dragging-tab * {
 
 .sb-clear {
   width: 16px;
-  font-size: 14px;
+  font-size: var(--fs-md);
 }
 
 /* SleepyF's reminder that it is on, and its off switch. */
@@ -3391,7 +3590,7 @@ html.is-dragging-tab * {
   background: transparent;
   color: var(--text-dim);
   font: inherit;
-  cursor: pointer;
+  cursor: default;
 }
 
 .sb-sleepy:hover {
@@ -3416,36 +3615,68 @@ html.is-dragging-tab * {
 
 .empty-card h1 {
   color: var(--text);
-  font-size: 22px;
+  font-size: var(--fs-xl);
   margin: 0 0 6px;
 }
 
+/* One button system, used by every sheet and panel. Primary is the default
+   (accent, answers Return in a sheet); secondary is everything else;
+   destructive names an action that throws something away - red text on the
+   secondary face, as AppKit draws it, so it never reads as the default.
+   One height, --control-h, for all three. */
 .primary-btn,
-.secondary-btn {
+.secondary-btn,
+.destructive-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   height: var(--control-h);
+  min-width: 72px;
   padding: 0 14px;
-  border-radius: 6px;
-  cursor: pointer;
+  border-radius: var(--radius-m);
+  cursor: default;
   font: inherit;
+  font-size: var(--fs-md);
+  white-space: nowrap;
 }
 
 .primary-btn {
   background: var(--accent);
   color: var(--accent-text);
   border: 1px solid transparent;
+  font-weight: 500;
 }
 
-.primary-btn:hover {
+.primary-btn:hover:not(:disabled) {
   filter: brightness(1.08);
 }
 
-.secondary-btn {
+.secondary-btn,
+.destructive-btn {
   background: var(--bg-inset);
   color: var(--text);
   border: 1px solid var(--border);
+}
+
+.secondary-btn:hover:not(:disabled),
+.destructive-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--bg-inset) 85%, var(--text));
+}
+
+.destructive-btn {
+  color: var(--danger);
+}
+
+.primary-btn:disabled,
+.secondary-btn:disabled,
+.destructive-btn:disabled {
+  opacity: 0.5;
+}
+
+.destructive-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .empty-card .primary-btn {
@@ -3466,10 +3697,10 @@ html.is-dragging-tab * {
 .drop-card {
   padding: 18px 30px;
   border: 2px dashed var(--accent);
-  border-radius: 12px;
+  border-radius: var(--radius-l);
   background: var(--bg-elev);
   color: var(--accent);
-  font-size: 16px;
+  font-size: var(--fs-lg);
   font-weight: 600;
 }
 
@@ -3488,14 +3719,14 @@ html.is-dragging-tab * {
   width: min(420px, calc(100vw - 40px));
   background: var(--bg-elev);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-l);
   box-shadow: var(--shadow);
   padding: 18px;
 }
 
 .modal h2 {
   margin: 0 0 8px;
-  font-size: 15px;
+  font-size: var(--fs-lg);
 }
 
 .modal p {
@@ -3509,7 +3740,7 @@ html.is-dragging-tab * {
   width: 100%;
   height: 30px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-inset);
   color: var(--text);
   padding: 0 8px;
@@ -3524,13 +3755,54 @@ html.is-dragging-tab * {
   flex-wrap: wrap;
 }
 
+/* A destructive choice beside the usual pair stands apart, at the start. */
+.modal-actions-lead {
+  margin-right: auto;
+}
+
+/* Sheets hang from the top centre of the window: right under the title bar
+   row on macOS (where the traffic lights are), at the top of the content
+   elsewhere. The sheet is flush with that edge and rounded below. */
+.sheet-backdrop {
+  align-items: flex-start;
+  padding-top: var(--sheet-top);
+}
+
+:root[data-platform='macos']:not([data-fullscreen]) {
+  --sheet-top: calc(var(--tabstrip-h) + 1px);
+}
+
+.sheet {
+  max-height: calc(100vh - var(--sheet-top) - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-top: none;
+  border-radius: 0 0 var(--radius-l) var(--radius-l);
+}
+
+.sheet:focus {
+  outline: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .sheet-backdrop {
+    animation: sheet-fade 120ms ease-out;
+  }
+}
+
+@keyframes sheet-fade {
+  from {
+    opacity: 0;
+  }
+}
+
 /* The host is the part of an external link worth reading, so it is the part
    that gets read: the full href sits under it for anyone who wants it, but a
    long URL must never be able to push the buttons off the dialog. */
 .link-host {
   margin: 12px 0 2px;
   font-weight: 600;
-  font-size: 15px;
+  font-size: var(--fs-lg);
   overflow-wrap: anywhere;
 }
 
@@ -3540,7 +3812,7 @@ html.is-dragging-tab * {
   overflow-y: auto;
   color: var(--text-dim);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   overflow-wrap: anywhere;
 }
 
@@ -3550,8 +3822,8 @@ html.is-dragging-tab * {
   gap: 8px;
   margin-bottom: 14px;
   color: var(--text-dim);
-  font-size: 13px;
-  cursor: pointer;
+  font-size: var(--fs-md);
+  cursor: default;
 }
 
 .modal-check input {
@@ -3584,7 +3856,7 @@ html.is-dragging-tab * {
   color: var(--text);
   font: inherit;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .sig-row:hover:not(:disabled) {
@@ -3596,7 +3868,7 @@ html.is-dragging-tab * {
 }
 
 .sig-status {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text);
 }
@@ -3612,17 +3884,17 @@ html.is-dragging-tab * {
 }
 
 .sig-signer {
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 
 .sig-meta {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-dim);
 }
 
 .sig-detail {
   padding: 0 6px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-dim);
   line-height: 1.4;
 }
@@ -3633,7 +3905,7 @@ html.is-dragging-tab * {
 
 .sig-changes-head {
   margin: 8px 0 2px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text);
 }
@@ -3674,7 +3946,7 @@ html.is-dragging-tab * {
   flex-direction: column;
   background: var(--bg-elev);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-l);
   box-shadow: var(--shadow);
   overflow: hidden;
 }
@@ -3691,7 +3963,7 @@ html.is-dragging-tab * {
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: 15px;
+  font-size: var(--fs-lg);
   padding: 0 14px;
   outline: none;
 }
@@ -3718,7 +3990,7 @@ html.is-dragging-tab * {
 
 .palette-group {
   padding: 8px 8px 4px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -3736,10 +4008,10 @@ html.is-dragging-tab * {
   color: var(--text);
   text-align: left;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.35;
   border-radius: var(--row-radius);
-  cursor: pointer;
+  cursor: default;
 }
 
 /* A soft tint rather than a filled accent: a solid fill would force
@@ -3776,7 +4048,7 @@ html.is-dragging-tab * {
 .palette-reason,
 .palette-keys {
   flex: none;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
   white-space: nowrap;
 }
@@ -3787,7 +4059,7 @@ html.is-dragging-tab * {
 .palette-keys {
   letter-spacing: 0.04em;
   background: var(--bg-inset);
-  border-radius: 3px;
+  border-radius: var(--radius-s);
   padding: 1px 5px;
 }
 
@@ -3808,7 +4080,7 @@ html.is-dragging-tab * {
   padding: 7px 12px;
   border-top: 1px solid var(--border);
   background: var(--bg-inset);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
@@ -3837,7 +4109,7 @@ html.is-dragging-tab * {
 }
 
 .quick-open-detail {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3851,7 +4123,7 @@ html.is-dragging-tab * {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
@@ -3880,7 +4152,7 @@ html.is-dragging-tab * {
 .ext-row {
   padding: 12px 14px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-m);
   background: var(--bg-elev);
 }
 
@@ -3909,12 +4181,12 @@ html.is-dragging-tab * {
   margin-top: 10px;
   padding-top: 8px;
   border-top: 1px solid var(--border);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
 .ext-details summary {
-  cursor: pointer;
+  cursor: default;
 }
 
 .ext-details[open] summary {
@@ -3951,7 +4223,7 @@ html.is-dragging-tab * {
 
 .ext-version {
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 /* Quiet by design. It marks provenance, not status — an extension you cannot
@@ -3959,9 +4231,9 @@ html.is-dragging-tab * {
 .ext-badge {
   padding: 1px 6px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-l);
   color: var(--text-dim);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -3974,12 +4246,12 @@ html.is-dragging-tab * {
 .ext-action {
   padding: 3px 8px;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius-m);
   background: var(--bg);
   color: var(--text-dim);
   font: inherit;
-  font-size: 11px;
-  cursor: pointer;
+  font-size: var(--fs-xs);
+  cursor: default;
 }
 
 .ext-action:hover {
@@ -3995,7 +4267,7 @@ html.is-dragging-tab * {
 .ext-description {
   margin: 6px 0 0;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.4;
 }
 
@@ -4004,7 +4276,7 @@ html.is-dragging-tab * {
   flex-wrap: wrap;
   gap: 4px 10px;
   margin-top: 6px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
@@ -4032,12 +4304,12 @@ html.is-dragging-tab * {
   align-items: baseline;
   justify-content: space-between;
   gap: 10px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .ext-command-id {
   color: var(--text-dim);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4048,10 +4320,10 @@ html.is-dragging-tab * {
   margin-top: 8px;
   padding: 6px 8px;
   border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border));
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: color-mix(in srgb, var(--danger) 8%, transparent);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.4;
 }
 
@@ -4078,11 +4350,11 @@ html.is-dragging-tab * {
 .ext-key {
   padding: 1px 5px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: var(--bg-inset);
   color: var(--text-dim);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10px;
+  font-size: var(--fs-xs);
 }
 
 /* ---------- contributed panels ---------- */
@@ -4100,7 +4372,7 @@ html.is-dragging-tab * {
 }
 
 .ext-panel-title {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 500;
 }
 
@@ -4136,7 +4408,7 @@ html.is-dragging-tab * {
 .ext-panel-section-title {
   padding: 4px 9px 6px;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -4165,12 +4437,12 @@ html.is-dragging-tab * {
   margin-left: 9px;
   padding-left: 11px;
   border-left: 1px solid var(--border);
-  border-radius: 0 6px 6px 0;
+  border-radius: 0 var(--radius-m) var(--radius-m) 0;
 }
 
 .ext-panel-row.is-nested .ext-panel-row-title {
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   -webkit-line-clamp: 3;
   line-clamp: 3;
 }
@@ -4179,7 +4451,7 @@ html.is-dragging-tab * {
    the row above it, where the title leads and the detail is dim. */
 .ext-panel-row.is-nested .ext-panel-row-subtitle {
   color: var(--text);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   letter-spacing: 0.02em;
 }
 
@@ -4189,7 +4461,7 @@ html.is-dragging-tab * {
 
 /* Only a row that does something looks like it does. */
 .ext-panel-row.is-actionable {
-  cursor: pointer;
+  cursor: default;
 }
 
 .ext-panel-row.is-actionable:hover {
@@ -4217,7 +4489,7 @@ html.is-dragging-tab * {
  * bounds the row honestly, and `anywhere` gives a URL somewhere to break —
  * it has no spaces to break at, so it would otherwise push the panel wide. */
 .ext-panel-row-title {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.35;
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -4229,7 +4501,7 @@ html.is-dragging-tab * {
 
 .ext-panel-row-subtitle {
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
@@ -4240,10 +4512,10 @@ html.is-dragging-tab * {
   align-self: flex-start;
   margin-top: 1px;
   padding: 1px 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-l);
   background: var(--accent-soft);
   color: var(--text-dim);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   white-space: nowrap;
 }
 
@@ -4277,13 +4549,13 @@ html.is-dragging-tab * {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   min-width: 0;
 }
 
 .ext-setting-desc {
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .ext-setting-text {
@@ -4302,7 +4574,7 @@ html.is-dragging-tab * {
 
 .ext-add-title {
   margin: 0 0 8px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 500;
   color: var(--text-dim);
 }
@@ -4325,7 +4597,7 @@ html.is-dragging-tab * {
   gap: 6px 12px;
   margin-top: 6px;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .ext-add-link {
@@ -4334,7 +4606,7 @@ html.is-dragging-tab * {
   background: none;
   color: var(--accent);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   cursor: pointer;
 }
 
@@ -4378,7 +4650,7 @@ html.is-dragging-tab * {
   right: -3px;
   bottom: -3px;
   padding: 0 1px;
-  border-radius: 3px;
+  border-radius: var(--radius-s);
   background: var(--bg-elev);
   color: var(--text-dim);
   font-size: 7px;
@@ -4605,7 +4877,7 @@ textarea.form-input {
 /* Combo boxes: the native menu, and a small arrow once the raster's own is
  * covered. */
 .form-select {
-  cursor: pointer;
+  cursor: default;
 }
 
 .form-select option,
@@ -4622,7 +4894,7 @@ textarea.form-input {
   margin: 0;
   border: 0;
   opacity: 0;
-  cursor: pointer;
+  cursor: default;
 }
 
 .form-combo.is-covered::after {
@@ -4675,7 +4947,7 @@ textarea.form-input {
 
 /* Checkboxes and radio buttons. */
 .form-widget {
-  cursor: pointer;
+  cursor: default;
 }
 
 .form-widget.is-radio,
@@ -4742,7 +5014,7 @@ textarea.form-input {
 
 .paper-panel {
   padding: 6px 0 12px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .paper-panel-head,
@@ -4757,7 +5029,7 @@ textarea.form-input {
 }
 
 .paper-panel-title {
-  font-size: 13px;
+  font-size: var(--fs-md);
   font-weight: 600;
   line-height: 1.35;
   overflow-wrap: anywhere;
@@ -4786,10 +5058,10 @@ textarea.form-input {
   flex: 1;
   min-width: 0;
   padding: 3px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: var(--bg-inset);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4804,7 +5076,7 @@ textarea.form-input {
 
 .paper-panel-error {
   padding: 6px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: color-mix(in srgb, var(--danger) 10%, transparent);
   color: var(--danger);
   line-height: 1.4;
@@ -4817,7 +5089,7 @@ textarea.form-input {
   align-items: flex-start;
   gap: 4px;
   padding: 6px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: var(--bg-inset);
   color: var(--text-dim);
   line-height: 1.4;
@@ -4827,7 +5099,7 @@ textarea.form-input {
 .paper-panel-section-title {
   margin-bottom: 4px;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 500;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -4843,7 +5115,7 @@ textarea.form-input {
   align-items: center;
   gap: 6px;
   padding: 3px 0;
-  cursor: pointer;
+  cursor: default;
 }
 
 .paper-panel-check input {
@@ -4860,7 +5132,7 @@ textarea.form-input {
 .paper-panel .secondary-btn.paper-panel-btn {
   height: 24px;
   padding: 0 9px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .paper-panel-btn:disabled {
@@ -4874,7 +5146,7 @@ textarea.form-input {
   background: none;
   color: var(--accent);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   text-align: left;
   cursor: pointer;
 }
@@ -4896,13 +5168,13 @@ textarea.form-input {
   width: 100%;
   padding: 5px 6px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: transparent;
   color: var(--text);
   text-align: left;
   font: inherit;
-  font-size: 12px;
-  cursor: pointer;
+  font-size: var(--fs-sm);
+  cursor: default;
 }
 
 .paper-panel-link-row:hover:not(:disabled) {
@@ -4921,7 +5193,7 @@ textarea.form-input {
 
 .paper-panel-link-meta {
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 /* An author who is a person with other items: a quiet link, text-coloured,
@@ -4930,7 +5202,7 @@ textarea.form-input {
   margin: 0 -2px;
   padding: 0 2px;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--radius-s);
   background: transparent;
   color: inherit;
   font: inherit;
@@ -4982,7 +5254,7 @@ textarea.form-input {
 .person-bar-also {
   padding: 0 var(--col-gutter) 8px;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 /* Settings rows for the library: a path and the buttons that change it, in
@@ -5003,7 +5275,7 @@ textarea.form-input {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .library-setting-actions {
@@ -5014,12 +5286,12 @@ textarea.form-input {
 .library-setting-actions .secondary-btn {
   height: 26px;
   padding: 0 10px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .library-setting-error {
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   text-align: right;
 }
 
@@ -5039,7 +5311,7 @@ textarea.form-input {
 .settings-backups-note {
   margin: 0 0 8px;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .settings-backup-list {
@@ -5057,7 +5329,7 @@ textarea.form-input {
   align-items: center;
   gap: 12px;
   min-height: 32px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .settings-backup-when {
@@ -5084,7 +5356,7 @@ textarea.form-input {
 .settings-backup .primary-btn {
   height: 26px;
   padding: 0 10px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 /* Advanced: closed by default, at the bottom of Settings. */
@@ -5095,8 +5367,8 @@ textarea.form-input {
 
 .settings-advanced-summary {
   color: var(--text-dim);
-  font-size: 12px;
-  cursor: pointer;
+  font-size: var(--fs-sm);
+  cursor: default;
 }
 
 .settings-advanced-body {
@@ -5109,14 +5381,14 @@ textarea.form-input {
 .settings-group-title {
   margin: 0;
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-md);
   font-weight: 600;
 }
 
 .settings-group-desc {
   margin: -10px 0 0;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 /* ---------- projects screen ---------- */
@@ -5146,7 +5418,7 @@ textarea.form-input {
    baseline while the controls stay centred. */
 .projects-head h2 {
   margin: 0;
-  font-size: 20px;
+  font-size: var(--fs-xl);
   font-weight: 400;
   line-height: 30px;
   color: var(--text);
@@ -5175,7 +5447,7 @@ textarea.form-input {
   font: inherit;
   overflow: hidden;
   text-overflow: ellipsis;
-  cursor: pointer;
+  cursor: default;
 }
 
 .projects-head-cited:hover {
@@ -5195,7 +5467,7 @@ textarea.form-input {
   flex: none;
   padding: 2px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-inset);
 }
 
@@ -5203,12 +5475,12 @@ textarea.form-input {
   height: 24px;
   padding: 0 10px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: transparent;
   color: var(--text-dim);
   font: inherit;
-  font-size: 12px;
-  cursor: pointer;
+  font-size: var(--fs-sm);
+  cursor: default;
 }
 
 .projects-launch-toggle button.is-active {
@@ -5245,9 +5517,9 @@ textarea.form-input {
   margin: 0 28px 10px;
   padding: 6px 10px;
   border: 1px solid color-mix(in srgb, var(--warn) 50%, transparent);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   color: var(--warn);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .projects-notice {
@@ -5272,9 +5544,9 @@ textarea.form-input {
   border-radius: 50%;
   background: none;
   color: inherit;
-  font-size: 16px;
+  font-size: var(--fs-lg);
   line-height: 1;
-  cursor: pointer;
+  cursor: default;
 }
 
 .projects-error-dismiss:hover {
@@ -5335,12 +5607,12 @@ textarea.form-input {
   margin: 10px 12px 0;
   padding: 2px 4px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: transparent;
   color: var(--text-dim);
   font: inherit;
-  font-size: 12px;
-  cursor: pointer;
+  font-size: var(--fs-sm);
+  cursor: default;
 }
 
 .project-pane-back span {
@@ -5432,7 +5704,7 @@ textarea.form-input {
 .projects-row-count {
   flex: none;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
 }
 
@@ -5440,7 +5712,7 @@ textarea.form-input {
   flex: none;
   width: 12px;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
   text-align: right;
   opacity: 0.7;
@@ -5461,10 +5733,10 @@ textarea.form-input {
   padding: 0;
   margin-right: -4px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: transparent;
   color: inherit;
-  cursor: pointer;
+  cursor: default;
 }
 
 .projects-row:hover .projects-row-menu,
@@ -5496,7 +5768,7 @@ textarea.form-input {
   height: 24px;
   padding: 0 6px;
   border: 1px solid var(--accent);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: var(--bg-elev);
   color: var(--text);
   font: inherit;
@@ -5520,7 +5792,7 @@ textarea.form-input {
   gap: 6px;
   width: 100%;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .projects-confirm-text {
@@ -5532,12 +5804,12 @@ textarea.form-input {
   height: 22px;
   padding: 0 8px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: var(--bg-elev);
   color: var(--text);
   font: inherit;
-  font-size: 12px;
-  cursor: pointer;
+  font-size: var(--fs-sm);
+  cursor: default;
 }
 
 .projects-confirm-yes {
@@ -5555,7 +5827,7 @@ textarea.form-input {
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   background: var(--bg-elev);
   box-shadow: var(--shadow);
 }
@@ -5567,13 +5839,13 @@ textarea.form-input {
   align-items: center;
   padding: 0 8px;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--radius-m);
   background: none;
   color: var(--text);
   font: inherit;
   text-align: left;
   white-space: nowrap;
-  cursor: pointer;
+  cursor: default;
 }
 
 .projects-menu-item:hover {
@@ -5601,13 +5873,13 @@ textarea.form-input {
   min-height: 28px;
   padding: 0 8px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: transparent;
   color: var(--text-dim);
   font: inherit;
   text-align: left;
   white-space: nowrap;
-  cursor: pointer;
+  cursor: default;
 }
 
 .projects-new:hover {
@@ -5630,7 +5902,7 @@ textarea.form-input {
   gap: 10px;
   min-width: 0;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .paper-list-bib {
@@ -5653,7 +5925,7 @@ textarea.form-input {
   flex: none;
   height: 26px;
   padding: 0 10px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 /* As tall as the List | Graph toggle and the buttons in its row. */
@@ -5662,7 +5934,7 @@ textarea.form-input {
 }
 
 .paper-search input {
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 
 .paper-list {
@@ -5687,10 +5959,10 @@ textarea.form-input {
   height: 28px;
   margin-top: 6px;
   padding: 0 6px;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 500;
   cursor: default;
 }
@@ -5762,7 +6034,7 @@ textarea.form-input {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 /* The key is there when you look for it and gone when you do not: on hover,
@@ -5775,7 +6047,7 @@ textarea.form-input {
   white-space: nowrap;
   color: var(--text-dim);
   font-family: ui-monospace, Menlo, monospace;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   opacity: 0;
 }
 
@@ -5793,12 +6065,12 @@ textarea.form-input {
   margin-top: 8px;
   padding: 7px 8px;
   border: 1px dashed var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: transparent;
   color: var(--text-dim);
   font: inherit;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .paper-fulltext:hover {
@@ -5822,7 +6094,7 @@ textarea.form-input {
   position: relative;
   width: 100%;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: var(--page-bg);
   overflow: hidden;
 }
@@ -5861,7 +6133,7 @@ textarea.form-input {
 .paper-field-label {
   padding-top: 5px;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 16px;
 }
 
@@ -5881,7 +6153,7 @@ textarea.form-input {
   margin: 0;
   padding: 4px 6px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: transparent;
   color: var(--text);
   font: inherit;
@@ -5901,13 +6173,13 @@ textarea.form-input {
 .paper-field-value.is-dim {
   color: var(--text-dim);
   font-style: italic;
-  cursor: pointer;
+  cursor: default;
 }
 
 .paper-field-value.is-mono,
 .paper-field-input.is-mono {
   font-family: ui-monospace, Menlo, monospace;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .paper-field-input {
@@ -5916,7 +6188,7 @@ textarea.form-input {
   width: 100%;
   padding: 4px 6px;
   border: 1px solid var(--accent);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-elev);
   color: var(--text);
   font: inherit;
@@ -5940,7 +6212,7 @@ textarea.paper-field-input {
   height: 26px;
   padding: 0 4px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-inset);
   color: var(--text);
   font: inherit;
@@ -5951,9 +6223,9 @@ textarea.paper-field-input {
   flex: none;
   padding: 0 5px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 16px;
   white-space: nowrap;
 }
@@ -5962,13 +6234,13 @@ textarea.paper-field-input {
   flex: 1 1 100%;
   margin: 0;
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .paper-notice {
   margin: -6px 0 0;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .paper-citekey-body {
@@ -5977,7 +6249,7 @@ textarea.paper-field-input {
 
 .paper-citekey-value {
   font-family: ui-monospace, Menlo, monospace;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   overflow-wrap: anywhere;
 }
 
@@ -5985,12 +6257,12 @@ textarea.paper-field-input {
   height: 20px;
   padding: 0 6px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: var(--bg-inset);
   color: var(--text-dim);
   font: inherit;
-  font-size: 11px;
-  cursor: pointer;
+  font-size: var(--fs-xs);
+  cursor: default;
 }
 
 .paper-mini-btn:hover {
@@ -6005,7 +6277,7 @@ textarea.paper-field-input {
   align-items: center;
   gap: 4px 6px;
   margin-top: 4px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
@@ -6044,7 +6316,7 @@ textarea.paper-field-input {
 .paper-file-size {
   flex: none;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .paper-file-actions {
@@ -6061,12 +6333,12 @@ textarea.paper-field-input {
 .paper-row-files {
   flex: none;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .paper-also {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 18px;
 }
 
@@ -6078,10 +6350,10 @@ textarea.paper-field-input {
 .paper-badge {
   flex: none;
   padding: 0 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: color-mix(in srgb, var(--warn) 18%, transparent);
   color: var(--warn);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 16px;
 }
 
@@ -6098,7 +6370,7 @@ textarea.paper-field-input {
   gap: 6px;
   min-width: 0;
   line-height: 20px;
-  cursor: pointer;
+  cursor: default;
 }
 
 .paper-project-check input {
@@ -6114,12 +6386,12 @@ textarea.paper-field-input {
 .paper-dim {
   padding-top: 5px;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .paper-incomplete {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .paper-actions {
@@ -6139,7 +6411,7 @@ textarea.paper-field-input {
   align-items: center;
   justify-content: space-between;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .paper-candidate {
@@ -6150,12 +6422,12 @@ textarea.paper-field-input {
   width: 100%;
   padding: 6px 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-elev);
   color: var(--text);
   font: inherit;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .paper-candidate:hover:not(:disabled) {
@@ -6164,7 +6436,7 @@ textarea.paper-field-input {
 
 .paper-candidate-meta {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 /* ---- narrow windows: the detail column folds behind a button ---- */
@@ -6192,7 +6464,7 @@ textarea.paper-field-input {
 }
 
 .paper-list-batch {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-dim);
 }
 
@@ -6206,7 +6478,7 @@ textarea.paper-field-input {
   align-items: center;
   gap: 6px 8px;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 20px;
 }
 
@@ -6239,7 +6511,7 @@ textarea.paper-field-input {
 .paper-row.is-other .paper-row-title {
   color: var(--text-dim);
   font-family: ui-monospace, Menlo, monospace;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 /* Matches a title search parked on a paper, at the right of its row. Unlike
@@ -6247,10 +6519,10 @@ textarea.paper-field-input {
 .paper-row-matches {
   flex: none;
   padding: 0 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: color-mix(in srgb, var(--accent) 16%, transparent);
   color: var(--accent);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 16px;
   white-space: nowrap;
 }
@@ -6269,7 +6541,7 @@ textarea.paper-field-input {
   gap: 2px;
   padding: 6px 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   text-align: left;
 }
 
@@ -6349,11 +6621,11 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   max-width: 280px;
   padding: 4px 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-elev);
   color: var(--text);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -6399,7 +6671,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .graph-view {
@@ -6425,7 +6697,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   white-space: nowrap;
   padding: 0 var(--col-gutter) 8px;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .graph-error {
@@ -6434,16 +6706,16 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   gap: 10px;
   margin: 0 var(--col-gutter) 8px;
   padding: 6px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: color-mix(in srgb, var(--danger) 10%, transparent);
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .graph-error .secondary-btn {
   height: 24px;
   padding: 0 8px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 /* The drawing surface: an elevated card inside the column, like a page. */
@@ -6454,7 +6726,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   /* On the column gutter, under the List | Graph toggle and the notes. */
   margin: 0 var(--col-gutter) var(--col-gutter);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-m);
   background: var(--bg-elev);
   overflow: hidden;
 }
@@ -6554,7 +6826,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 }
 
 .graph-node {
-  cursor: pointer;
+  cursor: default;
   outline: none;
 }
 
@@ -6613,7 +6885,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 /* A halo in the canvas colour keeps a label legible across an edge. */
 .graph-node-label {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   fill: var(--text-dim);
   paint-order: stroke;
   stroke: var(--bg-elev);
@@ -6648,7 +6920,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   right: 8px;
   display: flex;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-elev);
   overflow: hidden;
 }
@@ -6664,8 +6936,8 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   background: transparent;
   color: var(--text-dim);
   font: inherit;
-  font-size: 12px;
-  cursor: pointer;
+  font-size: var(--fs-sm);
+  cursor: default;
 }
 
 .graph-control + .graph-control {
@@ -6707,12 +6979,12 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   height: 24px;
   padding: 0 9px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-elev);
   color: var(--text-dim);
   font: inherit;
-  font-size: 12px;
-  cursor: pointer;
+  font-size: var(--fs-sm);
+  cursor: default;
 }
 
 .graph-canvas.is-empty .graph-chip {
@@ -6738,10 +7010,10 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   flex-direction: column;
   gap: 2px;
   padding: 4px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: color-mix(in srgb, var(--bg-elev) 88%, transparent);
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   pointer-events: none;
 }
 
@@ -6783,11 +7055,11 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   box-sizing: border-box;
   padding: 8px 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-elev);
   color: var(--text);
   box-shadow: var(--shadow);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.4;
   pointer-events: none;
 }
@@ -6798,7 +7070,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   line-clamp: 2;
-  font-size: 13px;
+  font-size: var(--fs-md);
   font-weight: 600;
   line-height: 1.3;
 }
@@ -6830,16 +7102,16 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .graph-card-kind {
   flex: none;
   padding: 0 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: var(--bg-inset);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .graph-card-alpha {
   flex: none;
   color: var(--text-dim);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
   opacity: 0.8;
 }
 
@@ -6859,7 +7131,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   gap: 8px;
   margin-top: 6px;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .graph-card-missing {
@@ -6934,7 +7206,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .paper-row-dup {
   flex: none;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-style: italic;
   white-space: nowrap;
   opacity: 0.8;
@@ -6947,7 +7219,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   align-items: center;
   gap: 6px 8px;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 20px;
 }
 
@@ -6966,7 +7238,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 18px;
 }
 
@@ -6984,7 +7256,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .merge-confirm-actions .secondary-btn {
   height: 24px;
   padding: 0 10px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .merge-confirm-spacer {
@@ -7040,7 +7312,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   height: var(--control-h);
   padding: 2px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-inset);
   color: var(--text);
   cursor: default;
@@ -7054,13 +7326,13 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   height: 24px;
   padding: 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: transparent;
   color: var(--text-dim);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1;
-  cursor: pointer;
+  cursor: default;
 }
 
 .graph-stepper button:hover:not(:disabled) {
@@ -7084,7 +7356,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 }
 
 .graph-note-link {
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 /* "Around ZD24  [1 step | 2 steps]  ×": a line above the notes. */
@@ -7094,7 +7366,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   gap: 10px;
   padding: 0 var(--col-gutter) 8px;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .graph-focus-label {
@@ -7105,7 +7377,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .graph-depth button {
   height: 20px;
   padding: 0 8px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .graph-focus-leave {
@@ -7114,13 +7386,13 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   margin-left: auto;
   padding: 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: transparent;
   color: var(--text-dim);
   font: inherit;
-  font-size: 15px;
+  font-size: var(--fs-lg);
   line-height: 1;
-  cursor: pointer;
+  cursor: default;
 }
 
 .graph-focus-leave:hover {
@@ -7141,7 +7413,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   -webkit-line-clamp: 5;
   line-clamp: 5;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 17px;
 }
 
@@ -7155,7 +7427,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 
 .missing-panel-text {
@@ -7171,7 +7443,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   gap: 2px 12px;
   margin: 0;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .missing-panel-ids dd {
@@ -7184,7 +7456,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   flex-wrap: wrap;
   align-items: baseline;
   gap: 4px 8px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .missing-panel .is-mono,
@@ -7212,7 +7484,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   align-self: center;
   height: 22px;
   padding: 0 8px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 /* The graph's View choices: a small panel under the controls strip. */
@@ -7230,10 +7502,10 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   gap: 8px 12px;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-elev);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .graph-view-menu-label {
@@ -7251,7 +7523,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   gap: 12px;
   padding: 0 8px 8px;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .missing-list-head > span {
@@ -7264,7 +7536,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 }
 
 .missing-row {
-  cursor: pointer;
+  cursor: default;
 }
 
 .missing-row-text {
@@ -7274,7 +7546,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   -webkit-line-clamp: 2;
   line-clamp: 2;
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 
 .graph-notes .graph-note {
@@ -7336,9 +7608,9 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   margin-top: 6px;
   padding: 2px 8px;
   border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--border));
-  border-radius: 999px;
+  border-radius: var(--radius-l);
   color: var(--warn);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   overflow-wrap: anywhere;
 }
 
@@ -7398,14 +7670,14 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .selection-action {
   padding: 1px 7px;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius-m);
   background: var(--bg-elev);
   color: var(--text);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
   white-space: nowrap;
   box-shadow: var(--shadow);
-  cursor: pointer;
+  cursor: default;
 }
 
 .equation-action:hover,
@@ -7428,19 +7700,19 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   overflow: auto;
   padding: 10px 12px;
   border: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
-  border-radius: 10px;
+  border-radius: var(--radius-l);
   background: var(--bg-elev);
   color: var(--text);
   box-shadow: 0 14px 38px rgba(0, 0, 0, 0.2);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .math-popover-formula {
   overflow-x: auto;
   padding: 6px 4px;
-  border-radius: 7px;
+  border-radius: var(--radius-m);
   background: var(--bg-inset);
-  font-size: 15px;
+  font-size: var(--fs-lg);
 }
 
 .math-popover-formula .katex-display {
@@ -7462,11 +7734,11 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .math-popover-copy {
   padding: 2px 9px;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius-m);
   background: transparent;
   color: var(--text);
-  font-size: 12px;
-  cursor: pointer;
+  font-size: var(--fs-sm);
+  cursor: default;
 }
 
 .math-popover-copy:hover,
@@ -7478,7 +7750,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .math-popover-note {
   margin-top: 6px;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .math-popover-status {
@@ -7514,7 +7786,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .paper-find-count {
   flex: none;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -7530,9 +7802,9 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   background: none;
   color: var(--text-dim);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   white-space: nowrap;
-  cursor: pointer;
+  cursor: default;
 }
 
 .paper-sort-btn:hover,
@@ -7544,7 +7816,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .health-action:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
 }
 
 .health-actions {
@@ -7595,7 +7867,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   left: 9px;
   bottom: 7px;
   color: #5c6570;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 1;
   pointer-events: none;
 }
@@ -7613,13 +7885,13 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   width: 100%;
   padding: 12px 14px;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-m);
   background: var(--bg-inset);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.45;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .hover-term-entry:focus-visible {
@@ -7629,7 +7901,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 
 .hover-term-page {
   color: var(--text-dim, #5c6570);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 /* ---------- extension editors: the reader's drawer and project views ---------- */
@@ -7644,10 +7916,10 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   min-height: 28px;
   padding: 0;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: transparent;
   color: var(--text-dim);
-  cursor: pointer;
+  cursor: default;
 }
 
 .projects-import:hover {
@@ -7697,7 +7969,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .reader-pane-switch {
   max-width: 40%;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .reader-pane-close {
@@ -7708,10 +7980,10 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   height: 22px;
   padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: transparent;
   color: var(--text-dim);
-  cursor: pointer;
+  cursor: default;
 }
 
 .reader-pane-close:hover {
@@ -7752,7 +8024,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   margin: 0 auto;
   padding: 8px 20px 0;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .note-editor-title {
@@ -7765,12 +8037,12 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .note-source-toggle {
   padding: 2px 4px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: transparent;
   color: var(--text-dim);
   font: inherit;
-  font-size: 12px;
-  cursor: pointer;
+  font-size: var(--fs-sm);
+  cursor: default;
 }
 
 .note-source-toggle:hover,
@@ -7794,7 +8066,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   min-width: 0;
   overflow: hidden;
   color: var(--warn);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -7822,7 +8094,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   margin: 0 auto;
   padding: 10px 20px 40vh;
   color: var(--text);
-  font-size: 14px;
+  font-size: var(--fs-md);
   line-height: 1.55;
 }
 
@@ -7838,7 +8110,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 
 .note-block {
   min-height: 1.55em;
-  border-radius: 3px;
+  border-radius: var(--radius-s);
   overflow-wrap: anywhere;
   cursor: text;
   /* A long note skips laying out what is off screen. */
@@ -7951,7 +8223,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .note-field.is-mono,
 .note-source {
   font-family: ui-monospace, Menlo, monospace;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 .note-source {
@@ -8031,7 +8303,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 
 .np-code {
   padding: 0 3px;
-  border-radius: 3px;
+  border-radius: var(--radius-s);
   background: var(--bg-inset);
   font-family: ui-monospace, Menlo, monospace;
   font-size: 0.9em;
@@ -8040,10 +8312,10 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .np-pre {
   margin: 0;
   padding: 6px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: var(--bg-inset);
   font-family: ui-monospace, Menlo, monospace;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   white-space: pre-wrap;
 }
 
@@ -8066,7 +8338,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   display: inline;
   padding: 0;
   border: none;
-  border-radius: 2px;
+  border-radius: var(--radius-s);
   background: none;
   color: var(--accent);
   font: inherit;
@@ -8143,7 +8415,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   gap: 4px;
   min-height: 0;
   padding: 12px 14px;
-  border-radius: 7px;
+  border-radius: var(--radius-m);
   white-space: normal;
 }
 
@@ -8160,7 +8432,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .note-preview-label,
 .note-preview-note {
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .note-picker-row.is-status {
@@ -8172,7 +8444,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   display: block;
   max-width: 100%;
   margin: 4px 0;
-  border-radius: 3px;
+  border-radius: var(--radius-s);
   background: var(--page-bg);
 }
 
@@ -8191,7 +8463,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   overflow-y: auto;
   padding: 4px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-elev);
   box-shadow: var(--shadow);
 }
@@ -8201,7 +8473,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   flex-direction: column;
   padding: 4px 8px;
   border-radius: var(--row-radius);
-  cursor: pointer;
+  cursor: default;
 }
 
 .note-picker-row.is-current {
@@ -8216,7 +8488,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 
 .note-picker-detail {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .project-question {
@@ -8237,7 +8509,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   min-width: 260px;
   padding: 10px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   background: var(--bg-elev);
   box-shadow: var(--shadow);
 }
@@ -8250,12 +8522,12 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .project-question-row {
   padding: 6px 8px;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--radius-m);
   background: transparent;
   color: var(--text);
   font: inherit;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .project-question-row:hover,
@@ -8267,7 +8539,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .project-question-hint {
   padding: 6px 6px 0;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .region-capture {
@@ -8286,10 +8558,10 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   gap: 8px;
   padding: 6px 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-elev);
   box-shadow: var(--shadow);
-  font-size: 13px;
+  font-size: var(--fs-md);
   transform: translateX(-50%);
   cursor: default;
 }
@@ -8314,12 +8586,12 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   background: transparent;
   color: var(--text-dim);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   text-align: left;
 }
 
 .item-line.is-action {
-  cursor: pointer;
+  cursor: default;
 }
 
 .item-line.is-action:hover {
@@ -8361,20 +8633,20 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .np-skeleton.is-image {
   width: 100%;
   padding: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: var(--bg-inset);
 }
 
 .np-skeleton-bar {
   display: block;
   height: 0.6em;
-  border-radius: 0.3em;
+  border-radius: var(--radius-s);
   background: var(--bg-inset);
 }
 
 .np-skeleton.is-equation .np-skeleton-bar {
   height: 0.85em;
-  border-radius: 0.45em;
+  border-radius: var(--radius-m);
 }
 
 .np-skeleton.is-animated .np-skeleton-bar,
@@ -8449,7 +8721,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   align-items: baseline;
   gap: 8px;
   padding: 5px 8px 5px 10px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.35;
   color: var(--text);
 }
@@ -8483,7 +8755,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   font: inherit;
   text-decoration: underline;
   text-underline-offset: 2px;
-  cursor: pointer;
+  cursor: default;
 }
 
 .sb-flash-action:hover,
@@ -8510,11 +8782,11 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   overflow-y: auto;
   padding: 4px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-elev);
   box-shadow: var(--shadow);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .note-head-menu-list:focus {
@@ -8523,11 +8795,11 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 
 .note-head-menu-row {
   padding: 3px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  cursor: pointer;
+  cursor: default;
 }
 
 .note-head-menu-row.is-current {
@@ -8537,13 +8809,13 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .note-head-toggle {
   padding: 2px 4px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: transparent;
   color: var(--text-dim);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   white-space: nowrap;
-  cursor: pointer;
+  cursor: default;
 }
 
 .note-head-toggle:hover,
@@ -8565,12 +8837,12 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   margin: 0.1em 0;
   padding: 0;
   border: none;
-  border-radius: 2px;
+  border-radius: var(--radius-s);
   background: none;
   color: var(--text-dim);
   font: inherit;
   font-size: 0.82em;
-  cursor: pointer;
+  cursor: default;
 }
 
 .np-ref-toggle:hover {
@@ -8608,12 +8880,12 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .np-refs-action {
   padding: 0;
   border: none;
-  border-radius: 2px;
+  border-radius: var(--radius-s);
   background: none;
   color: var(--text-dim);
   font: inherit;
   font-size: 0.78em;
-  cursor: pointer;
+  cursor: default;
 }
 
 .np-refs-action:hover,
@@ -8728,7 +9000,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   justify-content: center;
   padding: 0;
   border: none;
-  border-radius: 999px;
+  border-radius: var(--radius-l);
   background: var(--mk-ink);
   color: #ffffff;
   font-family: Helvetica, Arial, sans-serif;
@@ -8736,7 +9008,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   line-height: 1;
   font-variant-numeric: tabular-nums;
   pointer-events: auto;
-  cursor: pointer;
+  cursor: default;
   opacity: 0.9;
 }
 
@@ -8752,7 +9024,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 /* ---- the drawer ---- */
 
 .mk-drawer {
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 .mk-head {
@@ -8766,7 +9038,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 
 .mk-head-count {
   color: var(--text-dim);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
 }
 
@@ -8796,7 +9068,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 
 .mk-section-label {
   color: var(--text-dim);
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -8809,19 +9081,19 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 
 .mk-note-line {
   margin: 6px 0;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.45;
 }
 
 .mk-text-btn {
   padding: 2px 6px;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: transparent;
   color: var(--text-dim);
   font: inherit;
-  font-size: 11.5px;
-  cursor: pointer;
+  font-size: var(--fs-xs);
+  cursor: default;
 }
 
 .mk-text-btn:hover {
@@ -8858,7 +9130,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   width: 100%;
   padding: 6px 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-elev);
   color: var(--text);
   font: inherit;
@@ -8897,12 +9169,12 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   height: 22px;
   padding: 0 8px;
   border: 1px solid var(--border);
-  border-radius: 11px;
+  border-radius: var(--radius-l);
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: 11.5px;
-  cursor: pointer;
+  font-size: var(--fs-xs);
+  cursor: default;
 }
 
 .mk-filter-chip:hover:not(:disabled) {
@@ -8939,7 +9211,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   margin: 8px 0 2px;
   overflow: hidden;
   color: var(--text-dim);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -8978,10 +9250,10 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   min-width: 20px;
   height: 16px;
   padding: 0 5px;
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   background: var(--mk-ink);
   color: var(--accent-text);
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   line-height: 16px;
   text-align: center;
@@ -9000,9 +9272,9 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   background: none;
   color: var(--text-dim);
   font: inherit;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .mk-card-where:hover {
@@ -9012,7 +9284,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .mk-card-where:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
-  border-radius: 3px;
+  border-radius: var(--radius-s);
 }
 
 .mk-label-line {
@@ -9036,7 +9308,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 
 .mk-card-state {
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .mk-card-actions {
@@ -9072,15 +9344,15 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   height: 18px;
   padding: 0 6px;
   border: 1px solid color-mix(in srgb, var(--mk-ink) 45%, transparent);
-  border-radius: 9px;
+  border-radius: var(--radius-l);
   background: color-mix(in srgb, var(--mk-ink) 9%, transparent);
   color: var(--mk-ink);
   font: inherit;
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   appearance: none;
   -webkit-appearance: none;
-  cursor: pointer;
+  cursor: default;
 }
 
 .mk-kind-select:focus-visible {
@@ -9105,7 +9377,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   overflow: hidden;
   border-left: 2px solid color-mix(in srgb, var(--mk-ink) 45%, transparent);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-style: italic;
   line-height: 1.4;
   -webkit-box-orient: vertical;
@@ -9132,7 +9404,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 
 .mk-crop {
   overflow: hidden;
-  cursor: pointer;
+  cursor: default;
 }
 
 .mk-crop.is-clipped {
@@ -9144,7 +9416,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   display: block;
   max-width: 100%;
   height: auto;
-  border-radius: 2px;
+  border-radius: var(--radius-s);
 }
 
 /* A quote with its math typeset: a few lines, displays centred. */
@@ -9303,7 +9575,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .mk-preview {
   margin-top: 6px;
   padding: 6px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-elev);
 }
 
@@ -9319,7 +9591,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   min-width: 0;
   overflow: hidden;
   color: var(--text-dim);
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -9334,7 +9606,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   overflow-y: auto;
   padding: 4px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-elev);
   box-shadow: var(--shadow);
 }
@@ -9344,8 +9616,8 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   align-items: baseline;
   gap: 8px;
   padding: 4px 6px;
-  border-radius: 4px;
-  cursor: pointer;
+  border-radius: var(--radius-s);
+  cursor: default;
 }
 
 .mk-menu-row:hover {
@@ -9369,7 +9641,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   max-width: 45%;
   overflow: hidden;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -9389,7 +9661,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   flex: none;
   color: var(--mk-ink);
   font-family: ui-monospace, Menlo, monospace;
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
 }
 
 /* Empty state */
@@ -9397,7 +9669,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .mk-empty {
   padding: 10px 2px;
   color: var(--text);
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   line-height: 1.5;
 }
 
@@ -9423,10 +9695,10 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   padding: 0 4px;
   border: 1px solid var(--border);
   border-bottom-width: 2px;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: var(--bg-inset);
   font-family: inherit;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 16px;
   text-align: center;
 }
@@ -9448,8 +9720,8 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   background: none;
   color: var(--text-dim);
   font: inherit;
-  font-size: 11.5px;
-  cursor: pointer;
+  font-size: var(--fs-xs);
+  cursor: default;
 }
 
 .mk-suggest-toggle svg {
@@ -9464,7 +9736,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .mk-suggest-toggle:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
-  border-radius: 3px;
+  border-radius: var(--radius-s);
 }
 
 .mk-suggest-row {
@@ -9488,7 +9760,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .mk-suggest-detail {
   overflow: hidden;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -9684,10 +9956,10 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   height: 16px;
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--radius-s);
   background: var(--bg-elev);
   color: var(--text);
-  cursor: pointer;
+  cursor: default;
 }
 
 .prepare-rubber {
@@ -9711,7 +9983,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 
 .prepare-head {
   margin: 0 0 6px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-dim);
 }
@@ -9729,7 +10001,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 .form-prepare-btn {
   height: 24px;
   padding: 0 8px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .form-prepare-btn {
@@ -9745,7 +10017,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 }
 
 .prepare-proposals-bar span {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-dim);
   margin-right: auto;
 }
@@ -9758,7 +10030,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 
 .prepare-kind {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -9768,18 +10040,18 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .prepare-label {
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .prepare-hint {
   margin: 0;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .prepare-input {
@@ -9788,11 +10060,11 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   height: 24px;
   padding: 0 6px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: var(--bg-inset);
   color: var(--text);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .prepare-input.prepare-narrow {
@@ -9817,7 +10089,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text);
 }
 
@@ -9825,7 +10097,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   display: inline-flex;
   align-self: flex-start;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   overflow: hidden;
 }
 
@@ -9836,8 +10108,8 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   background: var(--bg-inset);
   color: var(--text);
   font: inherit;
-  font-size: 11px;
-  cursor: pointer;
+  font-size: var(--fs-xs);
+  cursor: default;
 }
 
 .prepare-segmented button + button {
@@ -9868,10 +10140,10 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   height: 24px;
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: var(--bg-inset);
   color: var(--text);
-  cursor: pointer;
+  cursor: default;
 }
 
 .prepare-mini:disabled {
@@ -9904,7 +10176,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   gap: 6px;
   padding: 3px 5px;
   border-radius: var(--row-radius);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   cursor: grab;
   touch-action: none;
   user-select: none;
@@ -9937,7 +10209,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 
 .prepare-tab-kind {
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 @media (prefers-reduced-motion: reduce) {

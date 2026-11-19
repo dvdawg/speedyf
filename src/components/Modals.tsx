@@ -1,5 +1,8 @@
-/** In-app modals: password prompt, unsaved-changes guard, error notice. */
+/** In-app sheets: password prompt, unsaved-changes guard, confirmations,
+ * external links, error notice, and the feature dialogs with stores of
+ * their own. Every one is a Sheet, so they look and answer keys alike. */
 import { createEffect, createSignal, Show } from 'solid-js';
+import Sheet from './Sheet';
 import PrintDialog from '../features/print/PrintDialog';
 import { closePrint, printState } from '../features/print/printStore';
 import SignDialog from '../features/sign/SignDialog';
@@ -21,28 +24,21 @@ import {
   resolveUnsaved,
 } from '../stores/modalStore';
 
+const LABELS: Record<NonNullable<typeof modal.kind>, string> = {
+  password: 'Password required',
+  unsaved: 'Unsaved changes',
+  confirm: 'Confirm',
+  'external-link': 'Open this link?',
+  error: 'Something went wrong',
+};
+
 export default function Modals() {
   const [password, setPassword] = createSignal('');
   const [rememberHost, setRememberHost] = createSignal(false);
-  let modalEl: HTMLDivElement | undefined;
-  let restoreFocus: HTMLElement | null = null;
 
   // Each link is its own decision: never carry a ticked box into the next one.
   createEffect(() => {
     if (modal.kind === 'external-link') setRememberHost(false);
-  });
-
-  createEffect(() => {
-    const kind = modal.kind;
-    if (kind !== null && restoreFocus === null) {
-      restoreFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    } else if (kind === null && restoreFocus !== null) {
-      const target = restoreFocus;
-      restoreFocus = null;
-      queueMicrotask(() => {
-        if (target.isConnected) target.focus();
-      });
-    }
   });
 
   const cancelModal = () => {
@@ -60,56 +56,15 @@ export default function Modals() {
     }
   };
 
-  const trapKeys = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      cancelModal();
-      return;
-    }
-    if (e.key !== 'Tab' || !modalEl) return;
-    const controls = [
-      ...modalEl.querySelectorAll<HTMLElement>(
-        'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)'
-      ),
-    ];
-    if (controls.length === 0) return;
-    const first = controls[0]!;
-    const last = controls[controls.length - 1]!;
-    if (e.shiftKey && document.activeElement === first) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && document.activeElement === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  };
-
   return (
     <>
       {/* Print has its own store rather than a modal kind: it owns a temp
           document that must be released on close, which the single-slot
           resolver pattern has nowhere to put. */}
       <Show when={printState.open}>
-        <div
-          class="modal-backdrop"
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') {
-              e.preventDefault();
-              void closePrint();
-            }
-          }}
-        >
-          <div
-            class="modal modal-wide"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Print"
-            ref={(el) => queueMicrotask(() => el.isConnected && el.focus())}
-            tabindex="-1"
-          >
-            <PrintDialog />
-          </div>
-        </div>
+        <Sheet label="Print" class="modal-wide" onCancel={() => void closePrint()}>
+          <PrintDialog />
+        </Sheet>
       </Show>
       {/* Visual signatures: their own store, like print. */}
       <Show when={signState.dialog}>
@@ -130,22 +85,10 @@ export default function Modals() {
       <Show when={certState.open}>
         <CertSignDialog />
       </Show>
-      <Show when={modal.kind !== null}>
-        <div
-          class="modal-backdrop"
-          onKeyDown={trapKeys}
-          onPointerDown={(e) => {
-            if (e.target === e.currentTarget && modal.kind === 'error') dismissError();
-          }}
-        >
-          <div
-            ref={modalEl}
-            class="modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label={modal.kind ?? 'dialog'}
-          >
-            <Show when={modal.kind === 'password'}>
+      <Show when={modal.kind} keyed>
+        {(kind) => (
+          <Sheet label={LABELS[kind]} onCancel={cancelModal}>
+            <Show when={kind === 'password'}>
               <h2>Password required</h2>
               <p>{modal.message}</p>
               <form
@@ -160,7 +103,6 @@ export default function Modals() {
                   type="password"
                   value={password()}
                   onInput={(e) => setPassword(e.currentTarget.value)}
-                  ref={(el) => queueMicrotask(() => el.isConnected && el.focus())}
                   aria-label="PDF password"
                 />
                 <div class="modal-actions">
@@ -181,10 +123,17 @@ export default function Modals() {
               </form>
             </Show>
 
-            <Show when={modal.kind === 'unsaved'}>
+            <Show when={kind === 'unsaved'}>
               <h2>Unsaved changes</h2>
               <p>{modal.message}</p>
               <div class="modal-actions">
+                <button
+                  type="button"
+                  class="destructive-btn modal-actions-lead"
+                  onClick={() => resolveUnsaved('discard')}
+                >
+                  Discard changes
+                </button>
                 <button
                   type="button"
                   class="secondary-btn"
@@ -192,42 +141,49 @@ export default function Modals() {
                 >
                   Cancel
                 </button>
-                <button
-                  type="button"
-                  class="secondary-btn"
-                  onClick={() => resolveUnsaved('discard')}
-                >
-                  Discard changes
-                </button>
-                <button
-                  type="button"
-                  class="primary-btn"
-                  ref={(el) => queueMicrotask(() => el.isConnected && el.focus())}
-                  onClick={() => resolveUnsaved('save')}
-                >
+                <button type="button" class="primary-btn" onClick={() => resolveUnsaved('save')}>
                   Save
                 </button>
               </div>
             </Show>
 
-            <Show when={modal.kind === 'confirm'}>
+            <Show when={kind === 'confirm'}>
               <p>{modal.message}</p>
-              <div class="modal-actions">
-                <button type="button" class="secondary-btn" onClick={() => resolveConfirm(false)}>
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  class="primary-btn"
-                  ref={(el) => queueMicrotask(() => el.isConnected && el.focus())}
-                  onClick={() => resolveConfirm(true)}
-                >
-                  {modal.confirmLabel ?? 'Confirm'}
-                </button>
-              </div>
+              <Show
+                when={modal.destructive}
+                fallback={
+                  <div class="modal-actions">
+                    <button
+                      type="button"
+                      class="secondary-btn"
+                      onClick={() => resolveConfirm(false)}
+                    >
+                      Cancel
+                    </button>
+                    <button type="button" class="primary-btn" onClick={() => resolveConfirm(true)}>
+                      {modal.confirmLabel ?? 'Confirm'}
+                    </button>
+                  </div>
+                }
+              >
+                {/* Cannot be taken back: drawn destructive, and Cancel is
+                    the default Return presses. */}
+                <div class="modal-actions">
+                  <button
+                    type="button"
+                    class="destructive-btn"
+                    onClick={() => resolveConfirm(true)}
+                  >
+                    {modal.confirmLabel ?? 'Confirm'}
+                  </button>
+                  <button type="button" class="primary-btn" onClick={() => resolveConfirm(false)}>
+                    Cancel
+                  </button>
+                </div>
+              </Show>
             </Show>
 
-            <Show when={modal.kind === 'external-link'}>
+            <Show when={kind === 'external-link'}>
               <h2>Open this link?</h2>
               <p>
                 This link comes from the document and opens outside SpeedyF, in your default
@@ -258,7 +214,6 @@ export default function Modals() {
                 <button
                   type="button"
                   class="primary-btn"
-                  ref={(el) => queueMicrotask(() => el.isConnected && el.focus())}
                   onClick={() => resolveExternalLink({ open: true, remember: rememberHost() })}
                 >
                   Open link
@@ -266,22 +221,17 @@ export default function Modals() {
               </div>
             </Show>
 
-            <Show when={modal.kind === 'error'}>
+            <Show when={kind === 'error'}>
               <h2>Something went wrong</h2>
               <p>{modal.message}</p>
               <div class="modal-actions">
-                <button
-                  type="button"
-                  class="primary-btn"
-                  ref={(el) => queueMicrotask(() => el.isConnected && el.focus())}
-                  onClick={() => dismissError()}
-                >
+                <button type="button" class="primary-btn" onClick={() => dismissError()}>
                   OK
                 </button>
               </div>
             </Show>
-          </div>
-        </div>
+          </Sheet>
+        )}
       </Show>
     </>
   );

@@ -170,7 +170,7 @@ export async function applyRedactions(tab: TabRecord | null = activeTab()): Prom
     'images and drawings under them are permanently removed and the file is rewritten without ' +
     'its earlier versions. Until you save, Undo takes this back; after saving it cannot be undone.' +
     (signed ? ' This document is digitally signed: its signatures will be removed.' : '');
-  if (!(await askConfirm(message, 'Apply redactions'))) return false;
+  if (!(await askConfirm(message, 'Apply redactions', { destructive: true }))) return false;
   store.apply({ type: 'setScrub', scrub: { ...store.state.scrub, applyRedactions: true } });
   return true;
 }

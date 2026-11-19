@@ -218,7 +218,7 @@ export default function PrintDialog() {
           </label>
         </Show>
 
-        <div class="print-actions">
+        <div class="print-actions modal-actions">
           <button type="button" class="secondary-btn" onClick={() => void closePrint()}>
             Cancel
           </button>

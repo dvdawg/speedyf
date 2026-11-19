@@ -1,13 +1,14 @@
 /** Make a visual signature or initials: type a name in one of three
  * handwriting styles, draw one, or import a picture of one. What is made is
  * saved on this machine only and handed straight on for placing. */
-import { createSignal, For, Match, onCleanup, onMount, Show, Switch } from 'solid-js';
+import { createSignal, For, Match, Show, Switch } from 'solid-js';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import type { PdfPoint, SignatureArt, SignatureStyle } from '../../types/model';
 import { signaturesApi, type PreparedImage } from '../../lib/transport/signatures';
 import { closeSignDialog, finishSignDialog, signState } from './signStore';
 import { drawnArt, extendStroke, finishStroke, strokeD } from './art';
 import SignatureArtView from './SignatureArtView';
+import Sheet from '../../components/Sheet';
 
 type Mode = 'type' | 'draw' | 'image';
 
@@ -41,7 +42,6 @@ export default function SignDialog() {
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   let padEl: SVGSVGElement | undefined;
-  let dialogEl: HTMLDivElement | undefined;
 
   const canSave = () => {
     if (busy()) return false;
@@ -144,233 +144,188 @@ export default function SignDialog() {
     }
   };
 
-  const onKey = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      closeSignDialog();
-      return;
-    }
-    // Keep Tab inside the dialog, as the other modals do.
-    if (e.key !== 'Tab' || !dialogEl) return;
-    const controls = [
-      ...dialogEl.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)'),
-    ];
-    const first = controls[0];
-    const last = controls[controls.length - 1];
-    if (!first || !last) return;
-    if (e.shiftKey && document.activeElement === first) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && document.activeElement === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  };
-
-  onMount(() => {
-    const restore = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    queueMicrotask(() =>
-      (
-        dialogEl?.querySelector<HTMLElement>('.sign-name') ?? dialogEl?.querySelector('button')
-      )?.focus()
-    );
-    onCleanup(() => {
-      if (restore?.isConnected) restore.focus();
-    });
-  });
-
   return (
-    <div class="modal-backdrop" onKeyDown={onKey}>
-      <div
-        ref={dialogEl}
-        class="modal sign-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label={role() === 'initials' ? 'Add initials' : 'Add signature'}
-      >
-        <h2>{role() === 'initials' ? 'Add initials' : 'Add signature'}</h2>
-        <div class="sign-modes" role="tablist" aria-label="How to make it">
-          <For each={['type', 'draw', 'image'] as const}>
-            {(m) => (
-              <button
-                type="button"
-                role="tab"
-                aria-selected={mode() === m}
-                classList={{ 'is-active': mode() === m }}
-                onClick={() => choose(m)}
-              >
-                {m === 'type' ? 'Type' : m === 'draw' ? 'Draw' : 'Image'}
-              </button>
-            )}
-          </For>
-        </div>
-
-        <Switch>
-          <Match when={mode() === 'type'}>
-            <input
-              class="sign-name"
-              type="text"
-              placeholder={role() === 'initials' ? 'Your initials' : 'Your name'}
-              aria-label={role() === 'initials' ? 'Initials' : 'Name'}
-              value={text()}
-              maxLength={80}
-              onInput={(e) => setText(e.currentTarget.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void save();
-              }}
-            />
-            <div class="sign-styles" role="radiogroup" aria-label="Style">
-              <For each={SIGNATURE_STYLES}>
-                {(s) => (
-                  <button
-                    type="button"
-                    role="radio"
-                    class="sign-style"
-                    aria-checked={style() === s.id}
-                    aria-label={`${s.label} style`}
-                    classList={{ 'is-active': style() === s.id }}
-                    onClick={() => setStyle(s.id)}
-                  >
-                    <span
-                      class="sign-style-sample"
-                      style={{ 'font-family': `'${s.family}', cursive`, color: ink() }}
-                    >
-                      {text().trim() || (role() === 'initials' ? 'A.L.' : 'Your name')}
-                    </span>
-                  </button>
-                )}
-              </For>
-            </div>
-          </Match>
-
-          <Match when={mode() === 'draw'}>
-            <svg
-              ref={padEl}
-              class="sign-pad"
-              viewBox={`0 0 ${PAD_W} ${PAD_H}`}
-              role="img"
-              aria-label={`Drawing area: draw your ${noun()} with the mouse or trackpad`}
-              onPointerDown={onPadDown}
-              onPointerMove={onPadMove}
-              onPointerUp={onPadUp}
-              onPointerCancel={onPadUp}
+    <Sheet
+      label={role() === 'initials' ? 'Add initials' : 'Add signature'}
+      class="sign-dialog"
+      onCancel={() => closeSignDialog()}
+    >
+      <h2>{role() === 'initials' ? 'Add initials' : 'Add signature'}</h2>
+      <div class="sign-modes" role="tablist" aria-label="How to make it">
+        <For each={['type', 'draw', 'image'] as const}>
+          {(m) => (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode() === m}
+              classList={{ 'is-active': mode() === m }}
+              onClick={() => choose(m)}
             >
-              <line
-                class="sign-pad-line"
-                x1="24"
-                x2={PAD_W - 24}
-                y1={PAD_H * 0.75}
-                y2={PAD_H * 0.75}
-              />
-              <For each={[...strokes(), ...(live() ? [live()!] : [])]}>
-                {(stroke) => (
-                  <path
-                    d={strokeD(stroke)}
-                    fill="none"
-                    stroke={ink()}
-                    stroke-width={PEN}
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  />
-                )}
-              </For>
-            </svg>
-            <div class="sign-pad-actions">
-              <button
-                type="button"
-                class="secondary-btn"
-                disabled={strokes().length === 0}
-                onClick={() => setStrokes(strokes().slice(0, -1))}
-              >
-                Undo stroke
-              </button>
-              <button
-                type="button"
-                class="secondary-btn"
-                disabled={strokes().length === 0}
-                onClick={() => setStrokes([])}
-              >
-                Clear
-              </button>
-            </div>
-          </Match>
+              {m === 'type' ? 'Type' : m === 'draw' ? 'Draw' : 'Image'}
+            </button>
+          )}
+        </For>
+      </div>
 
-          <Match when={mode() === 'image'}>
-            <div class="sign-image">
-              <Show
-                when={picture()}
-                fallback={
-                  <p class="sign-hint">
-                    A photo or scan of your {noun()} on white paper. The paper is made transparent
-                    and the picture is cropped to the ink.
-                  </p>
-                }
-              >
-                {(p) => (
-                  <div class="sign-image-preview">
-                    <SignatureArtView
-                      art={{ type: 'image', w: p().w, h: p().h, png: p().png }}
-                      color={ink()}
-                    />
-                  </div>
-                )}
-              </Show>
-              <button
-                type="button"
-                class="secondary-btn"
-                disabled={busy()}
-                onClick={() => void importImage()}
-              >
-                {picture() ? 'Choose another image...' : 'Choose image...'}
-              </button>
-            </div>
-          </Match>
-        </Switch>
-
-        <Show when={mode() !== 'image'}>
-          <div class="sign-inks" role="radiogroup" aria-label="Ink colour">
-            <For each={SIGNATURE_INKS}>
-              {(i) => (
+      <Switch>
+        <Match when={mode() === 'type'}>
+          <input
+            class="sign-name"
+            type="text"
+            placeholder={role() === 'initials' ? 'Your initials' : 'Your name'}
+            aria-label={role() === 'initials' ? 'Initials' : 'Name'}
+            value={text()}
+            maxLength={80}
+            onInput={(e) => setText(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void save();
+            }}
+          />
+          <div class="sign-styles" role="radiogroup" aria-label="Style">
+            <For each={SIGNATURE_STYLES}>
+              {(s) => (
                 <button
                   type="button"
                   role="radio"
-                  class="sign-ink"
-                  aria-checked={ink() === i.value}
-                  aria-label={i.label}
-                  title={i.label}
-                  classList={{ 'is-active': ink() === i.value }}
-                  style={{ '--ink': i.value }}
-                  onClick={() => setInk(i.value)}
-                />
+                  class="sign-style"
+                  aria-checked={style() === s.id}
+                  aria-label={`${s.label} style`}
+                  classList={{ 'is-active': style() === s.id }}
+                  onClick={() => setStyle(s.id)}
+                >
+                  <span
+                    class="sign-style-sample"
+                    style={{ 'font-family': `'${s.family}', cursive`, color: ink() }}
+                  >
+                    {text().trim() || (role() === 'initials' ? 'A.L.' : 'Your name')}
+                  </span>
+                </button>
               )}
             </For>
           </div>
-        </Show>
+        </Match>
 
-        <Show when={error()}>
-          <p class="sign-error" role="alert">
-            {error()}
-          </p>
-        </Show>
-        <p class="sign-hint">
-          Saved on this computer only. A visual signature is a picture of your {noun()}, not a
-          certificate signature.
-        </p>
-        <div class="modal-actions">
-          <button type="button" class="secondary-btn" onClick={() => closeSignDialog()}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            class="primary-btn"
-            disabled={!canSave()}
-            onClick={() => void save()}
+        <Match when={mode() === 'draw'}>
+          <svg
+            ref={padEl}
+            class="sign-pad"
+            viewBox={`0 0 ${PAD_W} ${PAD_H}`}
+            role="img"
+            aria-label={`Drawing area: draw your ${noun()} with the mouse or trackpad`}
+            onPointerDown={onPadDown}
+            onPointerMove={onPadMove}
+            onPointerUp={onPadUp}
+            onPointerCancel={onPadUp}
           >
-            Save and place
-          </button>
+            <line
+              class="sign-pad-line"
+              x1="24"
+              x2={PAD_W - 24}
+              y1={PAD_H * 0.75}
+              y2={PAD_H * 0.75}
+            />
+            <For each={[...strokes(), ...(live() ? [live()!] : [])]}>
+              {(stroke) => (
+                <path
+                  d={strokeD(stroke)}
+                  fill="none"
+                  stroke={ink()}
+                  stroke-width={PEN}
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              )}
+            </For>
+          </svg>
+          <div class="sign-pad-actions">
+            <button
+              type="button"
+              class="secondary-btn"
+              disabled={strokes().length === 0}
+              onClick={() => setStrokes(strokes().slice(0, -1))}
+            >
+              Undo stroke
+            </button>
+            <button
+              type="button"
+              class="secondary-btn"
+              disabled={strokes().length === 0}
+              onClick={() => setStrokes([])}
+            >
+              Clear
+            </button>
+          </div>
+        </Match>
+
+        <Match when={mode() === 'image'}>
+          <div class="sign-image">
+            <Show
+              when={picture()}
+              fallback={
+                <p class="sign-hint">
+                  A photo or scan of your {noun()} on white paper. The paper is made transparent and
+                  the picture is cropped to the ink.
+                </p>
+              }
+            >
+              {(p) => (
+                <div class="sign-image-preview">
+                  <SignatureArtView
+                    art={{ type: 'image', w: p().w, h: p().h, png: p().png }}
+                    color={ink()}
+                  />
+                </div>
+              )}
+            </Show>
+            <button
+              type="button"
+              class="secondary-btn"
+              disabled={busy()}
+              onClick={() => void importImage()}
+            >
+              {picture() ? 'Choose another image...' : 'Choose image...'}
+            </button>
+          </div>
+        </Match>
+      </Switch>
+
+      <Show when={mode() !== 'image'}>
+        <div class="sign-inks" role="radiogroup" aria-label="Ink colour">
+          <For each={SIGNATURE_INKS}>
+            {(i) => (
+              <button
+                type="button"
+                role="radio"
+                class="sign-ink"
+                aria-checked={ink() === i.value}
+                aria-label={i.label}
+                title={i.label}
+                classList={{ 'is-active': ink() === i.value }}
+                style={{ '--ink': i.value }}
+                onClick={() => setInk(i.value)}
+              />
+            )}
+          </For>
         </div>
+      </Show>
+
+      <Show when={error()}>
+        <p class="sign-error" role="alert">
+          {error()}
+        </p>
+      </Show>
+      <p class="sign-hint">
+        Saved on this computer only. A visual signature is a picture of your {noun()}, not a
+        certificate signature.
+      </p>
+      <div class="modal-actions">
+        <button type="button" class="secondary-btn" onClick={() => closeSignDialog()}>
+          Cancel
+        </button>
+        <button type="button" class="primary-btn" disabled={!canSave()} onClick={() => void save()}>
+          Save and place
+        </button>
       </div>
-    </div>
+    </Sheet>
   );
 }

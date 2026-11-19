@@ -56,7 +56,7 @@
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   background: var(--bg-elev);
   box-shadow: var(--shadow);
 }
@@ -67,11 +67,11 @@
   align-items: center;
   padding: 0 8px;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--radius-m);
   background: none;
   color: var(--text);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-md);
   text-align: left;
   white-space: nowrap;
 }
@@ -105,13 +105,13 @@
 .protect-hint {
   margin: 8px 0;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .protect-warn {
   margin: 8px 0;
   color: var(--warn);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .protect-input {
@@ -119,11 +119,11 @@
   height: var(--control-h);
   padding: 0 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-inset);
   color: var(--text);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 
 .protect-input:focus-visible {
@@ -135,7 +135,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 
 .protect-list {
@@ -152,7 +152,7 @@
   gap: 8px;
   padding: 5px 4px;
   border-radius: var(--row-radius);
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 
 .protect-row:hover {
@@ -173,7 +173,7 @@
 .protect-count,
 .protect-detail {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .protect-detail {
@@ -209,7 +209,7 @@
   margin-bottom: 4px;
   padding: 0;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .redact-results {
@@ -223,7 +223,7 @@
   justify-content: space-between;
   margin-bottom: 4px;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .redact-results-actions {
@@ -237,7 +237,7 @@
   background: none;
   color: var(--accent);
   font: inherit;
-  cursor: pointer;
+  cursor: default;
 }
 
 .redact-match-text {
@@ -252,5 +252,5 @@
   gap: 4px;
   margin-top: 12px;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }

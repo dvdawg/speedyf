@@ -20,7 +20,7 @@
 
 .protect-strength {
   display: block;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-dim);
 }
 
@@ -37,7 +37,7 @@
 .protect-perms legend {
   padding: 0;
   margin-bottom: 8px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-dim);
 }
 
@@ -51,7 +51,7 @@
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 8px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: var(--text-dim);
 }
 
@@ -59,7 +59,7 @@
   height: 26px;
   padding: 0 4px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg-inset);
   color: var(--text);
   font: inherit;
@@ -67,7 +67,7 @@
 
 .modal .protect-note {
   margin: 0 0 12px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .modal .protect-warn {
@@ -77,7 +77,7 @@
 .modal .protect-error {
   margin: 0 0 10px;
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .protect-remove {
@@ -93,7 +93,7 @@
   border: 0;
   background: transparent;
   color: var(--text-dim);
-  cursor: pointer;
+  cursor: default;
 }
 
 .sb-lock:hover {

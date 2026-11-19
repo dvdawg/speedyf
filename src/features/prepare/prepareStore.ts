@@ -88,7 +88,8 @@ export async function setFlatten(tab: TabRecord, on: boolean): Promise<boolean> 
       !(await askConfirm(
         'This document is digitally signed. Flattening the form removes its signature ' +
           'fields, and the saved file will show its signatures as broken. Flatten anyway?',
-        'Flatten form'
+        'Flatten form',
+        { destructive: true }
       ))
     ) {
       return false;

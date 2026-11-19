@@ -44,7 +44,12 @@ export const IconSign = () => (
 function Group(props: { role: SignatureRole }) {
   const remove = async (item: SavedSignature) => {
     const noun = props.role === 'initials' ? 'initials' : 'signature';
-    if (!(await askConfirm(`Remove this saved ${noun} from this computer?`, 'Remove'))) return;
+    if (
+      !(await askConfirm(`Remove this saved ${noun} from this computer?`, 'Remove', {
+        destructive: true,
+      }))
+    )
+      return;
     await removeSignature(item.id).catch(() => undefined);
   };
   return (
@@ -115,6 +120,7 @@ export function SignMenu() {
     <div class="sign-menu-wrap" ref={wrap}>
       <IconButton
         label="Sign: signatures and filling printed forms"
+        submenu
         disabled={!loaded()}
         active={signState.menuOpen || signState.pending !== null || fillActive()}
         onClick={() => setSignMenuOpen(!signState.menuOpen)}
