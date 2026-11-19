@@ -41,7 +41,7 @@
   padding: 6px 8px;
   border: 1px solid transparent;
   border-radius: var(--radius-m);
-  cursor: pointer;
+  cursor: default;
 }
 
 .cert-identity:hover {
@@ -147,7 +147,7 @@
   margin-bottom: 6px;
   color: var(--text);
   font-size: var(--fs-md);
-  cursor: pointer;
+  cursor: default;
 }
 
 .cert-check input {
@@ -162,7 +162,7 @@
   margin-bottom: 8px;
   color: var(--text-dim);
   font-size: var(--fs-sm);
-  cursor: pointer;
+  cursor: default;
 }
 
 .cert-options summary:focus-visible {

@@ -538,7 +538,7 @@ textarea,
   color: var(--text-dim);
   text-align: left;
   font: inherit;
-  cursor: pointer;
+  cursor: default;
 }
 
 .home-nav-item:hover {
@@ -652,7 +652,7 @@ textarea,
   color: var(--text);
   text-align: left;
   font: inherit;
-  cursor: pointer;
+  cursor: default;
 }
 
 .home-recent-row:hover {
@@ -723,7 +723,7 @@ textarea,
   display: flex;
   flex-direction: column;
   gap: 3px;
-  cursor: pointer;
+  cursor: default;
 }
 
 .home-setting-title {
@@ -966,7 +966,7 @@ textarea,
   border-radius: var(--radius-m);
   background: transparent;
   color: var(--text);
-  cursor: pointer;
+  cursor: default;
   font: inherit;
 }
 
@@ -1157,7 +1157,7 @@ textarea:focus-visible {
   border-radius: var(--radius-m) var(--radius-m) 0 0;
   background: var(--bg-inset);
   color: var(--text-dim);
-  cursor: pointer;
+  cursor: default;
 }
 
 .tab-pill:hover {
@@ -1302,7 +1302,7 @@ html.is-dragging-tab * {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  cursor: pointer;
+  cursor: default;
 }
 
 .tab-menu-item:hover:not(:disabled),
@@ -1450,7 +1450,7 @@ html.is-dragging-tab * {
   border-radius: var(--radius-s);
   padding: 0;
   background: var(--page-bg);
-  cursor: pointer;
+  cursor: default;
   overflow: hidden;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
 }
@@ -1606,7 +1606,7 @@ html.is-dragging-tab * {
   border-radius: var(--radius-s);
   font: inherit;
   color: inherit;
-  cursor: pointer;
+  cursor: default;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -1914,7 +1914,7 @@ html.is-dragging-tab * {
   background: var(--bg-inset);
   color: var(--text);
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .citation-preview-action:focus-visible {
@@ -2100,7 +2100,7 @@ html.is-dragging-tab * {
   border-radius: var(--radius-m);
   background: var(--bg-elev);
   color: var(--text);
-  cursor: pointer;
+  cursor: default;
 }
 
 .citation-library-action:hover {
@@ -2167,7 +2167,7 @@ html.is-dragging-tab * {
  * ring; a shaded one keeps a target too, since clicking it again clears it. */
 .annot-svg .bubble-target {
   pointer-events: fill;
-  cursor: pointer;
+  cursor: default;
   fill: var(--accent);
   fill-opacity: 0.14;
   stroke: var(--accent);
@@ -2382,7 +2382,7 @@ html.is-dragging-tab * {
   border: 1px solid var(--border);
   background: var(--bg-elev);
   color: var(--danger);
-  cursor: pointer;
+  cursor: default;
   box-shadow: var(--shadow);
 }
 
@@ -2429,7 +2429,7 @@ html.is-dragging-tab * {
   display: flex;
   align-items: center;
   gap: 6px;
-  cursor: pointer;
+  cursor: default;
 }
 
 .search-count {
@@ -2470,7 +2470,7 @@ html.is-dragging-tab * {
   font: inherit;
   font-size: var(--fs-md);
   line-height: 1.35;
-  cursor: pointer;
+  cursor: default;
   border-radius: var(--row-radius);
 }
 
@@ -2573,7 +2573,7 @@ html.is-dragging-tab * {
   color: var(--text-dim);
   font-size: var(--fs-lg);
   line-height: 1;
-  cursor: pointer;
+  cursor: default;
 }
 
 .library-search-clear:hover {
@@ -2596,7 +2596,7 @@ html.is-dragging-tab * {
   font: inherit;
   font-size: var(--fs-sm);
   text-overflow: ellipsis;
-  cursor: pointer;
+  cursor: default;
 }
 
 .library-search-scope:hover {
@@ -2669,7 +2669,7 @@ html.is-dragging-tab * {
   text-align: left;
   font: inherit;
   font-size: var(--fs-md);
-  cursor: pointer;
+  cursor: default;
 }
 
 .library-result-head:hover {
@@ -2723,7 +2723,7 @@ html.is-dragging-tab * {
   font: inherit;
   font-size: var(--fs-sm);
   line-height: 1.45;
-  cursor: pointer;
+  cursor: default;
 }
 
 .library-result-hit:hover {
@@ -2832,7 +2832,7 @@ html.is-dragging-tab * {
   color: var(--text-dim);
   font-size: var(--fs-md);
   line-height: 1;
-  cursor: pointer;
+  cursor: default;
 }
 
 .library-folder-remove:hover {
@@ -2881,7 +2881,7 @@ html.is-dragging-tab * {
   color: var(--text);
   text-align: left;
   font: inherit;
-  cursor: pointer;
+  cursor: default;
 }
 
 .note-row:hover {
@@ -3012,7 +3012,7 @@ html.is-dragging-tab * {
   color: var(--text);
   font-size: var(--fs-md);
   line-height: 1;
-  cursor: pointer;
+  cursor: default;
 }
 
 .print-pager button:hover:not(:disabled) {
@@ -3119,7 +3119,7 @@ html.is-dragging-tab * {
   border-top: 1px solid var(--border);
   color: var(--text);
   font-size: var(--fs-md);
-  cursor: pointer;
+  cursor: default;
 }
 
 .print-toggle input {
@@ -3180,7 +3180,7 @@ html.is-dragging-tab * {
   color: var(--text);
   text-align: left;
   font: inherit;
-  cursor: pointer;
+  cursor: default;
 }
 
 .figure-row:hover {
@@ -3276,7 +3276,7 @@ html.is-dragging-tab * {
   color: var(--text);
   padding: 6px 8px;
   border-radius: var(--row-radius);
-  cursor: pointer;
+  cursor: default;
   font: inherit;
   white-space: nowrap;
   overflow: hidden;
@@ -3356,7 +3356,7 @@ html.is-dragging-tab * {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  cursor: pointer;
+  cursor: default;
 }
 
 .form-nav-toggle input {
@@ -3384,7 +3384,7 @@ html.is-dragging-tab * {
   font: inherit;
   font-size: var(--fs-sm);
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .form-nav-row:hover {
@@ -3436,7 +3436,7 @@ html.is-dragging-tab * {
   background: var(--bg-elev);
   color: var(--text);
   font: inherit;
-  cursor: pointer;
+  cursor: default;
 }
 
 .form-nav-reset:hover {
@@ -3532,7 +3532,7 @@ html.is-dragging-tab * {
   background: transparent;
   color: var(--text-dim);
   font: inherit;
-  cursor: pointer;
+  cursor: default;
 }
 
 .sb-clear:hover {
@@ -3552,7 +3552,7 @@ html.is-dragging-tab * {
   background: transparent;
   color: var(--text-dim);
   font: inherit;
-  cursor: pointer;
+  cursor: default;
 }
 
 .sb-sleepy:hover {
@@ -3589,7 +3589,7 @@ html.is-dragging-tab * {
   height: var(--control-h);
   padding: 0 14px;
   border-radius: var(--radius-m);
-  cursor: pointer;
+  cursor: default;
   font: inherit;
 }
 
@@ -3712,7 +3712,7 @@ html.is-dragging-tab * {
   margin-bottom: 14px;
   color: var(--text-dim);
   font-size: var(--fs-md);
-  cursor: pointer;
+  cursor: default;
 }
 
 .modal-check input {
@@ -3745,7 +3745,7 @@ html.is-dragging-tab * {
   color: var(--text);
   font: inherit;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .sig-row:hover:not(:disabled) {
@@ -3900,7 +3900,7 @@ html.is-dragging-tab * {
   font-size: var(--fs-md);
   line-height: 1.35;
   border-radius: var(--row-radius);
-  cursor: pointer;
+  cursor: default;
 }
 
 /* A soft tint rather than a filled accent: a solid fill would force
@@ -4075,7 +4075,7 @@ html.is-dragging-tab * {
 }
 
 .ext-details summary {
-  cursor: pointer;
+  cursor: default;
 }
 
 .ext-details[open] summary {
@@ -4140,7 +4140,7 @@ html.is-dragging-tab * {
   color: var(--text-dim);
   font: inherit;
   font-size: var(--fs-xs);
-  cursor: pointer;
+  cursor: default;
 }
 
 .ext-action:hover {
@@ -4350,7 +4350,7 @@ html.is-dragging-tab * {
 
 /* Only a row that does something looks like it does. */
 .ext-panel-row.is-actionable {
-  cursor: pointer;
+  cursor: default;
 }
 
 .ext-panel-row.is-actionable:hover {
@@ -4766,7 +4766,7 @@ textarea.form-input {
 /* Combo boxes: the native menu, and a small arrow once the raster's own is
  * covered. */
 .form-select {
-  cursor: pointer;
+  cursor: default;
 }
 
 .form-select option,
@@ -4783,7 +4783,7 @@ textarea.form-input {
   margin: 0;
   border: 0;
   opacity: 0;
-  cursor: pointer;
+  cursor: default;
 }
 
 .form-combo.is-covered::after {
@@ -4836,7 +4836,7 @@ textarea.form-input {
 
 /* Checkboxes and radio buttons. */
 .form-widget {
-  cursor: pointer;
+  cursor: default;
 }
 
 .form-widget.is-radio,
@@ -5004,7 +5004,7 @@ textarea.form-input {
   align-items: center;
   gap: 6px;
   padding: 3px 0;
-  cursor: pointer;
+  cursor: default;
 }
 
 .paper-panel-check input {
@@ -5063,7 +5063,7 @@ textarea.form-input {
   text-align: left;
   font: inherit;
   font-size: var(--fs-sm);
-  cursor: pointer;
+  cursor: default;
 }
 
 .paper-panel-link-row:hover:not(:disabled) {
@@ -5257,7 +5257,7 @@ textarea.form-input {
 .settings-advanced-summary {
   color: var(--text-dim);
   font-size: var(--fs-sm);
-  cursor: pointer;
+  cursor: default;
 }
 
 .settings-advanced-body {
@@ -5336,7 +5336,7 @@ textarea.form-input {
   font: inherit;
   overflow: hidden;
   text-overflow: ellipsis;
-  cursor: pointer;
+  cursor: default;
 }
 
 .projects-head-cited:hover {
@@ -5369,7 +5369,7 @@ textarea.form-input {
   color: var(--text-dim);
   font: inherit;
   font-size: var(--fs-sm);
-  cursor: pointer;
+  cursor: default;
 }
 
 .projects-launch-toggle button.is-active {
@@ -5435,7 +5435,7 @@ textarea.form-input {
   color: inherit;
   font-size: var(--fs-lg);
   line-height: 1;
-  cursor: pointer;
+  cursor: default;
 }
 
 .projects-error-dismiss:hover {
@@ -5501,7 +5501,7 @@ textarea.form-input {
   color: var(--text-dim);
   font: inherit;
   font-size: var(--fs-sm);
-  cursor: pointer;
+  cursor: default;
 }
 
 .project-pane-back span {
@@ -5625,7 +5625,7 @@ textarea.form-input {
   border-radius: var(--radius-s);
   background: transparent;
   color: inherit;
-  cursor: pointer;
+  cursor: default;
 }
 
 .projects-row:hover .projects-row-menu,
@@ -5698,7 +5698,7 @@ textarea.form-input {
   color: var(--text);
   font: inherit;
   font-size: var(--fs-sm);
-  cursor: pointer;
+  cursor: default;
 }
 
 .projects-confirm-yes {
@@ -5734,7 +5734,7 @@ textarea.form-input {
   font: inherit;
   text-align: left;
   white-space: nowrap;
-  cursor: pointer;
+  cursor: default;
 }
 
 .projects-menu-item:hover {
@@ -5768,7 +5768,7 @@ textarea.form-input {
   font: inherit;
   text-align: left;
   white-space: nowrap;
-  cursor: pointer;
+  cursor: default;
 }
 
 .projects-new:hover {
@@ -5959,7 +5959,7 @@ textarea.form-input {
   color: var(--text-dim);
   font: inherit;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .paper-fulltext:hover {
@@ -6062,7 +6062,7 @@ textarea.form-input {
 .paper-field-value.is-dim {
   color: var(--text-dim);
   font-style: italic;
-  cursor: pointer;
+  cursor: default;
 }
 
 .paper-field-value.is-mono,
@@ -6151,7 +6151,7 @@ textarea.paper-field-input {
   color: var(--text-dim);
   font: inherit;
   font-size: var(--fs-xs);
-  cursor: pointer;
+  cursor: default;
 }
 
 .paper-mini-btn:hover {
@@ -6259,7 +6259,7 @@ textarea.paper-field-input {
   gap: 6px;
   min-width: 0;
   line-height: 20px;
-  cursor: pointer;
+  cursor: default;
 }
 
 .paper-project-check input {
@@ -6316,7 +6316,7 @@ textarea.paper-field-input {
   color: var(--text);
   font: inherit;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .paper-candidate:hover:not(:disabled) {
@@ -6715,7 +6715,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 }
 
 .graph-node {
-  cursor: pointer;
+  cursor: default;
   outline: none;
 }
 
@@ -6826,7 +6826,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   color: var(--text-dim);
   font: inherit;
   font-size: var(--fs-sm);
-  cursor: pointer;
+  cursor: default;
 }
 
 .graph-control + .graph-control {
@@ -6873,7 +6873,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   color: var(--text-dim);
   font: inherit;
   font-size: var(--fs-sm);
-  cursor: pointer;
+  cursor: default;
 }
 
 .graph-canvas.is-empty .graph-chip {
@@ -7221,7 +7221,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   font: inherit;
   font-size: var(--fs-md);
   line-height: 1;
-  cursor: pointer;
+  cursor: default;
 }
 
 .graph-stepper button:hover:not(:disabled) {
@@ -7281,7 +7281,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   font: inherit;
   font-size: var(--fs-lg);
   line-height: 1;
-  cursor: pointer;
+  cursor: default;
 }
 
 .graph-focus-leave:hover {
@@ -7425,7 +7425,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 }
 
 .missing-row {
-  cursor: pointer;
+  cursor: default;
 }
 
 .missing-row-text {
@@ -7566,7 +7566,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   line-height: 1.5;
   white-space: nowrap;
   box-shadow: var(--shadow);
-  cursor: pointer;
+  cursor: default;
 }
 
 .equation-action:hover,
@@ -7627,7 +7627,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   background: transparent;
   color: var(--text);
   font-size: var(--fs-sm);
-  cursor: pointer;
+  cursor: default;
 }
 
 .math-popover-copy:hover,
@@ -7693,7 +7693,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   font: inherit;
   font-size: var(--fs-sm);
   white-space: nowrap;
-  cursor: pointer;
+  cursor: default;
 }
 
 .paper-sort-btn:hover,
@@ -7780,7 +7780,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   font-size: var(--fs-md);
   line-height: 1.45;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .hover-term-entry:focus-visible {
@@ -7808,7 +7808,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   border-radius: var(--radius-m);
   background: transparent;
   color: var(--text-dim);
-  cursor: pointer;
+  cursor: default;
 }
 
 .projects-import:hover {
@@ -7872,7 +7872,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   border-radius: var(--radius-s);
   background: transparent;
   color: var(--text-dim);
-  cursor: pointer;
+  cursor: default;
 }
 
 .reader-pane-close:hover {
@@ -7931,7 +7931,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   color: var(--text-dim);
   font: inherit;
   font-size: var(--fs-sm);
-  cursor: pointer;
+  cursor: default;
 }
 
 .note-source-toggle:hover,
@@ -8362,7 +8362,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   flex-direction: column;
   padding: 4px 8px;
   border-radius: var(--row-radius);
-  cursor: pointer;
+  cursor: default;
 }
 
 .note-picker-row.is-current {
@@ -8416,7 +8416,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   color: var(--text);
   font: inherit;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .project-question-row:hover,
@@ -8480,7 +8480,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 }
 
 .item-line.is-action {
-  cursor: pointer;
+  cursor: default;
 }
 
 .item-line.is-action:hover {
@@ -8644,7 +8644,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   font: inherit;
   text-decoration: underline;
   text-underline-offset: 2px;
-  cursor: pointer;
+  cursor: default;
 }
 
 .sb-flash-action:hover,
@@ -8688,7 +8688,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  cursor: pointer;
+  cursor: default;
 }
 
 .note-head-menu-row.is-current {
@@ -8704,7 +8704,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   font: inherit;
   font-size: var(--fs-sm);
   white-space: nowrap;
-  cursor: pointer;
+  cursor: default;
 }
 
 .note-head-toggle:hover,
@@ -8731,7 +8731,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   color: var(--text-dim);
   font: inherit;
   font-size: 0.82em;
-  cursor: pointer;
+  cursor: default;
 }
 
 .np-ref-toggle:hover {
@@ -8774,7 +8774,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   color: var(--text-dim);
   font: inherit;
   font-size: 0.78em;
-  cursor: pointer;
+  cursor: default;
 }
 
 .np-refs-action:hover,
@@ -8897,7 +8897,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   line-height: 1;
   font-variant-numeric: tabular-nums;
   pointer-events: auto;
-  cursor: pointer;
+  cursor: default;
   opacity: 0.9;
 }
 
@@ -8982,7 +8982,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   color: var(--text-dim);
   font: inherit;
   font-size: var(--fs-xs);
-  cursor: pointer;
+  cursor: default;
 }
 
 .mk-text-btn:hover {
@@ -9063,7 +9063,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   color: var(--text);
   font: inherit;
   font-size: var(--fs-xs);
-  cursor: pointer;
+  cursor: default;
 }
 
 .mk-filter-chip:hover:not(:disabled) {
@@ -9163,7 +9163,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   font: inherit;
   font-size: var(--fs-xs);
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .mk-card-where:hover {
@@ -9241,7 +9241,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   font-weight: 600;
   appearance: none;
   -webkit-appearance: none;
-  cursor: pointer;
+  cursor: default;
 }
 
 .mk-kind-select:focus-visible {
@@ -9293,7 +9293,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
 
 .mk-crop {
   overflow: hidden;
-  cursor: pointer;
+  cursor: default;
 }
 
 .mk-crop.is-clipped {
@@ -9506,7 +9506,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   gap: 8px;
   padding: 4px 6px;
   border-radius: var(--radius-s);
-  cursor: pointer;
+  cursor: default;
 }
 
 .mk-menu-row:hover {
@@ -9610,7 +9610,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   color: var(--text-dim);
   font: inherit;
   font-size: var(--fs-xs);
-  cursor: pointer;
+  cursor: default;
 }
 
 .mk-suggest-toggle svg {
@@ -9848,7 +9848,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   border-radius: var(--radius-s);
   background: var(--bg-elev);
   color: var(--text);
-  cursor: pointer;
+  cursor: default;
 }
 
 .prepare-rubber {
@@ -9998,7 +9998,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   color: var(--text);
   font: inherit;
   font-size: var(--fs-xs);
-  cursor: pointer;
+  cursor: default;
 }
 
 .prepare-segmented button + button {
@@ -10032,7 +10032,7 @@ body.is-dragging .projects-row.is-project:hover .projects-row-count {
   border-radius: var(--radius-s);
   background: var(--bg-inset);
   color: var(--text);
-  cursor: pointer;
+  cursor: default;
 }
 
 .prepare-mini:disabled {

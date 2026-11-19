@@ -237,7 +237,7 @@
   background: none;
   color: var(--accent);
   font: inherit;
-  cursor: pointer;
+  cursor: default;
 }
 
 .redact-match-text {

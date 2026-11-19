@@ -94,3 +94,38 @@ describe('corner radii', () => {
     expect(off.map(where)).toEqual([]);
   });
 });
+
+describe('cursors', () => {
+  /** Real hyperlinks: links on the page, and link-styled text in prose that
+   * takes you somewhere (another file, an item, an author, a citation). */
+  const LINKS = [
+    '.citation-hotspot',
+    '.page-space.is-over-hover-span .text-layer',
+    '.paper-panel-link',
+    '.paper-verdict-link',
+    '.author-link',
+    '.ext-add-link',
+    '.np-cite',
+    '.np-xref',
+  ];
+
+  it('shows the pointing hand on links only', () => {
+    const off = declarations('cursor')
+      .filter((d) => d.value === 'pointer')
+      .flatMap((d) => d.rule.selector.split(',').map((s) => s.trim()))
+      .filter((s) => !LINKS.includes(s) && !/(^|\s)a(\[href[^\]]*\])?(:[\w-]+)*$/.test(s));
+    expect(off).toEqual([]);
+  });
+
+  it('gives the chrome the arrow and fields the I-beam', () => {
+    const all = rules();
+    const base = all.find((r) => r.selector === 'html, body')!;
+    expect(base.body).toMatch(/cursor:\s*default/);
+    expect(base.body).toMatch(/overscroll-behavior:\s*none/);
+    const fields = all.find(
+      (r) => r.selector.endsWith("textarea, [contenteditable='true']") && /cursor/.test(r.body)
+    )!;
+    expect(fields.body).toMatch(/cursor:\s*text/);
+    expect(fields.selector).toContain("[type='checkbox']");
+  });
+});

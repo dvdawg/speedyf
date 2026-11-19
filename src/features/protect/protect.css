@@ -93,7 +93,7 @@
   border: 0;
   background: transparent;
   color: var(--text-dim);
-  cursor: pointer;
+  cursor: default;
 }
 
 .sb-lock:hover {
