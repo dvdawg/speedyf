@@ -29,7 +29,6 @@ export function isBrowserKey(
 
 export function installWebviewGuards(): () => void {
   const onKey = (e: KeyboardEvent) => {
-    // A text field keeps Option/Alt+Arrow for its caret.
     if (isBrowserKey(e)) e.preventDefault();
   };
   // Ctrl+wheel (and a pinch, on engines that report one that way) zooms the
