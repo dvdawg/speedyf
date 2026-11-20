@@ -447,6 +447,7 @@ mod tests {
             added_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             incomplete: vec![],
+            looked_up_at: None,
             isbn: None,
             is_paper: true,
             paper_reason: String::new(),

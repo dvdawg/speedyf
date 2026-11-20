@@ -19,8 +19,8 @@ use super::references::{DocRefs, StoredRef, TitleIndex};
 use super::store::{format_rfc3339, now_rfc3339, parse_rfc3339, PaperStore};
 use super::types::{
     Author, CitationLinksDto, GraphDto, GraphEdgeDto, LibraryCountsDto, LookupCandidateDto,
-    MetaField, MetaPatchDto, MetaSource, PaperDto, PaperFile, PaperFilterDto, PaperListDto,
-    PaperMeta, PaperRowDto, PapernessVerdict,
+    MetaField, MetaPatchDto, MetaSource, PaperDto, PaperFile, PaperFilterDto, PaperKind,
+    PaperListDto, PaperMeta, PaperRowDto, PapernessVerdict,
 };
 use super::{bibtex, citekey, identifiers, mainfile, titlematch};
 use super::{normalize_isbn, plausible_info_title, LibraryEntry};
@@ -723,8 +723,13 @@ impl PaperRecord {
         }
     }
 
-    /// What a BibTeX entry needs and this paper lacks. A venue is not asked
-    /// of an arXiv-only work: it goes out as `@misc` with an eprint.
+    /// What a BibTeX entry needs and this paper lacks, by the type it will
+    /// go out as (`bibtex::entry_type`): an article its journal and a
+    /// conference paper its proceedings (both `venue`), a book its
+    /// publisher, a thesis its school (kept as `publisher`), `@misc`
+    /// nothing more. A paper of no known kind is asked for a venue - it is
+    /// most likely an article whose journal is unknown - unless it is an
+    /// arXiv-only work, which goes out as `@misc` with an eprint.
     pub fn incomplete(&self) -> Vec<String> {
         let mut missing = Vec::new();
         if self.authors().is_empty() {
@@ -736,8 +741,19 @@ impl PaperRecord {
         if self.title().is_none() {
             missing.push("title".to_owned());
         }
-        if self.venue().is_none() && self.ids.arxiv.is_none() {
-            missing.push("venue".to_owned());
+        let has = |field: &Option<MetaField<String>>| {
+            field.as_ref().is_some_and(|f| !f.value.trim().is_empty())
+        };
+        let wants = match self.meta.kind.as_ref().map(|kind| kind.value) {
+            Some(PaperKind::Article | PaperKind::Inproceedings) => Some("venue"),
+            Some(PaperKind::Book | PaperKind::Thesis) => Some("publisher"),
+            Some(PaperKind::Misc) => None,
+            None => self.ids.arxiv.is_none().then_some("venue"),
+        };
+        match wants {
+            Some("venue") if !has(&self.meta.venue) => missing.push("venue".to_owned()),
+            Some("publisher") if !has(&self.meta.publisher) => missing.push("publisher".to_owned()),
+            _ => {}
         }
         missing
     }
@@ -1657,6 +1673,7 @@ impl PaperStore {
             added_at: paper.added_at.clone(),
             updated_at: paper.updated_at.clone(),
             incomplete: paper.incomplete(),
+            looked_up_at: paper.looked_up_at.clone(),
             is_paper: paper.is_paper(),
             paper_reason: paper.paper_reason(),
             paper_override: paper.paper_override,
@@ -1773,6 +1790,7 @@ impl PaperStore {
         paper: &PaperRecord,
         memberships: &HashMap<&str, Vec<String>>,
     ) -> PaperRowDto {
+        let incomplete = paper.incomplete();
         PaperRowDto {
             id: paper.id.clone(),
             title: paper.display_title(),
@@ -1791,7 +1809,8 @@ impl PaperStore {
                 .unwrap_or_default(),
             missing: paper.is_missing(),
             has_identifier: paper.has_identifier(),
-            incomplete_count: paper.incomplete().len() as u32,
+            incomplete_count: incomplete.len() as u32,
+            incomplete,
             is_paper: paper.is_paper(),
             candidate_count: paper.candidates.len().min(u32::MAX as usize) as u32,
             file_count: mainfile::distinct_present(&paper.files).min(u32::MAX as usize) as u32,
@@ -2289,8 +2308,19 @@ impl PaperStore {
 
     /// Which of a project's papers a project-wide lookup asks about, and
     /// how (`PaperRecord::batch_chain`), in list order.
-    pub fn plan_project_lookup(&self, project_id: &str, now: u64) -> AppResult<LookupPlan> {
-        Ok(plan_lookup(self.project_members(project_id)?, now))
+    /// With `incomplete_only`, just the members whose BibTeX entry has a
+    /// gap: what the project's incomplete filter shows.
+    pub fn plan_project_lookup(
+        &self,
+        project_id: &str,
+        now: u64,
+        incomplete_only: bool,
+    ) -> AppResult<LookupPlan> {
+        let mut members = self.project_members(project_id)?;
+        if incomplete_only {
+            members.retain(|paper| !paper.incomplete().is_empty());
+        }
+        Ok(plan_lookup(members, now))
     }
 
     /// The same over the whole library.
@@ -2754,6 +2784,46 @@ mod tests {
             .iter()
             .map(|a| (a.given.as_str(), a.family.as_str()))
             .collect()
+    }
+
+    #[test]
+    fn incomplete_follows_the_entry_type() {
+        let field = |value: &str| {
+            Some(MetaField {
+                value: value.to_owned(),
+                source: MetaSource::User,
+            })
+        };
+        let mut paper = PaperRecord::new();
+        paper.meta.title = field("A Thesis");
+        paper.meta.authors = Some(MetaField {
+            value: vec![Author {
+                family: "Moitra".into(),
+                given: "Ankur".into(),
+            }],
+            source: MetaSource::User,
+        });
+        paper.meta.year = Some(MetaField {
+            value: 2011,
+            source: MetaSource::User,
+        });
+        let kind = |paper: &mut PaperRecord, kind: PaperKind| {
+            paper.meta.kind = Some(MetaField {
+                value: kind,
+                source: MetaSource::User,
+            });
+        };
+        // No kind and no venue: most likely an article without its journal.
+        assert_eq!(paper.incomplete(), ["venue"]);
+        // A thesis wants its school, not a venue.
+        kind(&mut paper, PaperKind::Thesis);
+        assert_eq!(paper.incomplete(), ["publisher"]);
+        paper.meta.publisher = field("MIT");
+        assert!(paper.incomplete().is_empty());
+        kind(&mut paper, PaperKind::Article);
+        assert_eq!(paper.incomplete(), ["venue"]);
+        kind(&mut paper, PaperKind::Misc);
+        assert!(paper.incomplete().is_empty());
     }
 
     #[test]
@@ -3745,7 +3815,7 @@ mod tests {
         }
 
         let now = crate::library::store::parse_rfc3339(&now_rfc3339()).unwrap();
-        let plan = store.plan_project_lookup(&project, now).unwrap();
+        let plan = store.plan_project_lookup(&project, now, false).unwrap();
         assert_eq!(plan.skipped, 1);
         let mut planned: Vec<(ChainKind, &str)> = plan
             .targets
@@ -3760,13 +3830,24 @@ mod tests {
         ];
         expected.sort_by_key(|(_, id)| id.to_string());
         assert_eq!(planned, expected);
-        assert!(store.plan_project_lookup("nope", now).is_err());
+        assert!(store.plan_project_lookup("nope", now, false).is_err());
         // The whole library: the same, with nobody left out.
         assert_eq!(store.plan_library_lookup(now).targets.len(), 3);
         assert_eq!(store.plan_library_lookup(now).skipped, 1);
         // A month on, the finished one is asked again.
         let later = now + LOOKUP_FRESH.as_secs();
         assert_eq!(store.plan_library_lookup(later).skipped, 0);
+        // Asked for the incomplete only, the complete one stays out even then.
+        let incomplete = store.plan_project_lookup(&project, later, true).unwrap();
+        assert!(!incomplete.targets.is_empty());
+        for (_, target) in &incomplete.targets {
+            let paper = store
+                .papers
+                .iter()
+                .find(|p| p.id == target.paper_id)
+                .unwrap();
+            assert!(target.paper_id != done_id && !paper.incomplete().is_empty());
+        }
 
         // What a target carries: the title, or the file's stem, and what
         // the paper already has.
