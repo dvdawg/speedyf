@@ -10,7 +10,8 @@ vi.mock('../../lib/transport/engine', async () => {
   return { engine: fakeEngine(), isEngineError };
 });
 
-const { dropHover, dropOverlayText, projectsDropTarget, setDropHover } = await import('./dnd');
+const { dropHover, dropOverlayText, dropPointToCss, projectsDropTarget, setDropHover } =
+  await import('./dnd');
 const { projectsStore } = await import('./projectsStore');
 
 describe('projectsDropTarget', () => {
@@ -83,5 +84,16 @@ describe('setDropHover', () => {
     expect(dropHover()).toEqual({ kind: 'slot', id: 'p1', after: false });
     setDropHover(null);
     expect(dropHover()).toBeNull();
+  });
+});
+
+describe('dropPointToCss', () => {
+  it('takes macOS positions as points already, whatever the scale', () => {
+    expect(dropPointToCss({ x: 120, y: 340 }, 2, true)).toEqual({ x: 120, y: 340 });
+  });
+
+  it('scales physical positions down elsewhere', () => {
+    expect(dropPointToCss({ x: 240, y: 680 }, 2, false)).toEqual({ x: 120, y: 340 });
+    expect(dropPointToCss({ x: 90, y: 30 }, 0, false)).toEqual({ x: 90, y: 30 });
   });
 });
