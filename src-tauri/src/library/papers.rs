@@ -264,20 +264,12 @@ pub fn offer<T: PartialEq>(field: &mut Option<MetaField<T>>, value: T, source: M
     true
 }
 
-/// Whether an identifier with this source is the scan's to re-derive:
-/// read off the file - the page, the file name, a PII, the XMP packet -
-/// or of unknown origin, a record from before sources were kept, which is
-/// read as the scan's so a rescan can correct it. A lookup's or the
-/// user's is not.
+/// An identifier and where it was read.
+type SourcedId = (String, MetaSource);
+
 /// The DOI and arXiv id a scanned file stands for, each with where the scan
 /// read it, and whether the DOI is only the XMP packet's say.
-fn entry_identifiers(
-    entry: &LibraryEntry,
-) -> (
-    Option<(String, MetaSource)>,
-    bool,
-    Option<(String, MetaSource)>,
-) {
+fn entry_identifiers(entry: &LibraryEntry) -> (Option<SourcedId>, bool, Option<SourcedId>) {
     let page_doi = entry
         .doi
         .as_deref()
@@ -316,6 +308,11 @@ pub fn scanned_record(entry: &LibraryEntry) -> PaperRecord {
     paper
 }
 
+/// Whether an identifier with this source is the scan's to re-derive:
+/// read off the file - the page, the file name, a PII, the XMP packet -
+/// or of unknown origin, a record from before sources were kept, which is
+/// read as the scan's so a rescan can correct it. A lookup's or the
+/// user's is not.
 fn scan_owned(source: Option<MetaSource>) -> bool {
     source.is_none_or(|source| source.rank() < MetaSource::OpenLibrary.rank())
 }
