@@ -567,6 +567,28 @@ export function uniqueLabels(
 
 /** Past this many edges in a component the untangling stage is skipped:
  * each count is quadratic in the edges. */
+/** How near an edge may pass a dot it does not end at: the largest dot's
+ * radius and a little. */
+const THROUGH_DOT = 9;
+
+/** Whether (px, py) lies within THROUGH_DOT of the segment's interior. */
+function nearSegment(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number
+): boolean {
+  const vx = bx - ax;
+  const vy = by - ay;
+  const length2 = vx * vx + vy * vy;
+  if (length2 < 1e-9) return false;
+  const t = ((px - ax) * vx + (py - ay) * vy) / length2;
+  if (t <= 0 || t >= 1) return false;
+  return Math.hypot(px - (ax + t * vx), py - (ay + t * vy)) < THROUGH_DOT;
+}
+
 export const UNTANGLE_MAX_EDGES = 600;
 const UNTANGLE_PASSES = 30;
 /** Components up to this size also try relocating a node anywhere. */
@@ -720,6 +742,22 @@ function untangleIn(
     return true;
   };
   const allClear = () => members.every(clearOf);
+  /** Whether no edge runs through a dot it does not end at, for edges at
+   * the given nodes and those nodes' dots. Crossings count only proper
+   * crossings, so without this a group that all cite one another scores
+   * best stacked on one line, its edges drawn over each other. */
+  const pathsClear = (nodes: number[]): boolean => {
+    const through = (v: number, e: number) => {
+      const [a, b] = links[e]!;
+      return v !== a && v !== b && nearSegment(xs[v]!, ys[v]!, xs[a]!, ys[a]!, xs[b]!, ys[b]!);
+    };
+    for (const v of nodes) {
+      spent += E + incident.get(v)!.length * members.length;
+      for (let e = 0; e < E; e++) if (through(v, e)) return false;
+      for (const e of incident.get(v)!) for (const w of members) if (through(w, e)) return false;
+    }
+    return true;
+  };
 
   let current = before;
   /** Whether edge e crosses any other. */
@@ -743,7 +781,7 @@ function untangleIn(
     if (nodes.some((i) => pinned[i])) return false;
     const was = whole ? current : local(nodes);
     apply();
-    const fits = whole ? allClear() : nodes.every(clearOf);
+    const fits = (whole ? allClear() : nodes.every(clearOf)) && pathsClear(nodes);
     const now = fits ? (whole ? total() : local(nodes)) : Infinity;
     if (now < was) {
       current = whole ? now : current - (was - now);
@@ -878,7 +916,7 @@ function untangleIn(
             if (Math.abs(tx - xi) >= slice * 2) continue;
             xs[i] = tx;
             ys[i] = ty;
-            if (clearOf(i)) {
+            if (clearOf(i) && pathsClear([i])) {
               const now = local([i]);
               if (now < bestCount) {
                 bestCount = now;

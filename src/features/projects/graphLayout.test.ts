@@ -284,6 +284,26 @@ describe('crossings', () => {
     expect(countCrossings(result.points, edges)).toBe(result.after);
   });
 
+  it('does not stack a group that all cite one another into a column', () => {
+    // A pinned focus among papers that nearly all cite each other: on one
+    // line their edges overlap and cross nothing, which the untangling
+    // must not take for tidy.
+    const nodes = Array.from({ length: 12 }, (_, i) => ({
+      ...node(`n${i}`, 'VRB+12', 2009 + (i % 9)),
+      pinned: i === 0,
+    }));
+    const edges: LayoutEdge[] = [];
+    for (let i = 0; i < 12; i++) {
+      for (let j = 0; j < i; j++) {
+        if ((i * 7 + j * 3) % 5 !== 0) edges.push({ from: `n${i}`, to: `n${j}` });
+      }
+    }
+    const layout = layoutGraph(nodes, edges, { aspect: 1.3 });
+    const xs = layout.points.map((p) => Math.round(p.x));
+    expect(new Set(xs).size).toBeGreaterThan(nodes.length / 2);
+    expectNoOverlaps(layout, nodes);
+  });
+
   it('lays a planar graph out without crossings', () => {
     // A wheel: a hub and a ring of seven, drawable with nothing crossing.
     // (Not every planar graph comes out planar: a force layout of the
