@@ -570,15 +570,25 @@ export function uniqueLabels(
 /** How near an edge may pass a dot it does not end at: the largest dot's
  * radius and a little. */
 const THROUGH_DOT = 9;
+/** How far the view's edge curve strays from the straight line, per unit
+ * of its length: half its bow (GraphView's BOW), at the curve's middle. */
+const BOW_REACH = 0.03;
+/** Sweeps of moving nodes off edges they sit on, and how many steps out
+ * each may try. */
+const UNBLOCK_SWEEPS = 4;
+const UNBLOCK_STEPS = 6;
 
-/** Whether (px, py) lies within THROUGH_DOT of the segment's interior. */
+/** Whether (px, py) lies within a dot of the segment's interior; with
+ * `bow`, within the dot and the drawn curve's bow, which is where the
+ * edge may actually pass. */
 function nearSegment(
   px: number,
   py: number,
   ax: number,
   ay: number,
   bx: number,
-  by: number
+  by: number,
+  bow = false
 ): boolean {
   const vx = bx - ax;
   const vy = by - ay;
@@ -586,7 +596,8 @@ function nearSegment(
   if (length2 < 1e-9) return false;
   const t = ((px - ax) * vx + (py - ay) * vy) / length2;
   if (t <= 0 || t >= 1) return false;
-  return Math.hypot(px - (ax + t * vx), py - (ay + t * vy)) < THROUGH_DOT;
+  const reach = THROUGH_DOT + (bow ? BOW_REACH * Math.sqrt(length2) : 0);
+  return Math.hypot(px - (ax + t * vx), py - (ay + t * vy)) < reach;
 }
 
 export const UNTANGLE_MAX_EDGES = 600;
@@ -671,8 +682,9 @@ export function untangle(
  * clear: a barycentric sweep (nodes in x-slices take each other's heights
  * in the order of their neighbours' mean height, left to right and back),
  * swapping two nodes close in x, and moving a node to its neighbours'
- * barycentre when that is not far in x (time stays a bias). Deterministic,
- * and bounded by passes and by a budget of crossing tests. */
+ * barycentre when that is not far in x (time stays a bias). Then, crossed
+ * or not, a node sitting on an edge it is not part of steps off it.
+ * Deterministic, and bounded by passes and by a budget of crossing tests. */
 function untangleIn(
   members: number[],
   links: [number, number][],
@@ -698,7 +710,7 @@ function untangleIn(
     return count;
   };
   const before = E < 2 ? 0 : total();
-  if (before === 0 || E > UNTANGLE_MAX_EDGES) return { before, after: before };
+  if (E > UNTANGLE_MAX_EDGES) return { before, after: before };
 
   const incident = new Map<number, number[]>(members.map((i) => [i, []]));
   links.forEach(([a, b], e) => {
@@ -746,15 +758,16 @@ function untangleIn(
    * the given nodes and those nodes' dots. Crossings count only proper
    * crossings, so without this a group that all cite one another scores
    * best stacked on one line, its edges drawn over each other. */
-  const pathsClear = (nodes: number[]): boolean => {
-    const through = (v: number, e: number) => {
-      const [a, b] = links[e]!;
-      return v !== a && v !== b && nearSegment(xs[v]!, ys[v]!, xs[a]!, ys[a]!, xs[b]!, ys[b]!);
-    };
+  const through = (v: number, e: number, bow = false) => {
+    const [a, b] = links[e]!;
+    return v !== a && v !== b && nearSegment(xs[v]!, ys[v]!, xs[a]!, ys[a]!, xs[b]!, ys[b]!, bow);
+  };
+  const pathsClear = (nodes: number[], bow = false): boolean => {
     for (const v of nodes) {
       spent += E + incident.get(v)!.length * members.length;
-      for (let e = 0; e < E; e++) if (through(v, e)) return false;
-      for (const e of incident.get(v)!) for (const w of members) if (through(w, e)) return false;
+      for (let e = 0; e < E; e++) if (through(v, e, bow)) return false;
+      for (const e of incident.get(v)!)
+        for (const w of members) if (through(w, e, bow)) return false;
     }
     return true;
   };
@@ -938,6 +951,48 @@ function untangleIn(
     }
     if (!improved) break;
     byX.sort((a, b) => xs[a]! - xs[b]! || a - b);
+  }
+
+  // (d) A node the forces left on an edge it is not part of - three
+  // papers in a line, the middle one under the outer pair's edge - steps
+  // off it sideways, on the side it already leans to first, to the
+  // nearest spot that keeps every box clear and adds no crossing.
+  for (let sweep = 0; sweep < UNBLOCK_SWEEPS; sweep++) {
+    let moved = false;
+    for (const v of members) {
+      if (pinned[v] || spent > UNTANGLE_BUDGET) continue;
+      let e = 0;
+      while (e < E && !through(v, e, true)) e++;
+      if (e === E) continue;
+      const [a, b] = links[e]!;
+      const length = Math.hypot(xs[b]! - xs[a]!, ys[b]! - ys[a]!);
+      const nx = -(ys[b]! - ys[a]!) / length;
+      const ny = (xs[b]! - xs[a]!) / length;
+      const lean = (xs[v]! - xs[a]!) * nx + (ys[v]! - ys[a]!) * ny;
+      const side = lean > 0 || (lean === 0 && v % 2 === 0) ? 1 : -1;
+      const step = THROUGH_DOT + BOW_REACH * length;
+      const [xv, yv] = [xs[v]!, ys[v]!];
+      const was = local([v]);
+      let placed = false;
+      for (let k = 1; k <= UNBLOCK_STEPS && !placed; k++) {
+        for (const s of [side, -side]) {
+          xs[v] = xv + nx * step * k * s;
+          ys[v] = yv + ny * step * k * s;
+          if (!clearOf(v) || !pathsClear([v], true)) continue;
+          const now = local([v]);
+          if (now > was) continue;
+          current -= was - now;
+          placed = true;
+          break;
+        }
+      }
+      if (placed) moved = true;
+      else {
+        xs[v] = xv;
+        ys[v] = yv;
+      }
+    }
+    if (!moved) break;
   }
   return { before, after: current };
 }
