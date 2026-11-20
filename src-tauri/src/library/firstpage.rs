@@ -1081,6 +1081,16 @@ fn parse_names(text: &str) -> ParsedRow {
     };
     let marked = mark_separators(text);
     let marked = marked.strip_prefix("by ").unwrap_or(&marked).to_string();
+    // A row that labels itself: "Authors: Daniel P. Lewinsohn1, ...".
+    let marked = ["authors:", "author:"]
+        .iter()
+        .find_map(|label| {
+            marked
+                .get(..label.len())
+                .filter(|head| head.eq_ignore_ascii_case(label))
+                .map(|_| marked[label.len()..].trim_start().to_string())
+        })
+        .unwrap_or(marked);
 
     // "Family, G." throughout, or "Given Family" - decided per line.
     let mut parts: Vec<String> = Vec::new();
@@ -1207,7 +1217,7 @@ fn is_affiliation(lower: &str) -> bool {
         .any(|word| AFFILIATION_WORDS.contains(&word))
 }
 
-fn is_particle(word: &str) -> bool {
+pub(crate) fn is_particle(word: &str) -> bool {
     PARTICLES.contains(&word)
 }
 
@@ -1740,6 +1750,14 @@ mod tests {
             .map(|a| (a.given.as_str(), a.family.as_str()))
             .collect();
         assert_eq!(got, [("Jean-Pierre", "Serre"), ("Wei", "Xu")]);
+        assert_eq!(parsed.rejected, 0);
+    }
+
+    #[test]
+    fn a_row_labelled_authors_keeps_its_first_name() {
+        let parsed = parse_names("Authors: Daniel P. Lewinsohn1, Nicolas Dias2, Allon Wagner1,3");
+        let got: Vec<_> = parsed.names.iter().map(|a| a.family.as_str()).collect();
+        assert_eq!(got, ["Lewinsohn", "Dias", "Wagner"]);
         assert_eq!(parsed.rejected, 0);
     }
 

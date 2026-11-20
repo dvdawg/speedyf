@@ -20,6 +20,7 @@
     "test:watch": "vitest",
     "bench": "bash scripts/bench.sh",
     "bench:release": "bash scripts/bench.sh --release",
+    "metaeval": "cargo run --release --manifest-path src-tauri/Cargo.toml --bin metaeval --",
     "fixture:smoke": "node scripts/make-smoke-pdf.mjs",
     "tauri": "tauri",
     "fetch-pdfium": "node scripts/fetch-pdfium.mjs",

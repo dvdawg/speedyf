@@ -31,11 +31,13 @@ pub mod journal;
 pub mod lookup;
 pub mod mainfile;
 pub mod merge;
+pub mod metaeval;
 pub mod missing;
 pub mod ocrtext;
 pub mod paperness;
 pub mod papers;
 pub mod persons;
+pub mod printedyear;
 pub mod projectdocs;
 pub mod projectfiles;
 pub mod projects;
@@ -87,6 +89,10 @@ pub struct LibraryEntry {
     pub info_author: Option<String>,
     #[serde(default)]
     pub info_year: Option<i32>,
+    /// The year the first page prints for itself (`printedyear`). Beats
+    /// the Info dictionary's CreationDate, which is the file's year.
+    #[serde(default)]
+    pub page_year: Option<printedyear::PrintedYear>,
     /// Every DOI and arXiv id the full text cites, less the file's own
     /// (projects.md sec. 8). `None` until extracted - the text pass fills it in,
     /// and a backfill job reads it out of the sidecar for entries indexed
@@ -1112,6 +1118,7 @@ pub fn entry_from_filename(candidate: &ScanCandidate) -> Option<LibraryEntry> {
         info_title: None,
         info_author: None,
         info_year: None,
+        page_year: None,
         cites: None,
         paper_verdict: None,
         paper_reason: None,
@@ -1228,6 +1235,7 @@ pub fn entry_from_page(
             .find(|line| line.chars().count() > 12)
             .map(|line| line.chars().take(300).collect())
     });
+    let page_year = printedyear::printed_year(head, consensus::current_year() + 1);
     let first_page_authors = layout.map(|page| page.authors.clone()).unwrap_or_default();
     let first_page_authors_confident = !first_page_authors.is_empty()
         && layout.is_some_and(|page| page.authors_confidence == firstpage::Confidence::High);
@@ -1246,6 +1254,7 @@ pub fn entry_from_page(
         info_title: None,
         info_author: None,
         info_year: None,
+        page_year,
         cites: None,
         paper_verdict: None,
         paper_reason: None,
@@ -1516,7 +1525,21 @@ pub fn backfill_cites(app_data_dir: &Path, entry: &LibraryEntry) -> Vec<Citation
 /// needed: those would otherwise outrank the first-page title.
 pub fn plausible_info_title(title: &str) -> bool {
     let title = title.trim();
-    if title.is_empty() || title.eq_ignore_ascii_case("untitled") {
+    // What a word processor or a print driver puts where the title goes.
+    const PLACEHOLDERS: &[&str] = &[
+        "untitled",
+        "print",
+        "document",
+        "title",
+        "slide 1",
+        "presentation",
+        "microsoft word",
+    ];
+    if title.is_empty()
+        || PLACEHOLDERS
+            .iter()
+            .any(|placeholder| title.eq_ignore_ascii_case(placeholder))
+    {
         return false;
     }
     let lower = title.to_lowercase();
@@ -1710,6 +1733,14 @@ fn collect_pdfs(root: &Path) -> Vec<PathBuf> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_placeholder_is_no_title() {
+        for placeholder in ["Print", "untitled", "Microsoft Word"] {
+            assert!(!plausible_info_title(placeholder), "{placeholder}");
+        }
+        assert!(plausible_info_title("Printing with light"));
+    }
+
     pub(crate) fn indexed_entry(path: &Path, mtime_ms: u64, size: u64) -> LibraryEntry {
         LibraryEntry {
             path: path.to_path_buf(),
@@ -1723,6 +1754,7 @@ mod tests {
             info_title: None,
             info_author: None,
             info_year: None,
+            page_year: None,
             cites: None,
             paper_verdict: None,
             paper_reason: None,
@@ -2958,6 +2990,7 @@ mod tests {
                     info_title: None,
                     info_author: None,
                     info_year: None,
+                    page_year: None,
                     cites: None,
                     paper_verdict: None,
                     paper_reason: None,

@@ -198,6 +198,14 @@ pub enum Work {
         path: PathBuf,
         respond: Respond<PaperDto>,
     },
+    /// Read one file as the library scan would, without OCR, and answer
+    /// with what it found; nothing is indexed or recorded. For checking the
+    /// scan against metadata a registry settled (`metaeval`).
+    LibraryScanEntry {
+        path: PathBuf,
+        app_data_dir: PathBuf,
+        respond: Respond<LibraryEntry>,
+    },
     /// Register a document as wanting text indexing. The worker runs exactly
     /// one indexing chain at a time (foreground document first), so opening
     /// many tabs at once cannot stampede the engine thread.
