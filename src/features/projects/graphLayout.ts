@@ -34,6 +34,7 @@
  * Positions come back in layout space: pixels at zoom 1, with every box
  * inside [0, width] × [0, height]. The view frames that. */
 import type { PaperRow } from '../../types/engine';
+import { MAX_SKEW } from './graphFit';
 
 export interface Point {
   x: number;
@@ -180,6 +181,9 @@ export function layoutGraph(
     for (let start = 0; start < starts; start++) {
       const lean = members.length <= ASPECT_NODES ? aspect : null;
       simulate(members, links, boxes, years, xs, ys, rounds, start, pinned, lean);
+      // Clear before the untangling too, so it starts from a drawing with
+      // nothing on an edge; a large component makes do with the pass after.
+      if (members.length <= BUDGET_NODES) clearEdges(members, local, boxes, xs, ys, pinned);
       const result = untangleIn(members, local, boxes, xs, ys, slice, pinned);
       if (!best || result.after < best.after) {
         best = { xs: xs.slice(), ys: ys.slice(), ...result };
@@ -190,8 +194,9 @@ export function layoutGraph(
       xs[i] = best!.xs[i]!;
       ys[i] = best!.ys[i]!;
     }
+    clearEdges(members, local, boxes, xs, ys, pinned);
     crossings.before += best!.before;
-    crossings.after += best!.after;
+    crossings.after += countCrossingsIn(local, xs, ys);
     return { members, bounds: extent(members, boxes, xs, ys) };
   });
 
@@ -420,6 +425,98 @@ function simulate(
   }
 }
 
+/** Rounds of clearEdges. */
+const CLEAR_ROUNDS = 60;
+
+/** The last word on a component: nodes still on an edge they are not part
+ * of are pushed off it, the edge's ends the other way, and boxes that the
+ * pushes made overlap are parted again, in turn until neither moves
+ * anything. The box collisions that settle a drawing can put a node back
+ * on an edge, and the untangling only counts crossings; this sees to both. */
+function clearEdges(
+  members: number[],
+  links: [number, number][],
+  boxes: NodeBox[],
+  xs: Float64Array,
+  ys: Float64Array,
+  pinned: readonly boolean[] = []
+): void {
+  if (links.length > UNTANGLE_MAX_EDGES) return;
+  // Fewer rounds for a large component, as the simulation has: each one
+  // sets every node against every edge, then every box against every box.
+  const m = members.length;
+  const rounds =
+    m <= BUDGET_NODES ? CLEAR_ROUNDS : Math.max(6, Math.round((CLEAR_ROUNDS * BUDGET_NODES) / m));
+  for (let round = 0; round < rounds; round++) {
+    let pushed = false;
+    for (const [a, b] of links) {
+      const vx = xs[b]! - xs[a]!;
+      const vy = ys[b]! - ys[a]!;
+      const length2 = vx * vx + vy * vy;
+      if (length2 < 1e-9) continue;
+      const length = Math.sqrt(length2);
+      const reach = THROUGH_DOT + BOW_REACH * length;
+      // The edge's box, grown by its reach: a cheap no for most nodes.
+      const left = Math.min(xs[a]!, xs[b]!) - reach;
+      const right = Math.max(xs[a]!, xs[b]!) + reach;
+      const top = Math.min(ys[a]!, ys[b]!) - reach;
+      const bottom = Math.max(ys[a]!, ys[b]!) + reach;
+      for (const v of members) {
+        if (v === a || v === b) continue;
+        if (xs[v]! < left || xs[v]! > right || ys[v]! < top || ys[v]! > bottom) continue;
+        const t = ((xs[v]! - xs[a]!) * vx + (ys[v]! - ys[a]!) * vy) / length2;
+        if (t <= 0 || t >= 1) continue;
+        let ex = xs[v]! - (xs[a]! + t * vx);
+        let ey = ys[v]! - (ys[a]! + t * vy);
+        const d = Math.hypot(ex, ey);
+        if (d >= reach) continue;
+        if (d < 0.01) {
+          const side = (v + a + b) % 2 === 0 ? 1 : -1;
+          ex = (-vy / length) * side;
+          ey = (vx / length) * side;
+        } else {
+          ex /= d;
+          ey /= d;
+        }
+        // Most of the way out by the node, the rest by the edge's ends;
+        // a pinned one stays and the others take its share.
+        const need = reach - d + 0.5;
+        const ends = (pinned[a] ? 0 : 1 - t) + (pinned[b] ? 0 : t);
+        const own = pinned[v] ? 0 : ends > 0 ? 0.7 : 1;
+        const rest = ends > 0 ? (1 - own) / ends : 0;
+        if (own === 0 && rest === 0) continue;
+        pushed = true;
+        xs[v] = xs[v]! + ex * need * own;
+        ys[v] = ys[v]! + ey * need * own;
+        if (!pinned[a]) {
+          xs[a] = xs[a]! - ex * need * rest * (1 - t);
+          ys[a] = ys[a]! - ey * need * rest * (1 - t);
+        }
+        if (!pinned[b]) {
+          xs[b] = xs[b]! - ex * need * rest * t;
+          ys[b] = ys[b]! - ey * need * rest * t;
+        }
+      }
+    }
+    const parted = collide(members, boxes, xs, ys, pinned);
+    if (!pushed && !parted) break;
+  }
+}
+
+/** Proper crossings among `links`, as placed. */
+function countCrossingsIn(links: [number, number][], xs: Float64Array, ys: Float64Array): number {
+  let count = 0;
+  for (let e = 0; e < links.length; e++) {
+    const [a, b] = links[e]!;
+    for (let f = e + 1; f < links.length; f++) {
+      const [c, d] = links[f]!;
+      if (a === c || a === d || b === c || b === d) continue;
+      if (crosses(xs[a]!, ys[a]!, xs[b]!, ys[b]!, xs[c]!, ys[c]!, xs[d]!, ys[d]!)) count++;
+    }
+  }
+  return count;
+}
+
 /** One sweep: every overlapping pair of padded boxes is pushed apart along
  * the axis that needs less, half each, or all of it by the one that is not
  * pinned. True when anything moved. */
@@ -570,14 +667,12 @@ export function uniqueLabels(
 /** How near an edge may pass a dot it does not end at: the largest dot's
  * radius and a little. */
 const THROUGH_DOT = 9;
-/** How far the view's edge curve strays from the straight line, per unit
- * of its length: half its bow (GraphView's BOW), at the curve's middle. */
-const BOW_REACH = 0.03;
-/** Sweeps of moving nodes off edges they sit on, and how many steps out
- * each may try. */
-const UNBLOCK_SWEEPS = 4;
-const UNBLOCK_STEPS = 6;
-
+/** How far the view's edge curve may stray from the straight line, per
+ * unit of its length: half its bow (GraphView's BOW) at the curve's
+ * middle, times the most the canvas fit may stretch one axis against the
+ * other (graphFit.ts), which can shrink a node's clearance beside an edge
+ * by that much against the edge's length. */
+const BOW_REACH = 0.03 * MAX_SKEW;
 /** Whether (px, py) lies within a dot of the segment's interior; with
  * `bow`, within the dot and the drawn curve's bow, which is where the
  * edge may actually pass. */
@@ -673,7 +768,9 @@ export function untangle(
   const xs = Float64Array.from(points, (p) => p.x);
   const ys = Float64Array.from(points, (p) => p.y);
   const members = points.map((_, i) => i);
-  const { before, after } = untangleIn(members, [...edges], [...boxes], xs, ys, slice);
+  const { before } = untangleIn(members, [...edges], [...boxes], xs, ys, slice);
+  clearEdges(members, [...edges], [...boxes], xs, ys);
+  const after = countCrossingsIn([...edges], xs, ys);
   return { points: members.map((i) => ({ x: xs[i]!, y: ys[i]! })), before, after };
 }
 
@@ -682,9 +779,8 @@ export function untangle(
  * clear: a barycentric sweep (nodes in x-slices take each other's heights
  * in the order of their neighbours' mean height, left to right and back),
  * swapping two nodes close in x, and moving a node to its neighbours'
- * barycentre when that is not far in x (time stays a bias). Then, crossed
- * or not, a node sitting on an edge it is not part of steps off it.
- * Deterministic, and bounded by passes and by a budget of crossing tests. */
+ * barycentre when that is not far in x (time stays a bias). Deterministic,
+ * and bounded by passes and by a budget of crossing tests. */
 function untangleIn(
   members: number[],
   links: [number, number][],
@@ -762,7 +858,7 @@ function untangleIn(
     const [a, b] = links[e]!;
     return v !== a && v !== b && nearSegment(xs[v]!, ys[v]!, xs[a]!, ys[a]!, xs[b]!, ys[b]!, bow);
   };
-  const pathsClear = (nodes: number[], bow = false): boolean => {
+  const pathsClear = (nodes: number[], bow = true): boolean => {
     for (const v of nodes) {
       spent += E + incident.get(v)!.length * members.length;
       for (let e = 0; e < E; e++) if (through(v, e, bow)) return false;
@@ -953,46 +1049,5 @@ function untangleIn(
     byX.sort((a, b) => xs[a]! - xs[b]! || a - b);
   }
 
-  // (d) A node the forces left on an edge it is not part of - three
-  // papers in a line, the middle one under the outer pair's edge - steps
-  // off it sideways, on the side it already leans to first, to the
-  // nearest spot that keeps every box clear and adds no crossing.
-  for (let sweep = 0; sweep < UNBLOCK_SWEEPS; sweep++) {
-    let moved = false;
-    for (const v of members) {
-      if (pinned[v] || spent > UNTANGLE_BUDGET) continue;
-      let e = 0;
-      while (e < E && !through(v, e, true)) e++;
-      if (e === E) continue;
-      const [a, b] = links[e]!;
-      const length = Math.hypot(xs[b]! - xs[a]!, ys[b]! - ys[a]!);
-      const nx = -(ys[b]! - ys[a]!) / length;
-      const ny = (xs[b]! - xs[a]!) / length;
-      const lean = (xs[v]! - xs[a]!) * nx + (ys[v]! - ys[a]!) * ny;
-      const side = lean > 0 || (lean === 0 && v % 2 === 0) ? 1 : -1;
-      const step = THROUGH_DOT + BOW_REACH * length;
-      const [xv, yv] = [xs[v]!, ys[v]!];
-      const was = local([v]);
-      let placed = false;
-      for (let k = 1; k <= UNBLOCK_STEPS && !placed; k++) {
-        for (const s of [side, -side]) {
-          xs[v] = xv + nx * step * k * s;
-          ys[v] = yv + ny * step * k * s;
-          if (!clearOf(v) || !pathsClear([v], true)) continue;
-          const now = local([v]);
-          if (now > was) continue;
-          current -= was - now;
-          placed = true;
-          break;
-        }
-      }
-      if (placed) moved = true;
-      else {
-        xs[v] = xv;
-        ys[v] = yv;
-      }
-    }
-    if (!moved) break;
-  }
   return { before, after: current };
 }

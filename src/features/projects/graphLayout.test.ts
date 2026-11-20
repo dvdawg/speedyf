@@ -321,14 +321,77 @@ describe('crossings', () => {
     const result = untangle(points, edges, boxes, 60);
     expect(result.after).toBe(0);
     const [a, b, c] = result.points as [Point, Point, Point];
-    // Off the outer edge by a dot and the curve's bow at least.
+    // Off the outer edge by a dot and the curve's bow at least, with room
+    // for the canvas fit stretching one axis against the other.
     const off =
       Math.abs((c.x - a.x) * (a.y - b.y) - (a.x - b.x) * (c.y - a.y)) /
       Math.hypot(c.x - a.x, c.y - a.y);
-    expect(off).toBeGreaterThanOrEqual(9 + 0.03 * Math.hypot(c.x - a.x, c.y - a.y));
-    // Only the middle one moved.
-    expect(a).toEqual(points[0]);
-    expect(c).toEqual(points[2]);
+    expect(off).toBeGreaterThanOrEqual(9 + 0.03 * 2.5 * Math.hypot(c.x - a.x, c.y - a.y));
+  });
+
+  it('keeps papers off the edges they are not part of, as drawn and stretched', () => {
+    // The view draws an edge as a curve bowed 0.06 of its length to the
+    // left of its direction, after the fit stretches each axis by up to 4
+    // and one against the other by up to 2.5 (graphFit.ts).
+    const onCurve = (layout: GraphLayout, ids: string[], edges: LayoutEdge[]) => {
+      const hits: string[] = [];
+      for (const [sx, sy] of [
+        [1, 1],
+        [4, 1.6],
+        [1.6, 4],
+      ] as const) {
+        const p = layout.points.map((q) => ({ x: q.x * sx, y: q.y * sy }));
+        for (const e of edges) {
+          const [ia, ib] = [ids.indexOf(e.from), ids.indexOf(e.to)];
+          const [a, b] = [p[ia]!, p[ib]!];
+          const length = Math.hypot(b.x - a.x, b.y - a.y);
+          const cx = (a.x + b.x) / 2 - ((b.y - a.y) / length) * length * 0.06;
+          const cy = (a.y + b.y) / 2 + ((b.x - a.x) / length) * length * 0.06;
+          p.forEach((v, k) => {
+            if (k === ia || k === ib) return;
+            for (let i = 1; i < 40; i++) {
+              const t = i / 40;
+              const x = (1 - t) ** 2 * a.x + 2 * (1 - t) * t * cx + t * t * b.x;
+              const y = (1 - t) ** 2 * a.y + 2 * (1 - t) * t * cy + t * t * b.y;
+              if (Math.hypot(x - v.x, y - v.y) < 9) {
+                hits.push(`${ids[k]} on ${e.from}-${e.to} at ${sx}x${sy}`);
+                return;
+              }
+            }
+          });
+        }
+      }
+      return hits;
+    };
+    // A paper's neighbourhood that drew SC12 under DZD25's citation of ZD24.
+    const ids = ['DZD25', 'ZFD25', 'SC12', 'ZD24', 'FD22', 'Zho25'];
+    const years = [2025, 2025, 2012, 2024, 2022, 2025];
+    const pairs = [
+      ['DZD25', 'ZFD25'],
+      ['DZD25', 'SC12'],
+      ['DZD25', 'ZD24'],
+      ['DZD25', 'FD22'],
+      ['ZFD25', 'SC12'],
+      ['ZFD25', 'ZD24'],
+      ['SC12', 'ZD24'],
+      ['SC12', 'FD22'],
+      ['SC12', 'Zho25'],
+      ['ZD24', 'FD22'],
+      ['ZD24', 'Zho25'],
+      ['FD22', 'Zho25'],
+    ];
+    const edges = pairs.map(([from, to]) => ({ from: from!, to: to! }));
+    for (const pinned of [false, true]) {
+      for (const aspect of [0.8, 1, 1.3, 1.8]) {
+        const nodes = ids.map((id, i) => ({
+          ...node(id, id, years[i]),
+          pinned: pinned && i === 0,
+        }));
+        const layout = layoutGraph(nodes, edges, { aspect });
+        expect(onCurve(layout, ids, edges), `pinned ${pinned}, aspect ${aspect}`).toEqual([]);
+        expectNoOverlaps(layout, nodes);
+      }
+    }
   });
 
   it('lays a planar graph out without crossings', () => {
