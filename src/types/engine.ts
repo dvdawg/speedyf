@@ -635,6 +635,8 @@ export interface Project {
   order: number;
   paperCount: number;
   bibPath: string | null;
+  /** the folder whose PDFs, subfolders included, join it as they are found */
+  folder?: string | null;
   incompleteCount: number;
   createdAt: string;
 }

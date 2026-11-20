@@ -569,6 +569,16 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
                       </span>
                     )}
                   </Show>
+                  <Show when={p().folder}>
+                    {(folder) => (
+                      <span
+                        class="paper-list-bib"
+                        title={`PDFs in ${folder()} join this project as they are found`}
+                      >
+                        {baseName(folder())}/
+                      </span>
+                    )}
+                  </Show>
                   {/* The count narrows the list to the gaps; pressed, it
                       reads as the filter it is and clears it. */}
                   <Show when={p().incompleteCount > 0 || incompleteOnly()}>

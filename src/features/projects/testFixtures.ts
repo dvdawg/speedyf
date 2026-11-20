@@ -705,6 +705,7 @@ export function fakeEngine() {
     libraryRelatedItems: vi.fn(async (_id: string): Promise<RelatedItem[]> => fixture.related),
     libraryExportBib: vi.fn(async () => {}),
     librarySetProjectBib: vi.fn(async () => {}),
+    librarySetProjectFolder: vi.fn(async (): Promise<number> => 2),
     libraryLookup: vi.fn(async (): Promise<LookupResult> => ({ kind: 'nothing' })),
     libraryApplyCandidate: vi.fn(async (id: string) => paperFor(id)),
     libraryLookupProject: vi.fn(async (): Promise<LookupBatch> => ({

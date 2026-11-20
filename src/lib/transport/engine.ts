@@ -251,6 +251,9 @@ export interface EngineApi {
   /** The project's .bib and each item's main PDF, as one .zip at `path`. */
   libraryExportBundle(projectId: string, path: string): Promise<BundleReport>;
   librarySetProjectBib(projectId: string, path: string | null): Promise<void>;
+  /** Links the project to a folder, or unlinks it; answers how many items
+   * joined now. */
+  librarySetProjectFolder(projectId: string, folder: string | null): Promise<number>;
   libraryLookup(paperId: string, mode: LookupMode): Promise<LookupResult>;
   libraryApplyCandidate(paperId: string, candidate: LookupCandidate): Promise<Paper>;
   /** Looks up every paper in the project that has an identifier, by
@@ -426,6 +429,8 @@ export const engine: EngineApi = {
   libraryExportBib: (projectId, path) => invoke('library_export_bib', { projectId, path }),
   libraryExportBundle: (projectId, path) => invoke('library_export_bundle', { projectId, path }),
   librarySetProjectBib: (projectId, path) => invoke('library_set_project_bib', { projectId, path }),
+  librarySetProjectFolder: (projectId, folder) =>
+    invoke('library_set_project_folder', { projectId, folder }),
   libraryLookup: (paperId, mode) => invoke('library_lookup', { paperId, mode }),
   libraryApplyCandidate: (paperId, candidate) =>
     invoke('library_apply_candidate', { paperId, candidate }),
