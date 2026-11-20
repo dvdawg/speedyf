@@ -304,6 +304,33 @@ describe('crossings', () => {
     expectNoOverlaps(layout, nodes);
   });
 
+  it('steps a paper off an edge it sits on, crossings or not', () => {
+    // DZD25 cites SC12 and ZD24, nearly in a line: the outer edge runs
+    // through SC12's dot and over the inner one. Nothing crosses.
+    const points = pts([
+      [0, 0],
+      [200, 4],
+      [400, 0],
+    ]);
+    const edges: [number, number][] = [
+      [0, 1],
+      [0, 2],
+      [1, 2],
+    ];
+    const boxes = points.map(() => small);
+    const result = untangle(points, edges, boxes, 60);
+    expect(result.after).toBe(0);
+    const [a, b, c] = result.points as [Point, Point, Point];
+    // Off the outer edge by a dot and the curve's bow at least.
+    const off =
+      Math.abs((c.x - a.x) * (a.y - b.y) - (a.x - b.x) * (c.y - a.y)) /
+      Math.hypot(c.x - a.x, c.y - a.y);
+    expect(off).toBeGreaterThanOrEqual(9 + 0.03 * Math.hypot(c.x - a.x, c.y - a.y));
+    // Only the middle one moved.
+    expect(a).toEqual(points[0]);
+    expect(c).toEqual(points[2]);
+  });
+
   it('lays a planar graph out without crossings', () => {
     // A wheel: a hub and a ring of seven, drawable with nothing crossing.
     // (Not every planar graph comes out planar: a force layout of the
