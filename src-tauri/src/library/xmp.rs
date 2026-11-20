@@ -250,6 +250,59 @@ fn field_of(ns: Ns, local: &str) -> Option<Field> {
     }
 }
 
+/// A value as text, for packets that escape their markup twice: Elsevier
+/// writes `<ce:monospace>FREYA</ce:monospace>` and `&#x2014;` into
+/// `dc:title` as literal text, which survives the XML parser's one round of
+/// unescaping. Tags go (a `<` not opening one, as in "a < b", stays) and
+/// character references become their characters.
+fn plain_text(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(at) = rest.find(['<', '&']) {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        if rest.starts_with('<') {
+            let opens_tag = rest[1..]
+                .trim_start_matches('/')
+                .starts_with(|c: char| c.is_ascii_alphabetic());
+            if let Some(end) = rest.find('>').filter(|_| opens_tag) {
+                rest = &rest[end + 1..];
+                continue;
+            }
+        } else if let Some(end) = rest.find(';').filter(|end| *end <= 10) {
+            if let Some(c) = character_reference(&rest[1..end]) {
+                out.push(c);
+                rest = &rest[end + 1..];
+                continue;
+            }
+        }
+        out.push_str(&rest[..1]);
+        rest = &rest[1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The character `&name;` stands for: a numeric reference or one of XML's
+/// five named ones.
+fn character_reference(name: &str) -> Option<char> {
+    let code = if let Some(hex) = name.strip_prefix("#x").or_else(|| name.strip_prefix("#X")) {
+        u32::from_str_radix(hex, 16).ok()?
+    } else if let Some(decimal) = name.strip_prefix('#') {
+        decimal.parse().ok()?
+    } else {
+        return match name {
+            "amp" => Some('&'),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "quot" => Some('"'),
+            "apos" => Some('\''),
+            _ => None,
+        };
+    };
+    char::from_u32(code)
+}
+
 fn non_empty(value: &str) -> Option<String> {
     let value = value.trim();
     (!value.is_empty()).then(|| value.to_owned())
@@ -259,7 +312,7 @@ fn non_empty(value: &str) -> Option<String> {
 /// fields keep the first value the packet gave, since `rdf:Alt` lists the
 /// default language first and a repeated property is a packet's mistake.
 fn absorb(fields: &mut XmpFields, field: Field, value: &str) {
-    let Some(value) = non_empty(value) else {
+    let Some(value) = non_empty(&plain_text(value)) else {
         return;
     };
     let slot = match field {
@@ -599,6 +652,15 @@ mod tests {
         );
         assert_eq!(got.year, None, "dc:date and CreateDate are not read");
         assert!(got.publication_name.is_none());
+    }
+
+    #[test]
+    fn markup_escaped_twice_in_a_title_is_read_as_text() {
+        let xml = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:dc="http://purl.org/dc/elements/1.1/"><rdf:Description><dc:title><rdf:Alt><rdf:li xml:lang="x-default">Fission Reaction Event Yield Algorithm &lt;ce:monospace&gt;FREYA 2.0.2&lt;/ce:monospace&gt; &amp;#x2014; for a &lt; b</rdf:li></rdf:Alt></dc:title></rdf:Description></rdf:RDF></x:xmpmeta>"#;
+        assert_eq!(
+            parse_xmp(xml).title.as_deref(),
+            Some("Fission Reaction Event Yield Algorithm FREYA 2.0.2 \u{2014} for a < b")
+        );
     }
 
     #[test]
