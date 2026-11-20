@@ -123,3 +123,20 @@ describe('addDroppedPdfs', () => {
     );
   });
 });
+
+describe('a project with a linked folder', () => {
+  it('copies drops on its row into the folder, asking for no inbox', async () => {
+    await projectsStore.initialize();
+    const original = projectsStore.state.projects;
+    const linked = original.map((p) => (p.id === 'p1' ? { ...p, folder: '/lit/FREYA_lit' } : p));
+    vi.mocked(engine.libraryProjects).mockResolvedValueOnce(linked);
+    await projectsStore.refresh();
+    await addDroppedPdfs(['/Users/me/Desktop/new.pdf'], NONEQ);
+    expect(openDialog).not.toHaveBeenCalled();
+    expect(engine.libraryFileIntoInbox).toHaveBeenCalledWith(
+      '/Users/me/Desktop/new.pdf',
+      '/lit/FREYA_lit'
+    );
+    expect(settings.libraryInbox).toBeNull();
+  });
+});

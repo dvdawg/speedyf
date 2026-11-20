@@ -459,6 +459,32 @@ pub async fn library_set_project_bib(
     Ok(())
 }
 
+/// Link a project to a folder, or unlink it (`None`). The folder is kept
+/// as the filesystem names it, so it compares with the scanned paths;
+/// whether it is watched is the library folders' business. Answers with how
+/// many items joined now.
+#[tauri::command]
+pub async fn library_set_project_folder(
+    state: tauri::State<'_, EngineState>,
+    project_id: String,
+    folder: Option<String>,
+) -> AppResult<u32> {
+    let engine = state.0.clone();
+    let folder = match folder {
+        Some(folder) => Some(
+            std::fs::canonicalize(&folder)
+                .map_err(|error| AppError::Io(format!("cannot use {folder}: {error}")))?
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        None => None,
+    };
+    write_store(engine, move |store| {
+        store.set_project_folder(&project_id, folder)
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn library_set_lookup(
     state: tauri::State<'_, EngineState>,

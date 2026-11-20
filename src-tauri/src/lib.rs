@@ -514,6 +514,7 @@ pub fn run() {
             commands::library::library_apply_candidate,
             commands::library::library_discard_candidates,
             commands::library::library_lookup_project,
+            commands::library::library_set_project_folder,
             commands::library::library_lookup_all,
             commands::library::library_citation_links,
             commands::library::library_graph,

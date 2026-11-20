@@ -89,6 +89,7 @@ mod tests {
             order: 0,
             paper_ids: vec![a.clone(), b.clone()],
             bib_path: None,
+            folder: None,
             created_at: String::new(),
         }];
         let entries = vec![

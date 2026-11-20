@@ -31,6 +31,11 @@ pub struct ProjectRecord {
     pub paper_ids: Vec<String>,
     #[serde(default)]
     pub bib_path: Option<String>,
+    /// A folder whose PDFs, subfolders included, join the project as the
+    /// scan finds them. It only ever adds: a file that leaves the folder
+    /// keeps its place, which is the user's to take away.
+    #[serde(default)]
+    pub folder: Option<String>,
     pub created_at: String,
 }
 
@@ -103,6 +108,7 @@ impl PaperStore {
             order: project.order,
             paper_count,
             bib_path: project.bib_path.clone(),
+            folder: project.folder.clone(),
             incomplete_count,
             created_at: project.created_at.clone(),
         }
@@ -158,6 +164,7 @@ impl PaperStore {
             order,
             paper_ids: Vec::new(),
             bib_path: None,
+            folder: None,
             created_at: now_rfc3339(),
         };
         let dto = self.project_dto_for(&project);
@@ -273,6 +280,64 @@ impl PaperStore {
             .map(|path| path.trim().to_owned())
             .filter(|path| !path.is_empty());
         Ok(())
+    }
+
+    /// Link the project to a folder, or unlink it. Every item with a file
+    /// in the folder now joins at once; those the scan finds there later
+    /// join as it reconciles them (`join_folder_projects`). Returns how
+    /// many joined now.
+    pub fn set_project_folder(
+        &mut self,
+        project_id: &str,
+        folder: Option<String>,
+    ) -> AppResult<u32> {
+        self.ensure_writable()?;
+        let index = self.project_index(project_id)?;
+        let folder = folder
+            .map(|folder| folder.trim().to_owned())
+            .filter(|folder| !folder.is_empty());
+        self.projects[index].folder = folder.clone();
+        self.mark_dirty();
+        let Some(folder) = folder else {
+            return Ok(0);
+        };
+        let inside: Vec<String> = self
+            .papers
+            .iter()
+            .filter(|paper| {
+                paper
+                    .files
+                    .iter()
+                    .any(|file| !file.missing && Path::new(&file.path).starts_with(&folder))
+            })
+            .map(|paper| paper.id.clone())
+            .collect();
+        let project = &mut self.projects[index];
+        let mut joined = 0;
+        for id in inside {
+            if !project.paper_ids.contains(&id) {
+                project.paper_ids.push(id);
+                joined += 1;
+            }
+        }
+        Ok(joined)
+    }
+
+    /// Put the paper in every project whose folder holds `path`. Whether
+    /// any membership was added.
+    pub(super) fn join_folder_projects(&mut self, paper_id: &str, path: &str) -> bool {
+        let mut joined = false;
+        for project in &mut self.projects {
+            let holds = project
+                .folder
+                .as_deref()
+                .is_some_and(|folder| Path::new(path).starts_with(folder));
+            if holds && !project.paper_ids.iter().any(|id| id == paper_id) {
+                project.paper_ids.push(paper_id.to_owned());
+                joined = true;
+            }
+        }
+        joined
     }
 
     pub fn project_name(&self, project_id: &str) -> AppResult<String> {

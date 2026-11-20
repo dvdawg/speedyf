@@ -3,7 +3,8 @@
  *
  * projects.md §6, "Filing": copy into `settings.libraryInbox`, a library
  * folder chosen once, then let the engine scan the copy and make the record;
- * for a drop on a project, add the membership. Never a move, never a delete.
+ * for a drop on a project, add the membership - into the project's linked
+ * folder when it has one. Never a move, never a delete.
  * The Paper panel's Add to library takes the same path. */
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { engine, isEngineError } from '../../lib/transport/engine';
@@ -43,7 +44,12 @@ export const isPdf = (path: string): boolean => path.toLowerCase().endsWith('.pd
 export async function addDroppedPdfs(paths: string[], target: ProjectsDropTarget): Promise<void> {
   const pdfs = paths.filter(isPdf);
   if (pdfs.length === 0) return;
-  const inbox = await chooseInbox();
+  // A project with a linked folder keeps its PDFs there.
+  const folder =
+    target.kind === 'project'
+      ? projectsStore.state.projects.find((p) => p.id === target.id)?.folder
+      : null;
+  const inbox = folder ?? (await chooseInbox());
   if (!inbox) return;
   const failures: string[] = [];
   for (const path of pdfs) {

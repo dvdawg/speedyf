@@ -20,6 +20,7 @@ import { createEffect, createSignal, For, onCleanup, onMount, Show } from 'solid
 import { IconImport, IconMore, IconPlus } from '../../components/icons';
 import type { Project } from '../../types/engine';
 import { exportBib, exportBundle, importBundle, stopSyncingBib, syncBib } from './bibActions';
+import { linkFolder, unlinkFolder } from './projectFolder';
 import { dropHover, reorderSlotAt, setDropHover } from './dnd';
 import { beginPointerDrag } from './pointerDrag';
 import { healthCount, projectsStore, sameScope } from './projectsStore';
@@ -90,6 +91,9 @@ function projectMenuItems(
     project.bibPath
       ? { label: 'Stop syncing .bib', run: () => void stopSyncingBib(project) }
       : { label: 'Sync .bib...', run: () => void syncBib(project) },
+    project.folder
+      ? { label: 'Unlink folder', run: () => void unlinkFolder(project) }
+      : { label: 'Link folder...', run: () => void linkFolder(project) },
     { label: 'Delete', run: onDelete, danger: true },
   ];
 }

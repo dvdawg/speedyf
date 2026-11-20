@@ -1465,10 +1465,14 @@ impl PaperStore {
             self.papers[index].set_cite_key(key);
             changed = true;
         }
+        let id = self.papers[index].id.clone();
+        if self.join_folder_projects(&id, &path) {
+            self.mark_dirty();
+            changed = true;
+        }
         if changed {
             self.papers[index].touch();
             self.mark_dirty();
-            let id = self.papers[index].id.clone();
             self.auto_merge_around(&id);
         }
         changed
@@ -2784,6 +2788,35 @@ mod tests {
             .iter()
             .map(|a| (a.given.as_str(), a.family.as_str()))
             .collect()
+    }
+
+    #[test]
+    fn a_projects_folder_files_what_is_in_it_and_only_ever_adds() {
+        let mut store = new_store();
+        store.reconcile_file(&entry("/lit/FREYA_lit/a.pdf", Some("fa")));
+        store.reconcile_file(&entry("/lit/FREYA_lit2/b.pdf", Some("fb")));
+        store.reconcile_file(&entry("/lit/other/c.pdf", Some("fc")));
+        let project = store.create_project("FREYA").unwrap().id;
+        let id = |store: &PaperStore, path: &str| store.paper_for_path(Path::new(path)).unwrap().id;
+        let members = |store: &PaperStore| store.projects[0].paper_ids.clone();
+
+        // Linking files what is already there, and not a folder that only
+        // shares the name's start.
+        let joined = store
+            .set_project_folder(&project, Some("/lit/FREYA_lit".into()))
+            .unwrap();
+        assert_eq!(joined, 1);
+        assert_eq!(members(&store), [id(&store, "/lit/FREYA_lit/a.pdf")]);
+
+        // A file the scan finds there later joins, subfolders included.
+        store.reconcile_file(&entry("/lit/FREYA_lit/reviews/d.pdf", Some("fd")));
+        assert!(members(&store).contains(&id(&store, "/lit/FREYA_lit/reviews/d.pdf")));
+
+        // Unlinking stops new joins and takes nobody out.
+        store.set_project_folder(&project, None).unwrap();
+        store.reconcile_file(&entry("/lit/FREYA_lit/e.pdf", Some("fe")));
+        assert_eq!(members(&store).len(), 2);
+        assert_eq!(store.projects[0].folder, None);
     }
 
     #[test]
