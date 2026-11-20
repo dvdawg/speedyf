@@ -50,7 +50,7 @@ import { trackReader } from '../features/extensions/readerContext';
 import HomeScreen from '../features/home/HomeScreen';
 import ProjectsScreen from '../features/projects/ProjectsScreen';
 import { libraryStore } from '../features/citations/libraryStore';
-import { dropOverlayText, projectsDropTarget } from '../features/projects/dnd';
+import { dropOverlayText, dropPointToCss, projectsDropTarget } from '../features/projects/dnd';
 import { addDroppedPdfs, isPdf } from '../features/projects/fileDrop';
 import { activeTab, tabsStore } from '../stores/tabsStore';
 import {
@@ -196,8 +196,8 @@ export default function App() {
     // Native file drag-drop. A PDF let go over the Projects screen is copied
     // into the library — and filed, when let go on a project row; anywhere
     // else it opens in a tab (or focuses the one it is in). The position is
-    // physical pixels relative to the webview; the DOM hit-test wants CSS
-    // pixels.
+    // relative to the webview; dropPointToCss makes it the CSS pixels the
+    // DOM hit-test wants.
     let unlistenDrop: (() => void) | undefined;
     void getCurrentWebview()
       .onDragDropEvent((event) => {
@@ -206,8 +206,8 @@ export default function App() {
           setDropOverlay(null);
           return;
         }
-        const scale = window.devicePixelRatio || 1;
-        const target = projectsDropTarget(payload.position.x / scale, payload.position.y / scale);
+        const at = dropPointToCss(payload.position, window.devicePixelRatio, IS_MAC);
+        const target = projectsDropTarget(at.x, at.y);
         if (payload.type !== 'drop') {
           setDropOverlay(dropOverlayText(target));
           return;

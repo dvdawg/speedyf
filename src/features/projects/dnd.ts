@@ -53,6 +53,20 @@ export function reorderSlotAt(x: number, y: number): { id: string; after: boolea
   return { id: row.id, after: y > rect.top + rect.height / 2 };
 }
 
+/** A native drop's position in CSS pixels. Tauri types it as physical, but
+ * on macOS wry hands over the view's own coordinates, which are points
+ * already (wkwebview/drag_drop.rs), and Tauri passes them through unscaled;
+ * dividing those by the Retina scale lands every drop up and to the left.
+ * Elsewhere they really are physical pixels. */
+export function dropPointToCss(
+  position: { x: number; y: number },
+  scale: number,
+  mac: boolean
+): { x: number; y: number } {
+  const s = mac ? 1 : scale || 1;
+  return { x: position.x / s, y: position.y / s };
+}
+
 export type ProjectsDropTarget = { kind: 'project'; id: string; name: string } | { kind: 'screen' };
 
 /** What a file dropped from the desktop at a point would land on: a project
