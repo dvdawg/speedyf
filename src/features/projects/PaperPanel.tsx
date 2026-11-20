@@ -35,6 +35,7 @@ import { yearText } from './paperFields';
 import MathText from '../../components/MathText';
 import ProjectSuggestionLine from './ProjectSuggestion';
 import RelatedItems from './RelatedItems';
+import { gapLabel } from './bibGaps';
 
 /** What the engine answers for a call the Rust side has not grown yet. The
  * citation graph is the one section that hides on it rather than reporting
@@ -513,7 +514,10 @@ export default function PaperPanel() {
 
                 <Show when={current().incomplete.length > 0}>
                   <div class="paper-panel-warn">
-                    Missing for BibTeX: {current().incomplete.join(', ')}
+                    Missing for BibTeX:{' '}
+                    {current()
+                      .incomplete.map((field) => gapLabel(field, current().meta.kind?.value))
+                      .join(', ')}
                   </div>
                 </Show>
 
