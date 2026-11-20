@@ -440,6 +440,7 @@ mod tests {
             order,
             paper_ids: ids,
             bib_path: bib.map(str::to_owned),
+            folder: None,
             created_at: String::new(),
         };
         s.projects = vec![

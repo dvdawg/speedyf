@@ -312,6 +312,9 @@ pub struct ProjectDto {
     pub order: u32,
     pub paper_count: u32,
     pub bib_path: Option<String>,
+    /// The folder whose PDFs join the project as they are found.
+    #[serde(default)]
+    pub folder: Option<String>,
     pub incomplete_count: u32,
     pub created_at: String,
 }
