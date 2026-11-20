@@ -42,7 +42,7 @@ fn whole_masthead() -> &'static Regex {
     // ("Phys. Rev. C 80, 024601 (2009), and refs. therein") is not taken.
     RE.get_or_init(|| {
         Regex::new(
-            r"^[A-Za-z][A-Za-z .,&:'-]{2,}\s\d+[ ,]*(?:\d+\s*)?\(((?:1[89]|20)\d\d)\)\s*(?:\d+\s*[–-]\s*\d+)?$",
+            r"^[A-Za-z][A-Za-z .,&:'-]{2,}\s\d+[ ,]*(?:\d+\s*)?\(((?:1[89]|20)\d\d)\)\s*(?:\d+\s*[\x{2013}-]\s*\d+)?$",
         )
         .expect("valid regex")
     })
@@ -78,7 +78,7 @@ fn copyright() -> &'static Regex {
     // "(c)" and a lone "c" at the start of a line are a © the text layer
     // lost; the holder may come before the year ("c MIT 2011").
     RE.get_or_init(|| {
-        Regex::new(r"(?im)(?:©|\(c\)|\bcopyright\b|^c\s)[^\n]{0,60}?\b((?:1[89]|20)\d\d)\b")
+        Regex::new(r"(?im)(?:\x{A9}|\(c\)|\bcopyright\b|^c\s)[^\n]{0,60}?\b((?:1[89]|20)\d\d)\b")
             .expect("valid regex")
     })
 }
