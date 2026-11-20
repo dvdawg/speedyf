@@ -16,6 +16,8 @@ mod system_quit;
 mod titlebar;
 mod windows;
 
+pub use library::metaeval::run as metaeval;
+
 use commands::EngineState;
 use engine::types::{DocId, Priority, RenderKey, RenderKind, TileRect};
 use engine::{EngineHandle, Work};

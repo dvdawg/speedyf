@@ -367,6 +367,7 @@ fn fail_work(work: Work, err: impl Fn() -> AppError) {
         Work::LibraryPreview { respond, .. } => respond(Err(err())),
         Work::ClassifyDocument { respond, .. } => respond(Err(err())),
         Work::LibraryScanFile { respond, .. } => respond(Err(err())),
+        Work::LibraryScanEntry { respond, .. } => respond(Err(err())),
         Work::MatchRects { respond, .. } => respond(Err(err())),
         Work::Save { respond, .. } => respond(Err(err())),
         Work::UnlockPermissions { respond, .. } => respond(Err(err())),
@@ -491,6 +492,11 @@ fn handle_work(state: &mut WorkerState, shared: &EngineShared, meta: JobMeta, wo
         Work::LibraryScanFile { path, respond } => {
             respond(do_library_scan_file(state, shared, &path))
         }
+        Work::LibraryScanEntry {
+            path,
+            app_data_dir,
+            respond,
+        } => respond(do_library_scan_entry(state, &path, &app_data_dir)),
         Work::StartIndexing { doc } => state.request_indexing(doc, shared),
         Work::IndexNext { doc, chain } => do_index_next(state, shared, meta, doc, chain),
         Work::LibraryScanNext => do_library_scan_next(state, shared),
@@ -2344,6 +2350,25 @@ fn do_library_scan_file(
     shared.notify_library_changed();
     requeue_library_text(shared);
     Ok(paper)
+}
+
+/// Scan one file and return the entry alone, as the inbox scan reads it:
+/// no OCR, and nothing put in the index or the paper records.
+fn do_library_scan_entry(
+    state: &mut WorkerState,
+    path: &Path,
+    app_data_dir: &Path,
+) -> AppResult<LibraryEntry> {
+    let (mtime_ms, size) = library::file_stamp(path)
+        .ok_or_else(|| AppError::Io(format!("cannot read {}", path.display())))?;
+    let candidate = library::ScanCandidate {
+        path: path.to_path_buf(),
+        mtime_ms,
+        size,
+        epoch: 0,
+        unchanged: false,
+    };
+    Ok(scan_library_candidate(state, &candidate, app_data_dir, false).0)
 }
 
 fn open_library_document(

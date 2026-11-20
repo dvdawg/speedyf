@@ -269,6 +269,53 @@ pub fn offer<T: PartialEq>(field: &mut Option<MetaField<T>>, value: T, source: M
 /// or of unknown origin, a record from before sources were kept, which is
 /// read as the scan's so a rescan can correct it. A lookup's or the
 /// user's is not.
+/// The DOI and arXiv id a scanned file stands for, each with where the scan
+/// read it, and whether the DOI is only the XMP packet's say.
+fn entry_identifiers(
+    entry: &LibraryEntry,
+) -> (
+    Option<(String, MetaSource)>,
+    bool,
+    Option<(String, MetaSource)>,
+) {
+    let page_doi = entry
+        .doi
+        .as_deref()
+        .and_then(normalize_doi)
+        .map(|doi| (doi, entry.doi_source.unwrap_or(MetaSource::FirstPage)));
+    let xmp_doi = entry
+        .xmp
+        .as_ref()
+        .and_then(|xmp| {
+            xmp.doi.clone().or_else(|| {
+                xmp.pii
+                    .as_deref()
+                    .filter(|pii| identifiers::pii_has_valid_issn(pii))
+                    .map(identifiers::doi_from_pii)
+            })
+        })
+        .as_deref()
+        .and_then(normalize_doi)
+        .map(|doi| (doi, MetaSource::Xmp));
+    let xmp_only = page_doi.is_none() && xmp_doi.is_some();
+    let doi = page_doi.or(xmp_doi);
+    let arxiv = entry
+        .arxiv
+        .as_deref()
+        .and_then(normalize_arxiv)
+        .map(|arxiv| (arxiv, entry.arxiv_source.unwrap_or(MetaSource::FirstPage)));
+    (doi, xmp_only, arxiv)
+}
+
+/// The record a file the library has never seen would get from its scan
+/// alone, before any lookup: what `reconcile_file` makes of a new file.
+pub fn scanned_record(entry: &LibraryEntry) -> PaperRecord {
+    let (doi, _, arxiv) = entry_identifiers(entry);
+    let mut paper = PaperRecord::new();
+    paper.offer_entry(entry, doi, arxiv);
+    paper
+}
+
 fn scan_owned(source: Option<MetaSource>) -> bool {
     source.is_none_or(|source| source.rank() < MetaSource::OpenLibrary.rank())
 }
@@ -417,18 +464,70 @@ fn is_initials(piece: &str) -> bool {
     })
 }
 
+/// Whether a metadata title is a damaged copy of the printed one: cut off
+/// partway (an Info field's length limit, a packet written from the first
+/// line), which any reading of the page that runs on from it shows; or
+/// with its formula replaced by a placeholder, which only a page title the
+/// layout was sure of may stand in for. Compared folded, letters and digits
+/// only.
+fn title_superseded_by(title: &str, printed: &str, printed_sure: bool) -> bool {
+    if title.contains("[formula omitted]") {
+        return printed_sure;
+    }
+    let key =
+        |text: &str| -> String { fold(text).chars().filter(|c| c.is_alphanumeric()).collect() };
+    let (title, printed) = (key(title), key(printed));
+    // Long enough that a short running title is not mistaken for a cut one.
+    title.chars().count() >= 20 && printed.len() > title.len() && printed.starts_with(&title)
+}
+
+/// "D.L.", "F.-J.": initials with their dots, which no family name has.
+fn is_dotted_initials(word: &str) -> bool {
+    let letters = word.chars().filter(|c| c.is_alphabetic()).count();
+    word.contains('.')
+        && (1..=4).contains(&letters)
+        && word
+            .chars()
+            .all(|c| c.is_uppercase() || c == '.' || c == '-')
+}
+
 /// "Given Family" -> family is the last word. Good for the two forms Info
 /// strings actually use; "van der Waals" becomes family "Waals", which the
 /// cite key would have reduced to anyway.
 fn author_from_name(name: &str) -> Option<Author> {
     let words: Vec<&str> = name.split_whitespace().collect();
-    let (family, given) = words.split_last()?;
-    if !family.chars().any(char::is_alphabetic) {
+    // "Duke D.L.": family first, initials after, as some publishers'
+    // Author strings run.
+    if let [family @ .., initials] = words.as_slice() {
+        if !family.is_empty() && is_dotted_initials(initials) && !is_dotted_initials(family[0]) {
+            return Some(Author {
+                family: family.join(" "),
+                given: (*initials).to_owned(),
+            });
+        }
+    }
+    // "vogt2": a login, not a name.
+    if name.chars().any(|c| c.is_ascii_digit()) {
         return None;
     }
+    let (last, _) = words.split_last()?;
+    if !last.chars().any(char::is_alphabetic) {
+        return None;
+    }
+    // "L. Le Meur", "S.C. van der Marck": the particles before the last
+    // word are the family's, so long as a given name is left before them.
+    // A capital single letter is an initial ("Ming Y Li"), not "y".
+    let particle = |word: &str| {
+        (word.chars().count() > 1 || word.chars().all(char::is_lowercase))
+            && super::firstpage::is_particle(&word.to_lowercase())
+    };
+    let mut split = words.len() - 1;
+    while split > 1 && particle(words[split - 1]) {
+        split -= 1;
+    }
     Some(Author {
-        family: (*family).to_owned(),
-        given: given.join(" "),
+        family: words[split..].join(" "),
+        given: words[..split].join(" "),
     })
 }
 
@@ -806,11 +905,16 @@ impl PaperRecord {
         // What the file's own identifiers say about its year, before they
         // are moved into the record: the arXiv id's submission year, else
         // the year a DOI of a known family carries (a PII's included).
+        // A DOI's year is when the article was registered, often the year
+        // before its issue; a masthead's year of record beats it.
+        let page_year = entry.page_year;
+        let printed_of_record = page_year.is_some_and(|printed| printed.strong);
         let identifier_year = arxiv
             .as_ref()
             .and_then(|(id, _)| identifiers::year_from_arxiv(id))
             .or_else(|| {
                 doi.as_ref()
+                    .filter(|_| !printed_of_record)
                     .and_then(|(id, _)| identifiers::year_from_doi(id))
             });
         changed |= offer_identifier(
@@ -864,9 +968,18 @@ impl PaperRecord {
         // What the XMP packet offers, filtered the way the Info dictionary
         // is: a Title that is a file name is no title whoever wrote it.
         let xmp = entry.xmp.as_ref();
+        // The title the page prints, which a metadata title cut short or
+        // with its formula dropped gives way to: a page title that runs on
+        // from the metadata's is evidence enough, sure or not.
+        let page_read = non_empty(entry.title.as_deref());
+        let superseded = |title: &str| {
+            page_read.as_deref().is_some_and(|page| {
+                title_superseded_by(title, page, entry.first_page_title_confident)
+            })
+        };
         let xmp_title = xmp
             .and_then(|xmp| xmp.title.as_deref())
-            .filter(|title| plausible_info_title(title))
+            .filter(|title| plausible_info_title(title) && !superseded(title))
             .and_then(|title| non_empty(Some(title)));
         let xmp_authors = xmp
             .map(|xmp| parse_xmp_creators(&xmp.creators))
@@ -878,7 +991,7 @@ impl PaperRecord {
         let xmp_pages = xmp.and_then(|xmp| xmp.pages());
         let xmp_publisher = xmp.and_then(|xmp| non_empty(xmp.publisher.as_deref()));
 
-        let info_title = non_empty(entry.info_title.as_deref());
+        let info_title = non_empty(entry.info_title.as_deref()).filter(|title| !superseded(title));
         let info_authors = entry
             .info_author
             .as_deref()
@@ -918,10 +1031,19 @@ impl PaperRecord {
             MetaSource::PdfInfo,
             info_authors.is_empty(),
         );
+        // CreationDate is when the file was made: a back issue's scan, a
+        // publisher's re-render. The year the page prints, when it prints
+        // one, is the paper's.
+        let info_year = entry.info_year.filter(|_| page_year.is_none());
         changed |= retract(
             &mut self.meta.year,
             MetaSource::PdfInfo,
-            entry.info_year.is_none(),
+            info_year.is_none(),
+        );
+        changed |= retract(
+            &mut self.meta.year,
+            MetaSource::FirstPage,
+            page_year.is_none(),
         );
         changed |= retract(
             &mut self.meta.year,
@@ -979,7 +1101,10 @@ impl PaperRecord {
         if !info_authors.is_empty() {
             changed |= offer(&mut self.meta.authors, info_authors, MetaSource::PdfInfo);
         }
-        if let Some(year) = entry.info_year {
+        if let Some(printed) = page_year {
+            changed |= offer(&mut self.meta.year, printed.year, MetaSource::FirstPage);
+        }
+        if let Some(year) = info_year {
             changed |= offer(&mut self.meta.year, year, MetaSource::PdfInfo);
         }
         if let Some(year) = identifier_year {
@@ -1211,32 +1336,8 @@ impl PaperStore {
         // Each identifier carries where the scan read it, for the record to
         // keep beside the value; an entry from before the scan recorded
         // sources is taken for the page's.
-        let page_doi = entry
-            .doi
-            .as_deref()
-            .and_then(normalize_doi)
-            .map(|doi| (doi, entry.doi_source.unwrap_or(MetaSource::FirstPage)));
-        let xmp_doi = entry
-            .xmp
-            .as_ref()
-            .and_then(|xmp| {
-                xmp.doi.clone().or_else(|| {
-                    xmp.pii
-                        .as_deref()
-                        .filter(|pii| identifiers::pii_has_valid_issn(pii))
-                        .map(identifiers::doi_from_pii)
-                })
-            })
-            .as_deref()
-            .and_then(normalize_doi)
-            .map(|doi| (doi, MetaSource::Xmp));
-        let xmp_only = page_doi.is_none() && xmp_doi.is_some();
-        let mut doi = page_doi.or(xmp_doi);
-        let arxiv = entry
-            .arxiv
-            .as_deref()
-            .and_then(normalize_arxiv)
-            .map(|arxiv| (arxiv, entry.arxiv_source.unwrap_or(MetaSource::FirstPage)));
+        let (doi, xmp_only, arxiv) = entry_identifiers(entry);
+        let mut doi = doi;
         let path = entry.path.to_string_lossy().into_owned();
         let file = PaperFile {
             name: entry
@@ -2650,6 +2751,58 @@ impl SortKey {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn author_names(authors: &[Author]) -> Vec<(&str, &str)> {
+        authors
+            .iter()
+            .map(|a| (a.given.as_str(), a.family.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn info_and_xmp_names_keep_particles_and_read_inverted_initials() {
+        assert_eq!(
+            author_names(&parse_info_authors("Duke D.L.; Hambsch F.-J.; Tovesson F.")),
+            [("D.L.", "Duke"), ("F.-J.", "Hambsch"), ("F.", "Tovesson")]
+        );
+        assert_eq!(
+            author_names(&parse_xmp_creators(&[
+                "S.C. van der Marck".into(),
+                "L. Le Meur".into(),
+                "Ming Y Li".into(),
+            ])),
+            [
+                ("S.C.", "van der Marck"),
+                ("L.", "Le Meur"),
+                ("Ming Y", "Li")
+            ]
+        );
+        // A login where the name should be.
+        assert!(parse_xmp_creators(&["vogt2".into()]).is_empty());
+    }
+
+    #[test]
+    fn a_metadata_title_cut_short_gives_way_to_the_printed_one() {
+        let printed = "Transporting Baguettes With Minimal Action: The Geometry of Optimal Nonequilibrium Processes";
+        assert!(title_superseded_by(
+            "Transporting Baguettes With Minimal Action: The Geometry of Optimal",
+            printed,
+            false
+        ));
+        assert!(!title_superseded_by(printed, printed, true));
+        // A short running title is not taken for a cut one.
+        assert!(!title_superseded_by("Transporting", printed, true));
+        assert!(title_superseded_by(
+            "Modeling of ([formula omitted], n) sources",
+            "Modeling of (α, n) sources",
+            true
+        ));
+        assert!(!title_superseded_by(
+            "Modeling of ([formula omitted], n) sources",
+            "Contents lists available",
+            false
+        ));
+    }
     use crate::library::types::PaperKind;
 
     fn entry(path: &str, fingerprint: Option<&str>) -> LibraryEntry {
@@ -2665,6 +2818,7 @@ mod tests {
             info_title: None,
             info_author: None,
             info_year: None,
+            page_year: None,
             cites: None,
             paper_verdict: None,
             paper_reason: None,
