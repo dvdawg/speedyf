@@ -255,7 +255,8 @@ export interface EngineApi {
   libraryApplyCandidate(paperId: string, candidate: LookupCandidate): Promise<Paper>;
   /** Looks up every paper in the project that has an identifier, by
    * identifier only, applying each result. Sequential and cache-first. */
-  libraryLookupProject(projectId: string): Promise<LookupBatch>;
+  /** With `incompleteOnly`, just the items whose BibTeX entry has a gap. */
+  libraryLookupProject(projectId: string, incompleteOnly?: boolean): Promise<LookupBatch>;
   /** Tells the engine whether online lookup is allowed and whom to identify
    * as. Called at startup and whenever the setting changes, like low memory. */
   librarySetLookup(enabled: boolean, contact: string, s2Key: string): Promise<void>;
@@ -428,7 +429,8 @@ export const engine: EngineApi = {
   libraryLookup: (paperId, mode) => invoke('library_lookup', { paperId, mode }),
   libraryApplyCandidate: (paperId, candidate) =>
     invoke('library_apply_candidate', { paperId, candidate }),
-  libraryLookupProject: (projectId) => invoke('library_lookup_project', { projectId }),
+  libraryLookupProject: (projectId, incompleteOnly = false) =>
+    invoke('library_lookup_project', { projectId, incompleteOnly }),
   librarySetLookup: (enabled, contact, s2Key) =>
     invoke('library_set_lookup', { enabled, contact, s2Key }),
   libraryLookupAll: () => invoke('library_lookup_all'),

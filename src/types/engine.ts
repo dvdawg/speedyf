@@ -538,9 +538,12 @@ export interface Paper {
   projectIds: string[];
   addedAt: string;
   updatedAt: string;
-  /** What a BibTeX entry needs and this paper lacks: 'authors', 'year',
-   * 'title', 'venue'. Empty when the entry would be complete. */
+  /** What a BibTeX entry needs and this paper lacks, by the type it goes
+   * out as: 'authors', 'year', 'title', 'venue', 'publisher'. Empty when
+   * the entry would be complete. */
   incomplete: string[];
+  /** when a lookup last ran for it (RFC 3339), whatever it found */
+  lookedUpAt?: string | null;
   /** the user's override when there is one, else the scan's verdict */
   isPaper: boolean;
   /** why, in a few words: the scan's reason, or "marked by you" */
@@ -596,6 +599,8 @@ export interface PaperRow {
   missing: boolean;
   hasIdentifier: boolean;
   incompleteCount: number;
+  /** which fields those are, as on the full record */
+  incomplete?: string[];
   isPaper: boolean;
   /** parked title-search matches waiting for the user */
   candidateCount: number;

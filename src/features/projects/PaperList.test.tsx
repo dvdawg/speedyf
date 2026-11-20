@@ -156,8 +156,29 @@ describe('lookups from the header', () => {
     render(() => <PaperList onMoveFocus={() => {}} />);
     await screen.findByText(CROOKS);
     fireEvent.click(screen.getByRole('button', { name: 'Look up all' }));
-    await waitFor(() => expect(engine.libraryLookupProject).toHaveBeenCalledWith('p1'));
+    await waitFor(() => expect(engine.libraryLookupProject).toHaveBeenCalledWith('p1', false));
     expect(await screen.findByText('1 of 2 updated, 1 failed')).toBeTruthy();
+  });
+
+  it('narrows a project to its .bib gaps, says what each lacks, and looks only those up', async () => {
+    updateSettings({ onlineLookup: true });
+    projectsStore.setScope({ kind: 'project', id: 'p1' });
+    await projectsStore.refresh();
+    render(() => <PaperList onMoveFocus={() => {}} />);
+    await screen.findByText(CROOKS);
+    expect(screen.getByText(JARZYNSKI)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '1 incomplete' }));
+    await waitFor(() => expect(screen.queryByText(JARZYNSKI)).toBeNull());
+    expect(screen.getByText(CROOKS)).toBeTruthy();
+    expect(screen.getByText(/no venue/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Look up incomplete' }));
+    await waitFor(() => expect(engine.libraryLookupProject).toHaveBeenCalledWith('p1', true));
+    // Pressed again, the chip clears the filter; so does leaving the project.
+    fireEvent.click(screen.getByRole('button', { name: /incomplete for \.bib/ }));
+    expect(await screen.findByText(JARZYNSKI)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '1 incomplete' }));
+    projectsStore.setScope({ kind: 'all' });
+    expect(projectsStore.state.incompleteOnly).toBe(false);
   });
 
   it('offers no lookup under Other PDFs', async () => {

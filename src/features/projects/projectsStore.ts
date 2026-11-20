@@ -186,6 +186,9 @@ interface State {
   health: HealthGroup[];
   /** Untriaged new items, newest first, for the New row's count. */
   newItems: PaperRow[];
+  /** The project's list narrowed to items whose BibTeX entry has a gap;
+   * cleared with the scope. */
+  incompleteOnly: boolean;
   /** How the list is sorted (listSortPrefs.ts), for every scope. */
   sort: ListSort;
   /** Item id -> items of the scope citing it, while sorting by it. */
@@ -229,6 +232,7 @@ const [state, setState] = createStore<State>({
   graphLabels: {},
   health: [],
   newItems: [],
+  incompleteOnly: false,
   sort: loadSort(),
   citedHere: {},
   error: null,
@@ -467,6 +471,12 @@ export const projectsStore = {
     setState('citedHere', reconcile(counts));
   },
 
+  /** Show only the project's items a BibTeX entry would be missing
+   * something for, or everything again. */
+  setIncompleteOnly(on: boolean): void {
+    setState('incompleteOnly', on);
+  },
+
   setSort(sort: ListSort): void {
     if (sort === state.sort) return;
     setState('sort', sort);
@@ -656,7 +666,13 @@ export const projectsStore = {
     setState('scope', reconcile(scope));
     // A focus and a picked missing work belong to the graph they were in.
     personSeq += 1;
-    setState({ focus: null, ghostKey: null, missingList: false, person: null });
+    setState({
+      focus: null,
+      ghostKey: null,
+      missingList: false,
+      person: null,
+      incompleteOnly: false,
+    });
     void projectsStore.loadRows();
     void projectsStore.loadMissing();
     void projectsStore.loadCoCited();
@@ -762,8 +778,8 @@ export const projectsStore = {
   /** Looks up every paper in the project that has an identifier. Sequential
    * on the engine side, so a large project takes a while; the status bar
    * shows the activity for as long as it runs. */
-  async lookupProject(projectId: string): Promise<LookupBatch | undefined> {
-    return guarded(() => engine.libraryLookupProject(projectId));
+  async lookupProject(projectId: string, incompleteOnly = false): Promise<LookupBatch | undefined> {
+    return guarded(() => engine.libraryLookupProject(projectId, incompleteOnly));
   },
 
   /** Every paper in the library, by identifier or by title. */

@@ -59,6 +59,7 @@ import { citeText, noteDropAt, type NoteDropTarget } from '../extensions/editor/
 import { backToProjectPane, shownProjectPane } from './ProjectPane';
 import { projectPane } from '../extensions/surfaces';
 import ViewToggle, { currentView } from './ViewToggle';
+import { gapsText } from './bibGaps';
 
 /** The group every paper with no project falls into under All papers. Not a
  * project id, so `collapsed` can hold it beside the real ones. */
@@ -105,12 +106,18 @@ type Item =
 export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void }) {
   const store = projectsStore;
   const hasQuery = () => store.state.query.trim().length > 0;
+  const incompleteOnly = () =>
+    store.state.incompleteOnly && store.state.scope.kind === 'project' && !store.state.person;
   /** A person's items while one is shown, else the scope's. The engine
    * filters the scope's by the query; a person's arrive whole and are
    * filtered here, by the same rule (itemMatch.ts). */
   const sourceRows = createMemo(() => {
     const person = store.state.person;
-    return person ? filterRows(person.rows, store.state.query) : store.state.rows;
+    if (person) return filterRows(person.rows, store.state.query);
+    // A project's .bib gaps, when its "incomplete" count was clicked.
+    return incompleteOnly()
+      ? store.state.rows.filter((row) => row.isPaper && row.incompleteCount > 0)
+      : store.state.rows;
   });
   const grouped = () => store.state.scope.kind === 'all' && !store.state.person;
   /** New items are triaged newest first; Health is not a list of rows. */
@@ -126,7 +133,8 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
   );
   const rowMeta = (row: PaperRow) => {
     const cited = store.state.sort === 'cited' && sortable() ? store.state.citedHere[row.id] : 0;
-    return [metaLine(row), citedHereText(cited)].filter(Boolean).join(', ');
+    const gaps = incompleteOnly() ? gapsText(row.incomplete ?? []) : '';
+    return [metaLine(row), citedHereText(cited), gaps].filter(Boolean).join(', ');
   };
   /** A row's right-click menu: the file's, plus taking the item out of the
    * project being shown. */
@@ -527,7 +535,9 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
     setLookingUp(true);
     setBatch(null);
     const result =
-      target.kind === 'project' ? await store.lookupProject(target.id) : await store.lookupAll();
+      target.kind === 'project'
+        ? await store.lookupProject(target.id, incompleteOnly())
+        : await store.lookupAll();
     setLookingUp(false);
     if (result) setBatch(result);
   };
@@ -559,10 +569,25 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
                       </span>
                     )}
                   </Show>
-                  <Show when={p().incompleteCount > 0}>
-                    <span class="paper-list-incomplete sb-warn">
-                      {p().incompleteCount} incomplete
-                    </span>
+                  {/* The count narrows the list to the gaps; pressed, it
+                      reads as the filter it is and clears it. */}
+                  <Show when={p().incompleteCount > 0 || incompleteOnly()}>
+                    <button
+                      type="button"
+                      class="paper-list-incomplete"
+                      classList={{ 'sb-warn': !incompleteOnly(), 'is-on': incompleteOnly() }}
+                      aria-pressed={incompleteOnly()}
+                      title={
+                        incompleteOnly()
+                          ? 'Show every item again'
+                          : 'Show only the items whose BibTeX entry is missing something'
+                      }
+                      onClick={() => store.setIncompleteOnly(!incompleteOnly())}
+                    >
+                      {incompleteOnly()
+                        ? `${p().incompleteCount} incomplete for .bib \u00d7`
+                        : `${p().incompleteCount} incomplete`}
+                    </button>
                   </Show>
                 </>
               )}
@@ -579,13 +604,19 @@ export default function PaperList(props: { onMoveFocus: (dir: -1 | 1) => void })
                     class="secondary-btn"
                     disabled={lookingUp()}
                     title={
-                      target().kind === 'project'
-                        ? 'Fetch metadata for every item here that has a DOI or arXiv id'
-                        : 'Fetch metadata for every item: by DOI or arXiv id, else by title'
+                      incompleteOnly()
+                        ? 'Fetch metadata for the items listed: by DOI or arXiv id, else by title'
+                        : target().kind === 'project'
+                          ? 'Fetch metadata for every item here that has a DOI or arXiv id'
+                          : 'Fetch metadata for every item: by DOI or arXiv id, else by title'
                     }
                     onClick={() => void lookUpAll()}
                   >
-                    {lookingUp() ? 'Looking up...' : 'Look up all'}
+                    {lookingUp()
+                      ? 'Looking up...'
+                      : incompleteOnly()
+                        ? 'Look up incomplete'
+                        : 'Look up all'}
                   </button>
                 </>
               )}
