@@ -423,3 +423,30 @@ describe('Look Up by Title from the palette', () => {
     await screen.findByText('Nothing found');
   });
 });
+
+describe('PaperDetail .bib gaps', () => {
+  it('offers the lookup first, then an Add per gap that opens its field', async () => {
+    updateSettings({ onlineLookup: true });
+    const { paperFor } = await import('./testFixtures');
+    const fresh = paperFor('b');
+    fresh.doi = '10.1103/physreve.60.2721';
+    vi.mocked(engine.libraryPaper).mockResolvedValueOnce(fresh);
+    await select('b');
+    render(() => <PaperDetail onMoveFocus={() => {}} />);
+    const gaps = await screen.findByRole('group', { name: 'Missing for BibTeX' });
+    expect(gaps.textContent).toContain('Missing for BibTeX: authors, year');
+    expect(gaps.querySelector('button')?.textContent).toBe('Look up');
+    cleanup();
+
+    await select('a');
+    const tried = { ...paperFor('b'), lookedUpAt: '2026-11-19T00:00:00Z' };
+    vi.mocked(engine.libraryPaper).mockResolvedValueOnce(tried);
+    await select('b');
+    render(() => <PaperDetail onMoveFocus={() => {}} />);
+    expect(await screen.findByText('A lookup did not find these.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Add year' }));
+    await waitFor(() =>
+      expect(document.activeElement?.closest('.paper-field')?.textContent).toContain('Year')
+    );
+  });
+});

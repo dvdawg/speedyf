@@ -15,14 +15,17 @@ import {
   createSignal,
   createUniqueId,
   For,
+  Match,
   onCleanup,
   Show,
+  Switch,
   untrack,
   type JSX,
 } from 'solid-js';
 import { engine } from '../../lib/transport/engine';
 import { renderUrl } from '../../lib/rendering/renderSource';
 import { pagesInverted, settings } from '../../stores/settings';
+import { gapFix, gapLabel } from './bibGaps';
 import type {
   LookupCandidate,
   LookupMode,
@@ -130,7 +133,13 @@ function SourceTag(props: {
  *
  * `onSave` returns a message to keep the field open with that problem, or
  * null once the value went through. */
+/** A field an "Add ..." fix asked to open: the matching editor opens and
+ * takes the request. */
+const [editRequest, setEditRequest] = createSignal<string | null>(null);
+
 function EditableField(props: {
+  /** The metadata field it edits, for a gap's "Add ..." to open it. */
+  field?: string;
   label: string;
   display: string;
   text: string;
@@ -187,6 +196,12 @@ function EditableField(props: {
     }
     setEditing(false);
   };
+  createEffect(() => {
+    const wanted = editRequest();
+    if (!wanted || wanted !== props.field) return;
+    setEditRequest(null);
+    untrack(begin);
+  });
   const keys = (e: KeyboardEvent) => {
     if (e.key === 'Escape') {
       e.preventDefault();
@@ -451,6 +466,7 @@ function Fields(props: { paper: Paper }) {
   return (
     <section class="paper-fields" aria-label="Metadata">
       <EditableField
+        field="title"
         label="Title"
         display={text('title')}
         text={text('title')}
@@ -460,6 +476,7 @@ function Fields(props: { paper: Paper }) {
         onSave={(v) => save(textPatch('title', v.trim() || null))}
       />
       <EditableField
+        field="authors"
         label="Authors"
         display={formatAuthors(authors())}
         text={formatAuthors(authors())}
@@ -473,6 +490,7 @@ function Fields(props: { paper: Paper }) {
         }}
       />
       <EditableField
+        field="year"
         label="Year"
         display={yearText({
           year: props.paper.meta.year?.value ?? null,
@@ -494,6 +512,7 @@ function Fields(props: { paper: Paper }) {
       <For each={TEXT_FIELDS.filter((f) => f.key !== 'title')}>
         {(field) => (
           <EditableField
+            field={field.key}
             label={field.label}
             display={text(field.key)}
             text={text(field.key)}
@@ -559,6 +578,60 @@ function Fields(props: { paper: Paper }) {
         onSave={(v) => save(textPatch('isbn', v.trim() || null))}
       />
     </section>
+  );
+}
+
+/** What the paper's BibTeX entry lacks, named as the entry names it, and
+ * the one fix worth trying (bibGaps.ts): a lookup that has not run, else
+ * an "Add" per gap that opens its field. */
+function BibGaps(props: { paper: Paper; busy: boolean; onLookup: (mode: LookupMode) => void }) {
+  const kind = () => props.paper.meta.kind?.value;
+  const fix = () => gapFix(props.paper, settings.onlineLookup);
+  return (
+    <div class="paper-gaps" role="group" aria-label="Missing for BibTeX">
+      <span class="sb-warn">
+        Missing for BibTeX:{' '}
+        {props.paper.incomplete.map((field) => gapLabel(field, kind())).join(', ')}
+      </span>
+      <div class="paper-gaps-fix">
+        <Switch>
+          <Match when={fix().kind === 'lookup'}>
+            <button
+              type="button"
+              class="paper-mini-btn"
+              disabled={props.busy}
+              title="Fetch metadata by DOI or arXiv id"
+              onClick={() => props.onLookup('id')}
+            >
+              Look up
+            </button>
+          </Match>
+          <Match when={fix().kind === 'title'}>
+            <button
+              type="button"
+              class="paper-mini-btn"
+              disabled={props.busy}
+              title="No DOI or arXiv id: search by title and pick a match"
+              onClick={() => props.onLookup('title')}
+            >
+              Find by title
+            </button>
+          </Match>
+          <Match when={fix().kind === 'edit'}>
+            <Show when={(fix() as { lookedUp?: boolean }).lookedUp}>
+              <span class="paper-gaps-note">A lookup did not find these.</span>
+            </Show>
+            <For each={props.paper.incomplete}>
+              {(field) => (
+                <button type="button" class="paper-mini-btn" onClick={() => setEditRequest(field)}>
+                  Add {gapLabel(field, kind())}
+                </button>
+              )}
+            </For>
+          </Match>
+        </Switch>
+      </div>
+    </div>
   );
 }
 
@@ -943,9 +1016,7 @@ export default function PaperDetail(props: { onMoveFocus: (dir: -1 | 1) => void 
             />
 
             <Show when={p().isPaper && p().incomplete.length > 0}>
-              <p class="paper-incomplete sb-warn">
-                Missing for BibTeX: {p().incomplete.join(', ')}
-              </p>
+              <BibGaps paper={p()} busy={busy()} onLookup={(mode) => void lookup(p(), mode)} />
             </Show>
 
             <div class="paper-actions">

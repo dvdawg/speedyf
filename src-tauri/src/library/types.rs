@@ -190,9 +190,13 @@ pub struct PaperDto {
     pub project_ids: Vec<String>,
     pub added_at: String,
     pub updated_at: String,
-    /// Metadata a BibTeX entry needs and this paper lacks: "authors", "year",
-    /// "title", "venue". Empty when the entry would be complete.
+    /// Metadata a BibTeX entry needs and this paper lacks, by the type it
+    /// goes out as: "authors", "year", "title", "venue", "publisher". Empty
+    /// when the entry would be complete.
     pub incomplete: Vec<String>,
+    /// When a lookup last ran for it (RFC 3339), whatever it found.
+    #[serde(default)]
+    pub looked_up_at: Option<String>,
     /// Whether this record is treated as a paper: the user's override when
     /// there is one, else the scan's verdict (`paper` or `likely`).
     pub is_paper: bool,
@@ -270,6 +274,9 @@ pub struct PaperRowDto {
     pub missing: bool,
     pub has_identifier: bool,
     pub incomplete_count: u32,
+    /// Which fields those are, as on the full record.
+    #[serde(default)]
+    pub incomplete: Vec<String>,
     pub is_paper: bool,
     /// Parked title-search matches waiting for the user.
     pub candidate_count: u32,

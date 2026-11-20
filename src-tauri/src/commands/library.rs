@@ -971,12 +971,14 @@ async fn run_batch(engine: EngineHandle, plan: LookupPlan) -> LookupBatchDto {
 pub async fn library_lookup_project(
     state: tauri::State<'_, EngineState>,
     project_id: String,
+    incomplete_only: Option<bool>,
 ) -> AppResult<LookupBatchDto> {
     let engine = state.0.clone();
     lookup::ensure_enabled(&engine.lookup_settings())?;
     let now = unix_now();
+    let incomplete_only = incomplete_only.unwrap_or(false);
     let plan = read_store(engine.clone(), move |store| {
-        store.plan_project_lookup(&project_id, now)
+        store.plan_project_lookup(&project_id, now, incomplete_only)
     })
     .await?;
     Ok(run_batch(engine, plan).await)

@@ -5879,6 +5879,33 @@ textarea.form-input {
   font-style: italic;
 }
 
+/* The .bib's incomplete count: plain text that narrows the list, and
+   while it does, a quiet chip that clears it. */
+.paper-list-incomplete {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-s);
+  background: none;
+  font: inherit;
+  cursor: default;
+}
+
+.paper-list-incomplete:hover {
+  text-decoration: underline;
+}
+
+.paper-list-incomplete.is-on {
+  border-color: var(--border);
+  background: var(--bg-inset);
+  color: var(--text);
+}
+
+.paper-list-incomplete.is-on:hover {
+  text-decoration: none;
+  border-color: var(--text-dim);
+}
+
 .paper-list-spacer {
   flex: 1;
 }
@@ -6351,9 +6378,22 @@ textarea.paper-field-input {
   font-size: var(--fs-sm);
 }
 
-.paper-incomplete {
-  margin: 0;
+.paper-gaps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   font-size: var(--fs-sm);
+}
+
+.paper-gaps-fix {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.paper-gaps-note {
+  color: var(--text-dim);
 }
 
 .paper-actions {
