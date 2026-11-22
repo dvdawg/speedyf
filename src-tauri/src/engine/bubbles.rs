@@ -11,10 +11,16 @@
 //! which means it costs no extra PDFium calls: the boxes, sizes and font
 //! classification are all sitting there once a page has been read at all.
 //!
+//! Some quizzes draw the bubble instead: a figure pasted in from Keynote or
+//! TikZ strokes each one as a Bezier circle, with no glyph to find. Those come
+//! from the path walk `blanks.rs` already does for the Fill tool, via
+//! [`drawn`].
+//!
 //! Nothing here writes. A detected bubble is only a target; shading one creates
 //! an ordinary annotation over it, so the underlying page is never modified and
 //! a bubble can be un-shaded by deleting that annotation like any other.
 
+use super::blanks::PageInput;
 use super::types::{BubbleDto, RectDto};
 
 /// Characters that are drawn as an empty, fillable control.
@@ -74,6 +80,40 @@ pub fn detect(raw: &str, boxes: &[[f32; 4]], sizes: &[f32]) -> Vec<BubbleDto> {
     out
 }
 
+/// Every empty drawn ring on a page, as bubbles.
+///
+/// A drawn ring has no character index, so each is numbered on from
+/// `first_index` - the page's character count - in the order the page draws
+/// them. That order is fixed for a page, which keeps the number as stable a
+/// key for a shading as a glyph's index is. A ring with text inside is a
+/// labelled diagram node, not a control.
+pub fn drawn(input: &PageInput, first_index: u32) -> Vec<BubbleDto> {
+    input
+        .rings
+        .iter()
+        .filter(|ring| {
+            !input.glyphs.iter().any(|g| {
+                let (cx, cy) = ((g.b.x0 + g.b.x1) / 2.0, (g.b.y0 + g.b.y1) / 2.0);
+                cx > ring.x0 && cx < ring.x1 && cy > ring.y0 && cy < ring.y1
+            })
+        })
+        .enumerate()
+        .map(|(i, ring)| {
+            let (w, h) = (ring.x1 - ring.x0, ring.y1 - ring.y0);
+            BubbleDto {
+                char_index: first_index + i as u32,
+                rect: RectDto {
+                    x: ring.x0,
+                    y: ring.y0,
+                    w,
+                    h,
+                },
+                font_size_pt: h,
+            }
+        })
+        .collect()
+}
+
 /// Whether a glyph box is plausibly a control rather than punctuation or art.
 fn is_control_sized(w: f32, h: f32) -> bool {
     let (small, large) = if w < h { (w, h) } else { (h, w) };
@@ -82,6 +122,7 @@ fn is_control_sized(w: f32, h: f32) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::super::blanks::{Bounds, Glyph};
     use super::*;
 
     /// Boxes sized like the CMSY10 `\bigcirc` PDFium actually reports.
@@ -129,6 +170,51 @@ mod tests {
     fn rejects_boxes_far_from_square() {
         let raw = "\u{25EF}";
         assert!(detect(raw, &[[0.0, 0.0, 30.0, 6.0]], &[12.0]).is_empty());
+    }
+
+    fn ring(x: f32) -> Bounds {
+        Bounds {
+            x0: x,
+            y0: 100.0,
+            x1: x + 10.6,
+            y1: 110.6,
+        }
+    }
+
+    /// A figure's stroked circles are bubbles too, numbered after the text.
+    #[test]
+    fn finds_drawn_rings_after_the_text() {
+        let input = PageInput {
+            rings: vec![ring(100.0), ring(170.0)],
+            ..PageInput::default()
+        };
+        let found = drawn(&input, 40);
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].char_index, 40);
+        assert_eq!(found[1].char_index, 41);
+        assert_eq!(found[1].rect.x, 170.0);
+    }
+
+    /// A ring around a label is a node in a diagram.
+    #[test]
+    fn skips_rings_with_text_inside() {
+        let input = PageInput {
+            rings: vec![ring(100.0), ring(170.0)],
+            glyphs: vec![Glyph {
+                ch: '3',
+                b: Bounds {
+                    x0: 103.0,
+                    y0: 102.0,
+                    x1: 107.0,
+                    y1: 108.0,
+                },
+                size: 9.0,
+            }],
+            ..PageInput::default()
+        };
+        let found = drawn(&input, 0);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].rect.x, 170.0);
     }
 
     /// Square controls are as common as round ones on printed forms.

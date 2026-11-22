@@ -64,6 +64,9 @@ struct DocState {
     /// Printed-form blanks found per page (`blanks::detect`), by page in the
     /// file: found once, the first time the Fill tool looks at a page.
     blanks: HashMap<u32, Vec<BlankDto>>,
+    /// Bubbles drawn as paths rather than glyphs (`bubbles::drawn`), by page
+    /// in the file: found once, the first time the bubble tool looks.
+    drawn_bubbles: HashMap<u32, Vec<BubbleDto>>,
     /// Pages rendered for layout analysis (`vision`), a few at a time.
     rasters: HashMap<u32, std::sync::Arc<vision::PageRaster>>,
 }
@@ -656,6 +659,7 @@ fn do_open(
             ocr_cache: None,
             equation_blocks: HashMap::new(),
             blanks: HashMap::new(),
+            drawn_bubbles: HashMap::new(),
             rasters: HashMap::new(),
         },
     );
@@ -897,10 +901,21 @@ fn do_page_bubbles(
     src: u32,
 ) -> AppResult<PageBubblesDto> {
     let layout = ensure_text_layout(state, shared, doc, src)?;
-    Ok(PageBubblesDto {
-        src,
-        bubbles: layout.bubbles.as_ref().clone(),
-    })
+    let mut bubbles = layout.bubbles.as_ref().clone();
+    // Figures draw their bubbles as paths, which the text layer never sees.
+    let drawn = match state.doc(doc)?.drawn_bubbles.get(&src) {
+        Some(cached) => cached.clone(),
+        None => {
+            let [w, h] = state.display_size(doc, src)?;
+            let page = state.page_handle(doc, src)?;
+            let input = blanks::collect(state.bindings, page, w, h);
+            let found = bubbles::drawn(&input, layout.char_count);
+            state.doc(doc)?.drawn_bubbles.insert(src, found.clone());
+            found
+        }
+    };
+    bubbles.extend(drawn);
+    Ok(PageBubblesDto { src, bubbles })
 }
 
 /// Every printed-form blank on one page, for the Fill tool.
@@ -2434,6 +2449,7 @@ fn open_library_document(
             ocr_cache: None,
             equation_blocks: HashMap::new(),
             blanks: HashMap::new(),
+            drawn_bubbles: HashMap::new(),
             rasters: HashMap::new(),
         },
     );
@@ -2848,6 +2864,7 @@ fn do_save(
                                 ocr_cache: None,
                                 equation_blocks: HashMap::new(),
                                 blanks: HashMap::new(),
+                                drawn_bubbles: HashMap::new(),
                                 rasters: HashMap::new(),
                             },
                         );

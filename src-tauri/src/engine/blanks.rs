@@ -1206,7 +1206,7 @@ pub fn collect(
         match b.FPDFPageObj_GetType(object) {
             PAGEOBJ_PATH if segments < MAX_SEGMENTS => {
                 let matrix = compose(&to_page, &own);
-                segments += read_path(b, object, &matrix, &mapper, &mut input);
+                segments += read_path(b, object, &matrix, &to_page, &mapper, &mut input);
             }
             PAGEOBJ_IMAGE => {
                 let (mut l, mut bo, mut r, mut t) = (0f32, 0f32, 0f32, 0f32);
@@ -1259,11 +1259,55 @@ fn luma(r: c_uint, g: c_uint, b: c_uint) -> f32 {
     (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32) / 255.0
 }
 
+/// The box an object's clip path leaves visible, in display space.
+///
+/// The clip is stored in the space of the content stream the object sits in,
+/// so it maps through `to_page` rather than the object's own matrix. Only the
+/// box of each clip path counts, intersected: a figure pasted in twice under
+/// two clip rects, the way Keynote exports one, is told apart by that alone.
+fn clip_bounds(
+    b: &dyn PdfiumLibraryBindings,
+    object: FPDF_PAGEOBJECT,
+    to_page: &Matrix,
+    mapper: &DispMapper,
+) -> Option<Bounds> {
+    let clip = b.FPDFPageObj_GetClipPath(object);
+    if clip.is_null() {
+        return None;
+    }
+    let mut visible: Option<Bounds> = None;
+    for path in 0..b.FPDFClipPath_CountPaths(clip).max(0) {
+        let mut points = Vec::new();
+        for i in 0..b.FPDFClipPath_CountPathSegments(clip, path).max(0) {
+            let seg = b.FPDFClipPath_GetPathSegment(clip, path, i);
+            let (mut x, mut y) = (0f32, 0f32);
+            if !seg.is_null() && b.FPDFPathSegment_GetPoint(seg, &mut x, &mut y) != 0 {
+                points.push(mapper_point(mapper, to_page, x, y));
+            }
+        }
+        if points.is_empty() {
+            continue;
+        }
+        let bb = bounds_of(&points);
+        visible = Some(match visible {
+            None => bb,
+            Some(v) => Bounds {
+                x0: v.x0.max(bb.x0),
+                y0: v.y0.max(bb.y0),
+                x1: v.x1.min(bb.x1),
+                y1: v.y1.min(bb.y1),
+            },
+        });
+    }
+    visible
+}
+
 /// Read one path object into rules and ink. Returns the segments read.
 fn read_path(
     b: &dyn PdfiumLibraryBindings,
     object: FPDF_PAGEOBJECT,
     matrix: &Matrix,
+    to_page: &Matrix,
     mapper: &DispMapper,
     input: &mut PageInput,
 ) -> usize {
@@ -1345,8 +1389,20 @@ fn read_path(
         }
     }
 
+    let rings = input.rings.len();
     for sub in subs {
         add_subpath(&sub, stroked, width, fill_luma.filter(|_| filled), input);
+    }
+    // A ring clipped out of sight is not a control anyone can see to fill.
+    if input.rings.len() > rings {
+        if let Some(clip) = clip_bounds(b, object, to_page, mapper) {
+            let added = input.rings.split_off(rings);
+            input.rings.extend(
+                added
+                    .into_iter()
+                    .filter(|r| clip.contains_point(r.cx(), r.cy())),
+            );
+        }
     }
     n as usize
 }
